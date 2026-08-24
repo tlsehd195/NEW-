@@ -53,6 +53,25 @@ class DataRepository(Protocol):
     def get_universe(self, market: str, universe: str, as_of_time: datetime) -> list[str]: ...
 
 
+class AppendableDataRepository(DataRepository, Protocol):
+    """DataRepository plus the ingestion-side bookkeeping methods
+    `data_infra.provider.IngestionRunner` needs (`all_bars`/`append_bars`).
+
+    Added in Phase 4 (docs/specifications/PHASE-4-baseline-models-and-storage.md
+    section 4) purely so IngestionRunner can be typed against a Protocol
+    instead of the concrete `InMemoryDataRepository` class, letting a
+    persistent, DuckDB/Parquet-backed repository (storage.data_repository.
+    DuckDBDataRepository) be used as an ingestion target without any
+    IngestionRunner code change -- this is a widening, backward-compatible
+    type-hint change only; `InMemoryDataRepository` already satisfies this
+    Protocol structurally, and no runtime behavior changes.
+    """
+
+    def all_bars(self) -> Sequence[PriceBar]: ...
+
+    def append_bars(self, new_bars: Sequence[PriceBar]) -> object: ...
+
+
 class InMemoryDataRepository:
     """Phase 1 reference implementation of DataRepository.
 

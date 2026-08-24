@@ -64,18 +64,24 @@
 
 ## 현재 상태
 
-**Phase 3 — Trade Journal** (설계 및 참조 구현 완료).
+**Phase 4 — Baseline Models + Persistent Storage** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
 - Phase 1 — Data Infrastructure: 완료 (`src/data_infra/`, 57 tests)
 - Phase 2 — Backtesting: 완료 (`src/backtest/`, 82 tests)
-- Phase 3 — Trade Journal: 완료 (`src/trade_journal/`, 63 tests) —
-  `DECISION REQUIRED` 3건 미결(벤치마크 return type, per-decision
-  data version, corporate-action-aware portfolio state 재구성) —
-  `docs/PROJECT_STATUS.md` 참조
+- Phase 3 — Trade Journal: 완료 (`src/trade_journal/`, 63 tests)
+- Phase 4 — Baseline Models + Persistent Storage: 완료
+  (`src/storage/`, `src/baseline/`, 51 tests) — DuckDB+Parquet 영속
+  저장소(Raw/Clean Market Data, Security Master, Universe Membership,
+  Corporate Actions, Benchmark, Trade Journal, Experiment, Experience
+  Dataset 전부 포함), Buy & Hold / Simple Momentum baseline을 동일
+  Backtest Engine에서 실행하고 벤치마크와 비교하는 리포트 —
+  `DECISION REQUIRED` 3건 여전히 미결(벤치마크 return type,
+  per-decision data version, corporate-action-aware portfolio state
+  재구성) — `docs/PROJECT_STATUS.md` 참조
 
-전체 테스트: **202 passed** (Phase 1+2+3 합산).
+전체 테스트: **253 passed** (Phase 1+2+3+4 합산).
 
 ## 테스트 실행
 
@@ -83,6 +89,19 @@
 pip install -e ".[dev]"
 python3 -m pytest tests/ -q
 ```
+
+## 영속 저장소 (Phase 4)
+
+`src/storage/`는 DuckDB(관계형/메타데이터: Security Master, Corporate
+Actions, Benchmark, Universe Membership, Trade Journal, Experiment,
+Experience Dataset) + Parquet(대용량 시계열: Raw/Clean Market Data)
+조합으로 재시작 후에도 데이터가 유실되지 않는 영속 계층을 제공한다.
+Application/Backtest/Trade Journal 코드는 이 구현을 직접 호출하지 않고
+Phase 1/3가 정의한 `DataRepository`/`TradeJournalRepository`
+Protocol(및 Phase 4가 추가한 `ExperimentRepository`/
+`ExperienceRepository`)을 통해서만 접근한다. 자세한 설계는
+`docs/specifications/PHASE-4-baseline-models-and-storage.md`와
+`docs/decisions/ADR-0010-persistent-storage-backend.md` 참조.
 
 ## 개발 원칙
 

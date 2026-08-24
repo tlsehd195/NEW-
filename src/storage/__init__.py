@@ -1,0 +1,1 @@
+"""Persistent storage layer (Phase 4): DuckDB + Parquet backed implementations of the DataRepository, TradeJournalRepository, ExperimentRepository and ExperienceRepository protocols defined in earlier phases."""

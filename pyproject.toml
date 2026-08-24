@@ -1,10 +1,13 @@
 [project]
 name = "aiinvest"
 version = "0.1.0"
-description = "Autonomous AI Investment System — Phase 1: Data Infrastructure"
+description = "Autonomous AI Investment System — Phase 4: Baseline Models + Persistent Storage"
 requires-python = ">=3.11"
 readme = "README.md"
-dependencies = []
+dependencies = [
+    "duckdb>=1.0",
+    "pyarrow>=15.0",
+]
 
 [project.optional-dependencies]
 dev = [

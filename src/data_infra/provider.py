@@ -17,7 +17,7 @@ from typing import Callable, Optional, Protocol, Sequence
 
 from data_infra.enums import IngestionStatus
 from data_infra.models import PriceBar, Provenance
-from data_infra.repository import InMemoryDataRepository
+from data_infra.repository import AppendableDataRepository
 from data_infra.versioning import compute_data_version
 
 
@@ -188,7 +188,7 @@ class IngestionRunner:
     def __init__(
         self,
         provider: DataProvider,
-        repository: InMemoryDataRepository,
+        repository: AppendableDataRepository,
         *,
         max_retries: int = 3,
         backoff_fn: Callable[[int], float] = default_backoff_seconds,
