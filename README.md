@@ -64,14 +64,18 @@
 
 ## 현재 상태
 
-**Phase 2 — Backtesting** (설계 및 참조 구현 완료).
+**Phase 3 — Trade Journal** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
 - Phase 1 — Data Infrastructure: 완료 (`src/data_infra/`, 57 tests)
-- Phase 2 — Backtesting: 완료 (`src/backtest/`, 82 tests) — 벤치마크
-  return type(가격수익률 vs total return)에 대한 `DECISION REQUIRED`
-  1건 미결 (`docs/PROJECT_STATUS.md` 참조)
+- Phase 2 — Backtesting: 완료 (`src/backtest/`, 82 tests)
+- Phase 3 — Trade Journal: 완료 (`src/trade_journal/`, 63 tests) —
+  `DECISION REQUIRED` 3건 미결(벤치마크 return type, per-decision
+  data version, corporate-action-aware portfolio state 재구성) —
+  `docs/PROJECT_STATUS.md` 참조
+
+전체 테스트: **202 passed** (Phase 1+2+3 합산).
 
 ## 테스트 실행
 

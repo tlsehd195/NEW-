@@ -31,6 +31,14 @@ class OrderStatus(str, Enum):
     # backtest window, so there is no future bar to fill it against
     # (Phase 2 spec section 6.2).
     NOT_EXECUTED = "NOT_EXECUTED"
+    # Reserved for future async brokers (Paper/Toss, Phase 13+) that have
+    # a real cancellation window between order submission and fill.
+    # Phase 2's synchronous BacktestBroker never produces this value —
+    # added so the Order state machine already matches
+    # PROJECT_MASTER_PLAN.md section 26 in full, and so Phase 3's Trade
+    # Journal (which must represent every Order status losslessly) does
+    # not need a second, broker-specific status enum.
+    CANCELLED = "CANCELLED"
 
 
 class IntegritySeverity(str, Enum):

@@ -5,270 +5,237 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-24
-**Updated By:** Claude Code (Session 3 — Phase 2 Backtesting)
+**Updated By:** Claude Code (Session 4 — Phase 3 Trade Journal)
 
 ---
 
 ## Current Phase
 
-**Phase 2 — Backtesting** (설계 및 참조 구현 완료, 실제 데이터 provider
-연동 및 영구 저장소 백엔드는 여전히 Phase 1부터 이어지는 후속 작업)
+**Phase 3 — Trade Journal** (설계 및 참조 구현 완료)
 
 ## Current Subtask
 
-Phase 2 Definition of Done 충족: 명세 + 3개 ADR + Backtest Engine 전체
-파이프라인(Clock/AsOfView/Strategy/Order/Fill/Cost/Slippage/Portfolio/
-CorporateAction/Benchmark/Metrics/Integrity/Experiment) 참조 구현 +
-15개 카테고리 테스트 전부 통과. **DECISION REQUIRED 1건 미결**
-(벤치마크 return type — 아래 참조).
+Phase 3 Definition of Done 충족: 명세 + ADR-0009 + `src/trade_journal/`
+전체(모델/저장소/분석/경험 변환/Phase 2 연동) 참조 구현 + 17개
+카테고리(+Phase2 통합) 테스트 전부 통과. **DECISION REQUIRED 2건 추가
+발생** (기존 벤치마크 return type 1건 + 이번 세션의 Phase 2 정밀도
+관련 2건 — 아래 참조).
 
 ---
 
 ## Completed
 
 ### Session 1 (Phase 0)
-- [x] Repository 조사, `PROJECT_MASTER_PLAN.md`, `docs/PROJECT_STATUS.md`,
-      `docs/decisions/ADR-0001-master-architecture.md` 작성
+- Repository 조사, `PROJECT_MASTER_PLAN.md`, `docs/PROJECT_STATUS.md`,
+  ADR-0001 작성
 
 ### Session 2 (Phase 1)
-- [x] `docs/specifications/PHASE-1-data-infrastructure.md`,
-      `docs/architecture/data-catalog.md`, ADR-0002~0005 작성
-- [x] `src/data_infra/` 참조 구현 (모델/품질/캘린더/저장소/provider/ingestion)
-- [x] 14개 필수 테스트 카테고리, 57개 테스트 전부 통과
+- Data Infrastructure 설계 및 참조 구현, 57개 테스트
 
 ### Session 3 (Phase 2)
-- [x] Phase 1 데이터 계층 재조사 (`DataRepository`, as_of_time,
-      `available_time`, `UniverseMembership`, `CorporateAction`,
-      `Provenance`, `DataQualityFramework` 시그니처 확인, 충돌 없음)
-- [x] `docs/specifications/PHASE-2-backtesting.md` 작성 (Scope,
-      Architecture, Leakage 카테고리별 방지 매핑, Strategy Interface,
-      Order/Fill Simulation, Transaction Cost/Slippage, Portfolio
-      Accounting, Benchmark Engine, Performance Metrics, Integrity
-      Layer, Experiment Tracking, Validation 구조, Baseline 전략,
-      연구 기반 적용 범위, Test Plan, DoD 체크리스트)
-- [x] `docs/decisions/ADR-0006-backtest-broker-execution-timing.md` —
-      Broker Interface + BacktestBroker, 실행 타이밍을 "T 종가로 결정,
-      T+1 종가로 체결"로 확정 (T+1 시가 대안은 Phase 1 데이터 모델의
-      단일 `available_time`으로는 안전하게 구현 불가능함을 근거로 기각)
-- [x] `docs/decisions/ADR-0007-transaction-cost-slippage-model.md` —
-      commission+spread+slippage(FixedBps/VolumeScaled), 항상 거래자에게
-      불리한 방향으로만 조정, 기본값 비영(非零) 비용
-- [x] `docs/decisions/ADR-0008-validation-protocol.md` — 시간순
-      train/test split + WalkForwardSplitter 구현, Purged K-Fold/Embargo는
-      `ValidationSplitter` 확장점만 예약(미구현)
-- [x] `src/backtest/` 패키지 구현 (17개 모듈): `clock.py`, `asof.py`,
-      `enums.py`, `strategy.py`(BuyAndHold/SimpleMomentum),
-      `orders.py`, `fills.py`, `costs.py`, `corporate_actions.py`,
-      `broker.py`, `portfolio.py`, `benchmark.py`, `metrics.py`,
-      `validation.py`, `integrity.py`, `experiment.py`, `engine.py`
-- [x] `tests/backtest/` — 15개 필수 테스트 카테고리 전부 포함, 82개
-      테스트 작성. Phase 1(57) + Phase 2(82) = **139개 테스트 전부 통과**
-      (`python3 -m pytest -q`)
-- [x] 개발 중 발견 및 수정한 실제 버그 3건 (아래 "이번 세션에서 발견한
-      버그" 참조) — 스모크 테스트 및 정식 테스트 작성 과정에서 발견,
-      설계가 아닌 구현 결함이었음
+- Backtesting 설계 및 참조 구현, 82개 테스트 (Phase1+2 = 139)
+
+### Session 4 (Phase 3)
+- [x] Phase 1/2 실제 데이터 구조 재조사 (`Order`, `Fill`,
+      `PortfolioView`, `Strategy`, `ExperimentRecord`, `IntegrityReport`
+      시그니처 확인 — Prediction/Decision 관련 별도 interface는 아직
+      존재하지 않음을 확인)
+- [x] `docs/specifications/PHASE-3-trade-journal.md` 작성 (Scope,
+      Architecture, Point-in-Time 원칙 적용, 데이터 모델 7종, Version
+      Lineage, Trade Lifecycle, Post Trade Analysis/Counterfactual/
+      Attribution의 "실제 계산 가능한 것만 계산" 원칙, Idempotency,
+      Immutability+Correction, Provenance 분리, Repository 추상화,
+      Phase2 연동 및 2가지 알려진 한계, Auditability 매핑, Test Plan,
+      DoD)
+- [x] `docs/decisions/ADR-0009-trade-journal-data-model.md` — Phase 2
+      타입(Order/Fill/PortfolioView) 직접 재사용 결정, 불변성/Correction
+      패턴, 두 가지 재구성 한계(portfolio_state replay, 데이터 없음
+      data_version)에 대한 결정 근거
+- [x] Phase 2에 **1건의 additive 변경**: `backtest.enums.OrderStatus`에
+      `CANCELLED` 추가 (기존 코드/테스트 어디도 해당 enum이 5개 값으로
+      exhaustive하다고 가정하지 않음을 확인 후 진행, Phase 2 기존
+      139개 테스트 전부 통과 유지)
+- [x] `src/trade_journal/` 패키지 구현: `enums.py`, `models.py`(7종
+      frozen dataclass), `repository.py`(Protocol +
+      `InMemoryTradeJournalRepository`, natural-key idempotency),
+      `analysis.py`(execution_error/hold-counterfactual/execution-
+      attribution — 실제 계산 가능한 것만), `experience.py`
+      (`build_experience_records`), `backtest_adapter.py`
+      (`ingest_backtest_result`, Phase 2를 읽기 전용으로만 사용)
+- [x] `tests/trade_journal/` — 17개 필수 카테고리 + Phase2 통합 테스트,
+      63개 테스트 작성 및 전부 통과
+- [x] **전체 테스트 스위트 202개 전부 통과** (Phase1 57 + Phase2 82 +
+      Phase3 63) — Phase 2 기존 테스트 무손상 확인
 
 ## In Progress
 
-없음 (Phase 2 설계+참조구현 단계는 완료). 아래 "Not Yet Implemented"는
-의도적으로 Phase 2 스코프에서 제외된 항목이며 후속 작업으로 남는다.
+없음 (Phase 3 설계+참조구현 완료).
 
 ## Blocked
 
-**DECISION REQUIRED 1건 — 사용자 확인 필요** (아래 참조). 이 결정이
-내려지기 전까지 Phase 2의 벤치마크 비교 결과는 "PRICE_RETURN 기준"이라는
-전제하에서만 유효하다고 해석해야 한다. Phase 2 코드/테스트 자체는 이
-결정과 무관하게 정상 동작하므로 구현이 차단된 것은 아니다.
+**DECISION REQUIRED 3건 누적 — 사용자 확인 필요:**
+1. (Phase 2에서 이어짐) 벤치마크 return type (PRICE_RETURN vs
+   TOTAL_RETURN)
+2. (이번 세션 신규) `BacktestEngine`의 per-decision `data_version`
+   미노출 — Trade Journal이 결정 단위 데이터 버전을 `None`으로 기록
+3. (이번 세션 신규) `BacktestResult`의 per-step corporate action 이벤트
+   미노출 — Trade Journal의 `portfolio_state` 재구성이 fill 재생 기반
+   근사치이며 두 fill 사이에 발생한 corporate action을 반영하지 못함
 
-## Design Decisions (이번 세션의 핵심 결정)
+모두 아래 "DECISION REQUIRED" 섹션에 상세 기록. Phase 3 코드/테스트
+자체는 이 결정들과 무관하게 정상 동작하며 구현이 차단된 것은 아니다.
 
-1. **실행 타이밍: T 종가로 결정 → T+1 종가로 체결** (ADR-0006). "T+1
-   시가 체결"이 더 흔한 관례이지만, Phase 1의 `PriceBar`가 봉 전체에
-   대해 단 하나의 `available_time`만 가지므로 시가만 더 일찍
-   이용가능하다고 가정하는 것은 Phase 1 데이터 모델을 임의로 확장하는
-   것과 같아 채택하지 않음. 이 선택은 자본 비용이 들지만(하루치 추가
-   지연) Phase 1 코드 변경이 전혀 필요 없다는 장점이 있음.
-2. **거래비용/슬리피지는 항상 거래자에게 불리한 방향으로만 작동**하며
-   기본 설정이 비영(非零)임 (ADR-0007).
-3. **Purged K-Fold/Embargo는 구현하지 않음** — 아직 학습된 모델도, 폴드
-   실험도 없어 검증할 실제 누수 시나리오가 없기 때문 (ADR-0008).
-   `ValidationSplitter` 인터페이스만 예약.
-4. **Average-cost 기반 포트폴리오 회계** (FIFO tax-lot 아님) — Phase 2의
-   전략 비교 목적에는 충분하다고 판단, 세무/규제 수준의 정확한 lot 추적이
-   필요해지는 시점에 재검토.
-5. `AsOfDataView`는 `as_of_time` 파라미터를 아예 노출하지 않아,
-   Strategy 구현체가 실수로라도 미래 시점 데이터를 요청할 방법이
-   구조적으로 없음 (Phase 1의 look-ahead guard를 시뮬레이션 계층까지
-   확장).
-
-## DECISION REQUIRED — 벤치마크 Return Type (미결, 사용자 확인 필요)
+## DECISION REQUIRED — Phase 2 정밀도 개선 (신규, 미결)
 
 ```
 Problem:
-S&P 500 벤치마크를 "가격 수익률(PRICE_RETURN)"로 비교할지 "총수익률
-(TOTAL_RETURN, 배당 재투자 포함)"로 비교할지가 아직 결정되지 않았다.
-이는 Phase 1이 이미 열어둔 채로 남긴 질문이다
-(data-catalog.md의 mock_benchmark_sp500 항목).
+Trade Journal(Phase 3)이 Phase 2의 BacktestResult만으로는 다음 두
+정보를 정확히 재구성할 수 없다:
+  (a) 각 개별 의사결정(Order) 시점에 어떤 data_version이 사용됐는지
+      (BacktestEngine은 런 전체 집계 데이터 버전만 노출)
+  (b) 두 체결(Fill) 사이에 발생한 corporate action(분할/배당) 적용
+      이벤트 (BacktestResult는 최종 성과만 노출, 중간 이벤트 로그 없음)
 
 Current Design:
-Phase 1의 BenchmarkPoint는 return_type 필드(PRICE_RETURN | TOTAL_RETURN)를
-가지고 있고, Phase 2의 BenchmarkEngine은 둘 중 어느 쪽이 들어와도 정확히
-처리하고 결과에 실제 사용된 return_type을 명시한다. 그러나 Phase 1이
-제공한 mock 벤치마크 데이터셋은 PRICE_RETURN만 존재하며, 실제 S&P 500
-total-return 데이터를 제공하는 provider는 아직 선정되지 않았다
-(ADR-0005, Phase 1).
+DecisionSnapshot.data_version은 Phase2 소스 레코드에 대해 None으로
+정직하게 기록됨 (Trade 레벨의 Fill.data_version은 정확히 보존됨).
+portfolio_state는 fill들을 재생(replay)하여 재구성하며, fill에
+관해서는 정확하지만 corporate action에 대해서는 정확하지 않을 수 있음
+(문서화된 한계, ADR-0009).
 
 Option A:
-지금은 PRICE_RETURN으로 진행하고, 실제 provider 선정 시점(Phase 2
-이후, 실 데이터 도입 시)에 TOTAL_RETURN으로 전환한다.
-장점: 지금 당장 막힘이 없음. 단점: 배당을 재투자하는 실제 S&P500 지수
-대비 전략의 초과수익이 구조적으로 과대평가될 수 있음(전략은 배당을
-받지만 — CorporateActionApplier가 이미 이를 반영함 — 벤치마크는 배당을
-반영하지 않으므로).
+지금 상태 유지. Phase 2/3는 이미 이 한계를 문서화했고 테스트도
+전부 통과한다. 실제로 필요해지는 시점(예: Phase 9 Learning Engine이
+per-decision 데이터 버전을 요구하거나, corporate action이 빈번한 실제
+데이터로 전환될 때)에 재검토한다.
 
 Option B:
-실제 데이터 provider를 선정할 때 반드시 total-return 데이터(또는
-가격 수익률 + 배당수익률을 합성할 수 있는 데이터)를 제공하는 provider를
-우선 조건으로 삼는다.
-장점: 처음부터 공정한 비교가 보장됨. 단점: provider 선택지가 줄어들거나
-비용이 늘어날 수 있음.
+BacktestEngine을 확장하여 (a) 매 주문 생성 시점에 사용된 가격 bar의
+data_version을 Order 또는 별도 이벤트로 노출하고, (b) corporate
+action 적용을 이벤트 로그(예: CorporateActionEvent 리스트)로
+BacktestResult에 포함시킨다. Trade Journal은 이 이벤트들을 정확히
+소비하도록 수정된다.
 
 Recommendation:
-Option A로 지금 진행하되(막힘 방지), Phase 1 ADR-0005의 "실제 provider
-선정" 결정 시점에 Option B의 조건(total-return 데이터 확보 가능 여부)을
-선정 기준에 명시적으로 포함시킬 것을 권장한다. Phase 2 코드는 이미 두
-경우 모두를 정확히 처리하도록 설계되어 있으므로(§9 of PHASE-2 spec),
-이 결정이 나중에 바뀌어도 재구현이 필요하지 않다.
+Option A로 유지. 두 한계 모두 명확히 문서화되어 있고, 현재 mock 데이터
+기반 테스트에서는 실질적 영향이 없다(대부분의 백테스트 시나리오가
+corporate action을 자주 포함하지 않음). Phase 9(Learning) 착수 시점에
+실제로 정밀한 per-decision lineage가 필요한지 재평가할 것을 권장한다.
+Option B는 Phase 2 아키텍처 변경이므로 Phase 2/3 세션 하나에서 임의로
+결정하지 않는다.
 
 Impact:
-현재 mock 데이터로 실행한 모든 Phase 2 벤치마크 비교 결과는
-"배당을 제외한 가격 수익률 기준" 비교로 해석해야 하며, 실제 총수익 기준
-초과수익(excess_return)과는 다를 수 있다. 이는 코드 버그가 아니라
-정직하게 라벨링된 한계다.
+현재 Trade Journal에서 나온 Experience Record는 data_version 필드가
+비어 있으므로(None) 재현성 검증 시 trade-level(Fill.data_version)
+정밀도까지만 신뢰할 수 있다. corporate action이 포함된 백테스트의
+portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 지표
+자체(realized_pnl, execution_price 등)에는 영향이 없다 — 영향은
+오직 "그 순간의 재현된 컨텍스트"의 정밀도에 국한된다.
 ```
 
-**사용자 확인이 있기 전까지 이 항목은 열려 있는 것으로 취급한다.**
+## Design Decisions (이번 세션의 핵심 결정)
+
+1. Phase 2의 `Order`/`Fill`/`PortfolioView`를 **직접 임베드**하여
+   재사용 — 병렬 스키마를 만들지 않음 (ADR-0009).
+2. 모든 Journal 레코드는 `frozen=True` dataclass — 불변성을 언어
+   차원에서 강제.
+3. 수정은 **원본 불변 + CorrectionRecord 추가** 방식만 허용 —
+   `TradeJournalRepository`에는 `update_*`/`delete_*` 메서드 자체가
+   없음.
+4. Idempotency는 **natural key**(`experiment_id` + `order_id`/
+   `fill.order_id`) 기반이며, id 할당은 저장소 내부에서만 수행(Phase
+   1/2와 동일 패턴).
+5. Post Trade Analysis/Counterfactual/Attribution은 **실제로 계산
+   가능한 필드만 계산**(execution_error, post-hoc hold counterfactual,
+   execution attribution)하고 나머지는 정직하게 `None` — 추정값을
+   사실처럼 저장하지 않는다는 지시를 그대로 구현.
+6. `backtest.enums.OrderStatus`에 `CANCELLED`를 additive하게 추가하여
+   Phase 13+ 비동기 브로커를 위한 확장성을 미리 확보 (Phase 2 코드
+   영향 없음, 기존 테스트 전부 통과 확인 후 진행).
 
 ## Known Risks / Limitations (의도적으로 남겨둔 항목)
 
-- (Phase 1에서 이어짐) `InMemoryDataRepository`는 참조 구현이며 영속성
-  없음. DuckDB/Parquet 백엔드 미구현.
-- (Phase 1에서 이어짐) `TradingCalendar`의 US/KR 구현은 최소 샘플
-  휴일만 포함.
-- 벤치마크 return type 미결 — 위 DECISION REQUIRED 참조.
-- MERGER/ACQUISITION/SPIN_OFF/TICKER_CHANGE/DELISTING corporate
-  action은 Phase 2에서 처리하지 않음 (경고만 기록, Phase 2 spec §8.4).
-- Average-cost 포트폴리오 회계 (FIFO tax-lot 아님).
-- Purged K-Fold/Embargo 미구현 (인터페이스만 예약, ADR-0008).
-- `VolumeScaledSlippageModel`의 impact coefficient는 실제 시장 데이터로
-  캘리브레이션되지 않음 — 메커니즘 실증용, 신뢰할 수 있는 비용 예측
-  아님 (ADR-0007).
-- Limit order 미구현 (구조만 예약, `OrderType.LIMIT` 사용 시
-  `NotImplementedError`).
-- 실제 외부 데이터 provider 및 실제 S&P500 historical constituent/배당
-  데이터 여전히 미확보 (Phase 1 ADR-0005에서 이어지는 선행 조건).
+- (Phase 1/2에서 이어짐) 실 저장소 백엔드 없음, 실 데이터 provider
+  없음, 벤치마크 return type 미결.
+- Phase 3의 `data_version`(per-decision) 및 `portfolio_state`(corporate
+  action 반영) 정밀도 한계 — 위 DECISION REQUIRED 참조.
+- `prediction_error`, `timing_error`, `risk_estimation_error`,
+  `regime_error`, `signal_error`, `market`/`sector`/`factor`/
+  `selection`/`timing` attribution — 전부 `None` (Phase 5/6/8 부재).
+- 명시적 `NO_TRADE` 의사결정 로깅 없음 — Phase 2 Strategy가 주문 의도를
+  생성한 경우만 기록됨 (Phase 7 Decision Agent가 생기면 확장).
+- Experience Record의 `reward`는 단순 `realized_return` 매핑 — 실제
+  reward function 설계는 Phase 9 과제.
+- 영속 저장소 없음 (`InMemoryTradeJournalRepository`만 존재).
 
 ## Recent Experiments
 
-없음 (실제 데이터 기반 실험 없음 — 모든 Phase 2 테스트/스모크 실행은
-mock/synthetic 데이터 기준). `ExperimentTracker`는 구현되어 있으며
-"BT-000001" 형식으로 실행마다 기록되지만, 지속 저장소는 아직 없음.
+없음 (실제 데이터 기반 실험 없음). Phase 3는 새로운 실험을 만들지
+않고 Phase 2의 `ExperimentRecord`를 참조만 한다.
 
-## Current Model
+## Current Model / Current Benchmark
 
-없음 (Phase 4 Baseline Models 이전까지 학습된 모델 없음). Phase 2는
-학습이 필요 없는 두 개의 baseline 전략(Buy & Hold, Simple Momentum)만
-구현했다.
-
-## Current Benchmark
-
-S&P 500 Buy & Hold 구조는 구현 완료 (`BenchmarkEngine`), 단 위
-DECISION REQUIRED가 해결되기 전까지는 PRICE_RETURN 기준으로만 사용
-가능.
+Phase 2와 동일 (변화 없음).
 
 ## Last Validation
 
-`python3 -m pytest tests/ -q` — **139 passed** (Phase 1: 57, Phase 2: 82).
-Phase 2의 82개 테스트는 지시된 15개 필수 카테고리(deterministic replay,
-no-lookahead, transaction cost, slippage, cash accounting, position
-accounting, PnL, drawdown, benchmark, corporate action, survivorship,
-execution timing, duplicate order, reproducibility, integrity failure)를
-전부 포함한다.
-
----
-
-## 이번 세션에서 발견한 버그 (설계가 아닌 구현 결함)
-
-스모크 테스트와 정식 테스트 작성 과정에서 다음 3개의 실제 버그를
-발견하고 수정했다 (설계 문서/ADR의 결함이 아니라 구현 코드의 결함):
-
-1. **`BuyAndHoldStrategy`/`SimpleMomentumStrategy`가 현금을 100% 소진**
-   하여 수수료를 위한 여유가 없어 정상적인 주문이 `OrderSimulator`에
-   의해 "insufficient cash"로 거부됨 → `COST_SAFETY_MARGIN`(2%) 도입.
-2. **`BacktestEngine._compute_benchmark`가 체크포인트 시각(예: 20:00)을
-   그대로 벤치마크 조회 시작 경계로 사용**하여, 봉 시작 시각(00:00)으로
-   기록된 첫날의 벤치마크 데이터 포인트가 범위에서 누락됨 → 시작 경계를
-   하루 전으로 당겨 조회하도록 수정.
-3. **백테스트 마지막 체크포인트에서 생성된 주문 의도(intent)가 실제
-   `Order` 객체로 변환되지 않고 조용히 폐기**되어 감사 가능성
-   (auditability) 원칙에 위배됨 → `OrderStatus.NOT_EXECUTED` 상태의
-   `Order` 객체를 명시적으로 생성하도록 수정.
-
-세 버그 모두 테스트 작성 및 실행을 통해 발견되었으며, 이는 Phase 2의
-핵심 목표("실전에서 믿을 수 있는 검증 방법을 만드는 것")가 실제로
-작동했음을 보여주는 사례로 기록해 둔다 — 설계 문서만으로는 이런 버그를
-잡을 수 없었을 것이다.
+`python3 -m pytest tests/ -q` — **202 passed**
+(Phase 1: 57, Phase 2: 82, Phase 3: 63). Phase 3의 63개 테스트는
+지시된 17개 카테고리(trade creation, decision snapshot integrity,
+immutable snapshot, order/fill linkage, partial fill, rejected order,
+cancelled order, duplicate event/idempotency, realized PnL, holding
+period, provenance, version lineage, point-in-time snapshot, audit
+trail, historical/paper/live separation, experience conversion,
+correction/audit record) + Phase 2 통합 테스트를 전부 포함한다.
 
 ---
 
 ## Not Yet Implemented
 
-- AI trading decision / LLM trading prompt / automatic strategy generation
-- Model training / reinforcement learning / automatic model deployment
-- Toss Securities 연동, 실계좌 주문, Live Trading, 자율 매매
-- 실제 외부 데이터 provider 연동 (Phase 1부터 이어짐)
-- DuckDB/Parquet 실 저장소 백엔드 (Phase 1부터 이어짐)
-- Feature Engine, Market Regime Detection, Prediction/Decision Agent
-  (Phase 2 Strategy는 이들 없이 baseline 신호를 직접 계산함),
-  Position Sizing/Portfolio Risk Engine의 완전한 형태 (Phase 5-8)
-- Limit order 실행 로직
-- Purged K-Fold / Embargo validation
-- MERGER/ACQUISITION/SPIN_OFF/TICKER_CHANGE/DELISTING corporate action
-  처리
-- 영속적 Experiment/Model Registry 저장소
+- AI trading decision / LLM API 호출 / Toss Securities / Live Trading
+- 실제 외부 데이터 provider, DuckDB/Parquet 영속 백엔드 (Phase 1부터)
+- Limit order, Purged K-Fold/Embargo, 5종 corporate action 처리 (Phase
+  2부터)
+- Feature Engine, Market Regime Detection, Prediction Engine, 완전한
+  Decision Agent, Position Sizing/Portfolio Risk Engine (Phase 5-8)
+- 실제 Post Trade Analysis 알고리즘(prediction/timing/risk/regime/
+  signal error), 실제 Performance Attribution(market/sector/factor/
+  selection/timing), 모델 기반 Counterfactual — 전부 구조만 준비됨
+- Trade Journal 영속 저장소
+- Paper/Live 브로커 어댑터 (Trade Journal의 `PAPER_TRADING`/
+  `LIVE_TRADING` provenance를 실제로 생산할 producer 없음)
+- Model Registry / "왜 모델이 변경되었는가" 감사 질문 (Phase 11)
 
 ---
 
 ## Next Recommended Task
 
-1. **DECISION REQUIRED 확인**: 벤치마크 return type 결정 (위 참조) —
-   사용자 확인 후 `docs/decisions/`에 후속 ADR로 기록 권장.
-2. (선택) Phase 1/2 공통 follow-up: DuckDB/Parquet 백엔드 구현.
-3. **Phase 3 — Trade Journal** 착수: `docs/specifications/
-   PHASE-3-trade-journal.md` 작성부터 시작. Phase 2가 이미 생성하는
-   `Order`/`Fill`/`ExperimentRecord`/`IntegrityReport`를 Trade
-   Journal의 Decision Snapshot 입력으로 연결하는 것이 핵심 과제가 될
-   것이다 (`PROJECT_MASTER_PLAN.md` §10, §30-31).
+1. **DECISION REQUIRED 3건 확인**: 벤치마크 return type, per-decision
+   data_version, corporate-action-aware portfolio_state 재구성.
+2. **Phase 4 — Baseline Models** 착수 검토, 또는 **Phase 5 — Market
+   Regime** 착수: `PROJECT_MASTER_PLAN.md` §61의 Phase 순서를 따를 것.
+   Phase 4/5 중 무엇을 먼저 할지는 마스터플랜 순서(Phase 4가 먼저)를
+   기본으로 하되, 사용자 지시가 있으면 그에 따른다.
+3. Phase 9(Learning Engine) 착수 시점에 위 DECISION REQUIRED 2건(데이터
+   버전/corporate action lineage)을 재평가.
 
 ---
 
 ## 세션 이력 (Session Log)
 
 ### Session 1 — 2026-08-24 (Phase 0)
-- 저장소 최초 조사, Phase 0 문서 기반 수립
-
 ### Session 2 — 2026-08-24 (Phase 1)
-- Data Infrastructure 설계 및 참조 구현, 57개 테스트
-
 ### Session 3 — 2026-08-24 (Phase 2)
-- Phase 1 데이터 계층 재조사 (충돌 없음 확인)
-- Phase 2 명세, ADR-0006~0008 작성
-- `src/backtest/` 참조 구현 (Clock/AsOfView/Strategy/Order/Fill/Cost/
-  Slippage/Portfolio/CorporateAction/Broker/Benchmark/Metrics/
-  Validation/Integrity/Experiment/Engine)
-- 15개 필수 테스트 카테고리 포함 82개 테스트 작성, Phase1+Phase2 합계
-  139개 테스트 전부 통과
-- 스모크 테스트로 실제 구현 버그 3건 발견 및 수정
-- 벤치마크 return type을 DECISION REQUIRED로 보고 (임의 결정하지 않음)
+
+### Session 4 — 2026-08-24 (Phase 3)
+- Phase 1/2 구조 재조사 (충돌 없음, Prediction/Decision interface 부재
+  확인)
+- Phase 3 명세, ADR-0009 작성
+- Phase 2에 additive 변경 1건 (`OrderStatus.CANCELLED`) — 기존 테스트
+  영향 없음 확인
+- `src/trade_journal/` 참조 구현 (모델/저장소/분석/경험변환/Phase2 연동)
+- 17개 카테고리 + Phase2 통합 테스트 포함 63개 테스트 작성, 전체
+  202개 테스트 전부 통과
+- DECISION REQUIRED 2건 신규 보고 (per-decision data_version,
+  corporate-action-aware portfolio_state 재구성) — 임의 결정하지 않음
 - 실제 AI API, Toss Securities, Live Trading은 여전히 구현하지 않음
-  (지시사항 준수)
