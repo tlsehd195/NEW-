@@ -64,7 +64,7 @@
 
 ## 현재 상태
 
-**Phase 5 — Market Regime Detection** (설계 및 참조 구현 완료).
+**Phase 6 — Prediction** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -81,12 +81,17 @@
   Trend/Volatility/Liquidity/Correlation/Stress 5개 축의 deterministic
   baseline regime 분류기, Phase 2의 `AsOfDataView`를 재사용하는
   point-in-time-safe `RegimeDetector`, Phase 4 저장소에 영속화, Trade
-  Journal/Experience Dataset과 비침습적 lineage 연결 —
+  Journal/Experience Dataset과 비침습적 lineage 연결
+- Phase 6 — Prediction: 완료 (`src/predict/`, 39 tests) — RandomWalk/
+  Drift deterministic baseline predictor 2종, Decision/Risk/Execution과
+  구조적으로 분리된 `PredictionOutput`, Phase 2의 `AsOfDataView`를
+  재사용하는 point-in-time-safe 예측 계산, Phase 4 저장소에 영속화,
+  Trade Journal/Experience Dataset과 비침습적 lineage 연결 —
   `DECISION REQUIRED` 3건 여전히 미결(벤치마크 return type,
   per-decision data version, corporate-action-aware portfolio state
   재구성) — `docs/PROJECT_STATUS.md` 참조
 
-전체 테스트: **310 passed** (Phase 1+2+3+4+5 합산).
+전체 테스트: **349 passed** (Phase 1+2+3+4+5+6 합산).
 
 ## 테스트 실행
 
@@ -118,6 +123,21 @@ Stress)를 독립적으로 탐지하는 계층이다. Prediction/Decision과 분
 Dataset과 비침습적으로 lineage가 연결된다. 자세한 설계는
 `docs/specifications/PHASE-5-market-regime.md`와
 `docs/decisions/ADR-0011-market-regime-detection.md` 참조.
+
+## Prediction (Phase 6)
+
+`src/predict/`는 expected_return/probability/expected_volatility/
+uncertainty/confidence를 산출하는 Prediction 계층이다. Decision/Risk/
+Execution과 구조적으로 분리되어 있으며(`PredictionOutput`에는
+order/risk-shaped 필드가 아예 존재하지 않는다), Prediction 결과만으로
+주문을 생성하지 않는다. RandomWalk(무정보 baseline)와 Drift(trailing
+mean return 외삽) 두 deterministic baseline이 존재하며, 향후 model-based
+predictor를 위한 인터페이스(`PredictionMethodType.MODEL_BASED`)만 예약
+되어 있다. 계산은 Phase 2의 `AsOfDataView`를 재사용해 point-in-time
+안전성을 상속받고, 결과는 Phase 4의 DuckDB 저장소에 영속화되며, Trade
+Journal/Experience Dataset과 비침습적으로 lineage가 연결된다. 자세한
+설계는 `docs/specifications/PHASE-6-prediction.md`와
+`docs/decisions/ADR-0012-prediction-layer.md` 참조.
 
 ## 개발 원칙
 

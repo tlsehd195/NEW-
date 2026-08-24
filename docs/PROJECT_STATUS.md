@@ -5,26 +5,77 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-24
-**Updated By:** Claude Code (Session 6 — Phase 5 Market Regime Detection)
+**Updated By:** Claude Code (Session 7 — Phase 6 Prediction)
 
 ---
 
 ## Current Phase
 
-**Phase 5 — Market Regime Detection** (설계 및 참조 구현 완료)
+**Phase 6 — Prediction** (설계 및 참조 구현 완료)
 
 ## Current Subtask
 
-Phase 5 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-5-market-regime.md`) + ADR-0011 +
-`src/regime/`(5개 baseline regime 축 — Trend/Volatility/Liquidity/
-Correlation/Stress — deterministic feature 계산, RegimeDetector,
-RegimeRepository, Regime↔Trade Journal lineage, RegimeConditionedStrategy)
-+ `src/storage/regime_repository.py`(Phase 4 저장소 확장) 참조 구현 +
-신규 57개 테스트(regime 8개 카테고리 + storage 1개 + integration 1개)
-전부 통과. Phase 3의 DECISION REQUIRED 3건은 이번 Phase에서도 재검토
-결과 해결이 필요하지 않다고 판단하여 계속 이연(Phase 5 spec §16 참조,
-아래 "Blocked" 섹션도 참조).
+Phase 6 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시)
+— 결과 PASS(단일 선형 히스토리, main/wvscwe 모두 현재 HEAD의 조상,
+Phase 1~5 전부 포함 확인, 세부 내역은 세션 이력 및 Phase 6 spec §0 참조).
+검증 통과 후 Phase 6 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-6-prediction.md`) + ADR-0012 +
+`src/predict/`(RandomWalk/Drift deterministic baseline predictor 2종,
+PredictionOutput, PredictionRepository, Prediction↔Trade Journal lineage,
+RegimeAwarePredictor) + `src/storage/prediction_repository.py`(Phase 4
+저장소 확장) 참조 구현 + 신규 39개 테스트 전부 통과. Phase 3의 DECISION
+REQUIRED 3건은 이번 Phase에서도 재검토 결과 해결이 필요하지 않다고
+판단하여 계속 이연(Phase 6 spec §16 참조, 아래 "Blocked" 섹션도 참조).
+
+## Completed (Session 7 — Phase 6)
+
+- [x] **Git/Branch Integrity Check 선행 수행** (사용자 지시) — 현재
+      branch(`claude/phase-4-baseline-storage-tuavwk`)의 HEAD(d386420,
+      Phase 5)부터 시작해 `git log --graph --all`, `merge-base`,
+      `is-ancestor`로 검증: 단일 선형 히스토리(Initial commit → Phase 0
+      → Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5), `origin/main`과
+      `origin/claude/autonomous-ai-investment-system-wvscwe` 둘 다 현재
+      HEAD의 진짜 조상이며 두 branch 모두 HEAD에 없는 커밋이 0개, 병합/
+      분기/reset/force-push 흔적 없음, 모든 Phase 산출물(`docs/specifications/
+      PHASE-{1..5}*`, ADR 11개, `src/{data_infra,backtest,trade_journal,
+      storage,baseline,regime}/`) 실존 확인, 310/310 테스트 통과, working
+      tree clean → **PASS 판정 후 Phase 6 착수**
+- [x] Master Plan/ADR-0001~0011/Phase 1~5 spec/현재 src·tests 재조사
+      (충돌 없음 확인)
+- [x] `docs/specifications/PHASE-6-prediction.md` 작성 (Git Integrity
+      Check 결과를 §0에 포함)
+- [x] `docs/decisions/ADR-0012-prediction-layer.md` 작성
+- [x] `src/predict/` 패키지 구현: `enums.py`(PredictionMethodType —
+      DETERMINISTIC_BASELINE/MODEL_BASED 명시적 구분), `config.py`
+      (PredictionConfig), `models.py`(PredictionOutput — order/risk-shaped
+      필드 구조적으로 없음, frozen dataclass), `predictor.py`
+      (Predictor Protocol + `RandomWalkPredictor`(null hypothesis,
+      데이터 조회 없음) + `DriftPredictor`(trailing mean return 외삽 +
+      realized vol persistence) + `RegimeAwarePredictor`(Phase5 Regime을
+      입력으로 사용하는 예시, alpha 주장 없음)), `repository.py`
+      (PredictionRepository Protocol + InMemoryPredictionRepository),
+      `experience.py`(attach_prediction_context — Phase3
+      `ExperienceRecord.expected_outcome` 필드를 비침습적으로 채움)
+- [x] `src/storage/prediction_repository.py`(DuckDBPredictionRepository) +
+      `schema.py`/`serialization.py`에 predictions 테이블/직렬화 추가 —
+      기존 테이블 스키마 변경 없음
+- [x] Phase 5에 **1건의 additive 변경**: `regime.features.
+      _annualized_realized_vol`를 `annualized_realized_vol`로 공개
+      (rename만, 동작 변경 없음) — Phase5 기존 48개 regime 테스트 전부
+      통과 확인 후 진행
+- [x] `tests/predict/`(31) + `tests/storage/test_prediction_repository.py`(5)
+      + `tests/integration/test_prediction_experience_lineage.py`(3) —
+      신규 39개 테스트 작성 및 전부 통과 (파일명 충돌 방지를 위해
+      `test_point_in_time.py`/`test_version_lineage.py`를 각각
+      `test_predict_point_in_time.py`/`test_predict_version_lineage.py`로
+      명명)
+- [x] **전체 테스트 스위트 349개 전부 통과** (Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57 + Phase6 39) — Phase 1~5 기존
+      테스트 무손상 확인
+- [x] Prediction은 BUY/SELL을 직접 만들지 않음을 구조적으로 검증
+      (`test_boundary.py` — PredictionOutput에 order/risk-shaped 필드
+      없음, Predictor는 Strategy Protocol을 구현하지 않음, `predict()`
+      시그니처에 portfolio/risk 파라미터 없음을 reflection으로 확인)
 
 ## Completed (Session 6 — Phase 5)
 
@@ -143,14 +194,15 @@ RegimeRepository, Regime↔Trade Journal lineage, RegimeConditionedStrategy)
 
 ## In Progress
 
-없음 (Phase 5 설계+참조구현 완료).
+없음 (Phase 6 설계+참조구현 완료).
 
 ## Blocked
 
 **DECISION REQUIRED 3건 누적 (Phase 2/3에서 이어짐) — 사용자 확인 필요.**
-Phase 4, Phase 5 세션 모두 세 항목을 재검토했으며, 매번 이번 Phase의
-완료 조건과 무관함을 확인하여 여전히 해결하지 않고 이연한다 (Phase 4
-spec §19, Phase 5 spec §16에 각각 재검토 근거 상세 기록):
+Phase 4, Phase 5, Phase 6 세션 모두 세 항목을 재검토했으며, 매번 이번
+Phase의 완료 조건과 무관함을 확인하여 여전히 해결하지 않고 이연한다
+(Phase 4 spec §19, Phase 5 spec §16, Phase 6 spec §16에 각각 재검토
+근거 상세 기록):
 
 1. (Phase 2에서 이어짐) 벤치마크 return type (PRICE_RETURN vs
    TOTAL_RETURN)
@@ -217,6 +269,55 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 문서화한 상태)로 저장된다 — 저장소가 정밀도 문제를 해결하지도, 악화
 시키지도 않는다.
 ```
+
+## Design Decisions (Phase 6 세션의 핵심 결정)
+
+1. Phase 6 착수 전 Git/Branch Integrity Check를 먼저 수행 — 사용자가
+   명시적으로 요구했고, 결과가 FAIL이었다면 임의로 merge/rebase/reset/
+   force-push를 하지 않고 DECISION REQUIRED로 보고한 뒤 작업을 중단할
+   계획이었음. 실제 검증 결과는 PASS였으므로 그대로 Phase 6 진행.
+2. `PredictionOutput`은 order/risk-shaped 필드(side, quantity,
+   target_weight, risk_state, portfolio_state 등)를 구조적으로 전혀
+   갖지 않음 — `Predictor.predict()`도 portfolio/risk 파라미터를 받지
+   않음. "Prediction 결과만으로 주문 생성 금지"를 문서가 아니라 타입
+   구조로 강제 (ADR-0012 §1).
+3. `Predictor`는 Phase 5 `RegimeDetector`와 동일하게 오직
+   `backtest.asof.AsOfDataView`만 입력으로 받음 — Phase 6에서 새로운
+   point-in-time guard를 전혀 작성하지 않음 (ADR-0012 §2).
+4. Baseline predictor 2종을 명확히 구분: `RandomWalkPredictor`(무정보
+   null hypothesis, 데이터 조회 자체가 없음, expected_return=0/
+   probability=0.5는 추정이 아니라 가설 자체) vs `DriftPredictor`(trailing
+   mean return 외삽 + realized vol persistence — 둘 다 표준적인 naive
+   forecasting baseline). `PredictionMethodType`(DETERMINISTIC_BASELINE/
+   MODEL_BASED)으로 타입 레벨에서 구분 (ADR-0012 §3, §6).
+5. `confidence`는 Phase 5의 `reliability`와 동일한 실제 data completeness
+   비율을 재사용 — 가짜 confidence score 아님. `uncertainty`는 실제
+   추정량(trailing mean return)의 standard error — RandomWalk는 추정 자체를
+   하지 않으므로 uncertainty=None (ADR-0012 §4).
+6. Phase 5에 **1건의 additive rename**: `regime.features.
+   _annualized_realized_vol` → `annualized_realized_vol`(공개) — Phase 6가
+   동일한 realized volatility 공식을 중복 구현하지 않도록 재사용. 동작
+   변경 없음, Phase 5 기존 48개 테스트 전부 통과 확인 후 진행 (ADR-0012 §5).
+7. `RegimeAwarePredictor`로 "Market Regime Detection → Prediction/Signal
+   Engine" 데이터 흐름(Master Plan §4.1)을 실제로 연결하되, Phase 5의
+   `RegimeConditionedStrategy`와 동일한 원칙 적용: 어떤 테스트도 조건부
+   예측이 더 정확하다고 주장하지 않음, 오직 mechanism(EXTREME 변동성일
+   때만 dampening 발생, 항상 0 방향으로만 이동)만 검증 (ADR-0012 §6).
+8. Phase 5의 `RegimeConditionedStrategy`와 달리, Prediction → 주문을
+   만드는 Strategy wrapper는 **의도적으로 만들지 않음** — 이번 Phase
+   지시사항이 "Prediction 결과만으로 주문 생성 금지"를 Phase 5보다 더
+   강하게 명시했고, Position Sizing/Risk Engine(Phase 8)이 아직 없어
+   그런 wrapper를 만들면 지켜야 할 경계를 스스로 흐리게 됨. Backtest
+   integration은 "매 체크포인트에서 prediction을 계산해도 백테스트
+   결과가 바이트 단위로 동일함"을 증명하는 순수 관찰 방식으로만 구현
+   (ADR-0012 §7).
+9. Prediction/Regime/Trade Journal/Experiment 전부 Phase 4의 단일 DuckDB
+   카탈로그에 저장 — `predictions` 테이블 1개만 추가, 기존 테이블 스키마
+   변경 없음 (ADR-0012 §8).
+10. Prediction↔Trade Journal lineage는 Phase 5의 `attach_regime_context`와
+    동일한 비침습적 opt-in 패턴(`attach_prediction_context`)으로 구현 —
+    Phase 3 코드 변경 없음, `ExperienceRecord.expected_outcome`(Phase 3가
+    이미 예약해둔 필드)을 채움 (ADR-0012 §9).
 
 ## Design Decisions (Phase 5 세션의 핵심 결정)
 
@@ -292,9 +393,20 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 
 ## Known Risks / Limitations (의도적으로 남겨둔 항목)
 
-- Regime을 실제로 소비하는 Prediction/Decision/Risk Engine 없음 (Phase
-  6-8) — Phase 5는 Regime을 생산/영속화/lineage 연결까지만 하고, 실제
-  거래 판단에는 아직 아무 것도 사용하지 않는다.
+- Prediction을 실제로 소비하는 Decision Agent/Risk Engine 없음 (Phase
+  7-8) — Phase 6는 Prediction을 생산/영속화/lineage 연결까지만 하고,
+  실제 거래 판단에는 아직 아무 것도 사용하지 않는다. Prediction →
+  주문을 만드는 Strategy wrapper도 의도적으로 만들지 않음(위 Design
+  Decisions #8).
+- Prediction의 model-based(`MODEL_BASED`) 구현 없음 — baseline
+  (RandomWalk/Drift) 2종만 존재, 통계적/ML 모델은 baseline 검증 없이
+  조기 구현하지 않음(지시사항에 따라 의도적으로 보류).
+- `DriftPredictor.probability`는 개별 일별 수익률 중 양수 비율이라는
+  거친(coarse) 근사치 — 정밀한 다일(multi-day) horizon 복리 확률이
+  아님, 문서에 명시적으로 단순화로 기록됨 (ADR-0012 "Negative/Trade-offs").
+- Regime을 실제로 소비하는 Decision/Risk Engine 없음 (Phase 7-8) —
+  Phase 5는 Regime을 생산/영속화/lineage 연결까지만 하고, 실제 거래
+  판단에는 아직 아무 것도 사용하지 않는다.
 - Regime의 Correlation/Stress 조합 확장(3축 이상 조합) 미구현 — 필요성이
   아직 확인되지 않아 `features.py`에 확장 지점만 문서화 (ADR-0011
   "Alternatives Considered").
@@ -326,12 +438,13 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
   `PAPER_TRADING`/`LIVE_TRADING` provenance 분리는 저장소 레벨까지
   검증되었으나, 이를 실제로 생산할 producer는 아직 없음 (Phase 13/15/16).
 - Model Registry / "왜 모델이 변경되었는가" 감사 질문 (Phase 11).
-- Feature Engine(일반화된), Prediction Engine, 완전한 Decision Agent,
-  Position Sizing/Portfolio Risk Engine 없음 (Phase 6-8) — Market
-  Regime Detection은 Phase 5에서 구현 완료. Baseline 전략은 여전히
-  Phase 2의 단순 Strategy 인터페이스로 직접 신호를 계산 (Regime을
-  조건으로 사용하는 것은 `RegimeConditionedStrategy`로 시연만 함, 실제
-  채택된 전략 아님).
+- 일반화된 Feature Engine, 완전한 Decision Agent, Position Sizing/
+  Portfolio Risk Engine 없음 (Phase 7-8) — Market Regime Detection(Phase
+  5)과 Prediction(Phase 6)은 구현 완료. Baseline 전략은 여전히 Phase 2의
+  단순 Strategy 인터페이스로 직접 신호를 계산 (Regime을 조건으로
+  사용하는 것은 `RegimeConditionedStrategy`로, Prediction을 Regime에
+  조건화하는 것은 `RegimeAwarePredictor`로 각각 시연만 함, 실제 채택된
+  전략/모델 아님).
 - Limit order, Purged K-Fold/Embargo, 5종 corporate action 처리 없음
   (Phase 2부터 이어짐).
 - Simple ML baseline 미구현 — Phase 2 spec이 `Strategy` Protocol만
@@ -340,32 +453,34 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 
 ## Recent Experiments
 
-없음 (실제 데이터 기반 실험 없음). Phase 4/5의 baseline runner와 regime
-conditioning 실험은 기존 Phase 1/2/3 목 데이터셋 패턴(테스트 fixture)
-으로만 검증되었으며, 실 시장 데이터 기반 실험은 아직 실행되지 않았다
-(실 데이터 provider가 없으므로 — ADR-0005). Phase 5의 regime-conditioning
-실험(`tests/regime/test_regime_conditioning_experiment.py`)은 조건부
-전략이 무조건부 baseline보다 우수하다고 주장하지 않는다 — mechanism
-검증 목적으로만 존재.
+없음 (실제 데이터 기반 실험 없음). Phase 4/5/6의 baseline runner, regime
+conditioning 실험, regime-aware prediction 실험 모두 기존 Phase 1/2/3
+목 데이터셋 패턴(테스트 fixture)으로만 검증되었으며, 실 시장 데이터
+기반 실험은 아직 실행되지 않았다 (실 데이터 provider가 없으므로 —
+ADR-0005). Phase 5의 regime-conditioning 실험과 Phase 6의
+`RegimeAwarePredictor` 실험(`tests/predict/test_regime_aware_predictor.py`)
+모두 조건부/보정 버전이 무조건부 baseline보다 우수하다고 주장하지
+않는다 — mechanism 검증 목적으로만 존재.
 
 ## Current Model / Current Benchmark
 
 Phase 2와 동일한 baseline 전략(Buy & Hold, Simple Momentum)과 벤치마크
 엔진(S&P 500 Buy & Hold, PRICE_RETURN/TOTAL_RETURN 미결) — 변화 없음.
-Phase 5는 이 baseline들을 Regime으로 조건화했을 때의 mechanism만
-시연했으며, "현재 채택된 모델"이라 부를 수 있는 변화는 없다.
+Phase 6는 baseline predictor 2종(RandomWalk, Drift)을 추가했으나
+"현재 채택된 예측 모델"이라 부를 수 있는 것은 없다 — 둘 다 향후 모델
+비교의 기준선으로만 존재.
 
 ## Last Validation
 
-`python3 -m pytest tests/ -q` — **310 passed**
-(Phase 1: 57, Phase 2: 82, Phase 3: 63, Phase 4: 51, Phase 5: 57).
-Phase 5의 57개 테스트는 deterministic-regime-calculation/
-point-in-time-leakage/future-data-rejection/missing-data/
-insufficient-history/timezone/parameter-boundary/regime-transition/
-persistence/reproducibility/version-lineage/backtest-integration/
-synthetic-bull-bear-high-vol-scenarios(regime 8개 카테고리) + storage
+`python3 -m pytest tests/ -q` — **349 passed**
+(Phase 1: 57, Phase 2: 82, Phase 3: 63, Phase 4: 51, Phase 5: 57, Phase 6: 39).
+Phase 6의 39개 테스트는 deterministic-prediction-calculation/
+parameter-boundary(baseline 구분 포함)/point-in-time-leakage/
+future-data-rejection/fail-closed(insufficient-data)/version-lineage/
+reproducibility/구조적 boundary(Decision·Risk와 분리)/backtest-integration
+(순수 관찰)/regime-as-input(no-alpha-claim) 카테고리 + storage
 persistence/restart/idempotency/provenance(1개 카테고리) +
-Backtest→Journal→Regime→Experience lineage(1개 카테고리)를 모두
+Backtest→Journal→Prediction→Experience lineage(1개 카테고리)를 모두
 포함한다.
 
 ---
@@ -376,10 +491,12 @@ Backtest→Journal→Regime→Experience lineage(1개 카테고리)를 모두
 - 실제 외부 데이터 provider (ADR-0005 — Phase 1부터 이연)
 - Limit order, Purged K-Fold/Embargo, 5종 corporate action 처리 (Phase
   2부터)
-- Prediction Engine, 완전한 Decision Agent, Position Sizing/Portfolio
-  Risk Engine (Phase 6-8) — Market Regime Detection은 Phase 5에서 완료
-- 일반화된 Feature Registry (Phase 5는 Regime 자신에게 필요한 범위만
-  구현; 더 넓은 registry는 필요가 확인되는 시점에)
+- 완전한 Decision Agent, Position Sizing/Portfolio Risk Engine (Phase
+  7-8) — Market Regime Detection(Phase 5), Prediction(Phase 6)은 완료
+- Prediction의 model-based(통계적/ML) 구현 — `PredictionMethodType.
+  MODEL_BASED`는 예약만 되어 있고 구현체 없음
+- 일반화된 Feature Registry (Phase 5/6는 각자에게 필요한 범위만 구현;
+  더 넓은 registry는 필요가 확인되는 시점에)
 - 실제 Post Trade Analysis 알고리즘(prediction/timing/risk/regime/
   signal error), 실제 Performance Attribution(market/sector/factor/
   selection/timing), 모델 기반 Counterfactual — 전부 구조만 준비됨
@@ -400,18 +517,22 @@ Backtest→Journal→Regime→Experience lineage(1개 카테고리)를 모두
 1. **DECISION REQUIRED 3건 확인**: 벤치마크 return type, per-decision
    data_version, corporate-action-aware portfolio_state 재구성 (여전히
    미결, 사용자 판단 대기).
-2. **Phase 6 — Prediction** 착수: `PROJECT_MASTER_PLAN.md` §18의 Phase
-   순서를 따를 것. Phase 5가 Regime Layer(축적/영속화/lineage)를
-   마련했으므로, 이제 Prediction Engine이 Regime을 입력 중 하나로
-   소비할 준비가 되어 있다 (단, Regime이 BUY/SELL을 직접 만들지
-   않는다는 경계는 Phase 6에서도 유지해야 함).
+2. **Phase 7 — Decision Agent** 착수: `PROJECT_MASTER_PLAN.md` §18의
+   Phase 순서를 따를 것. Phase 5(Regime)와 Phase 6(Prediction)가 모두
+   갖춰졌으므로, 이제 Decision Agent가 prediction + regime + portfolio
+   state + risk state를 종합해 BUY/SELL/HOLD/EXIT/NO_TRADE를 판단할
+   준비가 되어 있다 (Master Plan §8.2). Position Sizing/Risk Engine은
+   Decision Agent와 분리된 deterministic 계층(Phase 8)으로 유지할 것.
 3. Phase 9(Learning Engine) 착수 시점에 DECISION REQUIRED 2건(데이터
    버전/corporate action lineage)을 재평가하고, `DuckDBExperienceRepository`
-   (이제 `market_regime`이 채워진 레코드도 포함)를 실제로 소비하는
-   학습 파이프라인을 설계.
+   (이제 `market_regime`과 `expected_outcome`이 채워진 레코드도 포함)를
+   실제로 소비하는 학습 파이프라인을 설계.
 4. 실 데이터 provider 선정(ADR-0005 기준)이 이루어지면, `data/` 아래
    실제 `StorageConfig.root_dir`를 지정하여 장기 ingestion을 시작할 수
-   있다 — Phase 4/5가 그 대상 저장소를 이미 구현했다.
+   있다 — Phase 4/5/6이 그 대상 저장소를 이미 구현했다.
+5. 향후 Phase 6의 `PredictionMethodType.MODEL_BASED`를 실제로 사용하는
+   첫 모델이 추가될 때, 반드시 `RandomWalkPredictor`/`DriftPredictor`
+   baseline과 비교해 실제로 가치가 있는지 검증할 것 (baseline 우선 원칙).
 
 ---
 
@@ -469,3 +590,33 @@ Backtest→Journal→Regime→Experience lineage(1개 카테고리)를 모두
   않다고 판단, 계속 이연 (임의 결정하지 않음)
 - 실제 AI API, Toss Securities, Live Trading, LLM 기반 regime 판단은
   구현하지 않음 (지시대로)
+
+### Session 7 — 2026-08-24 (Phase 6)
+- **Phase 6 착수 전 Git/Branch Integrity Check 선행 수행** (사용자
+  지시) — 단일 선형 히스토리 확인(Initial commit→Phase0→1→2→3→4→5),
+  `origin/main`/`origin/claude/autonomous-ai-investment-system-wvscwe`
+  모두 현재 HEAD의 조상이며 누락된 커밋 0개, 병합/분기/reset 흔적 없음,
+  Phase 1~5 산출물 전부 실존, 310/310 테스트 통과 확인 → PASS 판정
+- Master Plan/ADR-0001~0011/Phase 1~5 spec/현재 src·tests 재조사
+  (충돌 없음 확인)
+- Phase 6 명세(Git Integrity Check 결과 포함), ADR-0012 작성
+- `src/predict/` 참조 구현: RandomWalk/Drift deterministic baseline
+  predictor 2종(Predictor Protocol), PredictionOutput(order/risk-shaped
+  필드 구조적으로 없음), PredictionRepository, 비침습적 Prediction↔Trade
+  Journal lineage, RegimeAwarePredictor(alpha 주장 없는 예시적
+  Regime-conditioning)
+- `src/storage/prediction_repository.py` — Phase4 DuckDB 카탈로그에
+  신규 테이블 1개 추가(기존 테이블 스키마 변경 없음)
+- Phase 5에 additive rename 1건(`annualized_realized_vol` 공개) —
+  Phase 5 기존 48개 테스트 영향 없음 확인. 그 외 Phase 1~5 소스코드
+  변경 없음
+- predict 7개 카테고리 + storage 1개 + integration 1개 카테고리 포함
+  39개 테스트 작성, 전체 349개 테스트 전부 통과 (파일명 충돌 발견 및
+  즉시 수정 — `test_point_in_time.py`/`test_version_lineage.py` →
+  `test_predict_point_in_time.py`/`test_predict_version_lineage.py`)
+- Prediction이 BUY/SELL을 직접 만들지 않음을 reflection 기반 구조
+  테스트로 검증 (test_boundary.py)
+- Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+  않다고 판단, 계속 이연 (임의 결정하지 않음)
+- 실제 AI API, Toss Securities, Live Trading, 학습된 모델 기반
+  prediction은 구현하지 않음 (지시대로)

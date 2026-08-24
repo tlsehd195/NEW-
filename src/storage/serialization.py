@@ -61,6 +61,9 @@ from trade_journal.models import (
 from regime.enums import RegimeAxis, SubjectKind
 from regime.models import CompositeRegimeObservation, RegimeObservation
 
+from predict.enums import PredictionMethodType
+from predict.models import PredictionOutput
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -817,6 +820,61 @@ def payload_to_composite_regime(data: dict) -> CompositeRegimeObservation:
         as_of_time=_dt_from_iso(data["as_of_time"]),
         axes=axes,
         composite_label=data.get("composite_label"),
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+# --------------------------------------------------------------------
+# predict.models
+# --------------------------------------------------------------------
+
+
+def prediction_output_to_payload(prediction: PredictionOutput) -> dict:
+    return {
+        "prediction_id": prediction.prediction_id,
+        "security_id": prediction.security_id,
+        "as_of_time": _dt_iso(prediction.as_of_time),
+        "horizon_days": prediction.horizon_days,
+        "expected_return": prediction.expected_return,
+        "probability": prediction.probability,
+        "expected_volatility": prediction.expected_volatility,
+        "uncertainty": prediction.uncertainty,
+        "confidence": prediction.confidence,
+        "method": prediction.method,
+        "method_type": prediction.method_type.value,
+        "feature_version": prediction.feature_version,
+        "data_version": list(prediction.data_version),
+        "method_version": prediction.method_version,
+        "configuration_version": prediction.configuration_version,
+        "model_version": prediction.model_version,
+        "regime_context": prediction.regime_context,
+        "provenance": prediction.provenance.value,
+        "experiment_id": prediction.experiment_id,
+        "recorded_at": _dt_iso(prediction.recorded_at),
+    }
+
+
+def payload_to_prediction_output(data: dict) -> PredictionOutput:
+    return PredictionOutput(
+        prediction_id=data["prediction_id"],
+        security_id=data["security_id"],
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        horizon_days=data["horizon_days"],
+        expected_return=data.get("expected_return"),
+        probability=data.get("probability"),
+        expected_volatility=data.get("expected_volatility"),
+        uncertainty=data.get("uncertainty"),
+        confidence=data.get("confidence"),
+        method=data["method"],
+        method_type=PredictionMethodType(data["method_type"]),
+        feature_version=data["feature_version"],
+        data_version=tuple(data.get("data_version") or ()),
+        method_version=data["method_version"],
+        configuration_version=data["configuration_version"],
+        model_version=data.get("model_version"),
+        regime_context=data.get("regime_context"),
         provenance=TradeProvenance(data["provenance"]),
         experiment_id=data.get("experiment_id"),
         recorded_at=_dt_from_iso(data.get("recorded_at")),

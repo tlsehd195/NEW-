@@ -274,6 +274,36 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 6: Prediction --
+    # Relational metadata, not Parquet: same criterion as Regime
+    # (point-lookup/filter/join-heavy, natural-key idempotency,
+    # "most recent prediction as of a decision time") -- ADR-0010
+    # section 1 / ADR-0011 section 4, applied again here (Phase 6 spec
+    # section 11).
+    """
+    CREATE TABLE IF NOT EXISTS predictions (
+        prediction_id TEXT PRIMARY KEY,
+        natural_key TEXT UNIQUE,
+        security_id TEXT NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        horizon_days INTEGER NOT NULL,
+        expected_return DOUBLE,
+        probability DOUBLE,
+        expected_volatility DOUBLE,
+        uncertainty DOUBLE,
+        confidence DOUBLE,
+        method TEXT NOT NULL,
+        method_type TEXT NOT NULL,
+        feature_version TEXT NOT NULL,
+        method_version TEXT NOT NULL,
+        configuration_version TEXT NOT NULL,
+        model_version TEXT,
+        provenance TEXT NOT NULL,
+        experiment_id TEXT,
+        recorded_at TIMESTAMP,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

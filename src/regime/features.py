@@ -71,7 +71,11 @@ def data_completeness(available: int, required: int) -> float:
     return min(1.0, available / required)
 
 
-def _annualized_realized_vol(prices_window: Sequence[float]) -> Optional[float]:
+def annualized_realized_vol(prices_window: Sequence[float]) -> Optional[float]:
+    """Public (Phase 6 reuses this directly for its volatility-persistence
+    baseline predictor, `predict.predictor.DriftPredictor` -- the same
+    "don't duplicate math across phases" precedent Phase 5's Stress axis
+    already set by reusing `backtest.metrics.compute_max_drawdown`)."""
     returns = _returns(prices_window)
     if len(returns) < 2:
         return None
@@ -84,7 +88,7 @@ def _rolling_vol_series(prices: Sequence[float], window: int) -> list[float]:
     "as of" position `i` never sees `prices[i:]`."""
     series: list[float] = []
     for i in range(window, len(prices) + 1):
-        vol = _annualized_realized_vol(prices[i - window : i])
+        vol = annualized_realized_vol(prices[i - window : i])
         if vol is not None:
             series.append(vol)
     return series
