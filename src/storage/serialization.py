@@ -58,6 +58,9 @@ from trade_journal.models import (
     TradeRecord,
 )
 
+from regime.enums import RegimeAxis, SubjectKind
+from regime.models import CompositeRegimeObservation, RegimeObservation
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -734,4 +737,87 @@ def payload_to_experience_record(data: dict) -> ExperienceRecord:
         strategy_version=data.get("strategy_version", "unknown"),
         model_version=data.get("model_version"),
         created_at=_dt_from_iso(data.get("created_at")),
+    )
+
+
+# --------------------------------------------------------------------
+# regime.models
+# --------------------------------------------------------------------
+
+
+def regime_observation_to_payload(observation: RegimeObservation) -> dict:
+    return {
+        "regime_id": observation.regime_id,
+        "axis": observation.axis.value,
+        "subject_id": observation.subject_id,
+        "subject_kind": observation.subject_kind.value,
+        "timestamp": _dt_iso(observation.timestamp),
+        "as_of_time": _dt_iso(observation.as_of_time),
+        "state": observation.state,
+        "value": observation.value,
+        "definition": observation.definition,
+        "reliability": observation.reliability,
+        "lookback_days": observation.lookback_days,
+        "feature_version": observation.feature_version,
+        "data_version": list(observation.data_version),
+        "method_version": observation.method_version,
+        "configuration_version": observation.configuration_version,
+        "provenance": observation.provenance.value,
+        "experiment_id": observation.experiment_id,
+        "recorded_at": _dt_iso(observation.recorded_at),
+    }
+
+
+def payload_to_regime_observation(data: dict) -> RegimeObservation:
+    return RegimeObservation(
+        regime_id=data["regime_id"],
+        axis=RegimeAxis(data["axis"]),
+        subject_id=data["subject_id"],
+        subject_kind=SubjectKind(data["subject_kind"]),
+        timestamp=_dt_from_iso(data["timestamp"]),
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        state=data["state"],
+        value=data.get("value"),
+        definition=data["definition"],
+        reliability=data["reliability"],
+        lookback_days=data["lookback_days"],
+        feature_version=data["feature_version"],
+        data_version=tuple(data.get("data_version") or ()),
+        method_version=data["method_version"],
+        configuration_version=data["configuration_version"],
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+def composite_regime_to_payload(composite: CompositeRegimeObservation) -> dict:
+    return {
+        "composite_id": composite.composite_id,
+        "subject_id": composite.subject_id,
+        "subject_kind": composite.subject_kind.value,
+        "as_of_time": _dt_iso(composite.as_of_time),
+        "axes": {axis.value: regime_observation_to_payload(obs) for axis, obs in composite.axes.items()},
+        "composite_label": composite.composite_label,
+        "provenance": composite.provenance.value,
+        "experiment_id": composite.experiment_id,
+        "recorded_at": _dt_iso(composite.recorded_at),
+    }
+
+
+def payload_to_composite_regime(data: dict) -> CompositeRegimeObservation:
+    axes = {
+        RegimeAxis(axis_value): payload_to_regime_observation(obs_data)
+        for axis_value, obs_data in (data.get("axes") or {}).items()
+    }
+    return CompositeRegimeObservation(
+        composite_id=data["composite_id"],
+        subject_id=data["subject_id"],
+        subject_kind=SubjectKind(data["subject_kind"]),
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        axes=axes,
+        composite_label=data.get("composite_label"),
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
     )

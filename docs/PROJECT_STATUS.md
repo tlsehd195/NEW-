@@ -5,27 +5,63 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-24
-**Updated By:** Claude Code (Session 5 — Phase 4 Baseline Models + Persistent Storage)
+**Updated By:** Claude Code (Session 6 — Phase 5 Market Regime Detection)
 
 ---
 
 ## Current Phase
 
-**Phase 4 — Baseline Models + Persistent Storage** (설계 및 참조 구현 완료)
+**Phase 5 — Market Regime Detection** (설계 및 참조 구현 완료)
 
 ## Current Subtask
 
-Phase 4 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-4-baseline-models-and-storage.md`) + ADR-0010
-+ `src/storage/`(DuckDB+Parquet 영속 저장소, DataRepository/
-TradeJournalRepository/ExperimentRepository/ExperienceRepository 구현) +
-`src/baseline/`(baseline runner + comparison report) 참조 구현 + Storage
-8개 카테고리 + Baseline 6개 카테고리 + Integration 2개 카테고리 테스트
-전부 통과. Phase 3의 DECISION REQUIRED 3건은 재검토 결과 이번 Phase에서
-해결이 필요하지 않다고 판단하여 계속 이연(Phase 4 spec §19 참조, 아래
-"Blocked" 섹션도 참조). 이번 세션 자체 테스트로 발견/수정한 2건의
-Phase-4-내부 정합성 이슈(ExperimentTracker 공유 필요성, ExperienceRecord
-dedup key)는 아래 "Design Decisions" 참조.
+Phase 5 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-5-market-regime.md`) + ADR-0011 +
+`src/regime/`(5개 baseline regime 축 — Trend/Volatility/Liquidity/
+Correlation/Stress — deterministic feature 계산, RegimeDetector,
+RegimeRepository, Regime↔Trade Journal lineage, RegimeConditionedStrategy)
++ `src/storage/regime_repository.py`(Phase 4 저장소 확장) 참조 구현 +
+신규 57개 테스트(regime 8개 카테고리 + storage 1개 + integration 1개)
+전부 통과. Phase 3의 DECISION REQUIRED 3건은 이번 Phase에서도 재검토
+결과 해결이 필요하지 않다고 판단하여 계속 이연(Phase 5 spec §16 참조,
+아래 "Blocked" 섹션도 참조).
+
+## Completed (Session 6 — Phase 5)
+
+- [x] Master Plan/ADR-0001~0010/Phase 1~4 spec/현재 src/tests 재조사
+      (충돌 없음 확인)
+- [x] `docs/specifications/PHASE-5-market-regime.md` 작성
+- [x] `docs/decisions/ADR-0011-market-regime-detection.md` 작성
+- [x] `src/regime/` 패키지 구현: `enums.py`(RegimeAxis/SubjectKind/
+      TrendState 등, TradeProvenance는 재사용), `config.py`
+      (RegimeConfig — 모든 threshold configuration으로 분리),
+      `points.py`(PriceBar/BenchmarkPoint → PricePoint 정규화 어댑터),
+      `features.py`(deterministic feature 계산 — MA관계/realized vol
+      percentile/거래량 비율/rolling correlation/drawdown 기반 stress),
+      `models.py`(RegimeObservation/CompositeRegimeObservation, frozen
+      dataclass), `detector.py`(RegimeDetector — Phase2
+      `AsOfDataView`/`BacktestClock`를 그대로 재사용하여 point-in-time
+      guard를 새로 만들지 않음, curated composite label 테이블),
+      `repository.py`(RegimeRepository Protocol +
+      InMemoryRegimeRepository), `experience.py`(attach_regime_context —
+      Phase3 `ExperienceRecord.market_regime` 필드를 비침습적으로 채움),
+      `strategy.py`(RegimeConditionedStrategy — Phase2 Strategy Protocol
+      그대로 구현하는 예시적 conditioning 전략, alpha 주장 없음)
+- [x] `src/storage/regime_repository.py`(DuckDBRegimeRepository) +
+      `schema.py`/`serialization.py`에 regime 테이블/직렬화 추가 — Phase4
+      storage architecture(단일 DuckDB 카탈로그) 그대로 확장, 기존 테이블
+      스키마는 변경 없음
+- [x] `tests/regime/`(53) + `tests/storage/test_regime_repository.py`(6)
+      + `tests/integration/test_regime_experience_lineage.py`(3) — 신규
+      57개 테스트 작성 및 전부 통과 (파일명 충돌 방지를 위해
+      `tests/regime/test_backtest_integration.py`를
+      `test_regime_backtest_integration.py`로 명명)
+- [x] **전체 테스트 스위트 310개 전부 통과** (Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57) — Phase 1~4 기존 테스트 무손상
+      확인
+- [x] Phase 1~4 소스코드 변경 없음 (Phase 5는 완전히 additive) —
+      `BacktestEngine`/`Strategy` Protocol/`TradeJournalRepository`/
+      기존 storage schema 전부 그대로
 
 ## Completed
 
@@ -107,15 +143,14 @@ dedup key)는 아래 "Design Decisions" 참조.
 
 ## In Progress
 
-없음 (Phase 4 설계+참조구현 완료).
+없음 (Phase 5 설계+참조구현 완료).
 
 ## Blocked
 
 **DECISION REQUIRED 3건 누적 (Phase 2/3에서 이어짐) — 사용자 확인 필요.**
-Phase 4 세션에서 세 항목 모두 재검토했으며, 셋 다 이번 Phase의 완료
-조건과 무관함을 확인하여(스토리지는 값이 무엇이든 그대로 영속화만 하면
-되므로) 여전히 해결하지 않고 이연한다 (Phase 4 spec §19에 재검토 근거
-상세 기록):
+Phase 4, Phase 5 세션 모두 세 항목을 재검토했으며, 매번 이번 Phase의
+완료 조건과 무관함을 확인하여 여전히 해결하지 않고 이연한다 (Phase 4
+spec §19, Phase 5 spec §16에 각각 재검토 근거 상세 기록):
 
 1. (Phase 2에서 이어짐) 벤치마크 return type (PRICE_RETURN vs
    TOTAL_RETURN)
@@ -183,6 +218,38 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 시키지도 않는다.
 ```
 
+## Design Decisions (Phase 5 세션의 핵심 결정)
+
+1. `RegimeObservation`/`CompositeRegimeObservation.provenance`는
+   `trade_journal.enums.TradeProvenance`를 그대로 재사용 — 병렬 enum을
+   만들지 않음 (ADR-0009가 이미 확립한 "기존 타입 재사용" 원칙을 Phase 5
+   에도 그대로 적용, ADR-0011 §1).
+2. `RegimeDetector`는 오직 `backtest.asof.AsOfDataView`만 입력으로
+   받음 — Phase 2가 이미 만들고 검증한 point-in-time-safe view를 그대로
+   재사용하여 Phase 5에서 새로운 look-ahead guard를 전혀 작성하지 않음.
+   Backtest 루프 밖(standalone) 사용은 `make_single_point_view()`가
+   `BacktestClock`을 체크포인트 1개로 구성해 재사용 (ADR-0011 §2).
+3. Regime observation/composite는 Phase 4가 만든 DuckDB 카탈로그에
+   테이블 2개(`regime_observations`, `regime_composites`)를 추가하는
+   방식으로 영속화 — Parquet가 아님. ADR-0010 §1이 이미 세운 기준(대용량
+   시계열=Parquet, point-lookup/조인 중심 relational=DuckDB)을 그대로
+   적용한 것으로, 기존 테이블 스키마는 전혀 변경하지 않음 (ADR-0011 §4).
+4. Regime↔Trade Journal lineage는 Phase 3 코드(`build_experience_records`)
+   를 수정하지 않고, `regime.experience.attach_regime_context()`라는
+   별도의 opt-in enrichment 함수로 구현 — `ExperienceRecord.market_regime`
+   필드는 Phase 3가 "Phase 5용으로 예약"해둔 것을 그대로 채움 (ADR-0011 §5).
+5. `RegimeConditionedStrategy`는 Phase 2 `Strategy` Protocol을 그대로
+   구현하는 예시적 wrapper이며, 이를 사용하는 모든 테스트는 조건부 실행
+   결과가 더 우수하다고 주장하지 않음 — 오직 mechanism이 동작하는지와
+   기계적 성질(BUY 억제 시 거래 수가 늘지 않음)만 검증 (ADR-0011 §6).
+6. `reliability`는 실제로 계산 가능한 데이터 완전성 비율이며, 가짜
+   ML confidence score가 아님 — lookback window 대비 실제 확보한 데이터
+   비율이 `min_data_completeness` 미만이면 axis 상태를 `UNKNOWN`으로
+   강제 (fail-closed) (ADR-0011 §7).
+7. Phase 1~4 소스코드는 전혀 수정하지 않음 — Phase 5는 완전히 additive
+   (신규 패키지 `src/regime/`, 신규 저장소 모듈, 기존 테이블에 영향 없는
+   신규 테이블 2개만 추가).
+
 ## Design Decisions (Phase 4 세션의 핵심 결정)
 
 1. DuckDB 카탈로그 파일 1개(모든 relational/metadata 테이블) + Parquet
@@ -225,6 +292,18 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 
 ## Known Risks / Limitations (의도적으로 남겨둔 항목)
 
+- Regime을 실제로 소비하는 Prediction/Decision/Risk Engine 없음 (Phase
+  6-8) — Phase 5는 Regime을 생산/영속화/lineage 연결까지만 하고, 실제
+  거래 판단에는 아직 아무 것도 사용하지 않는다.
+- Regime의 Correlation/Stress 조합 확장(3축 이상 조합) 미구현 — 필요성이
+  아직 확인되지 않아 `features.py`에 확장 지점만 문서화 (ADR-0011
+  "Alternatives Considered").
+- Spread 기반 유동성 지표 미구현 — Phase 1 `PriceBar`에 bid/ask spread
+  필드 자체가 없어 계산 불가 (문서화된 데이터 모델 한계, 은폐 아님).
+- 일반화된 Feature Registry 미구현 — Phase 5는 Regime 자신에게 필요한
+  최소한의 feature 메타데이터(`feature_version`/`method_version`/
+  `configuration_version`)만 구현했으며, 향후 더 넓은 registry가
+  이를 스키마 변경 없이 흡수할 수 있도록 설계됨 (ADR-0011).
 - 실 데이터 provider 없음(ADR-0005), 벤치마크 return type 미결(위
   DECISION REQUIRED 참조) — Phase 4의 스토리지/베이스라인 구현과 무관하게
   계속 이연.
@@ -247,10 +326,12 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
   `PAPER_TRADING`/`LIVE_TRADING` provenance 분리는 저장소 레벨까지
   검증되었으나, 이를 실제로 생산할 producer는 아직 없음 (Phase 13/15/16).
 - Model Registry / "왜 모델이 변경되었는가" 감사 질문 (Phase 11).
-- Feature Engine, Market Regime Detection, Prediction Engine, 완전한
-  Decision Agent, Position Sizing/Portfolio Risk Engine 없음 (Phase
-  5-8) — Baseline 전략은 여전히 Phase 2의 단순 Strategy 인터페이스로
-  직접 신호를 계산.
+- Feature Engine(일반화된), Prediction Engine, 완전한 Decision Agent,
+  Position Sizing/Portfolio Risk Engine 없음 (Phase 6-8) — Market
+  Regime Detection은 Phase 5에서 구현 완료. Baseline 전략은 여전히
+  Phase 2의 단순 Strategy 인터페이스로 직접 신호를 계산 (Regime을
+  조건으로 사용하는 것은 `RegimeConditionedStrategy`로 시연만 함, 실제
+  채택된 전략 아님).
 - Limit order, Purged K-Fold/Embargo, 5종 corporate action 처리 없음
   (Phase 2부터 이어짐).
 - Simple ML baseline 미구현 — Phase 2 spec이 `Strategy` Protocol만
@@ -259,27 +340,33 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 
 ## Recent Experiments
 
-없음 (실제 데이터 기반 실험 없음). Phase 4의 baseline runner는 기존
-Phase 1/2/3 목 데이터셋 패턴(테스트 fixture)으로만 검증되었으며, 실
-시장 데이터 기반 실험은 아직 실행되지 않았다 (실 데이터 provider가
-없으므로 — ADR-0005).
+없음 (실제 데이터 기반 실험 없음). Phase 4/5의 baseline runner와 regime
+conditioning 실험은 기존 Phase 1/2/3 목 데이터셋 패턴(테스트 fixture)
+으로만 검증되었으며, 실 시장 데이터 기반 실험은 아직 실행되지 않았다
+(실 데이터 provider가 없으므로 — ADR-0005). Phase 5의 regime-conditioning
+실험(`tests/regime/test_regime_conditioning_experiment.py`)은 조건부
+전략이 무조건부 baseline보다 우수하다고 주장하지 않는다 — mechanism
+검증 목적으로만 존재.
 
 ## Current Model / Current Benchmark
 
 Phase 2와 동일한 baseline 전략(Buy & Hold, Simple Momentum)과 벤치마크
 엔진(S&P 500 Buy & Hold, PRICE_RETURN/TOTAL_RETURN 미결) — 변화 없음.
-Phase 4는 이들을 실행/비교/영속화하는 인프라만 추가했다.
+Phase 5는 이 baseline들을 Regime으로 조건화했을 때의 mechanism만
+시연했으며, "현재 채택된 모델"이라 부를 수 있는 변화는 없다.
 
 ## Last Validation
 
-`python3 -m pytest tests/ -q` — **253 passed**
-(Phase 1: 57, Phase 2: 82, Phase 3: 63, Phase 4: 51). Phase 4의 51개
-테스트는 Storage 8개 카테고리(persistence/restart/append/duplicate-
-idempotency/immutable-records/provenance/version-lineage/corruption-
-failure-handling), Baseline 6개 카테고리(deterministic-replay/
-benchmark-comparison/transaction-cost/slippage/metric-correctness/
-reproducibility), Integration 2개 카테고리(Backtest→Trade Journal→
-Persistent Storage, Experiment→Persistent Storage)를 모두 포함한다.
+`python3 -m pytest tests/ -q` — **310 passed**
+(Phase 1: 57, Phase 2: 82, Phase 3: 63, Phase 4: 51, Phase 5: 57).
+Phase 5의 57개 테스트는 deterministic-regime-calculation/
+point-in-time-leakage/future-data-rejection/missing-data/
+insufficient-history/timezone/parameter-boundary/regime-transition/
+persistence/reproducibility/version-lineage/backtest-integration/
+synthetic-bull-bear-high-vol-scenarios(regime 8개 카테고리) + storage
+persistence/restart/idempotency/provenance(1개 카테고리) +
+Backtest→Journal→Regime→Experience lineage(1개 카테고리)를 모두
+포함한다.
 
 ---
 
@@ -289,17 +376,22 @@ Persistent Storage, Experiment→Persistent Storage)를 모두 포함한다.
 - 실제 외부 데이터 provider (ADR-0005 — Phase 1부터 이연)
 - Limit order, Purged K-Fold/Embargo, 5종 corporate action 처리 (Phase
   2부터)
-- Feature Engine, Market Regime Detection, Prediction Engine, 완전한
-  Decision Agent, Position Sizing/Portfolio Risk Engine (Phase 5-8)
+- Prediction Engine, 완전한 Decision Agent, Position Sizing/Portfolio
+  Risk Engine (Phase 6-8) — Market Regime Detection은 Phase 5에서 완료
+- 일반화된 Feature Registry (Phase 5는 Regime 자신에게 필요한 범위만
+  구현; 더 넓은 registry는 필요가 확인되는 시점에)
 - 실제 Post Trade Analysis 알고리즘(prediction/timing/risk/regime/
   signal error), 실제 Performance Attribution(market/sector/factor/
   selection/timing), 모델 기반 Counterfactual — 전부 구조만 준비됨
+  (Regime 필드는 Phase 5에서 실제로 채워지기 시작함 — `market_regime`)
 - Paper/Live 브로커 어댑터 (Trade Journal의 `PAPER_TRADING`/
   `LIVE_TRADING` provenance를 실제로 생산할 producer 없음)
-- Learning Engine (Phase 9) — 영속 Experience Dataset은 이제 존재하지만
-  아직 아무 것도 그것을 소비하지 않는다
+- Learning Engine (Phase 9) — 영속 Experience Dataset(Regime context
+  포함)은 이제 존재하지만 아직 아무 것도 그것을 소비하지 않는다
 - Model Registry / "왜 모델이 변경되었는가" 감사 질문 (Phase 11)
 - DuckDB 다중 프로세스 동시 writer 지원 (Phase 15/16 필요 시 재검토)
+- Regime의 HMM/통계적/ML 기반 확장 (baseline 검증 없이 조기 구현하지
+  않음 — 지시사항에 따라 의도적으로 보류)
 
 ---
 
@@ -308,16 +400,18 @@ Persistent Storage, Experiment→Persistent Storage)를 모두 포함한다.
 1. **DECISION REQUIRED 3건 확인**: 벤치마크 return type, per-decision
    data_version, corporate-action-aware portfolio_state 재구성 (여전히
    미결, 사용자 판단 대기).
-2. **Phase 5 — Market Regime** 착수: `PROJECT_MASTER_PLAN.md` §18의
-   Phase 순서를 따를 것. Phase 4가 baseline과 영속 저장소를 마련했으므로,
-   이제 Feature/Regime 계층을 추가할 준비가 되어 있다.
-3. Phase 9(Learning Engine) 착수 시점에 위 DECISION REQUIRED 2건(데이터
-   버전/corporate action lineage)을 재평가하고, 이번 Phase가 만든
-   `DuckDBExperienceRepository`를 실제로 소비하는 학습 파이프라인을
-   설계.
+2. **Phase 6 — Prediction** 착수: `PROJECT_MASTER_PLAN.md` §18의 Phase
+   순서를 따를 것. Phase 5가 Regime Layer(축적/영속화/lineage)를
+   마련했으므로, 이제 Prediction Engine이 Regime을 입력 중 하나로
+   소비할 준비가 되어 있다 (단, Regime이 BUY/SELL을 직접 만들지
+   않는다는 경계는 Phase 6에서도 유지해야 함).
+3. Phase 9(Learning Engine) 착수 시점에 DECISION REQUIRED 2건(데이터
+   버전/corporate action lineage)을 재평가하고, `DuckDBExperienceRepository`
+   (이제 `market_regime`이 채워진 레코드도 포함)를 실제로 소비하는
+   학습 파이프라인을 설계.
 4. 실 데이터 provider 선정(ADR-0005 기준)이 이루어지면, `data/` 아래
    실제 `StorageConfig.root_dir`를 지정하여 장기 ingestion을 시작할 수
-   있다 — 이번 Phase가 그 대상 저장소를 이미 구현했다.
+   있다 — Phase 4/5가 그 대상 저장소를 이미 구현했다.
 
 ---
 
@@ -354,3 +448,24 @@ Persistent Storage, Experiment→Persistent Storage)를 모두 포함한다.
 - Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
   않다고 판단, 계속 이연 (임의 결정하지 않음)
 - 실제 AI API, Toss Securities, Live Trading은 여전히 구현하지 않음
+
+### Session 6 — 2026-08-24 (Phase 5)
+- Master Plan/ADR-0001~0010/Phase 1~4 spec/현재 src·tests 재조사
+  (충돌 없음 확인)
+- Phase 5 명세, ADR-0011 작성
+- `src/regime/` 참조 구현: 5개 baseline regime 축(Trend/Volatility/
+  Liquidity/Correlation/Stress) deterministic feature 계산,
+  RegimeDetector(Phase2 AsOfDataView/BacktestClock 재사용 — 신규
+  look-ahead guard 없음), RegimeRepository, 비침습적 Regime↔Trade
+  Journal lineage, RegimeConditionedStrategy(alpha 주장 없는 예시적
+  conditioning 실험)
+- `src/storage/regime_repository.py` — Phase4 DuckDB 카탈로그에 신규
+  테이블 2개 추가(기존 테이블 스키마 변경 없음)
+- Phase 1~4 소스코드 변경 전혀 없음 (완전히 additive)
+- regime 8개 + storage 1개 + integration 1개 카테고리 포함 57개 테스트
+  작성, 전체 310개 테스트 전부 통과 (파일명 충돌 발견 및 즉시 수정 —
+  `test_backtest_integration.py` → `test_regime_backtest_integration.py`)
+- Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+  않다고 판단, 계속 이연 (임의 결정하지 않음)
+- 실제 AI API, Toss Securities, Live Trading, LLM 기반 regime 판단은
+  구현하지 않음 (지시대로)

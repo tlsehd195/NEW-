@@ -225,6 +225,55 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 5: Market Regime --
+    # Relational metadata, not Parquet time series: regime observations
+    # are point-lookup/filter-heavy (natural-key idempotency, "most
+    # recent composite as of a decision time") the same way Trade
+    # Journal/Experiment records are, not bulk-columnar-scan workloads
+    # the way per-security OHLCV bars are -- the same criterion ADR-0010
+    # section 1 already applied to Benchmark data, applied again here
+    # (docs/specifications/PHASE-5-market-regime.md section 11).
+    """
+    CREATE SEQUENCE IF NOT EXISTS regime_observation_id_seq START 1
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS regime_composite_id_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS regime_observations (
+        regime_id TEXT PRIMARY KEY,
+        natural_key TEXT UNIQUE,
+        axis TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        subject_kind TEXT NOT NULL,
+        timestamp TIMESTAMP NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        state TEXT NOT NULL,
+        value DOUBLE,
+        reliability DOUBLE NOT NULL,
+        feature_version TEXT NOT NULL,
+        method_version TEXT NOT NULL,
+        configuration_version TEXT NOT NULL,
+        provenance TEXT NOT NULL,
+        experiment_id TEXT,
+        recorded_at TIMESTAMP,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS regime_composites (
+        composite_id TEXT PRIMARY KEY,
+        natural_key TEXT UNIQUE,
+        subject_id TEXT NOT NULL,
+        subject_kind TEXT NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        composite_label TEXT,
+        provenance TEXT NOT NULL,
+        experiment_id TEXT,
+        recorded_at TIMESTAMP,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

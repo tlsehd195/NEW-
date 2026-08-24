@@ -64,7 +64,7 @@
 
 ## 현재 상태
 
-**Phase 4 — Baseline Models + Persistent Storage** (설계 및 참조 구현 완료).
+**Phase 5 — Market Regime Detection** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -76,12 +76,17 @@
   저장소(Raw/Clean Market Data, Security Master, Universe Membership,
   Corporate Actions, Benchmark, Trade Journal, Experiment, Experience
   Dataset 전부 포함), Buy & Hold / Simple Momentum baseline을 동일
-  Backtest Engine에서 실행하고 벤치마크와 비교하는 리포트 —
+  Backtest Engine에서 실행하고 벤치마크와 비교하는 리포트
+- Phase 5 — Market Regime Detection: 완료 (`src/regime/`, 57 tests) —
+  Trend/Volatility/Liquidity/Correlation/Stress 5개 축의 deterministic
+  baseline regime 분류기, Phase 2의 `AsOfDataView`를 재사용하는
+  point-in-time-safe `RegimeDetector`, Phase 4 저장소에 영속화, Trade
+  Journal/Experience Dataset과 비침습적 lineage 연결 —
   `DECISION REQUIRED` 3건 여전히 미결(벤치마크 return type,
   per-decision data version, corporate-action-aware portfolio state
   재구성) — `docs/PROJECT_STATUS.md` 참조
 
-전체 테스트: **253 passed** (Phase 1+2+3+4 합산).
+전체 테스트: **310 passed** (Phase 1+2+3+4+5 합산).
 
 ## 테스트 실행
 
@@ -102,6 +107,17 @@ Protocol(및 Phase 4가 추가한 `ExperimentRepository`/
 `ExperienceRepository`)을 통해서만 접근한다. 자세한 설계는
 `docs/specifications/PHASE-4-baseline-models-and-storage.md`와
 `docs/decisions/ADR-0010-persistent-storage-backend.md` 참조.
+
+## Market Regime (Phase 5)
+
+`src/regime/`는 시장 상태(Trend/Volatility/Liquidity/Correlation/
+Stress)를 독립적으로 탐지하는 계층이다. Prediction/Decision과 분리되어
+있으며 BUY/SELL을 직접 결정하지 않는다. Regime 계산은 Phase 2의
+`AsOfDataView`를 그대로 재사용해 point-in-time 안전성을 상속받고,
+결과는 Phase 4의 DuckDB 저장소에 영속화되며, Trade Journal/Experience
+Dataset과 비침습적으로 lineage가 연결된다. 자세한 설계는
+`docs/specifications/PHASE-5-market-regime.md`와
+`docs/decisions/ADR-0011-market-regime-detection.md` 참조.
 
 ## 개발 원칙
 
