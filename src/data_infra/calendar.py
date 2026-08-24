@@ -1,0 +1,96 @@
+"""Trading Calendar abstraction.
+
+See docs/specifications/PHASE-1-data-infrastructure.md section 11.
+
+IMPORTANT: the concrete calendars shipped here (US_EQUITY, KR_EQUITY) use
+a small, hand-picked holiday sample sufficient for Phase 1's mock data
+date range. They are explicitly NOT a production-accurate, multi-year
+holiday calendar — sourcing one is deferred (Phase 1 spec section 11).
+Do not rely on these for real trading-day calculations beyond tests.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, time
+from typing import Protocol
+
+
+class TradingCalendar(Protocol):
+    """A market's trading schedule. Deliberately more than "weekdays 9-15":
+    callers must consult holidays/early-close/late-open explicitly rather
+    than assuming a fixed weekly pattern."""
+
+    market: str
+    timezone: str  # IANA timezone name, e.g. "America/New_York"
+    open_time: time
+    close_time: time
+
+    def is_trading_day(self, day: date) -> bool: ...
+
+    def session_hours(self, day: date) -> tuple[time, time] | None:
+        """Returns (open_time, close_time) for the given day, or None if
+        the market is closed that day (holiday/weekend)."""
+        ...
+
+
+@dataclass(frozen=True)
+class SimpleTradingCalendar:
+    """A minimal concrete TradingCalendar implementation.
+
+    Weekends are always non-trading days. `holidays` fully closes the
+    market for that date. `early_close`/`late_open` override the default
+    open_time/close_time for specific dates without marking them as
+    holidays.
+    """
+
+    market: str
+    timezone: str
+    open_time: time
+    close_time: time
+    holidays: frozenset[date] = field(default_factory=frozenset)
+    early_close: dict[date, time] = field(default_factory=dict)
+    late_open: dict[date, time] = field(default_factory=dict)
+
+    def is_trading_day(self, day: date) -> bool:
+        if day.weekday() >= 5:  # Saturday=5, Sunday=6
+            return False
+        if day in self.holidays:
+            return False
+        return True
+
+    def session_hours(self, day: date) -> tuple[time, time] | None:
+        if not self.is_trading_day(day):
+            return None
+        open_t = self.late_open.get(day, self.open_time)
+        close_t = self.early_close.get(day, self.close_time)
+        return open_t, close_t
+
+
+# Minimal, Phase-1-scope-only sample calendars. See module docstring.
+US_EQUITY = SimpleTradingCalendar(
+    market="US_EQUITY",
+    timezone="America/New_York",
+    open_time=time(9, 30),
+    close_time=time(16, 0),
+    holidays=frozenset(
+        {
+            date(2024, 1, 1),  # New Year's Day
+            date(2024, 7, 4),  # Independence Day
+            date(2024, 12, 25),  # Christmas
+        }
+    ),
+)
+
+KR_EQUITY = SimpleTradingCalendar(
+    market="KR_EQUITY",
+    timezone="Asia/Seoul",
+    open_time=time(9, 0),
+    close_time=time(15, 30),
+    holidays=frozenset(
+        {
+            date(2024, 1, 1),  # New Year's Day
+            date(2024, 12, 25),  # Christmas
+        }
+    ),
+)
