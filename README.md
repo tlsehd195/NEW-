@@ -64,8 +64,21 @@
 
 ## 현재 상태
 
-**Phase 0 — Foundation** (문서 기반 수립 완료, 코드 구현 시작 전).
+**Phase 2 — Backtesting** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
+
+- Phase 0 — Foundation: 완료 (문서 기반 수립)
+- Phase 1 — Data Infrastructure: 완료 (`src/data_infra/`, 57 tests)
+- Phase 2 — Backtesting: 완료 (`src/backtest/`, 82 tests) — 벤치마크
+  return type(가격수익률 vs total return)에 대한 `DECISION REQUIRED`
+  1건 미결 (`docs/PROJECT_STATUS.md` 참조)
+
+## 테스트 실행
+
+```bash
+pip install -e ".[dev]"
+python3 -m pytest tests/ -q
+```
 
 ## 개발 원칙
 
