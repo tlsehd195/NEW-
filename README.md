@@ -64,8 +64,8 @@
 
 ## 현재 상태
 
-**Phase 7 — Decision Agent** (설계 및 참조 구현 완료).
-상세는 `docs/PROJECT_STATUS.md` 참조.
+**Phase 8 — Position Sizing + Portfolio Risk Engine** (설계 및 참조
+구현 완료). 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
 - Phase 1 — Data Infrastructure: 완료 (`src/data_infra/`, 57 tests)
@@ -95,11 +95,25 @@
   Phase 4 저장소(`decision_outputs` 테이블)에 영속화, Regime→
   Prediction→Decision 3-way SQL join으로 증명된 lineage — Position
   Sizing/Risk Engine/Order Creation/Broker/Paper·Live Trading은 명시적
-  범위 밖(Phase 8+) — `DECISION REQUIRED` 3건 여전히 미결(벤치마크
-  return type, per-decision data version, corporate-action-aware
-  portfolio state 재구성) — `docs/PROJECT_STATUS.md` 참조
+  범위 밖(Phase 8+)
+- Phase 8 — Position Sizing + Portfolio Risk Engine: 완료 (`src/risk/`,
+  94 tests) — Decision + Prediction + Regime + Portfolio State를 결합해
+  target_weight/target_quantity를 계산하는 `DeterministicPositionSizer`,
+  포트폴리오 수준 hard limit(single position/gross exposure/
+  concentration/drawdown/portfolio volatility/cash minimum/turnover/
+  liquidity)을 독립적으로 재검사하는 최종 권한자
+  `DeterministicPortfolioRiskEngine`, order_id/broker_order/
+  execution_price 등 order-shaped 필드가 구조적으로 없는
+  `PositionSizingResult`/`RiskCheckedPosition`, Phase 5~7 출력만
+  소비하는 point-in-time-safe 계산(신규 leakage guard 없음), Phase 4
+  저장소(`position_sizing_results`/`risk_assessments` 테이블)에
+  영속화, Phase 2 현금 소진 버그의 전용 regression test — Order
+  Creation/Validation/Broker/Paper·Live Trading은 명시적 범위 밖
+  (Phase 9+) — `DECISION REQUIRED` 3건 여전히 미결(벤치마크 return
+  type, per-decision data version, corporate-action-aware portfolio
+  state 재구성) — `docs/PROJECT_STATUS.md` 참조
 
-전체 테스트: **389 passed** (Phase 1+2+3+4+5+6+7 합산).
+전체 테스트: **483 passed** (Phase 1+2+3+4+5+6+7+8 합산).
 
 ## 테스트 실행
 
@@ -167,6 +181,39 @@ Sizing, Portfolio Risk Engine, Order Creation/Validation, Broker,
 Paper/Live Trading은 모두 이후 Phase의 몫으로 명시적으로 범위 밖에
 있다. 자세한 설계는 `docs/specifications/PHASE-7-decision-agent.md`와
 `docs/decisions/ADR-0013-decision-agent.md` 참조.
+
+## Position Sizing + Portfolio Risk Engine (Phase 8)
+
+`src/risk/`는 Phase 7의 `DecisionOutput`을 얼마나(target_weight/
+target_quantity) 매매할지로 변환하는 Position Sizing(`sizing.py`)과,
+그 제안을 포트폴리오 수준 hard limit에 대해 독립적으로 재검사하는
+Portfolio Risk Engine(`engine.py`) 두 계층이다. `DeterministicPositionSizer`
+는 confidence/volatility/liquidity/현금/risk_budget을 반영해
+target_weight를 계산하되 `DecisionOutput.target_weight_hint`는 어디서도
+읽지 않는다 — Phase 7이 "hint"라고 이름 붙인 이유가 이 계층에서
+literal하게 지켜진다. `DeterministicPortfolioRiskEngine`은 cash_minimum
+→ single_position_limit → gross_exposure → concentration → drawdown →
+portfolio_volatility → turnover → liquidity 순서로 자체 한도를 재검사
+하는 파이프라인의 최종 권한자이며, single_position_limit은 Position
+Sizing이 이미 적용했더라도 독립적으로 다시 검사한다(defense in depth).
+`RiskCheckStatus`(PASS/REDUCE/REJECT/UNKNOWN)를 두 계층이 공유하며,
+설정된 한도인데 필요한 데이터가 없으면 항상 `REJECT`(fail-closed)로
+처리하고, 설정되지 않은 한도(예: sector/factor — 데이터 자체가 없음)는
+단순히 검사를 건너뛴다. `PositionSizingResult`/`RiskCheckedPosition`
+어디에도 order_id/broker_order/execution_price 등 order-shaped 필드가
+구조적으로 존재하지 않는다. 두 계층 모두 이미 계산된
+Decision/Prediction/Regime/PortfolioView와 호출자가 이미 조회한
+`current_price`만 입력으로 받는 순수 함수이며, 어떤 저장소나
+`AsOfDataView`도 직접 호출하지 않아 point-in-time 안전성은 전적으로
+Phase 5~7 출력에서 상속받는다(신규 leakage guard 없음). 결과는 Phase 4의
+DuckDB 저장소(`position_sizing_results`/`risk_assessments` 테이블)에
+영속화되며, Decision/Prediction/Regime과의 lineage는 한 카탈로그 안에서의
+5-way SQL join으로 증명된다. Phase 2에서 발견됐던 "현금을 100% 소진해
+거래비용을 낼 여유가 없었던" 버그의 재발을 막는 전용 regression test도
+포함한다. Order Creation/Validation, Broker, Paper/Live Trading은 모두
+이후 Phase의 몫으로 명시적으로 범위 밖에 있다. 자세한 설계는
+`docs/specifications/PHASE-8-position-sizing-and-risk.md`와
+`docs/decisions/ADR-0014-position-sizing-and-risk-engine.md` 참조.
 
 ## 개발 원칙
 

@@ -329,6 +329,65 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 8: Position Sizing + Portfolio Risk Engine. Two new,
+    # additive tables -- no existing table's schema changed. risk_state
+    # (portfolio-level metrics) is embedded inside risk_assessments'
+    # payload_json rather than a separate table, mirroring how
+    # decision_outputs already embeds its `regime` context dict inline
+    # (Phase 7 spec section 5) instead of requiring a join for something
+    # that is always 1:1 with the record that used it (Phase 8 spec
+    # section 11, ADR-0014 section 8).
+    """
+    CREATE TABLE IF NOT EXISTS position_sizing_results (
+        sizing_id TEXT PRIMARY KEY,
+        natural_key TEXT UNIQUE,
+        security_id TEXT NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        status TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        decision_id TEXT,
+        decision_action TEXT,
+        proposed_target_weight DOUBLE,
+        proposed_target_quantity DOUBLE,
+        current_weight DOUBLE,
+        current_quantity DOUBLE NOT NULL,
+        sizing_version TEXT NOT NULL,
+        feature_version TEXT,
+        prediction_id TEXT,
+        decision_version TEXT,
+        prediction_version TEXT,
+        regime_version TEXT,
+        provenance TEXT NOT NULL,
+        experiment_id TEXT,
+        recorded_at TIMESTAMP,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS risk_assessments (
+        risk_id TEXT PRIMARY KEY,
+        natural_key TEXT UNIQUE,
+        security_id TEXT NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        status TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        final_target_weight DOUBLE,
+        final_target_quantity DOUBLE,
+        sizing_id TEXT,
+        decision_id TEXT,
+        prediction_id TEXT,
+        risk_version TEXT NOT NULL,
+        feature_version TEXT,
+        sizing_version TEXT,
+        decision_version TEXT,
+        prediction_version TEXT,
+        regime_version TEXT,
+        provenance TEXT NOT NULL,
+        experiment_id TEXT,
+        recorded_at TIMESTAMP,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

@@ -66,6 +66,9 @@ from predict.models import PredictionOutput
 
 from decision.models import DecisionOutput
 
+from risk.enums import RiskCheckStatus
+from risk.models import PortfolioRiskState, PositionSizingResult, RiskCheckedPosition
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -934,6 +937,161 @@ def payload_to_decision_output(data: dict) -> DecisionOutput:
         decision_version=data["decision_version"],
         strategy_version=data.get("strategy_version"),
         risk_version=data.get("risk_version"),
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+# --------------------------------------------------------------------
+# risk.models
+# --------------------------------------------------------------------
+
+
+def _risk_state_to_dict(state: Optional[PortfolioRiskState]) -> Optional[dict]:
+    if state is None:
+        return None
+    return {
+        "as_of_time": _dt_iso(state.as_of_time),
+        "portfolio_value": state.portfolio_value,
+        "cash": state.cash,
+        "gross_exposure": state.gross_exposure,
+        "net_exposure": state.net_exposure,
+        "position_weights": dict(state.position_weights),
+        "sector_exposure": state.sector_exposure,
+        "drawdown": state.drawdown,
+        "max_drawdown": state.max_drawdown,
+        "portfolio_volatility": state.portfolio_volatility,
+        "turnover": state.turnover,
+        "concentration": state.concentration,
+        "risk_budget_usage": state.risk_budget_usage,
+        "risk_state_version": state.risk_state_version,
+    }
+
+
+def _dict_to_risk_state(data: Optional[dict]) -> Optional[PortfolioRiskState]:
+    if data is None:
+        return None
+    return PortfolioRiskState(
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        portfolio_value=data["portfolio_value"],
+        cash=data["cash"],
+        gross_exposure=data.get("gross_exposure"),
+        net_exposure=data.get("net_exposure"),
+        position_weights=dict(data.get("position_weights") or {}),
+        sector_exposure=data.get("sector_exposure"),
+        drawdown=data.get("drawdown"),
+        max_drawdown=data.get("max_drawdown"),
+        portfolio_volatility=data.get("portfolio_volatility"),
+        turnover=data.get("turnover"),
+        concentration=data.get("concentration"),
+        risk_budget_usage=data.get("risk_budget_usage"),
+        risk_state_version=data.get("risk_state_version", "portfolio_risk_state_v1"),
+    )
+
+
+def position_sizing_result_to_payload(result: PositionSizingResult) -> dict:
+    return {
+        "sizing_id": result.sizing_id,
+        "security_id": result.security_id,
+        "as_of_time": _dt_iso(result.as_of_time),
+        "status": result.status.value,
+        "reason": result.reason,
+        "decision_id": result.decision_id,
+        "decision_action": result.decision_action.value if result.decision_action is not None else None,
+        "proposed_target_weight": result.proposed_target_weight,
+        "proposed_target_quantity": result.proposed_target_quantity,
+        "current_weight": result.current_weight,
+        "current_quantity": result.current_quantity,
+        "sizing_version": result.sizing_version,
+        "feature_version": result.feature_version,
+        "prediction_id": result.prediction_id,
+        "decision_version": result.decision_version,
+        "prediction_version": result.prediction_version,
+        "regime_version": result.regime_version,
+        "data_version": list(result.data_version),
+        "provenance": result.provenance.value,
+        "experiment_id": result.experiment_id,
+        "recorded_at": _dt_iso(result.recorded_at),
+    }
+
+
+def payload_to_position_sizing_result(data: dict) -> PositionSizingResult:
+    return PositionSizingResult(
+        sizing_id=data["sizing_id"],
+        security_id=data["security_id"],
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        status=RiskCheckStatus(data["status"]),
+        reason=data["reason"],
+        decision_id=data.get("decision_id"),
+        decision_action=DecisionAction(data["decision_action"]) if data.get("decision_action") else None,
+        proposed_target_weight=data.get("proposed_target_weight"),
+        proposed_target_quantity=data.get("proposed_target_quantity"),
+        current_weight=data.get("current_weight"),
+        current_quantity=data["current_quantity"],
+        sizing_version=data["sizing_version"],
+        feature_version=data.get("feature_version"),
+        prediction_id=data.get("prediction_id"),
+        decision_version=data.get("decision_version"),
+        prediction_version=data.get("prediction_version"),
+        regime_version=data.get("regime_version"),
+        data_version=tuple(data.get("data_version") or ()),
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+def risk_checked_position_to_payload(checked: RiskCheckedPosition) -> dict:
+    return {
+        "risk_id": checked.risk_id,
+        "security_id": checked.security_id,
+        "as_of_time": _dt_iso(checked.as_of_time),
+        "status": checked.status.value,
+        "reason": checked.reason,
+        "breached_limits": list(checked.breached_limits),
+        "final_target_weight": checked.final_target_weight,
+        "final_target_quantity": checked.final_target_quantity,
+        "sizing_id": checked.sizing_id,
+        "decision_id": checked.decision_id,
+        "prediction_id": checked.prediction_id,
+        "risk_state": _risk_state_to_dict(checked.risk_state),
+        "risk_version": checked.risk_version,
+        "feature_version": checked.feature_version,
+        "sizing_version": checked.sizing_version,
+        "decision_version": checked.decision_version,
+        "prediction_version": checked.prediction_version,
+        "regime_version": checked.regime_version,
+        "data_version": list(checked.data_version),
+        "strategy_version": checked.strategy_version,
+        "provenance": checked.provenance.value,
+        "experiment_id": checked.experiment_id,
+        "recorded_at": _dt_iso(checked.recorded_at),
+    }
+
+
+def payload_to_risk_checked_position(data: dict) -> RiskCheckedPosition:
+    return RiskCheckedPosition(
+        risk_id=data["risk_id"],
+        security_id=data["security_id"],
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        status=RiskCheckStatus(data["status"]),
+        reason=data["reason"],
+        breached_limits=tuple(data.get("breached_limits") or ()),
+        final_target_weight=data.get("final_target_weight"),
+        final_target_quantity=data.get("final_target_quantity"),
+        sizing_id=data.get("sizing_id"),
+        decision_id=data.get("decision_id"),
+        prediction_id=data.get("prediction_id"),
+        risk_state=_dict_to_risk_state(data.get("risk_state")),
+        risk_version=data["risk_version"],
+        feature_version=data.get("feature_version"),
+        sizing_version=data.get("sizing_version"),
+        decision_version=data.get("decision_version"),
+        prediction_version=data.get("prediction_version"),
+        regime_version=data.get("regime_version"),
+        data_version=tuple(data.get("data_version") or ()),
+        strategy_version=data.get("strategy_version"),
         provenance=TradeProvenance(data["provenance"]),
         experiment_id=data.get("experiment_id"),
         recorded_at=_dt_from_iso(data.get("recorded_at")),
