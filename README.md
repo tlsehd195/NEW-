@@ -64,7 +64,7 @@
 
 ## 현재 상태
 
-**Phase 9 — Learning Engine** (설계 및 참조 구현 완료).
+**Phase 11 — Model Evolution** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -128,8 +128,34 @@
   `DECISION REQUIRED` 3건 여전히 미결(벤치마크 return type,
   per-decision data version, corporate-action-aware portfolio state
   재구성) — `docs/PROJECT_STATUS.md` 참조
+- Phase 10 — Counterfactual / Attribution: 완료 (`src/counterfactual/`,
+  54 tests) — 선택한 행동과 HOLD/CASH 대안을 비교하는 Counterfactual
+  Analysis, `market + selection + execution == cumulative_return`
+  항등식을 항상 정확히 만족하는 Performance Attribution. Phase 3가
+  이미 예약해 둔 `AlternativeOutcome`/`CounterfactualRecord`/
+  `AttributionResult` 타입을 그대로 재사용(신규 병렬 타입 없음).
+  `alternative_action_1`/`alternative_action_2`(다른 모델의 가상
+  의사결정 비교)와 `timing`/`sector`/`factor` attribution은 검증되지
+  않은 추정값을 사실처럼 저장하지 않기 위해 Phase 11로 명시적으로 이연
+- Phase 11 — Model Evolution: 완료 (`src/evolution/`, 62 tests) —
+  `learning.enums.CandidateModelStatus`가 Phase 9부터 예약해 둔
+  `CANDIDATE → BACKTESTED → VALIDATED → OOS_TESTED` 상태 전이를 명시적,
+  버전 관리되는 수치 기준으로 실제로 구현(실패한 전이도 항상 auditable
+  기록으로 남김, `APPROVED`/`DEPLOYED`로 가는 경로는 구조적으로 아예
+  없음 — 사람의 승인이 필요). 두 번째 candidate 생성기
+  (`TrailingWindowMeanTrainer`)로 후보 비교(`compare_candidates`,
+  winner/champion 필드 없음)를 실제로 exercise. 후보의 generation을
+  항상 parent로부터만 파생시키는 `ModelLineageRecord`로 Model Registry
+  lineage/versioning 완성(Phase 9가 "Model Registry completion (Phase
+  11)"로 이미 지정해 둔 범위). Phase 10이 이연했던
+  `alternative_action_1`/`alternative_action_2`도 이번 Phase에서 구현
+  — 실제 Predictor+DecisionAgent를 거래의 decision_time에 실행해 얻은
+  가상 결정을 Phase 3/10의 hold/cash 수익률 계산으로 그대로 변환.
+  Phase 1~10 소스코드 변경 없이 완전히 additive. PBO/Deflated
+  Sharpe/Walk-Forward validation, AI Gateway, 실제 브로커/주문은 여전히
+  범위 밖(Phase 12+)
 
-전체 테스트: **553 passed** (Phase 1+2+3+4+5+6+7+8+9 합산).
+전체 테스트: **669 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11 합산).
 
 ## 테스트 실행
 
@@ -267,6 +293,66 @@ allocator 충돌로 PRIMARY KEY를 침해하지 않도록 하는, Phase 4가 이
 Deployment는 모두 이후 Phase의 몫으로 명시적으로 범위 밖에 있다. 자세한
 설계는 `docs/specifications/PHASE-9-learning-engine.md`와
 `docs/decisions/ADR-0015-learning-engine.md` 참조.
+
+## Counterfactual / Attribution (Phase 10)
+
+`src/counterfactual/`는 실제 선택한 행동의 결과를 선택하지 않은 대안
+(HOLD, CASH)과 비교하는 Counterfactual Analysis와, 실현 수익을
+market/selection/execution 세 요소로 분해하는 Performance Attribution
+을 구현한다. Phase 3가 이미 "미래 Phase가 채울 예약 필드" 형태로
+정의해 둔 `trade_journal.models.AlternativeOutcome`/
+`CounterfactualRecord`/`AttributionResult`를 그대로 재사용하며(신규
+병렬 타입 없음), HOLD counterfactual은 Phase 3의 기존
+`compute_hold_counterfactual`을 변경 없이 재사용하고 CASH
+counterfactual만 신규로 추가한다. `market + selection + execution ==
+cumulative_return` 항등식을 항상 정확히 만족하도록 `selection`을
+정확한 residual(`cumulative_return - market - execution`)로 계산하여,
+AI가 실제로 alpha를 만들어냈는지 시장 베타를 alpha로 착각하고 있는지를
+분석할 수 있게 한다. `timing`/`sector`/`factor` attribution과
+`alternative_action_1`/`alternative_action_2`(다른 모델/전략의 가상
+의사결정 비교)는 검증되지 않은 방식으로 그럴듯하지만 틀릴 수 있는
+숫자를 만드는 위험을 피하기 위해 계속 `None`으로 예약하고 Phase 11로
+이연한다. 결과는 Phase 4의 DuckDB 저장소(`attribution_results` 테이블,
+`CounterfactualRecord`는 Phase 3의 기존 `counterfactuals` 테이블을 그대로
+재사용)에 영속화된다. 자세한 설계는
+`docs/specifications/PHASE-10-counterfactual-attribution.md`와
+`docs/decisions/ADR-0016-counterfactual-attribution.md` 참조.
+
+## Model Evolution (Phase 11)
+
+`src/evolution/`는 Phase 9의 `learning.enums.CandidateModelStatus`가
+예약해 둔 `CANDIDATE → BACKTESTED → VALIDATED → OOS_TESTED` 상태
+전이와, Phase 3/10이 이연한 `alternative_action_1`/
+`alternative_action_2`, Phase 9가 "Model Registry completion (Phase
+11)"으로 지정해 둔 lineage/versioning을 구현한다. `evolution.criteria.
+evaluate_transition`은 각 전이마다 명시적, 버전 관리되는(`Promotion
+Config`) 수치 기준(sample count 충분성, MAE/MSE finite 여부 등)을
+검사하며, 실패한 시도도 절대 조용히 버리지 않고 항상 `passed`/`reason`
+/`criteria` 딕셔너리를 담은 auditable `ModelStatusTransition` 레코드로
+남긴다. `next_status`는 `APPROVED`/`DEPLOYED`로 매핑되는 항목이 dict
+자체에 구조적으로 없어(AST 스캔으로 검증) 사람의 명시적 승인 없이는
+그 어떤 코드 경로로도 배포 상태에 도달할 수 없다
+(`PROJECT_MASTER_PLAN.md` §11.5). 두 번째 candidate 생성기
+`TrailingWindowMeanTrainer`(ML 의존성 없는 deterministic baseline,
+Phase 9의 `MeanRewardBaselineTrainer`와 동일한 "파이프라인을 증명하되
+모델 자체를 주장하지 않는다" 원칙)로 여러 후보를 생성하고,
+`compare_candidates`로 (winner/champion 필드 없이) 순위만 매겨
+비교한다. `ModelLineageRecord`는 candidate의 generation을 항상
+parent로부터만 파생시켜(caller가 임의로 지정 불가) lineage 체인의
+깊이가 항상 일관되도록 보장한다 — 테스트 작성 중 서로 다른
+`CandidateTrainer` 인스턴스의 독립적인 in-process id 발급기가 우연히
+같은 candidate_id를 만들어 lineage가 자기 자신을 부모로 참조할 수
+있는 버그를 발견해 구조적 검증을 추가로 고쳤다.
+`compute_candidate_decision_alternative`는 실제 존재하고 실행 가능한
+대안 결정 프로세스(Predictor + DecisionAgent)를 거래의 decision_time에
+고정된 `AsOfDataView`로 실행해(신규 leakage guard 없이 기존
+point-in-time 장치 재사용) 가상 결정을 얻고, 이를 Phase 3/10의 기존
+hold/cash 수익률 계산으로 변환해 Phase 10의 `(HOLD, CASH)` 레코드에
+추가만 한다(Phase 3/10 소스 수정 없음). Phase 1~10 소스코드는 전혀
+수정하지 않고 `storage/schema.py`/`serialization.py`에 대한 순수
+추가(`model_status_transitions`/`model_lineage` 테이블)만 있다. 자세한
+설계는 `docs/specifications/PHASE-11-model-evolution.md`와
+`docs/decisions/ADR-0017-model-evolution.md` 참조.
 
 ## 개발 원칙
 
