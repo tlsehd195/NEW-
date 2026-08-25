@@ -492,6 +492,33 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 11: Model Evolution --
+    """
+    CREATE SEQUENCE IF NOT EXISTS model_status_transition_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS model_status_transitions (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('model_status_transition_seq'),
+        transition_id TEXT NOT NULL,
+        candidate_id TEXT NOT NULL,
+        from_status TEXT NOT NULL,
+        to_status TEXT NOT NULL,
+        criteria_version TEXT NOT NULL,
+        passed BOOLEAN NOT NULL,
+        evaluated_at TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS model_lineage (
+        candidate_id TEXT PRIMARY KEY,
+        parent_candidate_id TEXT,
+        generation INTEGER NOT NULL,
+        dataset_id TEXT NOT NULL,
+        dataset_version TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

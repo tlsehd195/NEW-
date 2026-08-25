@@ -73,6 +73,8 @@ from risk.models import PortfolioRiskState, PositionSizingResult, RiskCheckedPos
 from learning.enums import CandidateModelStatus, SplitName
 from learning.models import CandidateModelArtifact, EvaluationMetrics, EvaluationResult, LearningExperimentRecord, TrainingDataset
 
+from evolution.models import ModelLineageRecord, ModelStatusTransition
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -1297,4 +1299,71 @@ def payload_to_attribution_result(data: dict) -> AttributionResult:
         timing=data.get("timing"),
         execution=data.get("execution"),
         computed_at=_dt_from_iso(data.get("computed_at")),
+    )
+
+
+# -- Phase 11: Model Evolution -----------------------------------------
+
+
+def model_status_transition_to_payload(transition: ModelStatusTransition) -> dict:
+    return {
+        "transition_id": transition.transition_id,
+        "candidate_id": transition.candidate_id,
+        "dataset_id": transition.dataset_id,
+        "dataset_version": transition.dataset_version,
+        "evaluation_id": transition.evaluation_id,
+        "from_status": transition.from_status.value,
+        "to_status": transition.to_status.value,
+        "passed": transition.passed,
+        "criteria_version": transition.criteria_version,
+        "criteria": transition.criteria,
+        "reason": transition.reason,
+        "provenance": transition.provenance.value,
+        "evaluated_at": _dt_iso(transition.evaluated_at),
+        "recorded_at": _dt_iso(transition.recorded_at),
+    }
+
+
+def payload_to_model_status_transition(data: dict) -> ModelStatusTransition:
+    return ModelStatusTransition(
+        transition_id=data["transition_id"],
+        candidate_id=data["candidate_id"],
+        dataset_id=data["dataset_id"],
+        dataset_version=data["dataset_version"],
+        evaluation_id=data.get("evaluation_id"),
+        from_status=CandidateModelStatus(data["from_status"]),
+        to_status=CandidateModelStatus(data["to_status"]),
+        passed=data["passed"],
+        criteria_version=data["criteria_version"],
+        criteria=data.get("criteria") or {},
+        reason=data["reason"],
+        provenance=TradeProvenance(data["provenance"]),
+        evaluated_at=_dt_from_iso(data["evaluated_at"]),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+def model_lineage_to_payload(lineage: ModelLineageRecord) -> dict:
+    return {
+        "candidate_id": lineage.candidate_id,
+        "parent_candidate_id": lineage.parent_candidate_id,
+        "generation": lineage.generation,
+        "lineage_basis": lineage.lineage_basis,
+        "dataset_id": lineage.dataset_id,
+        "dataset_version": lineage.dataset_version,
+        "provenance": lineage.provenance.value,
+        "recorded_at": _dt_iso(lineage.recorded_at),
+    }
+
+
+def payload_to_model_lineage(data: dict) -> ModelLineageRecord:
+    return ModelLineageRecord(
+        candidate_id=data["candidate_id"],
+        parent_candidate_id=data.get("parent_candidate_id"),
+        generation=data["generation"],
+        lineage_basis=data["lineage_basis"],
+        dataset_id=data["dataset_id"],
+        dataset_version=data["dataset_version"],
+        provenance=TradeProvenance(data["provenance"]),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
     )

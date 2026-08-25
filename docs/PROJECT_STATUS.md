@@ -5,15 +5,47 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-25
-**Updated By:** Claude Code (Session 11 — Phase 10 Counterfactual / Attribution)
+**Updated By:** Claude Code (Session 12 — Phase 11 Model Evolution)
 
 ---
 
 ## Current Phase
 
-**Phase 10 — Counterfactual / Attribution** (설계 및 참조 구현 완료)
+**Phase 11 — Model Evolution** (설계 및 참조 구현 완료)
 
-## Current Subtask
+## Current Subtask (Session 12 — Phase 11)
+
+Phase 11 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시) —
+이번 세션은 새 컨테이너에서 시작했고, 지정된 작업 브랜치
+`claude/phase-11-model-evolution-7hpibr`가 실제로는 `main`에서 새로
+생성되어 `Initial commit`(`c3abad0`) 하나만 갖고 있었으며(원격의 동일
+이름 브랜치는 이미 삭제된 상태), 실제 Phase 0~10 lineage는
+`origin/claude/phase-10-counterfactual-attribution-ubum6u`(HEAD
+`483600fb571c2f392bcc193f7ebbe733b6122a4b`, "Phase 10: Counterfactual /
+Attribution", 13개 커밋의 단일 선형 히스토리, 병합 커밋 0개)에 있음을
+발견 — 지정 브랜치가 손실 없이(유일한 커밋이 실제 lineage의 조상이었음)
+`git checkout -B claude/phase-11-model-evolution-7hpibr
+origin/claude/phase-10-counterfactual-attribution-ubum6u`로 브랜치
+포인터를 재설정(공유 히스토리에 대한 rewrite/force-push 아님 — 원격의
+stale 브랜치는 이미 삭제되어 있었음). 인수인계 문서가 명시한 Phase 10
+commit hash(`483600fb571c2f392bccbe73f7ebbe733b6122a4b`, 42자)는 실제
+40자 SHA-1과 글자 수부터 다른 오기로 판단(주제 줄과 실제 HEAD 해시로
+동일 커밋 확인). 의존성(duckdb/pyarrow/pytest, 컨테이너에 미설치
+상태였음) 설치 후 **607/607 테스트 통과** → **PASS 판정 후 Phase 11
+착수**. 상세: `docs/specifications/PHASE-11-model-evolution.md` §0.
+
+Master Plan §18.1(Phase 11 = Model Evolution)과 Phase 9/10이 명시적으로
+이연한 항목(ADR-0015 §1/§10 "Phase 11 (Model Evolution/Registry)",
+Phase 9 spec §2.2/§22 "Model Registry completion (Phase 11)", ADR-0016
+§7 "`alternative_action_1`/`alternative_action_2` … deferred to Phase 11
+(Model Evolution)")을 재확인한 뒤 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-11-model-evolution.md`) + ADR-0017 +
+`src/evolution/`(신규 패키지, Phase 9 `learning.*`/Phase 3·10
+`trade_journal.*`를 전혀 수정하지 않고 그 위에 계층으로 추가) +
+`src/storage/evolution_repository.py`(신규 DuckDB 저장소 2종) + 신규
+62개 테스트 전부 통과.
+
+## Previous Subtask (Session 11 — Phase 10)
 
 Phase 10 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시,
 이전 세션 PASS 결과를 재사용하지 않고 현재 상태 기준으로 처음부터
@@ -47,6 +79,134 @@ counterfactual/`market`·`selection` attribution만 추가) +
 영속 저장소 — `CounterfactualRecord`는 Phase 3의 기존
 `TradeJournalRepository.record_counterfactual`/`get_counterfactual`을
 변경 없이 그대로 재사용) 참조 구현 + 신규 54개 테스트 전부 통과.
+
+## Completed (Session 12 — Phase 11)
+
+- [x] **Git/Branch Integrity Check 선행 수행** — 위 "Current Subtask
+      (Session 12 — Phase 11)" 참조. 지정 작업 브랜치가 실제 Phase 0~10
+      lineage를 갖고 있지 않음을 발견하고, 손실 없이 올바른 lineage로
+      브랜치 포인터를 재설정 → **PASS 판정 후 Phase 11 진행**
+- [x] `PROJECT_MASTER_PLAN.md`/ADR-0001~0016/Phase 1~10 spec/현재
+      src·tests 재조사. 특히 `learning.enums.CandidateModelStatus`가
+      `BACKTESTED`/`VALIDATED`/`OOS_TESTED`/`PAPER_TESTED`/`APPROVED`/
+      `DEPLOYED`를 이미 예약해 두었지만 Phase 9는 `CANDIDATE`만 생산했고
+      Phase 10도 이 상태들을 전혀 다루지 않았음을 코드로 직접 확인,
+      Phase 3의 `AlternativeOutcome`/`CounterfactualRecord.alternatives`가
+      임의 길이 tuple로 이미 설계돼 있어 candidate 기반 alternative를
+      추가하는 데 스키마 변경이 필요 없음을 확인
+- [x] `docs/specifications/PHASE-11-model-evolution.md` 작성 (Git
+      Integrity Check 결과를 §0에 포함, Candidate Generation/Comparison/
+      Status Transition/Lineage/Counterfactual/Persistence/Point-in-Time/
+      Reproducibility 각 설계, out-of-scope 항목과 근거, 13개 섹션)
+- [x] `docs/decisions/ADR-0017-model-evolution.md` 작성 (8개 결정 사항 +
+      alternatives considered + consequences, 자체 발견 버그 1건의 근본
+      원인과 수정 근거 상세 기록)
+- [x] `src/evolution/` 패키지 구현: `config.py`(`PromotionConfig` —
+      모든 threshold configuration으로 분리), `models.py`
+      (`ModelStatusTransition` — append-only 감사 기록,
+      `ModelLineageRecord` — generation은 항상 parent로부터 파생,
+      `CandidateComparison` — winner/is_better/champion 필드 없음),
+      `criteria.py`(`next_status`/`evaluate_transition` — CANDIDATE→
+      BACKTESTED→VALIDATED→OOS_TESTED만 매핑된 닫힌 dict, APPROVED/
+      DEPLOYED로의 전이 경로 구조적으로 없음, 실패한 전이도 항상
+      auditable record로 반환), `lineage.py`(`derive_lineage` —
+      generation을 parent에서만 파생), `comparison.py`
+      (`compare_candidates` — 동일 dataset만 비교 허용, 단일 명시적
+      metric으로 ranking만 제공), `trainer.py`
+      (`TrailingWindowMeanTrainer` — Phase 9 `CandidateTrainer` Protocol을
+      구조적으로 구현하는 두 번째 candidate 생성기, ML 의존성 없음),
+      `counterfactual.py`(`compute_candidate_decision_alternative` —
+      decision_time에 고정된 `AsOfDataView`로 실제 Predictor+
+      DecisionAgent를 실행해 대안 결정을 얻고, Phase 3/10의 hold/cash
+      counterfactual 계산을 그대로 재사용해 수익률로 변환;
+      `append_candidate_alternatives` — 기존 CounterfactualRecord에
+      추가만 함), `repository.py`(2종 Repository Protocol + InMemory
+      구현), `pipeline.py`(`generate_candidate_batch`/
+      `evaluate_candidate_batch` — 여러 candidate 생성/평가 오케스트레이션)
+- [x] `src/storage/evolution_repository.py`(`DuckDBModelStatusTransitionRepository`/
+      `DuckDBModelLineageRepository`) + `schema.py`/`serialization.py`에
+      `model_status_transitions`(append-only)/`model_lineage`
+      (candidate_id PK) 테이블 + `model_status_transition_seq` 시퀀스
+      신규 추가 — 기존 테이블 스키마 변경 없음
+- [x] Phase 1~10 소스코드 변경 없음 — `schema.py`/`serialization.py`에
+      대한 순수 추가만 있으며(`git diff src/storage/schema.py
+      src/storage/serialization.py | grep '^-'` 결과 두 파일 모두
+      삭제/변경 없음으로 확인), 그 외 Phase 1~10 코드 전혀 수정하지 않음
+- [x] `tests/evolution/`(54: trainer 7 + comparison 7 + criteria 12 +
+      lineage 9 + counterfactual 5 + point_in_time 2 + boundary 7 +
+      reproducibility 3 — 합 52, 아래 storage/integration 별도) +
+      `tests/storage/test_evolution_repository.py`(8) +
+      `tests/integration/test_evolution_lineage.py`(2) — 신규 62개
+      테스트 작성 및 전부 통과 (파일명 충돌 방지를 위해 처음부터
+      `test_evolution_*`/`test_model_lineage.py`로 명명, 기존 트리 전체와
+      basename 충돌 없음을 사전 확인)
+- [x] **전체 테스트 스위트 669개 전부 통과** (Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57 + Phase6 39 + Phase7 40 + Phase8
+      94 + Phase9 70 + Phase10 54 + Phase11 62) — Phase 1~10 기존 테스트
+      무손상 확인
+- [x] `next_status`가 `APPROVED`/`DEPLOYED`로 매핑되는 경로가 구조적으로
+      전혀 없음을 dict 리터럴 직접 검사 + `evolution/*.py` 전체 AST
+      스캔(`.APPROVED`/`.DEPLOYED` attribute reference 탐지)으로 검증
+      (`test_evolution_boundary.py`), Position Sizing/Risk/Order/Broker
+      관련 필드·메서드가 `evolution.*` 어디에도 없음을 reflection으로
+      검증
+- [x] 미래 데이터 유출 방지 — `evaluate_transition`/`compare_candidates`/
+      `derive_lineage`는 `DataRepository` 호출을 아예 하지 않음(새로운
+      leakage surface 없음), `compute_candidate_decision_alternative`는
+      `AsOfDataView`의 clock을 `decision_time`에 고정(코드 소스 자체를
+      검사해 `evaluation_time`으로 고정되지 않았음을 확인)하고, 이후
+      `decision_time` 이후 대량의 미래 bar를 추가해도 동일한 가상 결정이
+      나옴을 회귀 테스트로 검증(`test_evolution_point_in_time.py`)
+- [x] Reproducibility — `random` import/`datetime.now()`/`datetime.
+      utcnow()` 호출이 `src/evolution/*.py` 어디에도 없음을 AST 스캔으로
+      확인, generate→evaluate→compare→validate→lineage 전체 체인을 동일
+      입력으로 두 번 실행해 완전히 동일한 결과를 얻음을 검증
+      (`test_evolution_reproducibility.py`)
+- [x] **자체 발견 및 수정한 버그 1건**: `ModelLineageRecord`를 서로 다른
+      `CandidateTrainer` 인스턴스(각자 독립적인 in-process id
+      allocator를 가짐, "CAND-000001"부터 매 인스턴스 재시작)로 만든
+      candidate들로 구성할 때, 두 candidate가 우연히 같은 candidate_id를
+      가지면 child lineage가 자기 자신을 부모로 참조하는
+      self-referential 레코드가 조용히 만들어질 수 있는 문제 발견 (Phase
+      9가 ADR-0015 §6에서 storage 계층에 대해 이미 고친 것과 동일한
+      클래스의 버그가 in-memory 계층에서도 재현됨) — `ModelLineageRecord.
+      __post_init__`에 `candidate_id != parent_candidate_id` 구조적
+      검증을 추가해 수정, `test_model_lineage.py::
+      TestModelLineageRecordValidation::test_self_referential_parent_rejected`가
+      전용 regression test (ADR-0017 §7)
+- [x] SQL join으로 lineage 증명: `candidate_models`⋈`training_datasets`⋈
+      `evaluation_results`⋈`model_lineage`⋈`model_status_transitions`
+      (5-way join, 한 DuckDB 카탈로그) + 프로세스 재시작 후 동일 결과
+      확인(`test_evolution_lineage.py::TestModelEvolutionLineageEndToEnd`)
+- [x] `alternative_action_1`/`alternative_action_2`(Phase 3가 Phase
+      11로 이연, ADR-0016 §7이 재확인) 구현: 실제 Predictor+
+      DecisionAgent를 decision_time에 실행해 얻은 가상 결정을 Phase
+      3/10의 기존 hold/cash 수익률 계산을 그대로 재사용해
+      `AlternativeOutcome`으로 변환하고, `append_candidate_alternatives`로
+      Phase 10의 `(HOLD, CASH)` 레코드에 추가만 함(Phase 3/10 소스 수정
+      없음). 확장된 레코드가 `trade_journal.experience.
+      build_experience_records`를 통해 Learning Engine Experience
+      Dataset으로 코드 변경 없이 그대로 연결됨을 통합 테스트로 확인
+      (`test_evolution_lineage.py::TestCandidateAlternativeComposesWithPhase10Counterfactual`)
+- [x] PBO/Deflated Sharpe/Walk-Forward validation은 계속 미구현 —
+      검증되지 않은 방식으로 과최적화 강건성을 주장하는 위험을 피하기
+      위해 Phase 9(§13)에 이어 이번 Phase에서도 명시적으로 이연
+      (ADR-0017 §3)
+- [x] Model Registry는 "Phase 12+ 별도 서비스/UI"가 아니라 Phase 9가 이미
+      "Model Registry completion (Phase 11)"로 범위를 지정한 persisted
+      lineage/version/status 데이터(`ModelLineageRecord`+
+      `ModelStatusTransition`+기존 `CandidateModelArtifact`/
+      `EvaluationResult`)로 해석하여 구현 (ADR-0017 §5, DECISION REQUIRED
+      아님 — 근거를 문서로 남김)
+- [x] Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+      않다고 판단, 계속 이연
+- [x] Phase 8/9/10 Known Issue 재검토 — Model Evolution과 무관, 변경
+      불필요
+- [x] AI Gateway(Phase 12)/Toss Securities Adapter(Phase 13)/
+      Monitoring(Phase 14)/Paper Trading(Phase 15)/Live Trading(Phase
+      16)은 이번 Phase 범위에서 명시적으로 제외 — 실제 AI API 호출,
+      주문/브로커/실제 매매도 여전히 구현하지 않음, candidate가 자동으로
+      APPROVED/DEPLOYED되는 경로도 여전히 없음
 
 ## Completed (Session 11 — Phase 10)
 
@@ -593,16 +753,16 @@ counterfactual/`market`·`selection` attribution만 추가) +
 
 ## In Progress
 
-없음 (Phase 10 설계+참조구현 완료).
+없음 (Phase 11 설계+참조구현 완료).
 
 ## Blocked
 
 **DECISION REQUIRED 3건 누적 (Phase 2/3에서 이어짐) — 사용자 확인 필요.**
-Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10 세션 모두
-세 항목을 재검토했으며, 매번 이번 Phase의 완료 조건과 무관함을 확인하여
-여전히 해결하지 않고 이연한다(재검토했으며 이번 Phase와 무관하여 이연)
-(Phase 4 spec §19, Phase 5 spec §16, Phase 6 spec §16, Phase 7 spec §14,
-Phase 8 spec §20, Phase 9 spec §20에 각각 재검토 근거 상세 기록):
+Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, Phase 11
+세션 모두 세 항목을 재검토했으며, 매번 이번 Phase의 완료 조건과 무관함을
+확인하여 여전히 해결하지 않고 이연한다(재검토했으며 이번 Phase와 무관하여
+이연) (Phase 4 spec §19, Phase 5 spec §16, Phase 6 spec §16, Phase 7 spec
+§14, Phase 8 spec §20, Phase 9 spec §20에 각각 재검토 근거 상세 기록):
 
 1. (Phase 2에서 이어짐) 벤치마크 return type (PRICE_RETURN vs
    TOTAL_RETURN)
