@@ -557,6 +557,49 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 13: Toss Securities Adapter (Broker) --
+    """
+    CREATE TABLE IF NOT EXISTS broker_requests (
+        request_id TEXT PRIMARY KEY,
+        broker_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        execution_mode TEXT NOT NULL,
+        client_order_id TEXT,
+        decision_id TEXT,
+        sizing_id TEXT,
+        risk_assessment_id TEXT,
+        requested_at TIMESTAMP NOT NULL,
+        provenance TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS broker_responses (
+        response_id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        broker_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        status TEXT NOT NULL,
+        broker_order_id TEXT,
+        responded_at TIMESTAMP NOT NULL,
+        provenance TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS order_status_event_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS order_status_events (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('order_status_event_seq'),
+        observation_id TEXT NOT NULL,
+        client_order_id TEXT NOT NULL,
+        broker_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        observed_at TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

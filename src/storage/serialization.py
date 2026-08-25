@@ -78,6 +78,9 @@ from evolution.models import ModelLineageRecord, ModelStatusTransition
 from ai_gateway.enums import BillingStatus, ProviderHealthStatus, RequestStatus, TaskTier
 from ai_gateway.models import AIRequest, AIResponse, ProviderQuotaState, UsageInfo
 
+from broker.enums import BrokerOrderStatus
+from broker.models import BrokerRequestRecord, BrokerResponseRecord, OrderStatusObservation
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -1503,4 +1506,107 @@ def payload_to_provider_quota_state(data: dict) -> ProviderQuotaState:
         last_error_at=_dt_from_iso(data.get("last_error_at")),
         last_error_reason=data.get("last_error_reason"),
         reason=data["reason"],
+    )
+
+
+# -- Phase 13: Toss Securities Adapter (Broker) --------------------------
+
+
+def broker_request_to_payload(request: BrokerRequestRecord) -> dict:
+    return {
+        "request_id": request.request_id,
+        "broker_id": request.broker_id,
+        "operation": request.operation,
+        "execution_mode": request.execution_mode,
+        "client_order_id": request.client_order_id,
+        "decision_id": request.decision_id,
+        "sizing_id": request.sizing_id,
+        "risk_assessment_id": request.risk_assessment_id,
+        "configuration_version": request.configuration_version,
+        "requested_at": _dt_iso(request.requested_at),
+        "provenance": request.provenance.value,
+        "payload": request.payload,
+        "experiment_id": request.experiment_id,
+    }
+
+
+def payload_to_broker_request(data: dict) -> BrokerRequestRecord:
+    return BrokerRequestRecord(
+        request_id=data["request_id"],
+        broker_id=data["broker_id"],
+        operation=data["operation"],
+        execution_mode=data["execution_mode"],
+        client_order_id=data.get("client_order_id"),
+        decision_id=data.get("decision_id"),
+        sizing_id=data.get("sizing_id"),
+        risk_assessment_id=data.get("risk_assessment_id"),
+        configuration_version=data["configuration_version"],
+        requested_at=_dt_from_iso(data["requested_at"]),
+        provenance=TradeProvenance(data["provenance"]),
+        payload=data.get("payload") or {},
+        experiment_id=data.get("experiment_id"),
+    )
+
+
+def broker_response_to_payload(response: BrokerResponseRecord) -> dict:
+    return {
+        "response_id": response.response_id,
+        "request_id": response.request_id,
+        "broker_id": response.broker_id,
+        "operation": response.operation,
+        "status": response.status,
+        "broker_order_id": response.broker_order_id,
+        "error_code": response.error_code,
+        "attempt_count": response.attempt_count,
+        "latency_ms": response.latency_ms,
+        "responded_at": _dt_iso(response.responded_at),
+        "provenance": response.provenance.value,
+        "metadata": response.metadata,
+        "experiment_id": response.experiment_id,
+    }
+
+
+def payload_to_broker_response(data: dict) -> BrokerResponseRecord:
+    return BrokerResponseRecord(
+        response_id=data["response_id"],
+        request_id=data["request_id"],
+        broker_id=data["broker_id"],
+        operation=data["operation"],
+        status=data["status"],
+        broker_order_id=data.get("broker_order_id"),
+        error_code=data.get("error_code"),
+        attempt_count=data["attempt_count"],
+        latency_ms=data.get("latency_ms"),
+        responded_at=_dt_from_iso(data["responded_at"]),
+        provenance=TradeProvenance(data["provenance"]),
+        metadata=data.get("metadata") or {},
+        experiment_id=data.get("experiment_id"),
+    )
+
+
+def order_status_observation_to_payload(observation: OrderStatusObservation) -> dict:
+    return {
+        "observation_id": observation.observation_id,
+        "client_order_id": observation.client_order_id,
+        "broker_id": observation.broker_id,
+        "broker_order_id": observation.broker_order_id,
+        "status": observation.status.value,
+        "filled_quantity": observation.filled_quantity,
+        "avg_fill_price": observation.avg_fill_price,
+        "observed_at": _dt_iso(observation.observed_at),
+        "raw_status_code": observation.raw_status_code,
+    }
+
+
+def payload_to_order_status_observation(data: dict) -> OrderStatusObservation:
+    return OrderStatusObservation(
+        observation_id=data["observation_id"],
+        client_order_id=data["client_order_id"],
+        broker_id=data["broker_id"],
+        broker_order_id=data.get("broker_order_id"),
+        status=BrokerOrderStatus(data["status"]),
+        filled_quantity=data.get("filled_quantity"),
+        avg_fill_price=data.get("avg_fill_price"),
+        observed_at=_dt_from_iso(data["observed_at"]),
+        raw_status_code=data.get("raw_status_code"),
     )

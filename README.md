@@ -64,7 +64,7 @@
 
 ## 현재 상태
 
-**Phase 12 — AI Gateway** (설계 및 참조 구현 완료).
+**Phase 13 — Toss Securities Adapter** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -171,8 +171,32 @@
   구조적으로 없음. Phase 1~11 소스코드 변경 없이 완전히 additive. Toss
   Securities Adapter, Monitoring, Paper/Live Trading은 여전히 범위 밖
   (Phase 13+)
+- Phase 13 — Toss Securities Adapter: 완료 (`src/broker/`, 133 tests) —
+  Master Plan §9.3의 broker-neutral `BrokerAdapter` Protocol
+  (submit_order/cancel_order/get_order_status/get_account/
+  get_positions/get_capabilities)을 구현. `risk.models.
+  RiskCheckedPosition.final_target_quantity`(절대 목표치)와 caller가
+  제공하는 현재 수량의 차이로 실제 매매 side/quantity를 계산하는
+  `build_validated_order`가 이 저장소에서 유일하게 주문을 만드는
+  지점(Decision/Risk를 우회하는 경로 없음, `decision.agent`/
+  `risk.sizing`/`risk.engine`/`ai_gateway.gateway`/`learning.enums`
+  import 자체가 `broker/*.py` 어디에도 없음을 AST 스캔으로 검증).
+  `execution_mode` 기본값은 `OFFLINE`이며 `LIVE` 전환에는
+  `execution_mode=LIVE`와 `live_opt_in=True` 두 개의 독립적인 명시적
+  신호가 모두 필요(credential 존재만으로 활성화 불가) —
+  `MockBrokerAdapter`만이 이 저장소 코드/테스트/backtest가 실제로
+  호출하는 유일한 adapter. 실제 Toss증권 Open API를 리서치(공식
+  GA 2026-08-13, **공개 sandbox 없음**을 확인)하여 확인된 것만 구현
+  (`POST /oauth2/token` 인증, `POST /api/v1/orders` 주문 생성, 실제
+  주문 상태값), 확인하지 못한 취소/상태조회/계좌조회 엔드포인트는
+  추측하지 않고 `CapabilityStatus.UNKNOWN`/`BrokerCapabilityError`로
+  처리. `os.environ`/`os.getenv`는 `broker/toss/auth.py` 단 한 곳에서만
+  사용(AST 스캔으로 검증), 영속화된 request/response 어디에도 실제
+  secret 값이 없음. Phase 1~12 소스코드 변경 없이 완전히 additive.
+  Paper/Live Trading, Monitoring, 실제 실계좌 주문은 여전히 범위 밖
+  (Phase 14+)
 
-전체 테스트: **768 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12 합산).
+전체 테스트: **901 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13 합산).
 
 ## 테스트 실행
 
@@ -405,6 +429,54 @@ import하지 않아 이 계층이 직접 시장/의사결정 데이터를 조회
 `provider_quota_states` 테이블)에 영속화된다. 자세한 설계는
 `docs/specifications/PHASE-12-ai-gateway.md`와
 `docs/decisions/ADR-0018-ai-gateway.md` 참조.
+
+## Toss Securities Adapter (Phase 13)
+
+`src/broker/`는 Master Plan §9.3의 broker-neutral 인터페이스
+(`BrokerAdapter` Protocol: submit_order/cancel_order/
+get_order_status/get_account/get_positions/get_capabilities)를
+구현한다. `broker.validation.build_validated_order`가 이 저장소에서
+유일하게 실제 매매 side/quantity를 계산하는 지점이다 — Phase 8의
+`RiskCheckedPosition.final_target_quantity`는 절대 목표치(delta 아님)
+이므로, caller가 제공하는 현재 보유 수량과의 차이를 계산해야만 실제
+주문이 나온다. `client_order_id`는 decision/sizing/risk lineage +
+symbol/side/quantity/as_of_time의 결정적 해시라서, 모호한 실패 후
+재시도해도 동일한 idempotency key로 재제출된다(중복 주문 방지).
+`decision.agent`/`risk.sizing`/`risk.engine`/`ai_gateway.gateway`/
+`learning.enums` import 자체가 `broker/*.py` 어디에도 없어(AST
+스캔으로 검증) Decision/Risk/AI Gateway를 우회하거나 Model Evolution의
+APPROVED/DEPLOYED에 접근할 방법이 구조적으로 없다.
+
+`BrokerConfig.execution_mode` 기본값은 `OFFLINE`이며, `LIVE`로
+전환하려면 `execution_mode=LIVE`와 `live_opt_in=True` 두 개의 독립적인
+명시적 신호가 모두 필요하다 — credential이 환경변수에 존재하는 것만으로는
+활성화되지 않는다(`live_opt_in`이 패키지 어디서도 동적으로 계산되지
+않고 항상 리터럴 값으로만 전달됨을 AST 스캔으로 검증). 이 저장소
+자체의 코드/테스트/backtest가 실제로 호출하는 adapter는
+`MockBrokerAdapter`(결정적, 완전 오프라인, accepted/rejected/
+partially filled/filled/cancelled/broker unavailable 전부 시뮬레이션)
+뿐이다.
+
+`src/broker/toss/`는 실제 Toss증권 Open API(2026-08-13 정식 출시,
+**공개 sandbox 환경 없음**을 리서치로 확인 — 이 환경의 network egress
+proxy가 공식 문서 호스트를 차단해 OpenAPI spec을 직접 읽지 못했으나,
+공식 GA 발표와 제3자 기술 문서로 base URL/인증 방식/주문 생성 API/실제
+주문 상태값/에러 코드를 간접 확인) 연동을 위한 어댑터다. 확인된
+엔드포인트(`POST /oauth2/token` 인증, `POST /api/v1/orders` 주문
+생성)만 실제로 구현했고, 확인하지 못한 취소/상태조회/계좌조회
+엔드포인트는 추측하지 않고 `CapabilityStatus.UNKNOWN`/
+`BrokerCapabilityError`로 정직하게 처리한다. `TossBrokerAdapter`는
+생성 시점에 `execution_mode == LIVE`를 강제하여 OFFLINE/SANDBOX 설정으로
+아무 동작도 하지 않는 채 조용히 넘어가는 경로 자체가 없다.
+`os.environ`/`os.getenv`는 `broker/toss/auth.py` 단 한 곳에서만
+사용되며(AST 스캔으로 검증), resolve된 credential이나 access token은
+어떤 영속 모델 필드에도 저장되지 않는다. 결과는 Phase 4의 DuckDB
+저장소(`broker_requests`/`broker_responses`/`order_status_events`
+테이블)에 영속화되며, Decision→Risk→ValidatedOrder→BrokerRequest→
+BrokerResponse→OrderStatusObservation 전체 체인이 SQL join으로
+증명된다. Phase 1~12 소스코드는 전혀 수정하지 않았다. 자세한 설계는
+`docs/specifications/PHASE-13-toss-securities-adapter.md`와
+`docs/decisions/ADR-0019-toss-securities-adapter.md` 참조.
 
 ## 개발 원칙
 

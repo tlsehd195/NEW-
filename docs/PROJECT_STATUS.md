@@ -5,15 +5,50 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-25
-**Updated By:** Claude Code (Session 13 — Phase 12 AI Gateway)
+**Updated By:** Claude Code (Session 14 — Phase 13 Toss Securities Adapter)
 
 ---
 
 ## Current Phase
 
-**Phase 12 — AI Gateway** (설계 및 참조 구현 완료)
+**Phase 13 — Toss Securities Adapter** (설계 및 참조 구현 완료)
 
-## Current Subtask (Session 13 — Phase 12)
+## Current Subtask (Session 14 — Phase 13)
+
+Phase 13 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
+지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-12-ai-gateway`,
+HEAD `3511d7b9fa534895e649dce4bb1bcf43f3dc4b85` "Phase 12: AI Gateway",
+working tree clean)에서 시작. `git log --oneline --graph --decorate
+--all`로 단일 선형 히스토리(병합 커밋 0개) 확인, `git merge-base HEAD
+origin/main`이 `origin/main` 자신의 HEAD를 그대로 반환(발산 없음),
+`git merge-base HEAD origin/claude/autonomous-ai-investment-system-wvscwe`
+도 동일하게 확인(wvscwe에만 있는 커밋 0개), `git log <phase12-hash>..HEAD`
+가 비어 있어 현재 HEAD가 정확히 Phase 12 커밋 그 자체임을 확인. Phase
+13용 원격 브랜치가 아직 없어 검증된 현재 HEAD에서
+`claude/phase-13-toss-securities-adapter` 브랜치를 새로 생성. 착수 전
+**768/768 테스트 통과(baseline)** 확인. 상세:
+`docs/specifications/PHASE-13-toss-securities-adapter.md` §0.
+
+Master Plan §9.3(Toss Securities Adapter 구조)을 재확인하고, 실제 Toss
+증권 Open API를 리서치(공식 문서 호스트가 이 환경의 network egress
+proxy에 차단되어 있어 WebSearch로 공식 GA 발표(2026-08-13) 및 제3자
+기술 문서를 통해 간접 확인 — 자세한 내용은 spec의 "Toss API
+Verification" §8 참조)한 뒤 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-13-toss-securities-adapter.md`) + ADR-0019 +
+`src/broker/`(신규 패키지 + `toss/` 서브패키지, Phase 0~12 소스 전혀
+수정 없이 완전히 독립적인 새 계층으로 추가) +
+`src/storage/broker_repository.py`(신규 DuckDB 저장소 3종) + 신규
+133개 테스트 전부 통과. `execution_mode` 기본값은 `OFFLINE`이며 `LIVE`
+전환에는 `execution_mode=LIVE`와 `live_opt_in=True` 두 개의 독립적인
+명시적 신호가 모두 필요(credential 존재만으로 활성화 불가) —
+`MockBrokerAdapter`만이 이 저장소 자체 코드/테스트/backtest가 실제로
+호출하는 유일한 adapter. `os.environ`/`os.getenv`는
+`broker/toss/auth.py` 단 한 곳에서만 사용(AST 스캔으로 검증) —
+Decision/Risk/AI Gateway를 우회하는 경로 전혀 없음(`decision.agent`/
+`risk.sizing`/`risk.engine`/`ai_gateway.gateway`/`learning.enums` import
+자체가 `broker/*.py` 어디에도 없음을 AST 스캔으로 검증).
+
+## Previous Subtask (Session 13 — Phase 12)
 
 Phase 12 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
 지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-11-model-evolution-7hpibr`,
@@ -112,6 +147,163 @@ counterfactual/`market`·`selection` attribution만 추가) +
 영속 저장소 — `CounterfactualRecord`는 Phase 3의 기존
 `TradeJournalRepository.record_counterfactual`/`get_counterfactual`을
 변경 없이 그대로 재사용) 참조 구현 + 신규 54개 테스트 전부 통과.
+
+## Completed (Session 14 — Phase 13)
+
+- [x] **Git/Branch Integrity Check 선행 수행** — 위 "Current Subtask
+      (Session 14 — Phase 13)" 참조. 단일 선형 lineage, 병합 커밋 0개,
+      HEAD가 정확히 Phase 12 커밋임을 확인, working tree clean, Phase
+      13용 원격 브랜치가 없어 검증된 HEAD에서 새로 생성 → **PASS 판정
+      후 Phase 13 진행**
+- [x] `PROJECT_MASTER_PLAN.md` §9(Order System & Broker Layer),
+      ADR-0001~0019, Phase 7/8 spec(Decision/Position Sizing/Risk),
+      `.env.example`, 현재 src·tests 재조사. 특히 `risk.models.
+      RiskCheckedPosition.final_target_quantity`가 절대 목표치(delta
+      아님)임을 코드로 직접 확인 — Broker Adapter 계층이 현재 포지션과
+      비교해 실제 매매 수량/방향을 계산하는 유일한 지점이 되어야 함을
+      확인
+- [x] 실제 Toss증권 Open API 리서치 수행(WebSearch/WebFetch) —
+      `developers.tossinvest.com`/`openapi.tossinvest.com`이 이 환경의
+      network egress proxy에 차단되어 OpenAPI spec을 직접 읽지 못함,
+      대신 공식 GA 발표(2026-08-13)와 제3자 기술 문서로 간접 확인:
+      base URL(`https://openapi.tossinvest.com`), OAuth2 Client
+      Credentials 인증(`POST /oauth2/token`), 주문 생성
+      (`POST /api/v1/orders`, 확인된 request 필드:
+      clientOrderId/symbol/side/orderType/quantity/price), 주문 상태
+      값(PENDING/PARTIAL_FILLED/PENDING_CANCEL/PENDING_REPLACE 및
+      FILLED/CANCELED/REJECTED/REPLACED), 에러 코드 예시
+      (expired-token/insufficient-buying-power/order-hours-closed/
+      price-out-of-range), **공개 sandbox 환경 없음**(실계좌 1주로
+      테스트 권장). 취소/상태조회/계좌조회 엔드포인트의 정확한 경로는
+      확인하지 못해 추측하지 않고 `CapabilityStatus.UNKNOWN`/
+      `BrokerCapabilityError`로 처리(상세: spec §8 "Toss API
+      Verification")
+- [x] `docs/specifications/PHASE-13-toss-securities-adapter.md` 작성
+      (Git Integrity Check 결과를 §0에 포함, Order Validation/Capability
+      Model/Live Execution Safety/Fail-Closed/Toss API
+      Verification/Secrets/Persistence/Lineage/Point-in-Time 각 설계,
+      out-of-scope 항목과 근거, 16개 섹션)
+- [x] `docs/decisions/ADR-0019-toss-securities-adapter.md` 작성 (8개
+      결정 사항 + alternatives considered + consequences)
+- [x] `src/broker/` 패키지 구현: `enums.py`(BrokerExecutionMode —
+      OFFLINE 기본값/BrokerOrderStatus — Toss 실제 상태값만 사용,
+      placeholder 목록 아님/OrderValidationStatus/BrokerCapability/
+      CapabilityStatus), `config.py`(BrokerConfig — credential은 참조
+      이름만, LIVE 전환에 `live_opt_in=True` 별도 필수), `errors.py`
+      (BrokerError 계층, ai_gateway.provider와 동일 패턴),
+      `models.py`(ValidatedOrder — 유일한 권위 있는 주문 의도,
+      client_order_id는 결정적/BrokerOrderResponse — UNKNOWN 상태
+      구조적 지원/BrokerAccountSnapshot·BrokerPosition — available=False
+      시 값 필드 보유 금지를 `__post_init__`이 강제), `capabilities.py`
+      (build_capabilities — 선언 안 된 capability는 항상 UNKNOWN),
+      `validation.py`(build_validated_order — RiskCheckedPosition의
+      절대 목표치와 현재 수량 차이로 side/quantity 계산하는 유일한
+      지점, compute_client_order_id — 결정적 idempotency key),
+      `transport.py`(BrokerTransport Protocol + MockTransport),
+      `protocol.py`(BrokerAdapter Protocol), `mock.py`
+      (MockBrokerAdapter — 유일하게 이 저장소 코드가 실제로 호출하는
+      adapter, accepted/rejected/partial_fill/filled/cancelled/
+      unavailable/account_unavailable/status_unknown 전부 결정적
+      시뮬레이션), `repository.py`(3종 Repository Protocol + InMemory
+      구현), `pipeline.py`(submit_validated_order — 모든 operation의
+      일관된 audit log 기록), `auth.py`(ResolvedCredentials 타입만,
+      해석 로직 없음)
+- [x] `src/broker/toss/` 서브패키지: `endpoints.py`(CONFIRMED/
+      UNCONFIRMED 명시적 구분, 확인 못한 경로는 `None`), `auth.py`
+      (TossAuthClient — 이 패키지에서 `os.environ`/`os.getenv`를
+      사용하는 유일한 파일), `mapping.py`(map_order_status — 인식 못한
+      문자열은 항상 UNKNOWN, parse_order_response — 401/429/malformed/
+      unrecognized 전부 안전 처리), `transport.py`(TossHttpTransport —
+      stdlib `urllib`만 사용, 신규 의존성 없음, 응답 헤더를 안전한
+      allowlist로만 필터링), `adapter.py`(TossBrokerAdapter — 생성자가
+      execution_mode==LIVE 강제, submit_order만 확인된 엔드포인트로
+      실제 구현, 나머지는 BrokerCapabilityError)
+- [x] `src/storage/broker_repository.py`(3종 DuckDB Repository) +
+      `schema.py`/`serialization.py`에 `broker_requests`(decision_id/
+      sizing_id/risk_assessment_id를 실제 컬럼으로 노출, SQL join
+      가능)/`broker_responses`(Phase 5~8/12의 caller-assigned id 신뢰
+      패턴)/`order_status_events`(append-only, Phase 5/12 패턴) 테이블
+      + `order_status_event_seq` 시퀀스 신규 추가 — 기존 테이블 스키마
+      변경 없음
+- [x] Phase 1~12 소스코드 변경 없음 — `schema.py`/`serialization.py`에
+      대한 순수 추가만 있으며(`git diff src/storage/schema.py
+      src/storage/serialization.py | grep '^-'` 결과 두 파일 모두
+      삭제/변경 없음으로 확인), 그 외 Phase 1~12 코드 전혀 수정하지
+      않음. `.env.example`은 이미 예약되어 있던 TOSS_API_KEY/
+      TOSS_API_SECRET/TOSS_ACCOUNT_ID 주석을 리서치 결과로 보강만 함
+      (변수명 자체는 변경 없음)
+- [x] `tests/broker/`(125: models 16 + validation 19 + mock 15 +
+      boundary 12 + secret_safety 5 + reproducibility 3 + point_in_time
+      4 + backtest_integration 8 + toss/mapping 19 + toss/transport 7 +
+      toss/auth 8 + toss/adapter 9) + `tests/storage/
+      test_broker_repository.py`(6) + `tests/integration/
+      test_broker_lineage.py`(2) — 신규 133개 테스트 작성 및 전부 통과
+      (`test_broker_*`/`test_toss_*` prefix로 명명해 기존 트리 전체와
+      basename 충돌 없음을 사전 확인)
+- [x] **전체 테스트 스위트 901개 전부 통과** (Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57 + Phase6 39 + Phase7 40 + Phase8
+      94 + Phase9 70 + Phase10 54 + Phase11 62 + Phase12 99 + Phase13
+      133) — Phase 1~12 기존 테스트 무손상 확인
+- [x] Order/Broker 경계 검증 — `broker.*` 어디에도 `decision.agent`/
+      `risk.sizing`/`risk.engine`/`predict.predictor`/`ai_gateway.
+      gateway`/`learning.enums` import가 없음을 AST 스캔으로 검증,
+      `ValidatedOrder`가 `broker/validation.py` 밖에서 직접 생성되지
+      않음을 AST 스캔으로 검증, BrokerAdapter Protocol에 decide/
+      size_position/approve/deploy 등 금지 메서드 없음을 reflection으로
+      검증(`test_broker_boundary.py`)
+- [x] Live Execution Safety 검증 — `BrokerConfig` 기본값 OFFLINE,
+      `execution_mode=LIVE`만으로는 생성 실패(ValueError), `live_opt_in`
+      이 패키지 어디서도 동적으로 계산되지 않고 항상 리터럴 값으로만
+      전달됨을 AST 스캔으로 검증, `TossBrokerAdapter` 생성자가
+      execution_mode==LIVE를 강제함을 검증
+      (`test_broker_boundary.py::TestExecutionModeGuard`,
+      `test_toss_adapter.py::TestConstructionRequiresLiveMode`)
+- [x] Secret 안전성 검증 — `os.environ`/`os.getenv`가
+      `broker/toss/auth.py` 단 한 곳에서만 존재함을 패키지 전체 AST
+      스캔으로 검증, 주문 제출 후 영속화된 request/response payload
+      어디에도 실제 secret 문자열이나 `Bearer ` 헤더가 없음을 확인,
+      `BrokerAuthError` 예외 메시지가 credential 값을 echo하지 않음을
+      확인(`test_broker_secret_safety.py`)
+- [x] Fail-Closed 검증 — broker unavailable/timeout/auth 실패/rate
+      limit/malformed response/인식 못한 order status 문자열/미검증
+      capability/무효 주문/중복 client_order_id/계좌·포지션 조회
+      불가(0원·포지션 없음으로 추정하지 않고 available=False 보존) 전부
+      전용 테스트로 검증
+- [x] Point-in-time — `submit_order`/`get_order_status`가 `requested_at`
+      /`as_of`를 기본값 없는 필수 인자로 요구, `data_infra.repository`/
+      `backtest.asof` import가 `broker/*.py` 어디에도 없음(AST 스캔),
+      `ValidatedOrder.as_of_time`이 `RiskCheckedPosition.as_of_time`을
+      그대로 복사(wall-clock 호출 없음)함을 확인
+      (`test_broker_point_in_time.py`)
+- [x] Backtest 연동 — `src/backtest/`가 `broker.*`를 전혀 import하지
+      않음을 AST 스캔으로 확인, `MockBrokerAdapter`가 accepted/
+      rejected/partially filled/filled/cancelled/timeout(unavailable)
+      전부를 결정적으로 시뮬레이션함을 확인, 이 저장소의 어떤 테스트
+      파일도 `TossHttpTransport`(실제 네트워크 가능한 유일한
+      구현체)를 자기 자신의 전용 테스트 외에는 참조하지 않음을 확인
+      (`test_broker_backtest_integration.py`)
+- [x] Reproducibility — `random` import/`datetime.now()`/`datetime.
+      utcnow()` 호출이 `src/broker/**/*.py` 어디에도 없음을 AST
+      스캔으로 확인, 동일 RiskCheckedPosition+current_quantity →
+      동일 client_order_id+동일 MockBroker 응답 검증
+      (`test_broker_reproducibility.py`)
+- [x] SQL join으로 lineage 증명: `decision_outputs`⋈`risk_assessments`
+      ⋈`broker_requests`⋈`broker_responses`⋈`order_status_events`
+      (5-way join, 한 DuckDB 카탈로그) + 프로세스 재시작 후 동일 결과
+      확인, `broker.*`가 DecisionAction이나 target quantity를 스스로
+      재생성하지 않고 Phase 7/8 산출물을 그대로 이어받기만 함을 확인
+      (`test_broker_lineage.py`)
+- [x] Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+      않다고 판단, 계속 이연
+- [x] Phase 8/9/10/11/12 Known Issue 재검토 — Broker Adapter와 무관,
+      변경 불필요
+- [x] Paper Trading(Phase 15)/Live Trading(Phase 16)/Monitoring(Phase
+      14)/AI 기반 실행/Learning Engine 변경/Model Registry 완성/Model
+      APPROVED·DEPLOYED 자동 전이/Portfolio optimizer/새 prediction
+      model·decision strategy/risk limit 재설계/broker의 직접 position
+      sizing·risk 판단은 이번 Phase 범위에서 명시적으로 제외 — 실제
+      실계좌 주문도 여전히 발생하지 않음(코드상 가능하더라도 이 저장소
+      자체는 절대 호출하지 않음)
 
 ## Completed (Session 13 — Phase 12)
 
@@ -899,14 +1091,14 @@ counterfactual/`market`·`selection` attribution만 추가) +
 
 ## In Progress
 
-없음 (Phase 12 설계+참조구현 완료).
+없음 (Phase 13 설계+참조구현 완료).
 
 ## Blocked
 
 **DECISION REQUIRED 3건 누적 (Phase 2/3에서 이어짐) — 사용자 확인 필요.**
 Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, Phase 11,
-Phase 12 세션 모두 세 항목을 재검토했으며, 매번 이번 Phase의 완료 조건과
-무관함을 확인하여 여전히 해결하지 않고 이연한다(재검토했으며 이번 Phase와
+Phase 12, Phase 13 세션 모두 세 항목을 재검토했으며, 매번 이번 Phase의
+완료 조건과 무관함을 확인하여 여전히 해결하지 않고 이연한다(재검토했으며 이번 Phase와
 무관하여 이연) (Phase 4 spec §19, Phase 5 spec §16, Phase 6 spec §16,
 Phase 7 spec §14, Phase 8 spec §20, Phase 9 spec §20에 각각 재검토 근거
 상세 기록):

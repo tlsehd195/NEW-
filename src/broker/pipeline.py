@@ -1,0 +1,86 @@
+"""submit_validated_order: wraps one `BrokerAdapter.submit_order` call
+with the uniform audit-log recording every operation gets (instruction
+section 15) -- mirrors `ai_gateway.gateway.AIGateway`'s `_finalize`
+pattern (Phase 12) applied to the broker boundary instead. Persists
+nothing itself unless repositories are supplied (the same "return
+objects, caller decides what to keep" separation
+`learning.pipeline.run_learning_pipeline`/`evolution.pipeline.
+generate_candidate_batch` already use).
+
+See docs/specifications/PHASE-13-toss-securities-adapter.md section 15.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+
+from broker.errors import BrokerError
+from broker.models import BrokerOrderResponse, BrokerRequestRecord, BrokerResponseRecord, ValidatedOrder
+from broker.protocol import BrokerAdapter
+from broker.repository import BrokerRequestRepository, BrokerResponseRepository, OrderStatusEventRepository
+
+from trade_journal.enums import TradeProvenance
+
+
+class _IdAllocator:
+    def __init__(self, prefix: str) -> None:
+        self._prefix = prefix
+        self._next_id = 1
+
+    def allocate(self) -> str:
+        value = f"{self._prefix}-{self._next_id:06d}"
+        self._next_id += 1
+        return value
+
+
+_request_ids = _IdAllocator("BROKREQ")
+_log_response_ids = _IdAllocator("BROKRESLOG")
+
+
+def submit_validated_order(
+    adapter: BrokerAdapter,
+    order: ValidatedOrder,
+    *,
+    execution_mode: str,
+    requested_at: datetime,
+    configuration_version: str,
+    request_repository: Optional[BrokerRequestRepository] = None,
+    response_repository: Optional[BrokerResponseRepository] = None,
+    status_repository: Optional[OrderStatusEventRepository] = None,
+) -> BrokerOrderResponse:
+    request_record = BrokerRequestRecord(
+        request_id=_request_ids.allocate(), broker_id=adapter.broker_id, operation="submit_order",
+        execution_mode=execution_mode, client_order_id=order.client_order_id, decision_id=order.decision_id,
+        sizing_id=order.sizing_id, risk_assessment_id=order.risk_assessment_id,
+        configuration_version=configuration_version, requested_at=requested_at, provenance=order.provenance,
+        payload={"security_id": order.security_id, "side": order.side.value, "quantity": order.quantity},
+        experiment_id=order.experiment_id,
+    )
+    if request_repository is not None:
+        request_repository.record(request_record)
+
+    try:
+        order_response = adapter.submit_order(order, requested_at=requested_at)
+    except BrokerError as exc:
+        if response_repository is not None:
+            response_repository.record(BrokerResponseRecord(
+                response_id=_log_response_ids.allocate(), request_id=request_record.request_id,
+                broker_id=adapter.broker_id, operation="submit_order", status="ERROR",
+                broker_order_id=None, error_code=type(exc).__name__, attempt_count=1, latency_ms=None,
+                responded_at=requested_at, provenance=order.provenance, metadata={"reason": str(exc)},
+                experiment_id=order.experiment_id,
+            ))
+        raise
+
+    if response_repository is not None:
+        response_repository.record(BrokerResponseRecord(
+            response_id=_log_response_ids.allocate(), request_id=request_record.request_id,
+            broker_id=adapter.broker_id, operation="submit_order", status=order_response.status.value,
+            broker_order_id=order_response.broker_order_id, error_code=order_response.error_code,
+            attempt_count=order_response.attempt_count, latency_ms=order_response.latency_ms,
+            responded_at=order_response.responded_at, provenance=order_response.provenance,
+            metadata={}, experiment_id=order_response.experiment_id,
+        ))
+
+    return order_response
