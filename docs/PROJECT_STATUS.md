@@ -5,39 +5,179 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-25
-**Updated By:** Claude Code (Session 10 — Phase 9 Learning Engine)
+**Updated By:** Claude Code (Session 11 — Phase 10 Counterfactual / Attribution)
 
 ---
 
 ## Current Phase
 
-**Phase 9 — Learning Engine** (설계 및 참조 구현 완료)
+**Phase 10 — Counterfactual / Attribution** (설계 및 참조 구현 완료)
 
 ## Current Subtask
 
-Phase 9 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시,
-이전 세션 PASS 결과를 재사용하지 않고 현재 HEAD 기준으로 처음부터
-재검증) — 결과 PASS(단일 선형 히스토리, main/wvscwe 모두 현재 HEAD의
-조상, Phase 0~8 전부 포함 확인, 483/483 테스트 통과, working tree
-clean). 검증 통과 후 Phase 9 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-9-learning-engine.md`) + ADR-0015 +
-`src/learning/`(DataCleaner — VALID/INVALID/EXCLUDED/UNKNOWN 4상태로
-샘플을 절대 조용히 버리지 않는 데이터 정제, Labeler — 실제 실현된
-realized_return을 label로 사용하는 최소 label 구현, build_training_dataset
-— cleaning+labeling+시간순 train/validation/test split을 재현 가능한
-content-hash 버전과 함께 조립, MeanRewardBaselineTrainer — TRAIN split
-평균만 사용하는 deterministic null-hypothesis baseline trainer,
-Evaluator — baseline과의 비교만 제공하고 우위를 주장하지 않는 평가,
-CandidateModelStatus — CANDIDATE만 실제로 생산, 나머지 6개 상태는 Phase
-10/11을 위해 예약) + `src/storage/learning_repository.py`(Phase 4 저장소
-확장) 참조 구현 + 신규 70개 테스트 전부 통과. 구현 과정에서 자체 발견한
-버그 2건(dataset_version이 진짜 content hash가 아니었던 문제,
-storage-level id가 in-process allocator에서 충돌하던 문제)을 Phase 4가
-이미 확립한 해결 패턴 그대로 적용해 수정. Phase 3의 DECISION REQUIRED
-3건은 이번 Phase에서도 재검토 결과 해결이 필요하지 않다고 판단하여 계속
-이연(Phase 9 spec §20 참조, 아래 "Blocked" 섹션도 참조). 커밋 후 최종
-HEAD 기준으로 Git Integrity Check를 다시 한 번 수행하여 완료 보고에
-반영한다(사용자의 명시적 반복 지시).
+Phase 10 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시,
+이전 세션 PASS 결과를 재사용하지 않고 현재 상태 기준으로 처음부터
+재검증) — 이번 세션은 새 컨테이너에서 시작했고, 지정된 작업 브랜치
+`claude/phase-10-counterfactual-attribution-ubum6u`가 실제로는 `main`에서
+새로 생성되어 `Initial commit`(`c3abad0`) 하나만 갖고 있었으며(원격의
+동일 이름 브랜치는 이미 삭제된 상태), 실제 Phase 0~9 lineage는
+`origin/claude/phase-4-baseline-storage-tuavwk`(HEAD `0bd2350`, "Phase 9:
+Learning Engine")에 있음을 발견 — `c3abad0`이 `0bd2350`의 진짜 조상임을
+`merge-base --is-ancestor`로 확인한 뒤(즉 지정 브랜치에 실제 lineage가
+갖지 않은 내용이 전혀 없었음) `git checkout -B
+claude/phase-10-counterfactual-attribution-ubum6u
+origin/claude/phase-4-baseline-storage-tuavwk`로 브랜치 포인터를
+재설정(공유 히스토리에 대한 rewrite/force-push 아님 — 원격의 stale
+브랜치는 이미 삭제되어 있었음). 이후 단일 선형 히스토리(Initial commit
+→ Phase 0 → … → Phase 9), 병합 커밋 0개, `origin/main`/`origin/claude/
+autonomous-ai-investment-system-wvscwe` 모두 HEAD의 조상, working tree
+clean, Phase 9 산출물 전부 존재 확인 → 의존성(duckdb/pyarrow/pytest,
+컨테이너에 미설치 상태였음) 설치 후 553/553 테스트 통과 → **PASS 판정
+후 Phase 10 착수**. 검증 결과와 인수인계 문서의 차이(작업 브랜치 상태)는
+완료 보고에 명시.
+
+Master Plan/ADR-0001~0015/Phase 1~9 spec/현재 src·tests 재조사 후 Phase
+10 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-10-counterfactual-attribution.md`) + ADR-0016
++ `src/counterfactual/`(Phase 3가 이미 정의해 둔 예약 필드를 그대로
+채우는 100% additive 패키지 — HOLD counterfactual은 Phase 3
+`compute_hold_counterfactual`을 그대로 재사용하고, 신규 CASH
+counterfactual/`market`·`selection` attribution만 추가) +
+`src/storage/counterfactual_repository.py`(`AttributionResult` 전용 신규
+영속 저장소 — `CounterfactualRecord`는 Phase 3의 기존
+`TradeJournalRepository.record_counterfactual`/`get_counterfactual`을
+변경 없이 그대로 재사용) 참조 구현 + 신규 54개 테스트 전부 통과.
+
+## Completed (Session 11 — Phase 10)
+
+- [x] **Git/Branch Integrity Check 선행 수행 — 이전 세션 PASS를 재사용
+      하지 않고 처음부터 재검증**(사용자 지시) — 위 "Current Subtask"
+      참조. 지정 작업 브랜치가 실제 Phase 0~9 lineage를 갖고 있지 않음을
+      발견하고, 손실 없이(지정 브랜치의 유일한 커밋이 실제 lineage의
+      조상이었음을 확인 후) 올바른 lineage로 브랜치 포인터를 재설정 →
+      **PASS 판정 후 Phase 10 진행**
+- [x] Master Plan §33(Counterfactual Analysis)/§34(Performance
+      Attribution)/ADR-0001~0015/Phase 1~9 spec/현재 src·tests 재조사.
+      특히 Phase 3가 이미 `AlternativeOutcome`/`CounterfactualRecord`/
+      `AttributionResult`를 "미래 Phase가 채울 예약 필드" 형태로 정의해
+      두었고, `compute_hold_counterfactual`/`compute_execution_attribution`
+      두 함수만 실제로 값을 계산했으며, `TradeJournalRepository`가 이미
+      `CounterfactualRecord`(HOLD 하나만 담은 상태로) 영속화를 완전히
+      지원하지만 `AttributionResult`는 어떤 저장소도 가진 적이 없음을
+      코드로 직접 확인
+- [x] `docs/specifications/PHASE-10-counterfactual-attribution.md` 작성
+      (Git Integrity Check 결과를 §0에 포함, Counterfactual/Attribution
+      각 설계, out-of-scope 항목과 그 근거, point-in-time/provenance/
+      reproducibility/구조적 경계/lineage/persistence, 12개 섹션)
+- [x] `docs/decisions/ADR-0016-counterfactual-attribution.md` 작성 (8개
+      결정 사항 + alternatives considered + consequences)
+- [x] `src/counterfactual/` 패키지 구현: `counterfactual.py`
+      (`compute_cash_counterfactual` — 시스템 전역에 이미 존재하는
+      risk_free_rate=0.0 관행을 그대로 따름, `build_counterfactual_record`
+      — Phase 3의 HOLD + 신규 CASH를 `trade_journal.models.
+      CounterfactualRecord`(수정 없이 재사용)로 조립, `compute_
+      counterfactual_advantage` — 선택한 행동과 대안의 실현 수익률 차이),
+      `attribution.py`(`compute_market_attribution` — Phase 2
+      `BenchmarkResult`/`PerformanceReport`의 기존 필드를 그대로 읽음,
+      `compute_selection_attribution` — `cumulative_return - market -
+      execution` 정확한 residual, `build_attribution_result` — 세
+      요소가 `market + selection + execution == cumulative_return`을
+      항상 정확히 만족하도록 구성, `sector`/`factor`/`timing`은 계속
+      예약), `repository.py`(`AttributionRepository` Protocol +
+      `InMemoryAttributionRepository` — Phase 3의 `PostTradeAnalysis`/
+      `CounterfactualRecord`와 동일한 append/latest-wins 규율),
+      `pipeline.py`(`run_counterfactual_analysis`/
+      `run_counterfactual_analysis_for_provenance` — Trade Journal을
+      읽어 조립만 하고 저장은 호출자 책임, Learning Engine의 `pipeline.py`
+      설계를 그대로 따름)
+- [x] `src/storage/counterfactual_repository.py`
+      (`DuckDBAttributionRepository`) + `schema.py`/`serialization.py`에
+      `attribution_results` 테이블(Phase 3의 기존 `post_trade_analyses`/
+      `counterfactuals`와 동일한 append-history 구조) + `attribution_seq`
+      시퀀스 신규 추가 — 기존 테이블 스키마 변경 없음.
+      `CounterfactualRecord`용 신규 테이블은 만들지 않음(Phase 3의
+      `counterfactuals` 테이블이 이미 임의 길이의 `alternatives` tuple을
+      완전히 round-trip함을 기존 코드 확인으로 검증한 뒤 그대로 재사용)
+- [x] Phase 1~9 소스코드 변경 없음 — `schema.py`/`serialization.py`에
+      대한 순수 추가만 있으며(`git diff src/storage/schema.py
+      src/storage/serialization.py | grep '^-'` 결과 두 파일 모두
+      삭제/변경 없음으로 확인), 그 외 Phase 1~9 코드 전혀 수정하지 않음
+- [x] `tests/counterfactual/`(46: cash counterfactual 7 + counterfactual
+      record/advantage 7 + attribution 11 + attribution repository 6 +
+      point-in-time 5 + provenance 2 + reproducibility 4 + boundary 4)
+      + `tests/storage/test_attribution_repository.py`(6) +
+      `tests/integration/`(2: counterfactual pipeline + attribution
+      lineage) — 신규 54개 테스트 작성 및 전부 통과 (파일명 충돌 4건
+      발견 및 즉시 수정 — `test_reproducibility.py`→
+      `test_counterfactual_reproducibility.py`(tests/learning/와 충돌),
+      `test_boundary.py`→`test_counterfactual_boundary.py`
+      (tests/predict/와 충돌), `test_point_in_time.py`→
+      `test_counterfactual_point_in_time.py`(tests/regime/와 충돌),
+      `test_provenance.py`→`test_counterfactual_provenance.py`
+      (tests/trade_journal/와 충돌); 자체 파일명 충돌 1건도 함께 수정
+      — `tests/counterfactual/test_attribution_repository.py`→
+      `test_counterfactual_attribution_repository.py`
+      (tests/storage/test_attribution_repository.py와 충돌))
+- [x] **전체 테스트 스위트 607개 전부 통과** (Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57 + Phase6 39 + Phase7 40 + Phase8
+      94 + Phase9 70 + Phase10 54) — Phase 1~9 기존 테스트 무손상 확인
+- [x] `market + selection + execution == cumulative_return` reconciliation
+      항등식을 hand-built fixture(`test_attribution.py::
+      TestAttributionReconciles`)와 실제 `BacktestEngine` 실행 결과
+      (`test_attribution_lineage.py`) 양쪽에서 직접 검증
+- [x] `CounterfactualRecord`가 Phase 3의 기존 `build_experience_records`
+      (수정 없음)를 통해 Learning Engine Experience Dataset으로 자동
+      연결됨을 실제 baseline backtest 통합 테스트로 확인
+      (`test_counterfactual_pipeline.py` — counterfactual 기록 전에는
+      `counterfactual_results`가 전부 `None`, HOLD+CASH 기록 후에는
+      자동으로 2개 alternative를 담음)
+- [x] 미래 데이터 유출 방지 — CASH counterfactual은 `DataRepository`
+      호출을 아예 하지 않음(AST 스캔으로 검증), HOLD counterfactual은
+      Phase 3의 기존 `as_of_time` guard를 변경 없이 재사용, `build_
+      attribution_result`는 이미 계산된 `ExperimentRecord` 필드만 읽고
+      어떤 데이터 저장소도 호출하지 않음 — Phase 10은 새로운
+      `AsOfDataView`/`DataRepository` 호출 지점을 하나도 추가하지 않음
+      (`test_counterfactual_point_in_time.py`)
+- [x] Reproducibility — `random` import/`datetime.now()`/`datetime.
+      utcnow()` 호출이 `src/counterfactual/*.py` 어디에도 없음을 AST
+      스캔으로 확인, 동일 입력 → 동일 출력 검증
+      (`test_counterfactual_reproducibility.py`)
+- [x] 구조적 경계 — `CounterfactualRecord`/`AttributionResult` 어디에도
+      order/broker/risk-shaped 필드가 없고(Phase 3 원본 타입 그대로),
+      `src/counterfactual/*.py` 어디서도 `Order`/`RiskCheckedPosition`/
+      `PositionSizingResult`를 생성하거나 `CandidateModelStatus.
+      APPROVED`/`DEPLOYED`를 참조하지 않음을 AST 스캔 + reflection으로
+      검증(`test_counterfactual_boundary.py`)
+- [x] Provenance — 서로 다른 `TradeProvenance`의 거래를 함께 처리해도
+      한 거래의 counterfactual이 다른 거래의 데이터를 빌려오지 않음을
+      확인(`test_counterfactual_provenance.py`)
+- [x] `alternative_action_1`/`alternative_action_2`(다른 모델/전략의
+      가상 의사결정과 비교)는 Phase 3가 이미 "그 대안이 실제로 존재하고
+      실행 가능해야 한다"는 이유로 Phase 11(Model Evolution)로 지정해둔
+      것을 재검토 후 그대로 유지 — Phase 6~9로 여러 Predictor 구현체와
+      작동하는 DecisionAgent가 생겼지만, 대안 모델의 전체 의사결정
+      파이프라인을 별도로 실행/등록/추적하는 것은 Model Evolution의
+      고유 범위라고 판단해 구현하지 않음(ADR-0016 §7)
+- [x] `timing`/`sector`/`factor` attribution은 계속 `None`으로 예약 —
+      `sector`/`factor`는 Phase 8부터 이어지는 데이터 소스 부재(변경
+      없음), `timing`은 Brinson-Fachler류 가중치 기반 분해가 필요한데
+      검증되지 않은 모델로 그럴듯하지만 틀릴 수 있는 숫자를 만드는 위험이
+      "정확한 값을 계산할 수 없으면 추정값을 사실처럼 저장하지 않는다"는
+      프로젝트 원칙에 어긋난다고 판단해 이연(ADR-0016 §5-6)
+- [x] `PostTradeAnalysis`의 나머지 예약 필드(`prediction_error`,
+      `timing_error`, `risk_estimation_error`, `regime_error`,
+      `signal_error` — Master Plan §32)는 Counterfactual(§33)/
+      Attribution(§34)과는 별개의 master plan 섹션이라고 판단해 이번
+      Phase 범위에서 명시적으로 제외
+- [x] Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+      않다고 판단, 계속 이연
+- [x] Phase 8/9 Known Issue 재검토 — Counterfactual/Attribution과 무관,
+      변경 불필요
+- [x] Model Evolution 완성(Phase 11)/AI Gateway(Phase 12)/Toss
+      Securities Adapter(Phase 13)/Monitoring(Phase 14)/Paper
+      Trading(Phase 15)/Live Trading(Phase 16)은 이번 Phase 범위에서
+      명시적으로 제외 — 실제 AI API 호출, 주문/브로커/실제 매매도 여전히
+      구현하지 않음
 
 ## Completed (Session 10 — Phase 9)
 
@@ -453,14 +593,14 @@ HEAD 기준으로 Git Integrity Check를 다시 한 번 수행하여 완료 보�
 
 ## In Progress
 
-없음 (Phase 9 설계+참조구현 완료).
+없음 (Phase 10 설계+참조구현 완료).
 
 ## Blocked
 
 **DECISION REQUIRED 3건 누적 (Phase 2/3에서 이어짐) — 사용자 확인 필요.**
-Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9 세션 모두 세 항목을
-재검토했으며, 매번 이번 Phase의 완료 조건과 무관함을 확인하여 여전히
-해결하지 않고 이연한다(재검토했으며 이번 Phase와 무관하여 이연)
+Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10 세션 모두
+세 항목을 재검토했으며, 매번 이번 Phase의 완료 조건과 무관함을 확인하여
+여전히 해결하지 않고 이연한다(재검토했으며 이번 Phase와 무관하여 이연)
 (Phase 4 spec §19, Phase 5 spec §16, Phase 6 spec §16, Phase 7 spec §14,
 Phase 8 spec §20, Phase 9 spec §20에 각각 재검토 근거 상세 기록):
 
@@ -529,6 +669,59 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 문서화한 상태)로 저장된다 — 저장소가 정밀도 문제를 해결하지도, 악화
 시키지도 않는다.
 ```
+
+## Design Decisions (Phase 10 세션의 핵심 결정)
+
+1. Phase 10 착수 전 Git/Branch Integrity Check를 처음부터 재수행 —
+   지정된 작업 브랜치가 실제로는 `main`에서 새로 생성되어 Phase 0~9
+   lineage를 갖고 있지 않음을 발견. 지정 브랜치의 유일한 커밋이 실제
+   lineage(`origin/claude/phase-4-baseline-storage-tuavwk`, Phase 9
+   HEAD)의 조상임을 확인한 뒤 브랜치 포인터를 그 lineage로 재설정 —
+   공유 히스토리를 rewrite하거나 force-push하지 않음(원격의 stale
+   브랜치는 이미 삭제되어 있었음). 실제 저장소 상태를 인수인계 문서보다
+   우선했다(위 "Current Subtask" 참조).
+2. `AlternativeOutcome`/`CounterfactualRecord`/`AttributionResult`는
+   Phase 3가 이미 이 Phase를 위한 예약 필드로 정의해 둔 정확히 그 타입을
+   재사용 — Phase 9의 `LearningExperimentRecord`(새 타입이 필요했던
+   사례)와 달리, 이번에는 재사용이 정확히 들어맞아 병렬 타입을 만들지
+   않음(ADR-0016 §1).
+3. `CounterfactualRecord` 영속화는 재구현하지 않음 — Phase 3의
+   `TradeJournalRepository.record_counterfactual`/`get_counterfactual`이
+   이미 임의 길이의 `alternatives` tuple을 완전히 저장/복원함을 기존
+   코드를 읽어 확인한 뒤, `AttributionResult`에만(유일하게 저장소가
+   없었던 타입) 신규 저장소를 추가(ADR-0016 §2).
+4. CASH counterfactual의 `risk_free_rate` 기본값은 이 코드베이스에 이미
+   존재하는 `0.0` 관행(`backtest.metrics.sharpe_ratio`/`sortino_ratio`)을
+   그대로 따름 — 새로운 "전형적인" 무위험이자율을 발명하지 않음
+   (ADR-0016 §3).
+5. `market` attribution은 Phase 2 `BenchmarkEngine`/
+   `compute_performance_report`가 이미 계산·영속화한
+   `benchmark_cumulative_return`을 그대로 읽음 — 재계산하지 않아 저장된
+   값과 어긋날 위험, 그리고 아직 해결되지 않은 PRICE_RETURN/
+   TOTAL_RETURN DECISION REQUIRED를 두 번째 장소에서 다시 상속하는 것
+   모두를 피함(ADR-0016 §4).
+6. `selection`은 `cumulative_return - market - execution`의 정확한
+   residual로 정의 — 순수 "종목 선택 능력"이 아니라 selection+timing이
+   합쳐진 residual임을 문서에 명시. `market + selection + execution ==
+   cumulative_return` 항등식이 구성상 항상 정확히 성립하며, 이를 직접
+   테스트로 검증(`test_attribution.py::TestAttributionReconciles`,
+   `test_attribution_lineage.py`)(ADR-0016 §5).
+7. Brinson-Fachler류 가중치 기반 `timing`/`selection` 완전 분해는
+   검토했으나 이번 Phase에서 구현하지 않음 — 필요한 원재료
+   (`PositionSizingResult.proposed_target_weight` 시계열,
+   `BenchmarkResult.value_series`)는 있지만, 검증되지 않은 모델이
+   "그럴듯하지만 틀릴 수 있는" 숫자를 만들 위험이 이번 Phase가 실제로
+   전달해야 하는 "AI가 실제로 alpha를 만들어냈는지"를 정직한 residual로
+   전달하는 것보다 크다고 판단(ADR-0016 §5, Alternatives Considered §2).
+8. `alternative_action_1`/`alternative_action_2`(다른 모델/전략의
+   가상 의사결정과 비교)는 Phase 3가 이미 Phase 11(Model Evolution)로
+   지정해둔 근거를 재검토 후 그대로 유지 — 대안 모델의 전체 파이프라인을
+   별도로 실행/등록/추적하는 것은 이번 Phase가 아니라 Model Evolution의
+   고유 범위(ADR-0016 §7).
+9. Phase 10은 새로운 `AsOfDataView`/`DataRepository` 호출 지점을 하나도
+   추가하지 않음 — CASH는 데이터 조회가 전혀 필요 없고, HOLD는 Phase 3의
+   기존 호출을 변경 없이 재사용하며, attribution은 이미 계산된
+   `ExperimentRecord` 필드만 읽음(ADR-0016 §8).
 
 ## Design Decisions (Phase 9 세션의 핵심 결정)
 

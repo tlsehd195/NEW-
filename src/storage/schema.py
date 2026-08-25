@@ -479,6 +479,19 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 10: Performance Attribution (Counterfactual reuses Phase 3's
+    # existing `counterfactuals` table -- no new table for it) --
+    """
+    CREATE SEQUENCE IF NOT EXISTS attribution_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS attribution_results (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('attribution_seq'),
+        experiment_id TEXT NOT NULL,
+        computed_at TIMESTAMP,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

@@ -50,6 +50,7 @@ from backtest.portfolio import PortfolioView, PositionView
 from trade_journal.enums import CorrectionTargetType, DecisionAction, TradeProvenance
 from trade_journal.models import (
     AlternativeOutcome,
+    AttributionResult,
     CorrectionRecord,
     CounterfactualRecord,
     DecisionSnapshot,
@@ -1267,4 +1268,33 @@ def payload_to_learning_experiment(data: dict) -> LearningExperimentRecord:
         provenance=TradeProvenance(data["provenance"]),
         status=data["status"],
         created_at=_dt_from_iso(data["created_at"]),
+    )
+
+
+# -- Phase 10: Performance Attribution --------------------------------
+
+
+def attribution_result_to_payload(result: AttributionResult) -> dict:
+    return {
+        "experiment_id": result.experiment_id,
+        "market": result.market,
+        "sector": result.sector,
+        "factor": result.factor,
+        "selection": result.selection,
+        "timing": result.timing,
+        "execution": result.execution,
+        "computed_at": _dt_iso(result.computed_at),
+    }
+
+
+def payload_to_attribution_result(data: dict) -> AttributionResult:
+    return AttributionResult(
+        experiment_id=data["experiment_id"],
+        market=data.get("market"),
+        sector=data.get("sector"),
+        factor=data.get("factor"),
+        selection=data.get("selection"),
+        timing=data.get("timing"),
+        execution=data.get("execution"),
+        computed_at=_dt_from_iso(data.get("computed_at")),
     )
