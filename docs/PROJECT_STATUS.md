@@ -5,15 +5,48 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-25
-**Updated By:** Claude Code (Session 12 — Phase 11 Model Evolution)
+**Updated By:** Claude Code (Session 13 — Phase 12 AI Gateway)
 
 ---
 
 ## Current Phase
 
-**Phase 11 — Model Evolution** (설계 및 참조 구현 완료)
+**Phase 12 — AI Gateway** (설계 및 참조 구현 완료)
 
-## Current Subtask (Session 12 — Phase 11)
+## Current Subtask (Session 13 — Phase 12)
+
+Phase 12 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
+지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-11-model-evolution-7hpibr`,
+HEAD `b957ac2bd45befe6bcea3e8ca110f34417518623` "Update README to Phase
+11 status", working tree clean)에서 시작. `git log --oneline --graph
+--decorate --all`로 단일 선형 히스토리(병합 커밋 0개)를 확인하고,
+인수인계 문서가 제시한 두 참조 커밋(Phase 10
+`483600fb571c2f392bcc193f7ebbe733b6122a4b`, Phase 11
+`1f0194f89d24a33db57af8f2d0c0eb4a605d29ed`)이 실제로 현재 HEAD의 조상임을
+`git merge-base --is-ancestor`로 각각 확인. Phase 12용으로 지정된
+원격 브랜치가 아직 없어(`git branch -r` 확인) 검증된 현재 HEAD에서
+`claude/phase-12-ai-gateway` 브랜치를 새로 생성(Phase 11 세션이 겪었던
+"main에서 잘못 생성" 사례를 반복하지 않도록 반드시 현재 HEAD 기준으로
+생성). 의존성은 이전 세션에서 이미 설치되어 있었으며, 착수 전
+**669/669 테스트 통과** 확인. 상세:
+`docs/specifications/PHASE-12-ai-gateway.md` §0.
+
+Master Plan §5(AI API Gateway)/§6(무료 한도 로테이션)/§18.4(Phase
+12부터 AI API 연동이 Phase 목적 자체이나 실제 키 없이도 안전하게
+동작함을 우선 확인)를 재확인한 뒤 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-12-ai-gateway.md`) + ADR-0018 +
+`src/ai_gateway/`(신규 패키지, Phase 0~11 소스 전혀 수정 없이 완전히
+독립적인 새 계층으로 추가) + `src/storage/ai_gateway_repository.py`
+(신규 DuckDB 저장소 3종) + 신규 99개 테스트 전부 통과. 실제 AI
+provider 연동/API key 요구/네트워크 호출은 전혀 없음(`MockProviderAdapter`
+만 유일한 구현체, `os.environ`/`os.getenv`/`socket`/`http`/`urllib`/
+`requests`/`httpx` 중 어느 것도 `ai_gateway/*.py`에 존재하지 않음을
+AST 스캔으로 검증) — Decision/Risk/Position Sizing/Order/Broker/Model
+Evolution의 APPROVED·DEPLOYED로 가는 어떤 경로도 없음(`DecisionAction`/
+`CandidateModelStatus` import 자체가 패키지 어디에도 없음을 AST
+스캔으로 검증).
+
+## Previous Subtask (Session 12 — Phase 11)
 
 Phase 11 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시) —
 이번 세션은 새 컨테이너에서 시작했고, 지정된 작업 브랜치
@@ -79,6 +112,119 @@ counterfactual/`market`·`selection` attribution만 추가) +
 영속 저장소 — `CounterfactualRecord`는 Phase 3의 기존
 `TradeJournalRepository.record_counterfactual`/`get_counterfactual`을
 변경 없이 그대로 재사용) 참조 구현 + 신규 54개 테스트 전부 통과.
+
+## Completed (Session 13 — Phase 12)
+
+- [x] **Git/Branch Integrity Check 선행 수행** — 위 "Current Subtask
+      (Session 13 — Phase 12)" 참조. 단일 선형 lineage, 병합 커밋 0개,
+      두 참조 커밋 모두 조상 확인, working tree clean, Phase 12용
+      원격 브랜치가 없어 검증된 HEAD에서 새로 생성 → **PASS 판정 후
+      Phase 12 진행**
+- [x] `PROJECT_MASTER_PLAN.md` §5/§6/§18.4, ADR-0001~0018, Phase
+      1~11 spec, 현재 src·tests 재조사. 특히 `.env.example`이 Phase
+      0에서 이미 `AI_PROVIDER_A_API_KEY`/`AI_PROVIDER_B_API_KEY`/
+      `AI_PROVIDER_C_API_KEY`(값 없이 이름만, 주석 처리)를 예약해
+      두었음을 확인하고 `ProviderConfig.api_key_reference`가 그 예약된
+      이름 관례를 그대로 따르도록 설계
+- [x] `docs/specifications/PHASE-12-ai-gateway.md` 작성 (Git Integrity
+      Check 결과를 §0에 포함, Pipeline/Data Model/Fail-Closed
+      Behavior/Provider Versioning/Point-in-Time/Secrets/Persistence/
+      Reproducibility/Lineage 각 설계, out-of-scope 항목과 근거, 13개
+      섹션)
+- [x] `docs/decisions/ADR-0018-ai-gateway.md` 작성 (7개 결정 사항 +
+      alternatives considered + consequences)
+- [x] `src/ai_gateway/` 패키지 구현: `enums.py`(TaskTier/
+      ProviderHealthStatus/BillingStatus/RequestStatus — UNKNOWN
+      health·billing은 UNAVAILABLE·PAID_DETECTED와 동일하게 보수적
+      처리), `config.py`(ProviderConfig — `api_key_reference`는 env var
+      이름만, 실제 값 아님/GatewayConfig — provider별 priority·
+      supported_tiers에서 tier별 후보 목록을 직접 파생, 별도 유지되는
+      2차 라우팅 테이블 없음), `models.py`(AIRequest — payload는 caller가
+      이미 조립한 opaque 문자열, 이 모듈이 데이터를 직접 조회하지
+      않음/AIResponse — SUCCESS↔content 있음, 그 외 상태↔error_reason
+      있음을 `__post_init__`이 구조적으로 강제/ProviderQuotaState —
+      Phase 5 RegimeObservation과 동일한 append-only 관측 기록 패턴),
+      `provider.py`(AIProviderAdapter Protocol + `MockProviderAdapter`
+      — 유일한 구현체, 결정적·오프라인, `failure_mode`로 §6.5의 모든
+      시나리오를 시뮬레이션), `validation.py`(schema/JSON/missing-field/
+      invalid-value 검증), `task_router.py`(tier별 provider 후보 목록),
+      `quota_manager.py`(QuotaManager — is_available이 모든 라우팅
+      결정의 단일 fail-closed 게이트, 모든 상태 변화는 append-only
+      관측), `provider_selector.py`(TaskRouter+QuotaManager를 결합해
+      "지금 실제로 쓸 수 있는" 후보만 필터), `gateway.py`(AIGateway —
+      단일 진입점, provider rotation/failover/retry/검증/실패 매핑
+      오케스트레이션), `repository.py`(3종 Repository Protocol +
+      InMemory 구현)
+- [x] `src/storage/ai_gateway_repository.py`(3종 DuckDB Repository) +
+      `schema.py`/`serialization.py`에 `ai_requests`/`ai_responses`
+      (caller-assigned id 신뢰, Phase 5~8의 decisions/predictions
+      패턴)/`provider_quota_states`(append-only, Phase 5/10/11 패턴)
+      테이블 + `provider_quota_state_seq` 시퀀스 신규 추가 — 기존 테이블
+      스키마 변경 없음
+- [x] Phase 1~11 소스코드 변경 없음 — `schema.py`/`serialization.py`에
+      대한 순수 추가만 있으며(`git diff src/storage/schema.py
+      src/storage/serialization.py | grep '^-'` 결과 두 파일 모두
+      삭제/변경 없음으로 확인), 그 외 Phase 1~11 코드 전혀 수정하지 않음
+- [x] `tests/ai_gateway/`(87: provider 15 + validation 9 + quota_manager
+      15 + task_router 6 + provider_selector 4 + gateway 13 + boundary
+      14 + reproducibility 3 + point_in_time 3 + secret_safety 5) +
+      `tests/storage/test_ai_gateway_repository.py`(10) +
+      `tests/integration/test_ai_gateway_lineage.py`(2) — 신규 99개
+      테스트 작성 및 전부 통과 (처음부터 `test_ai_gateway_*` prefix로
+      명명해 기존 트리 전체와 basename 충돌 없음을 사전 확인)
+- [x] **전체 테스트 스위트 768개 전부 통과** (Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57 + Phase6 39 + Phase7 40 + Phase8
+      94 + Phase9 70 + Phase10 54 + Phase11 62 + Phase12 99) — Phase
+      1~11 기존 테스트 무손상 확인
+- [x] Master Plan §6.5가 요구하는 5개 시나리오(Provider A 정상 성공;
+      A quota exhausted → B로 자동 전환; A/B/C 모두 실패 → NO AI
+      CALL/안전한 실패; A quota reset → 우선순위 A로 복귀; billing
+      감지 → 해당 provider disabled)를 각각 전용 테스트로 검증
+      (`test_ai_gateway_gateway.py::TestFailoverRotation`)
+- [x] 구조적 경계 검증 — `ai_gateway/*.py` 어디에도 order/broker/risk
+      필드 없음, `trade_journal.enums.DecisionAction`/`learning.enums.
+      CandidateModelStatus` import 자체가 없음(reflection + AST 스캔,
+      `test_ai_gateway_boundary.py`), `AIGateway.generate` 시그니처에
+      broker/risk/data_repository 파라미터 없음
+- [x] Fail-closed 검증 — provider 미초기화/disabled/UNKNOWN health·
+      billing은 항상 unavailable, quota 소진은 명시적 reset_time 도래
+      전까지 계속 unavailable, billing PAID_DETECTED는 quota reset과
+      무관하게 계속 unavailable(`test_ai_gateway_quota_manager.py`)
+- [x] Secret 안전성 검증 — `api_key_reference`가 실제 키가 아닌 env var
+      이름임(Phase 0의 `.env.example` 예약 이름과 일치), `os.environ`/
+      `os.getenv` 호출이 패키지 어디에도 없음, 영속화된 request/
+      response/quota-state payload 어디에도 비밀처럼 보이는 문자열이
+      없음을 검증(`test_ai_gateway_secret_safety.py`)
+- [x] Point-in-time — `AIGateway.generate`가 `as_of`를 기본값 없는
+      필수 키워드 인자로 요구, `data_infra.repository`/`backtest.asof`
+      import가 패키지 어디에도 없음(AST 스캔), `AIRequest.payload`가
+      단순 opaque 문자열이라 이 모듈이 직접 데이터를 조회할 방법이
+      구조적으로 없음(`test_ai_gateway_point_in_time.py`)
+- [x] Reproducibility — `random` import/`datetime.now()`/`datetime.
+      utcnow()` 호출이 `src/ai_gateway/*.py` 어디에도 없음을 AST
+      스캔으로 확인, 동일 request+동일 as_of → 동일 응답 검증
+      (`test_ai_gateway_reproducibility.py`)
+- [x] SQL join으로 lineage 증명: `ai_requests`⋈`ai_responses` +
+      `provider_quota_states`(provider_id로 상관) 한 DuckDB 카탈로그,
+      전부 실패한(all-exhausted) 안전한 실패 응답도 정상적으로
+      영속화·재조회됨을 확인, 프로세스 재시작 후 동일 결과 확인
+      (`test_ai_gateway_lineage.py`)
+- [x] `stream()`은 Master Plan §5.1이 명시한 인터페이스 완전성을 위해
+      `MockProviderAdapter`에 구현했으나 `AIGateway`는 호출하지 않음
+      (스트리밍 소비자가 이번 Phase에 없음, ADR-0018 §6)
+- [x] `ai_requests`/`ai_responses`는 Phase 9/11과 달리 storage-level
+      id 재발급을 하지 않고 caller-assigned id를 그대로 신뢰(Phase
+      5~8의 decisions/predictions 패턴과 동일) — request/response
+      로그는 content-addressed artifact가 아니므로 Phase 9/11의 dedup
+      수정이 그대로 적용되지 않는다고 판단(ADR-0018 §4, Known Issue로
+      명시)
+- [x] Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+      않다고 판단, 계속 이연
+- [x] Phase 8/9/10/11 Known Issue 재검토 — AI Gateway와 무관, 변경 불필요
+- [x] Toss Securities Adapter(Phase 13)/Monitoring(Phase 14)/Paper
+      Trading(Phase 15)/Live Trading(Phase 16)은 이번 Phase 범위에서
+      명시적으로 제외 — 실제 브로커/주문/실거래도 여전히 구현하지 않음,
+      Model Evolution의 APPROVED/DEPLOYED 자동 전이 경로도 여전히 없음
 
 ## Completed (Session 12 — Phase 11)
 
@@ -753,16 +899,17 @@ counterfactual/`market`·`selection` attribution만 추가) +
 
 ## In Progress
 
-없음 (Phase 11 설계+참조구현 완료).
+없음 (Phase 12 설계+참조구현 완료).
 
 ## Blocked
 
 **DECISION REQUIRED 3건 누적 (Phase 2/3에서 이어짐) — 사용자 확인 필요.**
-Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, Phase 11
-세션 모두 세 항목을 재검토했으며, 매번 이번 Phase의 완료 조건과 무관함을
-확인하여 여전히 해결하지 않고 이연한다(재검토했으며 이번 Phase와 무관하여
-이연) (Phase 4 spec §19, Phase 5 spec §16, Phase 6 spec §16, Phase 7 spec
-§14, Phase 8 spec §20, Phase 9 spec §20에 각각 재검토 근거 상세 기록):
+Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, Phase 11,
+Phase 12 세션 모두 세 항목을 재검토했으며, 매번 이번 Phase의 완료 조건과
+무관함을 확인하여 여전히 해결하지 않고 이연한다(재검토했으며 이번 Phase와
+무관하여 이연) (Phase 4 spec §19, Phase 5 spec §16, Phase 6 spec §16,
+Phase 7 spec §14, Phase 8 spec §20, Phase 9 spec §20에 각각 재검토 근거
+상세 기록):
 
 1. (Phase 2에서 이어짐) 벤치마크 return type (PRICE_RETURN vs
    TOTAL_RETURN)

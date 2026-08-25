@@ -64,7 +64,7 @@
 
 ## 현재 상태
 
-**Phase 11 — Model Evolution** (설계 및 참조 구현 완료).
+**Phase 12 — AI Gateway** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -154,8 +154,25 @@
   Phase 1~10 소스코드 변경 없이 완전히 additive. PBO/Deflated
   Sharpe/Walk-Forward validation, AI Gateway, 실제 브로커/주문은 여전히
   범위 밖(Phase 12+)
+- Phase 12 — AI Gateway: 완료 (`src/ai_gateway/`, 99 tests) — Master
+  Plan §5의 `Application → AI Gateway → Task Router → Quota Manager →
+  Provider Selector → Provider Adapter` 파이프라인을 그대로 구현. 유일한
+  구현체 `MockProviderAdapter`는 결정적·오프라인이며 실제 네트워크 호출도
+  `os.environ`/`os.getenv` 호출도 패키지 어디에도 없음(AST 스캔으로 검증)
+  — API key 없이도 §6.5가 요구하는 5개 시나리오(A 정상 성공 / A quota
+  exhausted → B 전환 / A·B·C 모두 실패 → 안전한 실패(NO AI CALL, 절대
+  임의 콘텐츠 생성 없음) / A quota reset → 우선순위 복귀 / billing 감지 →
+  disabled)를 전부 검증. `QuotaManager`가 모든 provider quota/health/
+  billing 변화를 append-only 관측 기록으로 추적하고, 상태가 불확실한
+  provider(UNKNOWN health/billing)는 항상 보수적으로(사용 중단 방향으로)
+  처리. `trade_journal.enums.DecisionAction`/`learning.enums.
+  CandidateModelStatus` import 자체가 패키지 어디에도 없어 Decision/Risk/
+  Order/Broker나 Model Evolution의 APPROVED·DEPLOYED로 가는 경로가
+  구조적으로 없음. Phase 1~11 소스코드 변경 없이 완전히 additive. Toss
+  Securities Adapter, Monitoring, Paper/Live Trading은 여전히 범위 밖
+  (Phase 13+)
 
-전체 테스트: **669 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11 합산).
+전체 테스트: **768 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12 합산).
 
 ## 테스트 실행
 
@@ -353,6 +370,41 @@ hold/cash 수익률 계산으로 변환해 Phase 10의 `(HOLD, CASH)` 레코드�
 추가(`model_status_transitions`/`model_lineage` 테이블)만 있다. 자세한
 설계는 `docs/specifications/PHASE-11-model-evolution.md`와
 `docs/decisions/ADR-0017-model-evolution.md` 참조.
+
+## AI Gateway (Phase 12)
+
+`src/ai_gateway/`는 Master Plan §5가 요구하는 "전체 애플리케이션에서 AI
+API를 직접 호출하지 않는다"는 원칙의 단일 진입점이다. `AIGateway.
+generate(request, as_of=...)`가 `TaskRouter`(작업 등급별 provider
+후보) → `ProviderSelector`(`QuotaManager`가 지금 실제로 쓸 수 있다고
+판단한 후보만 필터) → `AIProviderAdapter.generate()` 순서로
+오케스트레이션한다. 이번 Phase가 제공하는 유일한 구현체는
+`MockProviderAdapter` — 결정적이고 완전히 오프라인이며, 실제 provider에
+연결하지 않고 API key도 요구하지 않는다(`os.environ`/`os.getenv`
+호출은 물론 `socket`/`http`/`urllib`/`requests`/`httpx` import조차
+패키지 어디에도 없음을 AST 스캔으로 검증). `failure_mode` 파라미터로
+Master Plan §6.5가 요구하는 모든 시나리오(정상 성공, timeout, auth
+실패, rate limit, malformed/missing-field 응답, provider 자체 오류)를
+결정적으로 재현한다. `QuotaManager`는 provider별 quota/health/billing
+상태를 Phase 5의 `RegimeObservation`과 동일한 append-only 관측 기록으로
+추적하며, `is_available`이 모든 라우팅 결정이 반드시 거치는 단일
+fail-closed 게이트다 — health/billing 상태가 불확실한(UNKNOWN) provider는
+UNAVAILABLE/PAID_DETECTED와 동일하게 보수적으로 처리되어 절대 선택되지
+않는다. Provider가 전부 소진/실패하면 `AIGateway`는 절대 임의의 콘텐츠를
+만들어내지 않고 사실적인 실패 상태(`TIMEOUT`/`AUTH_FAILED`/
+`RATE_LIMITED`/`INVALID_RESPONSE`/`PROVIDER_ERROR`/`NO_PROVIDER_AVAILABLE`/
+`MISSING_CONFIGURATION`)를 반환한다(`AIResponse.__post_init__`이
+SUCCESS↔content 존재, 그 외 상태↔error_reason 존재를 구조적으로
+강제). `trade_journal.enums.DecisionAction`/`learning.enums.
+CandidateModelStatus`는 `ai_gateway/*.py` 어디에서도 import되지 않아
+Decision/Risk/Order/Broker나 Model Evolution의 APPROVED/DEPLOYED로
+가는 경로가 구조적으로 없다. `generate()`는 `as_of`를 기본값 없는 필수
+인자로 요구하고 `data_infra.repository`/`backtest.asof`를 전혀
+import하지 않아 이 계층이 직접 시장/의사결정 데이터를 조회할 방법이
+없다. 결과는 Phase 4의 DuckDB 저장소(`ai_requests`/`ai_responses`/
+`provider_quota_states` 테이블)에 영속화된다. 자세한 설계는
+`docs/specifications/PHASE-12-ai-gateway.md`와
+`docs/decisions/ADR-0018-ai-gateway.md` 참조.
 
 ## 개발 원칙
 

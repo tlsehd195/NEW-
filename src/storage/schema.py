@@ -519,6 +519,44 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 12: AI Gateway --
+    """
+    CREATE TABLE IF NOT EXISTS ai_requests (
+        request_id TEXT PRIMARY KEY,
+        task_tier TEXT NOT NULL,
+        prompt_template_id TEXT NOT NULL,
+        prompt_template_version TEXT NOT NULL,
+        requested_at TIMESTAMP NOT NULL,
+        provenance TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ai_responses (
+        response_id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        provider_id TEXT,
+        responded_at TIMESTAMP NOT NULL,
+        provenance TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS provider_quota_state_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS provider_quota_states (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('provider_quota_state_seq'),
+        state_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        observed_at TIMESTAMP NOT NULL,
+        health_status TEXT NOT NULL,
+        billing_status TEXT NOT NULL,
+        enabled BOOLEAN NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

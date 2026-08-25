@@ -1,0 +1,155 @@
+"""AIProviderAdapter Protocol + MockProviderAdapter.
+
+See docs/specifications/PHASE-12-ai-gateway.md sections 5, 6, 9.
+
+PROJECT_MASTER_PLAN.md section 5.1 defines the provider interface as
+`generate()/stream()/estimate_usage()/get_usage()/health_check()/
+get_limits()`. `MockProviderAdapter` is the only implementation this
+phase ships -- fully deterministic and offline, no network call, no
+`os.environ` read anywhere (it never needs to resolve
+`ProviderConfig.api_key_reference` to an actual secret). It exists to
+prove the Gateway/Router/QuotaManager pipeline end to end, the same
+"baseline/mock first" precedent every prior phase's own reference
+implementation already established.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Iterator, Optional, Protocol
+
+from ai_gateway.config import ProviderConfig
+from ai_gateway.enums import ProviderHealthStatus
+from ai_gateway.models import AIRequest, ProviderLimits, UsageEstimate, UsageInfo
+
+
+class ProviderError(Exception):
+    """Base class for every AI provider failure the Gateway explicitly
+    handles and maps to a `RequestStatus`. Never used for a Gateway/
+    routing bug -- those raise a plain `ValueError`/`RuntimeError`
+    instead, so they are not silently swallowed as "just another
+    provider failure.\""""
+
+
+class ProviderTimeoutError(ProviderError):
+    pass
+
+
+class ProviderAuthError(ProviderError):
+    pass
+
+
+class ProviderRateLimitError(ProviderError):
+    pass
+
+
+class RawProviderOutput:
+    """The provider's raw output, before the Gateway wraps it into an
+    `AIResponse`. Deliberately not a dataclass with `__post_init__`
+    validation -- a real provider adapter's raw output may be malformed
+    by construction (that is exactly what `MockProviderAdapter`'s
+    `failure_mode="malformed"` simulates), and validating it is the
+    Gateway's job (`ai_gateway.validation`), not the adapter's."""
+
+    __slots__ = ("content", "usage")
+
+    def __init__(self, content: str, usage: UsageInfo) -> None:
+        self.content = content
+        self.usage = usage
+
+
+class AIProviderAdapter(Protocol):
+    provider_id: str
+
+    def generate(self, request: AIRequest) -> RawProviderOutput: ...
+    def stream(self, request: AIRequest) -> Iterator[str]: ...
+    def estimate_usage(self, request: AIRequest) -> UsageEstimate: ...
+    def get_usage(self) -> UsageInfo: ...
+    def health_check(self) -> ProviderHealthStatus: ...
+    def get_limits(self) -> ProviderLimits: ...
+
+
+class MockProviderAdapter:
+    """`failure_mode` deterministically simulates one failure class per
+    PROJECT_MASTER_PLAN.md section 6.5's required test scenarios --
+    never a real timer/network wait (this system has no wall-clock
+    dependency here): `None` (default, success), `"timeout"`,
+    `"auth"`, `"rate_limit"`, `"provider_error"`, `"unavailable"`
+    (health_check only), `"malformed"` (returns syntactically invalid
+    JSON when the caller expects it), `"missing_field"` (returns valid
+    JSON missing a required field)."""
+
+    def __init__(self, config: ProviderConfig, *, failure_mode: Optional[str] = None) -> None:
+        self.provider_id = config.provider_id
+        self._config = config
+        self._failure_mode = failure_mode
+        self._cumulative_usage = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+
+    def generate(self, request: AIRequest) -> RawProviderOutput:
+        if self._failure_mode == "timeout":
+            raise ProviderTimeoutError(f"simulated timeout for provider {self.provider_id!r}")
+        if self._failure_mode == "auth":
+            raise ProviderAuthError(f"simulated auth failure for provider {self.provider_id!r}")
+        if self._failure_mode == "rate_limit":
+            raise ProviderRateLimitError(f"simulated rate limit for provider {self.provider_id!r}")
+        if self._failure_mode == "provider_error":
+            raise ProviderError(f"simulated provider error for provider {self.provider_id!r}")
+
+        payload_hash = hashlib.sha256(request.payload.encode("utf-8")).hexdigest()[:16]
+
+        if self._failure_mode == "malformed":
+            content = "{not valid json!!"
+        elif self._failure_mode == "missing_field" and request.response_schema:
+            fields = {name: f"mock_value_{name}" for name in request.response_schema[1:]}
+            content = json.dumps(fields, sort_keys=True)
+        elif request.response_schema:
+            fields = {name: f"mock_value_{name}" for name in request.response_schema}
+            content = json.dumps(fields, sort_keys=True)
+        else:
+            content = f"[mock:{self.provider_id}] template={request.prompt_template_id} payload_hash={payload_hash}"
+
+        prompt_tokens = max(1, len(request.payload) // 4)
+        completion_tokens = max(1, len(content) // 4)
+        usage = UsageInfo(
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+        )
+        self._cumulative_usage = UsageInfo(
+            prompt_tokens=(self._cumulative_usage.prompt_tokens or 0) + prompt_tokens,
+            completion_tokens=(self._cumulative_usage.completion_tokens or 0) + completion_tokens,
+            total_tokens=(self._cumulative_usage.total_tokens or 0) + prompt_tokens + completion_tokens,
+        )
+        return RawProviderOutput(content=content, usage=usage)
+
+    def stream(self, request: AIRequest) -> Iterator[str]:
+        output = self.generate(request)
+        midpoint = max(1, len(output.content) // 2)
+        yield output.content[:midpoint]
+        yield output.content[midpoint:]
+
+    def estimate_usage(self, request: AIRequest) -> UsageEstimate:
+        estimated_prompt_tokens = max(1, len(request.payload) // 4)
+        estimated_completion_tokens = request.max_tokens or estimated_prompt_tokens
+        return UsageEstimate(
+            provider_id=self.provider_id,
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            estimated_total_tokens=estimated_prompt_tokens + estimated_completion_tokens,
+            basis="char_count_heuristic_v1",
+        )
+
+    def get_usage(self) -> UsageInfo:
+        return self._cumulative_usage
+
+    def health_check(self) -> ProviderHealthStatus:
+        if self._failure_mode == "unavailable":
+            return ProviderHealthStatus.UNAVAILABLE
+        return ProviderHealthStatus.HEALTHY
+
+    def get_limits(self) -> ProviderLimits:
+        return ProviderLimits(
+            provider_id=self.provider_id,
+            rpm_limit=self._config.rpm_limit, rpd_limit=self._config.rpd_limit,
+            tpm_limit=self._config.tpm_limit, tpd_limit=self._config.tpd_limit,
+            monthly_limit=self._config.monthly_limit,
+        )

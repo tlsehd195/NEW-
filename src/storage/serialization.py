@@ -75,6 +75,9 @@ from learning.models import CandidateModelArtifact, EvaluationMetrics, Evaluatio
 
 from evolution.models import ModelLineageRecord, ModelStatusTransition
 
+from ai_gateway.enums import BillingStatus, ProviderHealthStatus, RequestStatus, TaskTier
+from ai_gateway.models import AIRequest, AIResponse, ProviderQuotaState, UsageInfo
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -1366,4 +1369,138 @@ def payload_to_model_lineage(data: dict) -> ModelLineageRecord:
         dataset_version=data["dataset_version"],
         provenance=TradeProvenance(data["provenance"]),
         recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+# -- Phase 12: AI Gateway -----------------------------------------------
+
+
+def ai_request_to_payload(request: AIRequest) -> dict:
+    return {
+        "request_id": request.request_id,
+        "task_tier": request.task_tier.value,
+        "prompt_template_id": request.prompt_template_id,
+        "prompt_template_version": request.prompt_template_version,
+        "payload": request.payload,
+        "max_tokens": request.max_tokens,
+        "requested_at": _dt_iso(request.requested_at),
+        "provenance": request.provenance.value,
+        "experiment_id": request.experiment_id,
+        "response_schema": list(request.response_schema) if request.response_schema is not None else None,
+    }
+
+
+def payload_to_ai_request(data: dict) -> AIRequest:
+    schema = data.get("response_schema")
+    return AIRequest(
+        request_id=data["request_id"],
+        task_tier=TaskTier(data["task_tier"]),
+        prompt_template_id=data["prompt_template_id"],
+        prompt_template_version=data["prompt_template_version"],
+        payload=data["payload"],
+        max_tokens=data.get("max_tokens"),
+        requested_at=_dt_from_iso(data["requested_at"]),
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+        response_schema=tuple(schema) if schema else None,
+    )
+
+
+def _usage_info_to_dict(usage: Optional[UsageInfo]) -> Optional[dict]:
+    if usage is None:
+        return None
+    return {
+        "prompt_tokens": usage.prompt_tokens, "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.total_tokens,
+    }
+
+
+def _dict_to_usage_info(data: Optional[dict]) -> Optional[UsageInfo]:
+    if data is None:
+        return None
+    return UsageInfo(
+        prompt_tokens=data.get("prompt_tokens"), completion_tokens=data.get("completion_tokens"),
+        total_tokens=data.get("total_tokens"),
+    )
+
+
+def ai_response_to_payload(response: AIResponse) -> dict:
+    return {
+        "response_id": response.response_id,
+        "request_id": response.request_id,
+        "status": response.status.value,
+        "provider_id": response.provider_id,
+        "model": response.model,
+        "model_version": response.model_version,
+        "prompt_template_version": response.prompt_template_version,
+        "configuration_version": response.configuration_version,
+        "content": response.content,
+        "parsed": response.parsed,
+        "usage": _usage_info_to_dict(response.usage),
+        "latency_ms": response.latency_ms,
+        "error_reason": response.error_reason,
+        "attempt_count": response.attempt_count,
+        "responded_at": _dt_iso(response.responded_at),
+        "provenance": response.provenance.value,
+        "experiment_id": response.experiment_id,
+    }
+
+
+def payload_to_ai_response(data: dict) -> AIResponse:
+    return AIResponse(
+        response_id=data["response_id"],
+        request_id=data["request_id"],
+        status=RequestStatus(data["status"]),
+        provider_id=data.get("provider_id"),
+        model=data.get("model"),
+        model_version=data.get("model_version"),
+        prompt_template_version=data["prompt_template_version"],
+        configuration_version=data["configuration_version"],
+        content=data.get("content"),
+        parsed=data.get("parsed"),
+        usage=_dict_to_usage_info(data.get("usage")),
+        latency_ms=data.get("latency_ms"),
+        error_reason=data.get("error_reason"),
+        attempt_count=data["attempt_count"],
+        responded_at=_dt_from_iso(data["responded_at"]),
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+    )
+
+
+def provider_quota_state_to_payload(state: ProviderQuotaState) -> dict:
+    return {
+        "state_id": state.state_id,
+        "provider_id": state.provider_id,
+        "observed_at": _dt_iso(state.observed_at),
+        "remaining_requests": state.remaining_requests,
+        "remaining_tokens": state.remaining_tokens,
+        "reset_time": _dt_iso(state.reset_time),
+        "health_status": state.health_status.value,
+        "billing_status": state.billing_status.value,
+        "enabled": state.enabled,
+        "error_count": state.error_count,
+        "last_success_at": _dt_iso(state.last_success_at),
+        "last_error_at": _dt_iso(state.last_error_at),
+        "last_error_reason": state.last_error_reason,
+        "reason": state.reason,
+    }
+
+
+def payload_to_provider_quota_state(data: dict) -> ProviderQuotaState:
+    return ProviderQuotaState(
+        state_id=data["state_id"],
+        provider_id=data["provider_id"],
+        observed_at=_dt_from_iso(data["observed_at"]),
+        remaining_requests=data.get("remaining_requests"),
+        remaining_tokens=data.get("remaining_tokens"),
+        reset_time=_dt_from_iso(data.get("reset_time")),
+        health_status=ProviderHealthStatus(data["health_status"]),
+        billing_status=BillingStatus(data["billing_status"]),
+        enabled=data["enabled"],
+        error_count=data["error_count"],
+        last_success_at=_dt_from_iso(data.get("last_success_at")),
+        last_error_at=_dt_from_iso(data.get("last_error_at")),
+        last_error_reason=data.get("last_error_reason"),
+        reason=data["reason"],
     )
