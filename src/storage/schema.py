@@ -600,6 +600,54 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 14: Monitoring --
+    """
+    CREATE TABLE IF NOT EXISTS monitoring_events (
+        event_id TEXT PRIMARY KEY,
+        component TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        observed_at TIMESTAMP NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS component_health_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS component_health_states (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('component_health_seq'),
+        health_id TEXT NOT NULL,
+        component TEXT NOT NULL,
+        status TEXT NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS drift_result_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS drift_results (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('drift_result_seq'),
+        drift_id TEXT NOT NULL,
+        component TEXT NOT NULL,
+        metric_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS alerts (
+        alert_id TEXT PRIMARY KEY,
+        severity TEXT NOT NULL,
+        component TEXT NOT NULL,
+        raised_at TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

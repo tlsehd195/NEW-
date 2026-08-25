@@ -5,15 +5,44 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-25
-**Updated By:** Claude Code (Session 14 — Phase 13 Toss Securities Adapter)
+**Updated By:** Claude Code (Session 15 — Phase 14 Monitoring)
 
 ---
 
 ## Current Phase
 
-**Phase 13 — Toss Securities Adapter** (설계 및 참조 구현 완료)
+**Phase 14 — Monitoring** (설계 및 참조 구현 완료)
 
-## Current Subtask (Session 14 — Phase 13)
+## Current Subtask (Session 15 — Phase 14)
+
+Phase 14 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
+지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-13-toss-securities-adapter`,
+HEAD `5b4b30cfd50c233ac83181b7dd5db7f36bd2feb9` "Phase 13: Toss
+Securities Adapter", working tree clean)에서 시작. `git log --oneline
+--graph --decorate --all`로 단일 선형 히스토리(병합 커밋 0개) 확인,
+`git merge-base HEAD origin/main`이 `origin/main` 자신의 HEAD
+(`c3abad0eb9b2ba1ed4dda5ee158b448606a87d59`)를 그대로 반환(발산 없음).
+Phase 14용 원격 브랜치가 아직 없어 검증된 현재 HEAD에서
+`claude/phase-14-monitoring` 브랜치를 새로 생성. 착수 전 **901/901
+테스트 통과(baseline)** 확인. 상세:
+`docs/specifications/PHASE-14-monitoring.md` §0.
+
+Master Plan §12(Kill Switch & 장애/복구 규칙 — §12.4 Monitoring metrics
+목록/§12.5 Alerting severity)와 §11.6(Drift는 재검증 프로세스를
+트리거할 뿐 자동으로 모델을 교체하지 않음), §3 모듈 표의 명시적 금지
+("모델 재학습 자체 실행")를 재확인한 뒤 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-14-monitoring.md`) + ADR-0020(handoff가
+제안한 ADR-0019는 Phase 13이 이미 사용 중이어서 ADR-0020으로 재번호
+부여, 완료 보고에 명시) + `src/monitoring/`(신규 패키지, Phase 0~13
+소스 전혀 수정 없이 완전히 독립적인 읽기 전용 관찰 계층으로 추가) +
+`src/storage/monitoring_repository.py`(신규 DuckDB 저장소 4종) + 신규
+135개 테스트 전부 통과. `ComponentHealthStatus.UNKNOWN`/`DriftStatus.
+UNKNOWN`은 어디에서도 `HEALTHY`/`NO_DRIFT`로 강제 변환되지 않으며,
+`learning.enums.CandidateModelStatus.APPROVED`/`DEPLOYED`를 생성하는
+코드 경로가 전혀 없음(AST 스캔으로 검증) — Broker/Risk/Decision을
+mutate하거나 AI provider를 직접 호출하는 경로도 전혀 없음.
+
+## Previous Subtask (Session 14 — Phase 13)
 
 Phase 13 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
 지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-12-ai-gateway`,
@@ -113,44 +142,117 @@ Phase 9 spec §2.2/§22 "Model Registry completion (Phase 11)", ADR-0016
 `src/storage/evolution_repository.py`(신규 DuckDB 저장소 2종) + 신규
 62개 테스트 전부 통과.
 
-## Previous Subtask (Session 11 — Phase 10)
+## Completed (Session 15 — Phase 14)
 
-Phase 10 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시,
-이전 세션 PASS 결과를 재사용하지 않고 현재 상태 기준으로 처음부터
-재검증) — 이번 세션은 새 컨테이너에서 시작했고, 지정된 작업 브랜치
-`claude/phase-10-counterfactual-attribution-ubum6u`가 실제로는 `main`에서
-새로 생성되어 `Initial commit`(`c3abad0`) 하나만 갖고 있었으며(원격의
-동일 이름 브랜치는 이미 삭제된 상태), 실제 Phase 0~9 lineage는
-`origin/claude/phase-4-baseline-storage-tuavwk`(HEAD `0bd2350`, "Phase 9:
-Learning Engine")에 있음을 발견 — `c3abad0`이 `0bd2350`의 진짜 조상임을
-`merge-base --is-ancestor`로 확인한 뒤(즉 지정 브랜치에 실제 lineage가
-갖지 않은 내용이 전혀 없었음) `git checkout -B
-claude/phase-10-counterfactual-attribution-ubum6u
-origin/claude/phase-4-baseline-storage-tuavwk`로 브랜치 포인터를
-재설정(공유 히스토리에 대한 rewrite/force-push 아님 — 원격의 stale
-브랜치는 이미 삭제되어 있었음). 이후 단일 선형 히스토리(Initial commit
-→ Phase 0 → … → Phase 9), 병합 커밋 0개, `origin/main`/`origin/claude/
-autonomous-ai-investment-system-wvscwe` 모두 HEAD의 조상, working tree
-clean, Phase 9 산출물 전부 존재 확인 → 의존성(duckdb/pyarrow/pytest,
-컨테이너에 미설치 상태였음) 설치 후 553/553 테스트 통과 → **PASS 판정
-후 Phase 10 착수**. 검증 결과와 인수인계 문서의 차이(작업 브랜치 상태)는
-완료 보고에 명시.
-
-Master Plan/ADR-0001~0015/Phase 1~9 spec/현재 src·tests 재조사 후 Phase
-10 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-10-counterfactual-attribution.md`) + ADR-0016
-+ `src/counterfactual/`(Phase 3가 이미 정의해 둔 예약 필드를 그대로
-채우는 100% additive 패키지 — HOLD counterfactual은 Phase 3
-`compute_hold_counterfactual`을 그대로 재사용하고, 신규 CASH
-counterfactual/`market`·`selection` attribution만 추가) +
-`src/storage/counterfactual_repository.py`(`AttributionResult` 전용 신규
-영속 저장소 — `CounterfactualRecord`는 Phase 3의 기존
-`TradeJournalRepository.record_counterfactual`/`get_counterfactual`을
-변경 없이 그대로 재사용) 참조 구현 + 신규 54개 테스트 전부 통과.
+- [x] **Git/Branch Integrity Check 선행 수행** — 위 "Current Subtask
+      (Session 15 — Phase 14)" 참조. 단일 선형 lineage, 병합 커밋 0개,
+      `origin/main`이 HEAD의 조상, working tree clean, Phase 14용
+      원격 브랜치가 없어 검증된 HEAD에서 새로 생성 → **PASS 판정 후
+      Phase 14 진행**
+- [x] `PROJECT_MASTER_PLAN.md` §12(Kill Switch & 장애/복구 규칙)/§11.6
+      (Drift Detection), ADR-0001~0020, Phase 1~13 전체 모델/spec, 현재
+      src·tests 재조사. `RiskCheckedPosition.as_of_time`/
+      `PredictionOutput.as_of_time`/`BrokerResponseRecord.responded_at`
+      등 각 Phase의 point-in-time 필드를 코드로 직접 확인해
+      collector별 필터링 키로 재사용
+- [x] `docs/specifications/PHASE-14-monitoring.md` 작성(Git Integrity
+      Check 결과를 §0에 포함, Event Model/Health Evaluation/Drift
+      Detection/Alerting/Collectors/Pipeline/Persistence/Lineage/
+      Point-in-Time/Reproducibility 각 설계, 15개 섹션)
+- [x] `docs/decisions/ADR-0020-monitoring.md` 작성(handoff가 제안한
+      번호는 ADR-0019였으나 Phase 13이 이미 사용 중이어서 ADR-0020으로
+      재번호 부여 — 7개 결정 사항 + alternatives considered +
+      consequences)
+- [x] `src/monitoring/` 패키지 구현: `enums.py`(MonitoringComponent/
+      ComponentHealthStatus/AlertSeverity/DriftStatus),
+      `config.py`(MonitoringConfig — 모든 threshold 명시적 검증),
+      `models.py`(MonitoringEvent/ComponentHealth/DriftResult/Alert —
+      order/broker/risk-shaped 필드 없음), `metrics.py`(9개 컴포넌트별
+      순수 metric 계산 함수 — 빈 입력은 항상 `None`/`0.0`, 조작된 값
+      없음), `health.py`(failure-rate 기반/existence 기반/data 전용/
+      pipeline aggregation 4종 evaluator — `UNKNOWN`은 어디서도
+      `HEALTHY`로 강제 변환되지 않음), `drift.py`(mean shift/variance
+      shift/distribution shift 3종 deterministic 검출기 —
+      `min_drift_sample_count` 미만이면 항상 `UNKNOWN`), `alerts.py`
+      (event/health/drift → Alert 순수 매핑, `INFO`는 alert를 발생시키지
+      않음, drift 관찰은 `WARNING`만 발생 — `CRITICAL` 아님), `collectors.py`
+      (컴포넌트별 9종 collector — `as_of_time` 이후 레코드를 명시적으로
+      필터링한 뒤에만 metrics.py 호출, 기본값 없는 필수 파라미터),
+      `pipeline.py`(assemble_pipeline_observation — worst-of aggregation
+      + alert 조립), `repository.py`(4종 Repository Protocol + InMemory
+      구현)
+- [x] `src/storage/monitoring_repository.py`(4종 DuckDB Repository) +
+      `schema.py`/`serialization.py`에 `monitoring_events`/`alerts`
+      (caller-assigned id 신뢰 패턴)/`component_health_states`/
+      `drift_results`(append-only, Phase 5/11/12 패턴) 테이블 + 2개
+      시퀀스 신규 추가 — 기존 테이블 스키마 변경 없음. `MonitoringEvent.
+      metrics`에 담기는 유일한 datetime 값(`latest_available_time`)을
+      정확히 왕복 직렬화하는 `_deserialize_metrics` 헬퍼 추가
+- [x] Phase 1~13 소스코드 변경 없음 — `schema.py`/`serialization.py`에
+      대한 순수 추가만 있으며(`git diff src/storage/schema.py
+      src/storage/serialization.py | grep '^-'` 결과 두 파일 모두
+      삭제/변경 없음으로 확인), 그 외 Phase 1~13 코드 전혀 수정하지
+      않음
+- [x] `tests/monitoring/`(119: metrics 24 + health 20 + drift 14 +
+      alerts 10 + leakage 8 + boundary 17 + reproducibility 5 +
+      collectors 10 + pipeline 3 + repository_inmemory 8) +
+      `tests/storage/test_monitoring_repository.py`(14) +
+      `tests/integration/test_monitoring_lineage.py`(2) — 신규 135개
+      테스트 작성 및 전부 통과(`test_monitoring_*` prefix로 명명해 기존
+      트리 전체와 basename 충돌 없음을 사전 확인 —
+      `test_monitoring_repository.py`가 `tests/monitoring/`과
+      `tests/storage/`에 동시에 필요해 in-memory 버전을
+      `test_monitoring_repository_inmemory.py`로 명명해 충돌 회피)
+- [x] **전체 테스트 스위트 1036개 전부 통과**(Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57 + Phase6 39 + Phase7 40 + Phase8
+      94 + Phase9 70 + Phase10 54 + Phase11 62 + Phase12 99 + Phase13
+      133 + Phase14 135) — Phase 1~13 기존 테스트 무손상 확인
+- [x] Boundary 검증 — `monitoring.*` 어디에도 `decision.agent`/
+      `risk.sizing`/`risk.engine`/`ai_gateway.gateway`/`broker.pipeline`/
+      `broker.validation`/`broker.protocol` import가 없음을 AST
+      스캔으로 검증, `.APPROVED`/`.DEPLOYED` attribute 참조가 패키지
+      어디에도 없음을 AST 스캔으로 검증(단, `learning.enums.
+      CandidateModelStatus`를 읽기 전용으로 카운팅하는 것은 허용 —
+      "절대 쓰지 않는다"가 경계이지 "절대 읽지 않는다"가 아님),
+      `MonitoringEvent`/`ComponentHealth`/`DriftResult`/`Alert` 4종
+      dataclass 모두 order/risk-shaped 필드가 없고 `frozen=True`임을
+      reflection으로 검증(`test_monitoring_boundary.py`)
+- [x] Fail-Closed 검증 — 빈 입력/샘플 부족/non-finite 값/degenerate
+      baseline 전부 `UNKNOWN` 반환, pipeline aggregation에서 `UNKNOWN`이
+      `DEGRADED`보다 우선순위가 높아 다수의 `HEALTHY`에 의해 묻히지
+      않음을 확인(`test_monitoring_health.py`)
+- [x] Point-in-time/Leakage 검증 — 9개 collector 전부 `as_of_time`이
+      기본값 없는 필수 파라미터임을 `inspect.signature`로 검증, 미래
+      레코드를 추가해도 과거 시점 collector 결과(`metrics`/`health.
+      status`)가 완전히 동일함을 확인, `datetime.now()`/`datetime.
+      utcnow()` 호출이 패키지 어디에도 없음을 AST 스캔으로 확인
+      (`test_monitoring_leakage.py`)
+- [x] Reproducibility 검증 — `random` import가 패키지 어디에도 없음을
+      AST 스캔으로 확인, 동일 input+config+as_of_time → 동일 health/
+      drift/event 결과 확인(`test_monitoring_reproducibility.py`)
+- [x] SQL join으로 lineage 증명: `risk_assessments`⋈`monitoring_events`
+      (DuckDB `json_extract`로 `source_record_ids` 배열 내 `risk_id`
+      존재 여부 join) + 프로세스 재시작 후 동일 결과 확인, 여러 컴포넌트가
+      하나의 `assemble_pipeline_observation` 호출로 합쳐져 mixed
+      health(Risk=HEALTHY, Broker=UNAVAILABLE → pipeline=UNAVAILABLE)를
+      정확히 반영함을 확인(`test_monitoring_lineage.py`)
+- [x] Persistence 검증 — 4개 테이블 모두 저장→재조회 round-trip, 동일
+      id 재기록 시 idempotent, 프로세스 재시작 후 데이터 보존 확인
+      (`test_monitoring_repository.py`)
+- [x] Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+      않다고 판단, 계속 이연
+- [x] Phase 8/9/10/11/12/13 Known Issue 재검토 — Monitoring과 무관,
+      변경 불필요
+- [x] Paper Trading(Phase 15)/Live Trading(Phase 16)/실제 trading
+      execution/자동 model 승인·배포·재학습/실제 alert 발송 채널
+      (email/Slack 등)/Alert 승인·해제(acknowledgement/resolution)
+      워크플로우는 이번 Phase 범위에서 명시적으로 제외 — 어떤 주문도
+      생성/제출되지 않고, 어떤 model도 자동으로 APPROVED/DEPLOYED되지
+      않음
 
 ## Completed (Session 14 — Phase 13)
 
-- [x] **Git/Branch Integrity Check 선행 수행** — 위 "Current Subtask
+- [x] **Git/Branch Integrity Check 선행 수행** — 위 "Previous Subtask
       (Session 14 — Phase 13)" 참조. 단일 선형 lineage, 병합 커밋 0개,
       HEAD가 정확히 Phase 12 커밋임을 확인, working tree clean, Phase
       13용 원격 브랜치가 없어 검증된 HEAD에서 새로 생성 → **PASS 판정

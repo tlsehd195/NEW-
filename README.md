@@ -64,7 +64,7 @@
 
 ## 현재 상태
 
-**Phase 13 — Toss Securities Adapter** (설계 및 참조 구현 완료).
+**Phase 14 — Monitoring** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -195,8 +195,29 @@
   secret 값이 없음. Phase 1~12 소스코드 변경 없이 완전히 additive.
   Paper/Live Trading, Monitoring, 실제 실계좌 주문은 여전히 범위 밖
   (Phase 14+)
+- Phase 14 — Monitoring: 완료 (`src/monitoring/`, 135 tests) — Master
+  Plan §12(Kill Switch & 장애/복구 규칙)/§11.6(Drift Detection)을
+  따르는 완전히 읽기 전용(read-only)인 관찰 계층. Phase 1~13의
+  이미 계산된 결과만 소비해 데이터 품질/예측/의사결정/사이징/리스크/
+  브로커/AI Gateway/학습/모델 진화 9개 컴포넌트의 metric을 계산하고
+  (`metrics.py`), `MonitoringConfig` threshold로 `HEALTHY`/`DEGRADED`/
+  `UNAVAILABLE`/`UNKNOWN` health를 판정하며(`health.py`), mean/variance/
+  distribution shift 3종 deterministic drift 검출기(`drift.py`)와
+  event/health/drift → `Alert` 순수 매핑(`alerts.py`)을 제공.
+  `ComponentHealthStatus.UNKNOWN`/`DriftStatus.UNKNOWN`은 어디에서도
+  `HEALTHY`/`NO_DRIFT`로 강제 변환되지 않고, drift 관찰은 항상 재검증
+  트리거일 뿐 자동 모델 교체로 이어지지 않음(`learning.enums.
+  CandidateModelStatus.APPROVED`/`DEPLOYED`로 가는 코드 경로가 전혀
+  없음). 9개 collector(`collectors.py`) 전부 `as_of_time` 이전 레코드만
+  명시적으로 필터링한 뒤 metric을 계산해 미래 데이터 유출을 구조적으로
+  차단(leakage regression test로 검증). Phase 4 저장소(`monitoring_events`/
+  `component_health_states`/`drift_results`/`alerts` 4개 테이블)에
+  영속화, `risk_assessments`⋈`monitoring_events` SQL join(DuckDB
+  `json_extract`)으로 lineage 증명. Phase 1~13 소스코드 변경 없이
+  완전히 additive. 실제 alert 발송 채널(email/Slack), Alert
+  승인·해제 워크플로우, Paper/Live Trading은 여전히 범위 밖(Phase 15+)
 
-전체 테스트: **901 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13 합산).
+전체 테스트: **1036 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14 합산).
 
 ## 테스트 실행
 
@@ -477,6 +498,56 @@ BrokerResponse→OrderStatusObservation 전체 체인이 SQL join으로
 증명된다. Phase 1~12 소스코드는 전혀 수정하지 않았다. 자세한 설계는
 `docs/specifications/PHASE-13-toss-securities-adapter.md`와
 `docs/decisions/ADR-0019-toss-securities-adapter.md` 참조.
+
+## Monitoring (Phase 14)
+
+`src/monitoring/`는 Master Plan §12(Kill Switch & 장애/복구 규칙)와
+§11.6(Drift Detection)을 구현하는, Phase 1~13 위에 완전히 읽기 전용
+(read-only)으로 얹히는 관찰 계층이다. 핸드오프의 표현을 그대로 빌리면
+"Monitoring은 거래를 결정하는 계층이 아니다" — 이 패키지 어디에도
+`broker.models.ValidatedOrder`를 생성/제출하거나
+`risk.sizing`/`risk.engine`/`decision.agent`/`ai_gateway.gateway`를
+직접 호출하는 코드 경로가 없다(AST 스캔으로 검증).
+
+`monitoring.collectors`는 데이터 품질/예측/의사결정/사이징/리스크/
+브로커/AI Gateway/학습/모델 진화 9개 컴포넌트 각각에 대해, 이미
+계산되어 넘어온 레코드 시퀀스를 `<field> <= as_of_time`으로 먼저
+필터링한 뒤에만 `monitoring.metrics`의 순수 함수를 호출한다 — 모든
+collector가 기본값 없는 필수 `as_of_time` 파라미터를 요구하며, 미래
+레코드를 추가해도 과거 시점 결과가 전혀 바뀌지 않음을 leakage
+regression test로 직접 검증한다. `monitoring.health`는 실패율 기반
+(Broker/AI Gateway/Risk/Sizing)과 존재 여부 기반(Prediction/Decision/
+Learning/Model Evolution — `NO_TRADE`/`HOLD`는 정당한 출력이므로
+"무엇을 생산했는가"가 아니라 "생산했는가"만 판정) 두 가지 평가자와
+데이터 전용 평가자, 그리고 전체 파이프라인을 worst-of로 집계하는
+평가자를 제공한다. `ComponentHealthStatus.UNKNOWN`은 다수의
+`HEALTHY`에 의해 묻히지 않도록 `DEGRADED`보다 집계 우선순위가 높다 —
+"모른다"를 절대 "건강하다"로 조용히 바꾸지 않는다.
+
+`monitoring.drift`는 mean shift(z-score)/variance shift(분산 비율)/
+distribution shift(baseline 범위 기준 등폭 버킷 빈도 차이 — 교과서적
+PSI가 아닌 단순화된 "PSI-like" 통계량으로 명시) 3종의 deterministic
+검출기를 제공하며, 표본이 `min_drift_sample_count` 미만이거나
+baseline이 degenerate하면 항상 `UNKNOWN`을 반환한다. Drift가
+감지되어도(`DriftStatus.DRIFT_DETECTED`) `monitoring.alerts`는 이를
+`WARNING`으로만 처리한다(`CRITICAL`이 아님) — §11.6이 요구하는 대로
+재검증 프로세스의 트리거일 뿐, 어떤 코드 경로도 이를 자동 모델 교체로
+연결하지 않는다(`learning.enums.CandidateModelStatus.APPROVED`/
+`DEPLOYED`로 가는 경로가 패키지 전체에 없음 — 단,
+`compute_model_evolution_metrics`가 관측된 상태 전이를 세는 목적으로
+그 enum을 읽기만 하는 것은 허용).
+
+결과는 Phase 4의 DuckDB 저장소(`monitoring_events`/
+`component_health_states`/`drift_results`/`alerts` 4개 테이블)에
+영속화되며, `risk_assessments`⋈`monitoring_events`가 DuckDB
+`json_extract`로 `MonitoringEvent.source_record_ids`를 조회하는 SQL
+join으로 lineage가 증명되고 프로세스 재시작 후에도 그대로 보존된다.
+Phase 1~13 소스코드는 전혀 수정하지 않았다. 실제 alert 발송 채널
+(email/Slack 등)과 Alert 승인·해제(acknowledgement/resolution)
+워크플로우는 Master Plan §12.5의 "초기에는 logging 중심으로 구현"에
+따라 이번 Phase 범위에서 의도적으로 제외했다. 자세한 설계는
+`docs/specifications/PHASE-14-monitoring.md`와
+`docs/decisions/ADR-0020-monitoring.md` 참조.
 
 ## 개발 원칙
 

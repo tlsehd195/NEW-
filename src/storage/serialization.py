@@ -81,6 +81,9 @@ from ai_gateway.models import AIRequest, AIResponse, ProviderQuotaState, UsageIn
 from broker.enums import BrokerOrderStatus
 from broker.models import BrokerRequestRecord, BrokerResponseRecord, OrderStatusObservation
 
+from monitoring.enums import AlertSeverity, ComponentHealthStatus, DriftStatus, MonitoringComponent
+from monitoring.models import Alert, ComponentHealth, DriftResult, MonitoringEvent
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -1609,4 +1612,165 @@ def payload_to_order_status_observation(data: dict) -> OrderStatusObservation:
         avg_fill_price=data.get("avg_fill_price"),
         observed_at=_dt_from_iso(data["observed_at"]),
         raw_status_code=data.get("raw_status_code"),
+    )
+
+
+# -- Phase 14: Monitoring ------------------------------------------------
+
+# `MonitoringEvent.metrics` is a generic `dict` -- every value in it is
+# already a JSON-native primitive (float/int/str/None/list) *except*
+# `compute_data_quality_metrics`'s own `latest_available_time`, which is
+# a real `datetime` (needed for `collectors.py`'s staleness arithmetic).
+# `json_dumps`'s own `_default` hook already turns any `datetime` value
+# into an ISO string on encode; these two helpers make that reversible
+# on decode for the one key known to hold a timestamp, so a round-tripped
+# `MonitoringEvent.metrics` is identical to the one that was persisted.
+_METRICS_DATETIME_KEYS = frozenset({"latest_available_time"})
+
+
+def _deserialize_metrics(metrics: Optional[dict]) -> dict:
+    if not metrics:
+        return {}
+    result = dict(metrics)
+    for key in _METRICS_DATETIME_KEYS:
+        if key in result and isinstance(result[key], str):
+            # `json_dumps`'s own `_default` hook encodes a `datetime` via
+            # `to_utc_naive(...).isoformat()` -- a naive UTC string, not
+            # `_dt_iso`'s offset-preserving form -- so this must reverse
+            # with `from_utc_naive`, not `_dt_from_iso`.
+            result[key] = from_utc_naive(datetime.fromisoformat(result[key]))
+    return result
+
+
+def monitoring_event_to_payload(event: MonitoringEvent) -> dict:
+    return {
+        "event_id": event.event_id,
+        "component": event.component.value,
+        "event_type": event.event_type,
+        "severity": event.severity.value,
+        "observed_at": _dt_iso(event.observed_at),
+        "as_of_time": _dt_iso(event.as_of_time),
+        "metrics": event.metrics,
+        "threshold_version": event.threshold_version,
+        "component_version": event.component_version,
+        "data_version": list(event.data_version),
+        "message": event.message,
+        "provenance": event.provenance.value,
+        "correlation_id": event.correlation_id,
+        "source_record_ids": list(event.source_record_ids),
+        "configuration_version": event.configuration_version,
+        "experiment_id": event.experiment_id,
+    }
+
+
+def payload_to_monitoring_event(data: dict) -> MonitoringEvent:
+    return MonitoringEvent(
+        event_id=data["event_id"],
+        component=MonitoringComponent(data["component"]),
+        event_type=data["event_type"],
+        severity=AlertSeverity(data["severity"]),
+        observed_at=_dt_from_iso(data["observed_at"]),
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        metrics=_deserialize_metrics(data.get("metrics")),
+        threshold_version=data.get("threshold_version", "unknown"),
+        component_version=data.get("component_version"),
+        data_version=tuple(data.get("data_version") or ()),
+        message=data.get("message", ""),
+        provenance=TradeProvenance(data["provenance"]),
+        correlation_id=data.get("correlation_id"),
+        source_record_ids=tuple(data.get("source_record_ids") or ()),
+        configuration_version=data.get("configuration_version", "unknown"),
+        experiment_id=data.get("experiment_id"),
+    )
+
+
+def component_health_to_payload(health: ComponentHealth) -> dict:
+    return {
+        "health_id": health.health_id,
+        "component": health.component.value,
+        "status": health.status.value,
+        "as_of_time": _dt_iso(health.as_of_time),
+        "reason": health.reason,
+        "checks": health.checks,
+        "configuration_version": health.configuration_version,
+        "event_id": health.event_id,
+        "recorded_at": _dt_iso(health.recorded_at),
+    }
+
+
+def payload_to_component_health(data: dict) -> ComponentHealth:
+    return ComponentHealth(
+        health_id=data["health_id"],
+        component=MonitoringComponent(data["component"]),
+        status=ComponentHealthStatus(data["status"]),
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        reason=data["reason"],
+        checks=data.get("checks") or {},
+        configuration_version=data.get("configuration_version", "unknown"),
+        event_id=data.get("event_id"),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+def drift_result_to_payload(drift: DriftResult) -> dict:
+    return {
+        "drift_id": drift.drift_id,
+        "component": drift.component.value,
+        "metric_name": drift.metric_name,
+        "status": drift.status.value,
+        "statistic": drift.statistic,
+        "threshold": drift.threshold,
+        "as_of_time": _dt_iso(drift.as_of_time),
+        "baseline_summary": drift.baseline_summary,
+        "current_summary": drift.current_summary,
+        "sample_count_baseline": drift.sample_count_baseline,
+        "sample_count_current": drift.sample_count_current,
+        "configuration_version": drift.configuration_version,
+        "reason": drift.reason,
+        "recorded_at": _dt_iso(drift.recorded_at),
+    }
+
+
+def payload_to_drift_result(data: dict) -> DriftResult:
+    return DriftResult(
+        drift_id=data["drift_id"],
+        component=MonitoringComponent(data["component"]),
+        metric_name=data["metric_name"],
+        status=DriftStatus(data["status"]),
+        statistic=data.get("statistic"),
+        threshold=data.get("threshold"),
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        baseline_summary=data.get("baseline_summary") or {},
+        current_summary=data.get("current_summary") or {},
+        sample_count_baseline=data.get("sample_count_baseline"),
+        sample_count_current=data.get("sample_count_current"),
+        configuration_version=data.get("configuration_version", "unknown"),
+        reason=data.get("reason", ""),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+def alert_to_payload(alert: Alert) -> dict:
+    return {
+        "alert_id": alert.alert_id,
+        "severity": alert.severity.value,
+        "component": alert.component.value,
+        "message": alert.message,
+        "raised_at": _dt_iso(alert.raised_at),
+        "event_id": alert.event_id,
+        "provenance": alert.provenance.value,
+        "experiment_id": alert.experiment_id,
+    }
+
+
+def payload_to_alert(data: dict) -> Alert:
+    return Alert(
+        alert_id=data["alert_id"],
+        severity=AlertSeverity(data["severity"]),
+        component=MonitoringComponent(data["component"]),
+        message=data["message"],
+        raised_at=_dt_from_iso(data["raised_at"]),
+        event_id=data.get("event_id"),
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
     )
