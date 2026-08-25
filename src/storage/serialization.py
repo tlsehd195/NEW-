@@ -64,6 +64,8 @@ from regime.models import CompositeRegimeObservation, RegimeObservation
 from predict.enums import PredictionMethodType
 from predict.models import PredictionOutput
 
+from decision.models import DecisionOutput
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -875,6 +877,63 @@ def payload_to_prediction_output(data: dict) -> PredictionOutput:
         configuration_version=data["configuration_version"],
         model_version=data.get("model_version"),
         regime_context=data.get("regime_context"),
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+        recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+# --------------------------------------------------------------------
+# decision.models
+# --------------------------------------------------------------------
+
+
+def decision_output_to_payload(decision: DecisionOutput) -> dict:
+    return {
+        "decision_id": decision.decision_id,
+        "security_id": decision.security_id,
+        "as_of_time": _dt_iso(decision.as_of_time),
+        "action": decision.action.value,
+        "decision_reason": decision.decision_reason,
+        "confidence": decision.confidence,
+        "time_horizon_days": decision.time_horizon_days,
+        "target_weight_hint": decision.target_weight_hint,
+        "regime": decision.regime,
+        "prediction_id": decision.prediction_id,
+        "prediction_version": decision.prediction_version,
+        "regime_version": decision.regime_version,
+        "feature_version": decision.feature_version,
+        "data_version": list(decision.data_version),
+        "model_version": decision.model_version,
+        "decision_version": decision.decision_version,
+        "strategy_version": decision.strategy_version,
+        "risk_version": decision.risk_version,
+        "provenance": decision.provenance.value,
+        "experiment_id": decision.experiment_id,
+        "recorded_at": _dt_iso(decision.recorded_at),
+    }
+
+
+def payload_to_decision_output(data: dict) -> DecisionOutput:
+    return DecisionOutput(
+        decision_id=data["decision_id"],
+        security_id=data["security_id"],
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        action=DecisionAction(data["action"]),
+        decision_reason=data["decision_reason"],
+        confidence=data.get("confidence"),
+        time_horizon_days=data.get("time_horizon_days"),
+        target_weight_hint=data.get("target_weight_hint"),
+        regime=data.get("regime"),
+        prediction_id=data.get("prediction_id"),
+        prediction_version=data.get("prediction_version"),
+        regime_version=data.get("regime_version"),
+        feature_version=data.get("feature_version"),
+        data_version=tuple(data.get("data_version") or ()),
+        model_version=data.get("model_version"),
+        decision_version=data["decision_version"],
+        strategy_version=data.get("strategy_version"),
+        risk_version=data.get("risk_version"),
         provenance=TradeProvenance(data["provenance"]),
         experiment_id=data.get("experiment_id"),
         recorded_at=_dt_from_iso(data.get("recorded_at")),

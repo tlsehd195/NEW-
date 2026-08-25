@@ -281,6 +281,31 @@ DDL_STATEMENTS: tuple[str, ...] = (
     # section 1 / ADR-0011 section 4, applied again here (Phase 6 spec
     # section 11).
     """
+    CREATE TABLE IF NOT EXISTS decision_outputs (
+        decision_id TEXT PRIMARY KEY,
+        natural_key TEXT UNIQUE,
+        security_id TEXT NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        action TEXT NOT NULL,
+        decision_reason TEXT NOT NULL,
+        confidence DOUBLE,
+        time_horizon_days INTEGER,
+        target_weight_hint DOUBLE,
+        prediction_id TEXT,
+        prediction_version TEXT,
+        regime_version TEXT,
+        feature_version TEXT,
+        model_version TEXT,
+        decision_version TEXT NOT NULL,
+        strategy_version TEXT,
+        risk_version TEXT,
+        provenance TEXT NOT NULL,
+        experiment_id TEXT,
+        recorded_at TIMESTAMP,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS predictions (
         prediction_id TEXT PRIMARY KEY,
         natural_key TEXT UNIQUE,

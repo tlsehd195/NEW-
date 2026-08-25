@@ -64,7 +64,7 @@
 
 ## 현재 상태
 
-**Phase 6 — Prediction** (설계 및 참조 구현 완료).
+**Phase 7 — Decision Agent** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -86,12 +86,20 @@
   Drift deterministic baseline predictor 2종, Decision/Risk/Execution과
   구조적으로 분리된 `PredictionOutput`, Phase 2의 `AsOfDataView`를
   재사용하는 point-in-time-safe 예측 계산, Phase 4 저장소에 영속화,
-  Trade Journal/Experience Dataset과 비침습적 lineage 연결 —
-  `DECISION REQUIRED` 3건 여전히 미결(벤치마크 return type,
-  per-decision data version, corporate-action-aware portfolio state
-  재구성) — `docs/PROJECT_STATUS.md` 참조
+  Trade Journal/Experience Dataset과 비침습적 lineage 연결
+- Phase 7 — Decision Agent: 완료 (`src/decision/`, 40 tests) —
+  Prediction + Regime + Portfolio State를 결합해 BUY/SELL/HOLD/EXIT/
+  NO_TRADE를 판단하는 `BaselineRuleDecisionAgent`, quantity/order/
+  broker/risk-bypass 필드가 구조적으로 없는 `DecisionOutput`, Phase 5/6
+  출력만 소비하는 point-in-time-safe 계산(신규 leakage guard 없음),
+  Phase 4 저장소(`decision_outputs` 테이블)에 영속화, Regime→
+  Prediction→Decision 3-way SQL join으로 증명된 lineage — Position
+  Sizing/Risk Engine/Order Creation/Broker/Paper·Live Trading은 명시적
+  범위 밖(Phase 8+) — `DECISION REQUIRED` 3건 여전히 미결(벤치마크
+  return type, per-decision data version, corporate-action-aware
+  portfolio state 재구성) — `docs/PROJECT_STATUS.md` 참조
 
-전체 테스트: **349 passed** (Phase 1+2+3+4+5+6 합산).
+전체 테스트: **389 passed** (Phase 1+2+3+4+5+6+7 합산).
 
 ## 테스트 실행
 
@@ -138,6 +146,27 @@ predictor를 위한 인터페이스(`PredictionMethodType.MODEL_BASED`)만 예�
 Journal/Experience Dataset과 비침습적으로 lineage가 연결된다. 자세한
 설계는 `docs/specifications/PHASE-6-prediction.md`와
 `docs/decisions/ADR-0012-prediction-layer.md` 참조.
+
+## Decision Agent (Phase 7)
+
+`src/decision/`는 Prediction(Phase 6) + Regime(Phase 5) + Portfolio
+State(+ 향후 Risk State)를 종합해 BUY/SELL/HOLD/EXIT/NO_TRADE 중
+하나를 판단하는 Decision 계층이다. `DecisionOutput`에는 quantity,
+order_id, broker_order, execution_price 등 Position Sizing/Order
+Creation/Execution의 책임에 해당하는 필드가 구조적으로 전혀 존재하지
+않는다 — `target_weight_hint`는 참고용 힌트일 뿐 권위 있는 주문
+수량이 아니다. `BaselineRuleDecisionAgent`는 이미 계산된 Prediction/
+Regime/PortfolioView만 입력으로 받는 순수 함수이며, 어떤 저장소나
+`AsOfDataView`도 직접 호출하지 않아 point-in-time 안전성은 전적으로
+Phase 5/6 출력에서 상속받는다(신규 leakage guard 없음).
+`portfolio_state`가 없으면 항상 `NO_TRADE`로 fail-closed 처리한다
+(`PROJECT_MASTER_PLAN.md` §1.4). 결과는 Phase 4의 DuckDB 저장소
+(`decision_outputs` 테이블)에 영속화되며, Prediction/Regime과의
+lineage는 한 카탈로그 안에서의 SQL join으로 증명된다. Position
+Sizing, Portfolio Risk Engine, Order Creation/Validation, Broker,
+Paper/Live Trading은 모두 이후 Phase의 몫으로 명시적으로 범위 밖에
+있다. 자세한 설계는 `docs/specifications/PHASE-7-decision-agent.md`와
+`docs/decisions/ADR-0013-decision-agent.md` 참조.
 
 ## 개발 원칙
 
