@@ -388,6 +388,97 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 9: Learning Engine. Four new, additive tables -- no
+    # existing table's schema changed. `training_datasets.dataset_version`
+    # is a content hash (reproducibility: rebuilding from identical
+    # source experiences + configuration always idempotently returns the
+    # same row, see storage/learning_repository.py).
+    #
+    # The four *_id primary keys below are allocated by this sequence
+    # group at INSERT time, never trusted from the caller's in-process
+    # allocator -- the identical fix `experience_id_seq` already applies
+    # to `ExperienceRecord.experience_id` (Phase 4 spec section 12.1,
+    # ADR-0010 "Known correctness fix"): a fresh, per-process
+    # `DatasetIdAllocator`/trainer/evaluator/tracker restarts its
+    # "...-000001" counter on every call, so two independently-built
+    # pipeline runs can legitimately allocate the same in-process id for
+    # two genuinely different records; only a storage-level sequence is
+    # actually globally unique.
+    """
+    CREATE SEQUENCE IF NOT EXISTS training_dataset_id_seq START 1
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS candidate_model_id_seq START 1
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS evaluation_id_seq START 1
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS learning_experiment_id_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS training_datasets (
+        dataset_id TEXT PRIMARY KEY,
+        dataset_version TEXT UNIQUE,
+        created_at TIMESTAMP NOT NULL,
+        provenance TEXT NOT NULL,
+        feature_version TEXT,
+        label_version TEXT NOT NULL,
+        configuration_version TEXT NOT NULL,
+        sample_count INTEGER NOT NULL,
+        excluded_count INTEGER NOT NULL,
+        quality_status TEXT NOT NULL,
+        as_of_cutoff TIMESTAMP,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS candidate_models (
+        candidate_id TEXT PRIMARY KEY,
+        natural_key TEXT UNIQUE,
+        status TEXT NOT NULL,
+        trainer_version TEXT NOT NULL,
+        dataset_id TEXT NOT NULL,
+        dataset_version TEXT NOT NULL,
+        label_version TEXT NOT NULL,
+        seed INTEGER,
+        trained_at TIMESTAMP NOT NULL,
+        provenance TEXT NOT NULL,
+        experiment_id TEXT,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS evaluation_results (
+        evaluation_id TEXT PRIMARY KEY,
+        natural_key TEXT UNIQUE,
+        candidate_id TEXT NOT NULL,
+        dataset_id TEXT NOT NULL,
+        dataset_version TEXT NOT NULL,
+        evaluator_version TEXT NOT NULL,
+        evaluated_at TIMESTAMP NOT NULL,
+        provenance TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS learning_experiments (
+        experiment_id TEXT PRIMARY KEY,
+        natural_key TEXT UNIQUE,
+        dataset_id TEXT NOT NULL,
+        dataset_version TEXT NOT NULL,
+        trainer_version TEXT NOT NULL,
+        evaluator_version TEXT NOT NULL,
+        candidate_id TEXT NOT NULL,
+        evaluation_id TEXT NOT NULL,
+        configuration_version TEXT NOT NULL,
+        seed INTEGER,
+        provenance TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

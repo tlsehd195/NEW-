@@ -5,33 +5,154 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-25
-**Updated By:** Claude Code (Session 9 — Phase 8 Position Sizing + Portfolio Risk Engine)
+**Updated By:** Claude Code (Session 10 — Phase 9 Learning Engine)
 
 ---
 
 ## Current Phase
 
-**Phase 8 — Position Sizing + Portfolio Risk Engine** (설계 및 참조 구현 완료)
+**Phase 9 — Learning Engine** (설계 및 참조 구현 완료)
 
 ## Current Subtask
 
-Phase 8 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시,
+Phase 9 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시,
 이전 세션 PASS 결과를 재사용하지 않고 현재 HEAD 기준으로 처음부터
 재검증) — 결과 PASS(단일 선형 히스토리, main/wvscwe 모두 현재 HEAD의
-조상, Phase 0~7 전부 포함 확인, 389/389 테스트 통과, working tree
-clean). 검증 통과 후 Phase 8 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-8-position-sizing-and-risk.md`) + ADR-0014 +
-`src/risk/`(DeterministicPositionSizer — Decision+Prediction+Regime+
-Portfolio State를 결합해 target_weight/target_quantity를 계산하는
-deterministic 규칙, DeterministicPortfolioRiskEngine — 포트폴리오 수준
-hard limit을 독립적으로 재검사하는 최종 권한자, PositionSizingResult/
-RiskCheckedPosition, PositionSizingRepository/RiskRepository) +
-`src/storage/risk_repository.py`(Phase 4 저장소 확장) 참조 구현 + 신규
-94개 테스트 전부 통과. Phase 3의 DECISION REQUIRED 3건은 이번 Phase에서도
-재검토 결과 해결이 필요하지 않다고 판단하여 계속 이연(Phase 8 spec §20
-참조, 아래 "Blocked" 섹션도 참조). 커밋 후 최종 HEAD 기준으로 Git
-Integrity Check를 다시 한 번 수행하여 완료 보고에 반영한다(사용자의
-명시적 반복 지시).
+조상, Phase 0~8 전부 포함 확인, 483/483 테스트 통과, working tree
+clean). 검증 통과 후 Phase 9 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-9-learning-engine.md`) + ADR-0015 +
+`src/learning/`(DataCleaner — VALID/INVALID/EXCLUDED/UNKNOWN 4상태로
+샘플을 절대 조용히 버리지 않는 데이터 정제, Labeler — 실제 실현된
+realized_return을 label로 사용하는 최소 label 구현, build_training_dataset
+— cleaning+labeling+시간순 train/validation/test split을 재현 가능한
+content-hash 버전과 함께 조립, MeanRewardBaselineTrainer — TRAIN split
+평균만 사용하는 deterministic null-hypothesis baseline trainer,
+Evaluator — baseline과의 비교만 제공하고 우위를 주장하지 않는 평가,
+CandidateModelStatus — CANDIDATE만 실제로 생산, 나머지 6개 상태는 Phase
+10/11을 위해 예약) + `src/storage/learning_repository.py`(Phase 4 저장소
+확장) 참조 구현 + 신규 70개 테스트 전부 통과. 구현 과정에서 자체 발견한
+버그 2건(dataset_version이 진짜 content hash가 아니었던 문제,
+storage-level id가 in-process allocator에서 충돌하던 문제)을 Phase 4가
+이미 확립한 해결 패턴 그대로 적용해 수정. Phase 3의 DECISION REQUIRED
+3건은 이번 Phase에서도 재검토 결과 해결이 필요하지 않다고 판단하여 계속
+이연(Phase 9 spec §20 참조, 아래 "Blocked" 섹션도 참조). 커밋 후 최종
+HEAD 기준으로 Git Integrity Check를 다시 한 번 수행하여 완료 보고에
+반영한다(사용자의 명시적 반복 지시).
+
+## Completed (Session 10 — Phase 9)
+
+- [x] **Git/Branch Integrity Check 선행 수행 — 이전 세션 PASS를 재사용
+      하지 않고 현재 HEAD(`05ac338`, Phase 8)부터 처음부터 재검증**
+      (사용자 지시) — Phase 0~8 커밋 10개를 `merge-base --is-ancestor`로
+      개별 조상 확인, 병합 커밋 0개, `origin/main` 대비 main에만 있는
+      커밋 0개/현재 branch에만 있는 커밋 10개, `wvscwe` 대비 wvscwe에만
+      있는 커밋 0개/현재 branch에만 있는 커밋 5개, working tree clean,
+      483/483 테스트 통과 확인 → **PASS 판정 후 Phase 9 착수**
+- [x] Master Plan/ADR-0001~0014/Phase 1~8 spec/현재 src·tests 재조사
+      (충돌 없음 확인, DECISION REQUIRED 신규 발생 없음). 특히 Phase 3
+      `ExperienceRecord`/`build_experience_records`, Phase 4
+      `ExperienceRepository`/`ExperimentRepository`, Phase 5~8의
+      `attach_*_context` 비침습적 lineage 패턴을 실제 코드로 재확인
+- [x] `docs/specifications/PHASE-9-learning-engine.md` 작성 (Git
+      Integrity Check 결과를 §0에 포함, Data Cleaning 규칙 표, Labeling/
+      Dataset/Training/Evaluation 각 섹션, fail-closed 원칙, lineage,
+      persistence, 25개 섹션)
+- [x] `docs/decisions/ADR-0015-learning-engine.md` 작성 (8개 결정 사항 +
+      alternatives considered + consequences, 자체 발견 버그 2건의 근본
+      원인과 수정 근거 상세 기록)
+- [x] `src/learning/` 패키지 구현: `enums.py`(SampleStatus/SplitName/
+      CandidateModelStatus — 7개 상태 전부 예약하되 이번 Phase는
+      CANDIDATE만 실제 생산), `config.py`(DataCleaningConfig/LabelConfig/
+      SplitConfig/SamplingConfig/TrainingDatasetConfig — 모든 threshold를
+      configuration으로 분리), `models.py`(CleaningResult/LabeledSample/
+      TrainingDataset/CandidateModelArtifact/EvaluationResult/
+      LearningExperimentRecord — order/broker/risk-mutation 필드
+      구조적으로 없음), `cleaning.py`(DataCleaner — provenance mismatch/
+      duplicate/NaN·Inf/missing decision/no realized outcome을 모두
+      개별 상태로 기록, 절대 조용히 제거하지 않음), `labeling.py`
+      (Labeler — TradeRecord.realized_return만 label 소스로 사용, feature
+      cutoff와 label start를 별도 필드로 유지), `dataset.py`
+      (build_training_dataset — as_of_cutoff로 미래 experience를 cleaning
+      이전에 배제, 시간순 non-shuffled 3-way split, 실제 sample 내용을
+      해싱하는 content-hash dataset_version), `trainer.py`
+      (CandidateTrainer Protocol + MeanRewardBaselineTrainer — TRAIN
+      split 평균만 사용, VALIDATION/TEST 접근 안 함, 항상
+      CandidateModelStatus.CANDIDATE만 생산), `evaluation.py`
+      (Evaluator — MAE/MSE + baseline 비교, candidate_is_better 필드
+      없음), `experiment.py`(LearningExperimentTracker), `repository.py`
+      (4종 Repository Protocol + InMemory 구현), `pipeline.py`
+      (run_learning_pipeline — 전체 체인 오케스트레이션, 저장은 호출자
+      책임으로 분리)
+- [x] `src/storage/learning_repository.py`(4종 DuckDB Repository) +
+      `schema.py`/`serialization.py`에 `training_datasets`/
+      `candidate_models`/`evaluation_results`/`learning_experiments`
+      테이블 + 4개 시퀀스 신규 추가 — 기존 테이블 스키마 변경 없음
+- [x] Phase 1~8 소스코드 변경 없음(Phase 9는 `schema.py`/
+      `serialization.py`에 대한 순수 추가만 있으며 — `git diff | grep
+      '^-'` 결과 두 파일 모두 삭제/변경 없음으로 확인 — 그 외
+      Phase 1~8 코드 전혀 수정하지 않음)
+- [x] `tests/learning/`(58: cleaning 11 + labeling 5 + dataset 8 +
+      trainer 6 + evaluation 5 + leakage 7 + provenance 4 + boundary 7 +
+      reproducibility 5) + `tests/storage/test_learning_repository.py`(8)
+      + `tests/integration/test_learning_pipeline.py`(4) — 신규 70개
+      테스트 작성 및 전부 통과 (파일명 충돌 발견 및 즉시 수정 —
+      `test_provenance.py` → `test_learning_provenance.py`,
+      `tests/trade_journal/test_provenance.py`와 충돌)
+- [x] **자체 발견 및 수정한 버그 2건**: (1) `TrainingDataset.dataset_version`이
+      `source_experience_ids` 목록만 해싱해 서로 다른 두 journal(예:
+      두 개의 독립적 백테스트 실행)이 우연히 동일한 trade_id/experience_id
+      시퀀스("TRD-000001" 등, journal마다 로컬로 재시작)를 갖게 되면
+      실제 내용이 다른데도 동일한 dataset_version이 나오는 문제 — 실제
+      sample content((trade_id, label_value, sample_as_of_time) 튜플)를
+      해싱하도록 수정, `data_infra.versioning.compute_data_version`의
+      진짜 content-hash 계약을 충족(ADR-0015 §5). (2) 위와 동일한 원인으로
+      `TrainingDataset.dataset_id`/`CandidateModelArtifact.candidate_id`
+      등이 in-process allocator("...-000001"부터 매 호출 재시작)에서
+      나와 독립적인 두 pipeline 실행이 저장소 PRIMARY KEY에서 충돌하는
+      문제 — Phase 4가 `experience_id_seq`로 이미 확립한 동일 해결
+      패턴(자연키로 dedup 확인 후 storage-level 시퀀스로 새 id 발급)을
+      4개 Learning 저장소 모두에 적용(ADR-0015 §6).
+      `tests/integration/test_learning_pipeline.py::
+      test_two_independent_pipeline_runs_do_not_collide_in_storage`가
+      전용 regression test
+- [x] Data Cleaning이 샘플을 절대 조용히 버리지 않음을 개별 테스트로
+      검증(`test_cleaning.py::TestNeverSilentlyDrops`), Labeling이
+      feature_cutoff_time/label_start_time을 구조적으로 분리 유지함을
+      검증
+- [x] 미래 데이터 유출 방지 회귀 테스트 신규 작성 — 동일한 as_of_cutoff로
+      재구축한 dataset이 이후 journal에 미래 experience가 추가되어도
+      dataset_version/splits/label 값 전부 동일함을 확인
+      (`test_learning_point_in_time.py`)
+- [x] Provenance 분리를 `build_training_dataset`의 `provenance` 파라미터에
+      기본값을 두지 않는 구조로 강제(`inspect.signature`로 검증) —
+      HISTORICAL_SIMULATION/PAPER_TRADING/LIVE_TRADING이 절대 섞이지
+      않음을 확인(`test_learning_provenance.py`)
+- [x] Learning Engine이 order/broker/risk-limit mutation을 만들지 않고,
+      CandidateModelStatus.APPROVED/DEPLOYED를 생성하는 코드 경로가
+      전혀 없음을 reflection + AST 스캔으로 검증(`test_learning_boundary.py`)
+- [x] Reproducibility 검증 — 동일 dataset/config/seed → 동일 결과, 그리고
+      `learning/*.py` 어디에도 `random` 모듈을 import하지 않음을 AST로
+      확인(`test_reproducibility.py`)
+- [x] **전체 테스트 스위트 553개 전부 통과** (Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57 + Phase6 39 + Phase7 40 + Phase8
+      94 + Phase9 70) — Phase 1~8 기존 테스트 무손상 확인
+- [x] `LearningExperimentRecord`는 `backtest.experiment.ExperimentRecord`를
+      재사용하지 않고 새 타입으로 설계(재사용 시도했으나 backtest-특화
+      필드(PerformanceReport, transaction_cost_config 등)가 training
+      run과 맞지 않아 기각, ADR-0015 §1) — 대신 저장 패턴(단일 DuckDB
+      카탈로그, id-allocating tracker, natural-key idempotency)은 그대로
+      재사용, 중복된 새 Experiment 시스템을 만들지 않음
+- [x] Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+      않다고 판단, 계속 이연 (임의 결정하지 않음)
+- [x] Phase 8의 Known Issue 3건(average_cost proxy/sector-factor 데이터
+      부재/turnover 호출자 의존) 재검토 — Learning Engine과 무관, 변경
+      불필요
+- [x] Counterfactual Analysis/Performance Attribution(Phase 10)/Model
+      Evolution/Model Registry 완성(Phase 11)/AI Gateway(Phase 12)/Toss
+      Securities Adapter(Phase 13)/Monitoring(Phase 14)/Paper
+      Trading(Phase 15)/Live Trading(Phase 16)은 이번 Phase 범위에서
+      명시적으로 제외 (지시대로) — 실제 AI API 호출, 학습 결과의 자동
+      Live 적용도 여전히 구현하지 않음
 
 ## Completed (Session 9 — Phase 8)
 
@@ -332,16 +453,16 @@ Integrity Check를 다시 한 번 수행하여 완료 보고에 반영한다(사
 
 ## In Progress
 
-없음 (Phase 8 설계+참조구현 완료).
+없음 (Phase 9 설계+참조구현 완료).
 
 ## Blocked
 
 **DECISION REQUIRED 3건 누적 (Phase 2/3에서 이어짐) — 사용자 확인 필요.**
-Phase 4, Phase 5, Phase 6, Phase 7, Phase 8 세션 모두 세 항목을
+Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9 세션 모두 세 항목을
 재검토했으며, 매번 이번 Phase의 완료 조건과 무관함을 확인하여 여전히
 해결하지 않고 이연한다(재검토했으며 이번 Phase와 무관하여 이연)
 (Phase 4 spec §19, Phase 5 spec §16, Phase 6 spec §16, Phase 7 spec §14,
-Phase 8 spec §20에 각각 재검토 근거 상세 기록):
+Phase 8 spec §20, Phase 9 spec §20에 각각 재검토 근거 상세 기록):
 
 1. (Phase 2에서 이어짐) 벤치마크 return type (PRICE_RETURN vs
    TOTAL_RETURN)
@@ -408,6 +529,57 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 문서화한 상태)로 저장된다 — 저장소가 정밀도 문제를 해결하지도, 악화
 시키지도 않는다.
 ```
+
+## Design Decisions (Phase 9 세션의 핵심 결정)
+
+1. Phase 9 착수 전 Git/Branch Integrity Check를 **이전 세션의 PASS
+   결과를 재사용하지 않고** 현재 HEAD 기준으로 처음부터 재수행 —
+   사용자가 명시적으로 반복 요구했음. 실제 검증 결과는 PASS였으므로
+   그대로 Phase 9 진행.
+2. `LearningExperimentRecord`는 `backtest.experiment.ExperimentRecord`를
+   재사용하지 않고 새 타입으로 정의 — 재사용을 먼저 시도했으나
+   `ExperimentRecord`가 `PerformanceReport`/transaction_cost_config/
+   slippage_config/benchmark 등 backtest 실행에 특화된 필드로 구성되어
+   있어 training run(dataset_id/trainer_version/evaluator_version 등)과
+   구조적으로 맞지 않음을 확인. 대신 저장 패턴(단일 DuckDB 카탈로그,
+   id-allocating tracker, natural-key idempotency)은 `storage.
+   experiment_repository`가 이미 확립한 것을 그대로 재사용 — "타입은
+   새로 만들되 아키텍처 패턴은 재사용"이라는 Phase 8의
+   PositionSizingResult/RiskCheckedPosition과 동일한 판단 기준을 적용
+   (ADR-0015 §1).
+3. `CandidateModelStatus`에 Master Plan §11.2의 7개 상태를 전부
+   예약하되, 이번 Phase 코드는 오직 `CANDIDATE`만 실제로 생성 —
+   `APPROVED`/`DEPLOYED`를 생성할 수 있는 코드 경로가 `learning/*.py`
+   어디에도 없음을 AST 스캔으로 구조적으로 검증(ADR-0015 §2).
+4. `build_training_dataset`의 `provenance` 파라미터는 기본값을 두지
+   않음(다른 모든 config는 기본값 있음) — provenance가 섞이는 것을
+   "쉬운 기본 경로"로 만들지 않기 위한 의도적 설계, `DataCleaner`도
+   요청된 provenance와 다른 레코드를 INVALID로 표시(ADR-0015 §3).
+5. `as_of_cutoff` 필터링을 Data Cleaning이 레코드를 보기 *전에* 적용 —
+   `AsOfDataView`의 "미래 데이터는 존재하지 않는다" 원칙을 Experience
+   Dataset 구성에도 동일하게 적용(문자 그대로 재사용은 아니지만 동일한
+   설계 원칙 적용, ADR-0015 §4).
+6. **(자체 테스트로 발견/수정)** `dataset_version`이 처음에는
+   `source_experience_ids` 목록만 해싱했으나, `trade_id`/`experience_id`가
+   journal마다 로컬로 재시작되는 시퀀스라는 사실(Phase 3 자체 문서화된
+   설계) 때문에 서로 다른 두 journal이 우연히 동일한 id를 가지면서 실제
+   내용이 다른데도 동일한 dataset_version이 나오는 문제를 발견 — 실제
+   sample 내용((trade_id, label_value, sample_as_of_time) 튜플)을
+   해싱하도록 수정하여 `compute_data_version`의 진짜 content-hash
+   계약을 충족(ADR-0015 §5).
+7. **(자체 테스트로 발견/수정)** 위와 동일한 원인으로
+   `TrainingDataset.dataset_id` 등 storage PRIMARY KEY가 in-process
+   allocator에서 나와 독립적인 두 pipeline 실행이 충돌하는 문제 발견 —
+   Phase 4가 `experience_id_seq`로 이미 확립한 "자연키로 dedup 확인 후
+   storage-level 시퀀스로 새 id 발급" 패턴을 4개 Learning 저장소 모두에
+   동일하게 적용(ADR-0015 §6).
+8. Label은 `TradeRecord.realized_return`(이미 실현된 실제 결과)만
+   사용 — 가격 데이터 기반의 새로운 forward-return 계산을 이번 Phase에서
+   만들지 않음. `label_horizon`은 고정값이 아니라 각 거래의 실제
+   holding_period를 반영해 정직하게 `None`으로 둠(ADR-0015 §7).
+9. Train/Validation/Test는 `sample_as_of_time` 기준 시간순 분할만
+   구현 — random shuffle 사용하지 않음, Purged K-Fold/Embargo 전체
+   구현은 이후 Validation 전용 Phase로 명시적으로 이연(ADR-0015 §8).
 
 ## Design Decisions (Phase 8 세션의 핵심 결정)
 
@@ -644,6 +816,30 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 
 ## Known Risks / Limitations (의도적으로 남겨둔 항목)
 
+- Learning Engine이 생산한 `CandidateModelArtifact`를 실제로 검증/승인/
+  배포하는 로직 없음 (Phase 10/11) — Phase 9는 CANDIDATE 상태까지만
+  생산하고, `CandidateModelStatus`의 나머지 6개 상태(BACKTESTED/
+  VALIDATED/OOS_TESTED/PAPER_TESTED/APPROVED/DEPLOYED)는 enum에만
+  예약되어 있을 뿐 이를 실제로 부여하는 코드가 전혀 없다.
+- `MeanRewardBaselineTrainer`는 실제 예측 가치를 주장하지 않는
+  null-hypothesis baseline(TRAIN split 평균)일 뿐 — 실제 ML/통계 모델
+  구현은 아직 없음(`CandidateTrainer` Protocol만 확장 지점으로 준비).
+- `Evaluator`는 MAE/MSE + baseline 비교만 제공 — PBO/Deflated
+  Sharpe/Walk-Forward 검증은 구현하지 않음(Phase 10 Validation 범위,
+  Design Decisions #9, ADR-0015 §8).
+- Label은 `TradeRecord.realized_return` 1종만 구현 —
+  forward_return/direction/excess_return_vs_benchmark/
+  risk_adjusted_outcome 등은 아직 구현하지 않음(Design Decisions #8,
+  ADR-0015 §7).
+- `EvaluationResult`에 S&P 500 벤치마크와의 직접 비교는 아직 연결되지
+  않음 — Experience Dataset 샘플이 거래 단위(per-trade)이지 벤치마크
+  단위가 아니기 때문(Phase 9 spec §14에 문서화된 한계, 향후 확장
+  가능).
+- `ExperienceRecord`↔`TrainingDataset` 간 비침습적 lineage enrichment
+  함수(`attach_learning_context`류)는 만들지 않음 — Phase 7/8과 동일한
+  이유(Trade Journal의 ground truth 레코드를 hypothetical 결과로
+  덮어쓰지 않음), 대신 4-way SQL join으로 lineage 증명(Phase 9 spec
+  §15, ADR-0013 §9의 연장).
 - Position Sizing/Risk Engine의 출력(`RiskCheckedPosition`)을 실제로
   소비해 주문을 만드는 Order Creation 없음 (Phase 8+ 이후) — Phase 8은
   sizing/risk 계산을 생산/영속화/lineage 연결까지만 하고, 어떤
@@ -749,17 +945,18 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 
 ## Recent Experiments
 
-없음 (실제 데이터 기반 실험 없음). Phase 4/5/6/7/8의 baseline runner,
+없음 (실제 데이터 기반 실험 없음). Phase 4/5/6/7/8/9의 baseline runner,
 regime conditioning 실험, regime-aware prediction 실험, baseline rule
-decision 실험, deterministic position sizing/risk 실험 모두 기존
-Phase 1/2/3 목 데이터셋 패턴(테스트 fixture)으로만 검증되었으며, 실
-시장 데이터 기반 실험은 아직 실행되지 않았다 (실 데이터 provider가
-없으므로 — ADR-0005). Phase 5의 regime-conditioning 실험, Phase 6의
-`RegimeAwarePredictor` 실험, Phase 7의 `BaselineRuleDecisionAgent`를,
-Phase 8의 `DeterministicPositionSizer`+`DeterministicPortfolioRiskEngine`
-까지 `RecordingStrategy`로 백테스트 루프에 관찰자로 연결한 실험 모두
-조건부/파생 버전이 baseline보다 우수하다고 주장하지 않는다 —
-mechanism 검증 목적으로만 존재.
+decision 실험, deterministic position sizing/risk 실험, mean-reward
+baseline learning 실험 모두 기존 Phase 1/2/3 목 데이터셋 패턴(테스트
+fixture)으로만 검증되었으며, 실 시장 데이터 기반 실험은 아직 실행되지
+않았다 (실 데이터 provider가 없으므로 — ADR-0005). Phase 5의
+regime-conditioning 실험, Phase 6의 `RegimeAwarePredictor` 실험, Phase 7의
+`BaselineRuleDecisionAgent`, Phase 8의 `DeterministicPositionSizer`+
+`DeterministicPortfolioRiskEngine`를 `RecordingStrategy`로 백테스트
+루프에 관찰자로 연결한 실험, Phase 9의 `MeanRewardBaselineTrainer`
+학습/평가 실험 모두 조건부/파생/학습 버전이 baseline보다 우수하다고
+주장하지 않는다 — mechanism 검증 목적으로만 존재.
 
 ## Current Model / Current Benchmark
 
@@ -767,25 +964,26 @@ Phase 2와 동일한 baseline 전략(Buy & Hold, Simple Momentum)과 벤치마�
 엔진(S&P 500 Buy & Hold, PRICE_RETURN/TOTAL_RETURN 미결) — 변화 없음.
 Phase 6는 baseline predictor 2종(RandomWalk, Drift), Phase 7은
 `BaselineRuleDecisionAgent` 1종, Phase 8은 `DeterministicPositionSizer`+
-`DeterministicPortfolioRiskEngine` 1쌍을 추가했으나 "현재 채택된
-예측/의사결정/사이징 모델"이라 부를 수 있는 것은 없다 — 전부 향후 모델
-비교의 기준선으로만 존재하며 실제 주문 생성에 연결되지 않는다.
+`DeterministicPortfolioRiskEngine` 1쌍, Phase 9는
+`MeanRewardBaselineTrainer` 1종(TRAIN split 평균만 예측하는
+null-hypothesis baseline)을 추가했으나 "현재 채택된 예측/의사결정/
+사이징/학습 모델"이라 부를 수 있는 것은 없다 — 전부 향후 모델 비교의
+기준선으로만 존재하며 실제 주문 생성/Live 배포에 연결되지 않는다.
 
 ## Last Validation
 
-`python3 -m pytest tests/ -q` — **483 passed**
-(Phase 1: 57, Phase 2: 82, Phase 3: 63, Phase 4: 51, Phase 5: 57, Phase 6: 39, Phase 7: 40, Phase 8: 94).
-Phase 8의 94개 테스트는 Unit(정상 사이징/zero-confidence/high-vol/
-low-liquidity/cash-shortage/기존 포지션/최대 한도/risk-budget/hint
-무시/invalid-numeric/negative/boundary — sizing 36 + engine 31)/
-Boundary(주문·broker·execution_price 생성 없음, Phase 7 경계 재확인,
-reflection 기반 — 11)/Leakage(미래 데이터 차단, as-of replay,
-deterministic replay — 3)/Integration(Phase5 Regime → Phase6
-Prediction → Phase7 Decision → Phase8 Sizing/Risk 전체 체인이 실제
-BacktestEngine 루프 안에서 관찰자로 동작, 체결 결과 불변 — 4)/
-Persistence(저장/재시작/멱등성/as_of 조회/lineage round-trip — 6)/
-5-way SQL join lineage(3) 카테고리를 모두 포함하며, Phase 2 현금
-소진 버그의 전용 regression test도 포함한다.
+`python3 -m pytest tests/ -q` — **553 passed**
+(Phase 1: 57, Phase 2: 82, Phase 3: 63, Phase 4: 51, Phase 5: 57, Phase 6: 39, Phase 7: 40, Phase 8: 94, Phase 9: 70).
+Phase 9의 70개 테스트는 Unit(Data Cleaning 11 + Labeling 5 + Dataset
+construction/versioning/split 8 + Candidate Training 6 + Evaluation 5)/
+Leakage(cutoff 필터링, feature/label 분리, temporal split integrity —
+7)/Provenance(HISTORICAL_SIMULATION/PAPER_TRADING/LIVE_TRADING 격리 —
+4)/Boundary(order/broker/risk mutation 없음, candidate 자동 승인/배포
+없음, reflection + AST 스캔 — 7)/Reproducibility(동일 입력 → 동일 결과,
+random 모듈 미사용 확인 — 5)/Persistence(저장/재시작/멱등성/id-collision
+regression — 8)/Integration(전체 파이프라인 + 4-way SQL join lineage —
+4) 카테고리를 모두 포함하며, 자체 발견한 dataset_version content-hash
+버그와 storage id 충돌 버그의 전용 regression test도 포함한다.
 
 ---
 
@@ -796,9 +994,10 @@ Persistence(저장/재시작/멱등성/as_of 조회/lineage round-trip — 6)/
 - Limit order, Purged K-Fold/Embargo, 5종 corporate action 처리 (Phase
   2부터)
 - Order Creation/Validation, Broker/Toss Securities API, Paper/Live
-  Trading, Learning Engine/Model Evolution (Phase 9+) — Market Regime
-  Detection(Phase 5), Prediction(Phase 6), Decision Agent(Phase 7),
-  Position Sizing/Portfolio Risk Engine(Phase 8)는 완료
+  Trading, Model Evolution/Model Registry 완성 (Phase 10+) — Market
+  Regime Detection(Phase 5), Prediction(Phase 6), Decision Agent(Phase 7),
+  Position Sizing/Portfolio Risk Engine(Phase 8), Learning Engine
+  기반(Phase 9)은 완료
 - Prediction의 model-based(통계적/ML) 구현 — `PredictionMethodType.
   MODEL_BASED`는 예약만 되어 있고 구현체 없음
 - Decision Agent의 model-based(AI) 구현 — `DecisionAgent` Protocol은
@@ -806,6 +1005,9 @@ Persistence(저장/재시작/멱등성/as_of 조회/lineage round-trip — 6)/
   drop-in 확장 지점만 마련됨
 - Position Sizing/Risk Engine의 model-based 구현 — `PositionSizer`/
   `PortfolioRiskEngine` Protocol은 각각 `Deterministic*` 1종만 구현
+- Learning Engine의 실제 ML/통계 trainer 구현 — `CandidateTrainer`
+  Protocol은 `MeanRewardBaselineTrainer`(null-hypothesis baseline)
+  1종만 구현
 - Risk Engine이 검증한 `RiskCheckedPosition`을 실제로 소비해 주문을
   만드는 Order Creation/Strategy — 의도적으로 Phase 8 범위 밖
 - Sector/Factor limit 실제 검사 — `SecurityMaster`에 해당 데이터
@@ -815,11 +1017,15 @@ Persistence(저장/재시작/멱등성/as_of 조회/lineage round-trip — 6)/
 - 실제 Post Trade Analysis 알고리즘(prediction/timing/risk/regime/
   signal error), 실제 Performance Attribution(market/sector/factor/
   selection/timing), 모델 기반 Counterfactual — 전부 구조만 준비됨
-  (Regime 필드는 Phase 5에서 실제로 채워지기 시작함 — `market_regime`)
+  (Regime 필드는 Phase 5에서 실제로 채워지기 시작함 — `market_regime`).
+  Phase 10의 몫으로 명시적으로 남겨짐
 - Paper/Live 브로커 어댑터 (Trade Journal의 `PAPER_TRADING`/
   `LIVE_TRADING` provenance를 실제로 생산할 producer 없음)
-- Learning Engine (Phase 9) — 영속 Experience Dataset(Regime context
-  포함)은 이제 존재하지만 아직 아무 것도 그것을 소비하지 않는다
+- Candidate Model의 BACKTESTED/VALIDATED/OOS_TESTED/PAPER_TESTED/
+  APPROVED/DEPLOYED 상태 전이 로직 (Phase 10/11) — `CandidateModelStatus`
+  enum에 예약만 되어 있고, 이를 실제로 부여하는 검증/승인 절차는
+  구현되지 않음(사람의 명시적 승인 없이는 `APPROVED`로 전이할 수 없다는
+  Master Plan §11.5 원칙이 구조적으로 보장됨)
 - Model Registry / "왜 모델이 변경되었는가" 감사 질문 (Phase 11)
 - DuckDB 다중 프로세스 동시 writer 지원 (Phase 15/16 필요 시 재검토)
 - Regime의 HMM/통계적/ML 기반 확장 (baseline 검증 없이 조기 구현하지
@@ -832,31 +1038,39 @@ Persistence(저장/재시작/멱등성/as_of 조회/lineage round-trip — 6)/
 1. **DECISION REQUIRED 3건 확인**: 벤치마크 return type, per-decision
    data_version, corporate-action-aware portfolio_state 재구성 (여전히
    미결, 사용자 판단 대기).
-2. **Phase 9 — Learning Engine** 착수: `PROJECT_MASTER_PLAN.md` §18.1의
-   Phase 순서를 따를 것. Phase 8의 `RiskCheckedPosition`까지 전체
-   deterministic 파이프라인(Prediction→Decision→Sizing→Risk)이 갖춰
-   졌으므로, 이제 Trade Journal/Experience Dataset을 실제로 소비하는
-   학습 파이프라인을 설계할 준비가 되어 있다. 참고: Master Plan §18.1의
-   Phase 목록에는 "Order Creation/Validation/Broker Adapter"를 위한
-   전용 Phase 번호가 명시적으로 없음(§2 아키텍처 다이어그램에는
-   존재) — Phase 13(Toss Securities Adapter) 또는 그 이전 어느 시점에
-   Order Creation이 실질적으로 필요해질 것으로 예상되나, 이는 Phase 8
-   완료를 막는 문제가 아니며 사용자 판단 없이 임의로 Phase 번호를
-   재배치하지 않는다(§18.4).
-3. Phase 9(Learning Engine) 착수 시점에 DECISION REQUIRED 2건(데이터
-   버전/corporate action lineage)을 재평가하고, `DuckDBExperienceRepository`
-   (이제 `market_regime`과 `expected_outcome`이 채워진 레코드도 포함)를
-   실제로 소비하는 학습 파이프라인을 설계.
+2. **Phase 10 — Counterfactual / Attribution** 착수: `PROJECT_MASTER_PLAN.md`
+   §18.1의 Phase 순서를 따를 것. Phase 9의 `TrainingDataset`/
+   `CandidateModelArtifact`/`EvaluationResult`까지 Learning Engine의
+   기반이 갖춰졌으므로, 이제 실제 Counterfactual Analysis 알고리즘과
+   Performance Attribution을 구현할 준비가 되어 있다(현재 구조만 준비된
+   `prediction_error`/`timing_error`/`risk_estimation_error`/
+   `market`/`sector`/`factor`/`selection`/`timing` attribution을 실제로
+   채우는 작업). 참고: Master Plan §18.1의 Phase 목록에는 "Order
+   Creation/Validation/Broker Adapter"를 위한 전용 Phase 번호가
+   명시적으로 없음(§2 아키텍처 다이어그램에는 존재) — Phase 13(Toss
+   Securities Adapter) 또는 그 이전 어느 시점에 Order Creation이
+   실질적으로 필요해질 것으로 예상되나, 이는 어떤 완료된 Phase도 막는
+   문제가 아니며 사용자 판단 없이 임의로 Phase 번호를 재배치하지
+   않는다(§18.4).
+3. Phase 10/11 착수 시점에 DECISION REQUIRED 2건(데이터 버전/corporate
+   action lineage)을 재평가.
 4. 실 데이터 provider 선정(ADR-0005 기준)이 이루어지면, `data/` 아래
    실제 `StorageConfig.root_dir`를 지정하여 장기 ingestion을 시작할 수
-   있다 — Phase 4/5/6/7/8이 그 대상 저장소를 이미 구현했다.
+   있다 — Phase 4/5/6/7/8/9가 그 대상 저장소를 이미 구현했다.
 5. 향후 Phase 6의 `PredictionMethodType.MODEL_BASED`, Phase 7의
    model-based `DecisionAgent`, Phase 8의 model-based `PositionSizer`/
-   `PortfolioRiskEngine`을 실제로 사용하는 첫 모델이 추가될 때, 반드시
-   각 baseline(`RandomWalkPredictor`/`DriftPredictor`/
-   `BaselineRuleDecisionAgent`/`DeterministicPositionSizer`/
-   `DeterministicPortfolioRiskEngine`)과 비교해 실제로 가치가 있는지
-   검증할 것 (baseline 우선 원칙).
+   `PortfolioRiskEngine`, Phase 9의 model-based `CandidateTrainer`를
+   실제로 사용하는 첫 모델이 추가될 때, 반드시 각 baseline
+   (`RandomWalkPredictor`/`DriftPredictor`/`BaselineRuleDecisionAgent`/
+   `DeterministicPositionSizer`/`DeterministicPortfolioRiskEngine`/
+   `MeanRewardBaselineTrainer`)과 비교해 실제로 가치가 있는지 검증할
+   것 (baseline 우선 원칙).
+6. Phase 11(Model Evolution/Model Registry)에서 Phase 9의
+   `CandidateModelArtifact`를 `BACKTESTED`→`VALIDATED`→`OOS_TESTED`→
+   `PAPER_TESTED`→`APPROVED`→`DEPLOYED`로 전이시키는 검증/승인 절차를
+   설계할 때, `APPROVED` 전이는 반드시 사람의 명시적 승인을 거쳐야
+   하며 Claude Code/AI가 스스로 부여할 수 없다는 원칙(Master Plan
+   §11.5)을 그대로 유지할 것.
 
 ---
 
@@ -1039,3 +1253,75 @@ Persistence(저장/재시작/멱등성/as_of 조회/lineage round-trip — 6)/
   Live Trading/Prediction model training/Learning Engine/Model
   Evolution/AI Gateway/Model Registry/Drift Detection은 이번 Phase
   범위에서 명시적으로 제외 (지시대로)
+
+### Session 10 — 2026-08-25 (Phase 9)
+- **Phase 9 착수 전 Git/Branch Integrity Check를 이전 세션 PASS
+  결과를 재사용하지 않고 처음부터 재수행** (사용자 지시) — 현재
+  HEAD(`05ac338`, Phase 8)부터 Phase 0~8 커밋 10개를 `merge-base
+  --is-ancestor`로 개별 재확인, 병합 커밋 0개, `origin/main`과
+  `origin/claude/autonomous-ai-investment-system-wvscwe` 모두 조상,
+  두 branch 모두 HEAD에 없는 커밋 0개, Phase 0~8 산출물 전부 실존,
+  483/483 테스트 통과, working tree clean → PASS 판정
+- Master Plan/ADR-0001~0014/Phase 1~8 spec/현재 src·tests 재조사
+  (충돌 없음 확인). Phase 3 `ExperienceRecord`/`build_experience_records`,
+  Phase 4 `ExperienceRepository`/`ExperimentRepository`, Phase 5~8의
+  `attach_*_context` 비침습적 lineage 패턴을 실제 코드로 재확인 후 설계
+- Phase 9 명세(Git Integrity Check 결과 포함), ADR-0015 작성
+- `src/learning/` 참조 구현: `DataCleaner`(provenance mismatch/
+  duplicate/NaN·Inf/missing decision/no realized outcome을 VALID/
+  INVALID/EXCLUDED/UNKNOWN 4상태로 전부 기록, 절대 조용히 제거하지
+  않음), `Labeler`(TradeRecord.realized_return만 label 소스로 사용,
+  feature_cutoff_time/label_start_time 구조적 분리), `build_training_dataset`
+  (as_of_cutoff로 미래 experience를 cleaning 이전에 배제, 시간순
+  non-shuffled train/validation/test split, 실제 sample 내용을 해싱하는
+  content-hash dataset_version), `MeanRewardBaselineTrainer`(TRAIN
+  split 평균만 사용, VALIDATION/TEST 미접근, 항상
+  CandidateModelStatus.CANDIDATE만 생산), `Evaluator`(MAE/MSE + baseline
+  비교, candidate_is_better 필드 없음), `LearningExperimentTracker`,
+  4종 Repository Protocol + InMemory 구현, `run_learning_pipeline`
+  오케스트레이션
+- `src/storage/learning_repository.py` — Phase4 DuckDB 카탈로그에
+  `training_datasets`/`candidate_models`/`evaluation_results`/
+  `learning_experiments` 테이블 + 4개 시퀀스 신규 추가(기존 테이블
+  스키마 변경 없음)
+- Phase 1~8 소스코드 변경 전혀 없음(`schema.py`/`serialization.py`에
+  대한 순수 추가만 존재, `git diff | grep '^-'` 결과 두 파일 모두
+  삭제/변경 없음으로 확인)
+- learning 9개 카테고리(cleaning/labeling/dataset/trainer/evaluation/
+  leakage/provenance/boundary/reproducibility, 58개) + storage 1개(8개)
+  + integration 1개(4개) 포함 70개 테스트 작성, 전체 553개 테스트 전부
+  통과 (파일명 충돌 발견 및 즉시 수정 — `test_provenance.py` →
+  `test_learning_provenance.py`, `tests/trade_journal/test_provenance.py`
+  와 충돌)
+- **자체 발견 및 수정한 버그 2건**: (1) `dataset_version`이
+  `source_experience_ids` 목록만 해싱해 서로 다른 두 journal이 우연히
+  동일한 trade_id 시퀀스를 가지면 실제 내용이 달라도 동일 버전이
+  나오는 문제 — 실제 sample 내용을 해싱하도록 수정. (2) 동일 원인으로
+  storage PRIMARY KEY가 in-process allocator에서 충돌하는 문제 — Phase
+  4의 `experience_id_seq` 패턴을 4개 Learning 저장소 모두에 동일하게
+  적용해 수정. 전용 regression test
+  (`test_two_independent_pipeline_runs_do_not_collide_in_storage`) 추가
+- Data Cleaning이 샘플을 절대 조용히 버리지 않음을 검증, 미래 데이터
+  유출 방지 회귀 테스트 신규 작성(동일 as_of_cutoff로 재구축한 dataset이
+  이후 journal에 미래 experience가 추가되어도 완전히 동일함을 확인)
+- Provenance 분리를 `provenance` 파라미터 기본값 미제공으로 구조적으로
+  강제, Learning Engine이 order/broker/risk mutation을 만들지 않고
+  CandidateModelStatus.APPROVED/DEPLOYED를 생성하는 코드 경로가 전혀
+  없음을 reflection + AST 스캔으로 검증
+  (`test_learning_boundary.py`)
+- Reproducibility 검증 — 동일 dataset/config/seed → 동일 결과,
+  `learning/*.py` 어디에도 `random` 모듈 미사용을 AST로 확인
+- `LearningExperimentRecord`는 `backtest.experiment.ExperimentRecord`를
+  재사용하지 않고 새 타입으로 설계(backtest-특화 필드가 training run과
+  맞지 않아 기각) — 저장 패턴은 `storage.experiment_repository`를 그대로
+  재사용, 중복된 새 Experiment 시스템을 만들지 않음
+- Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+  않다고 판단, 계속 이연 (임의 결정하지 않음)
+- Phase 8의 Known Issue 3건(average_cost proxy/sector-factor 데이터
+  부재/turnover 호출자 의존) 재검토 — Learning Engine과 무관, 변경 불필요
+- Counterfactual Analysis/Performance Attribution(Phase 10)/Model
+  Evolution/Model Registry 완성(Phase 11)/AI Gateway(Phase 12)/Toss
+  Securities Adapter(Phase 13)/Monitoring(Phase 14)/Paper Trading
+  (Phase 15)/Live Trading(Phase 16)은 이번 Phase 범위에서 명시적으로
+  제외 (지시대로) — 학습 결과의 자동 Live 적용, 실제 AI API 호출도
+  여전히 구현하지 않음

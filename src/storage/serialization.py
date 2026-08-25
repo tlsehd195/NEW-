@@ -69,6 +69,9 @@ from decision.models import DecisionOutput
 from risk.enums import RiskCheckStatus
 from risk.models import PortfolioRiskState, PositionSizingResult, RiskCheckedPosition
 
+from learning.enums import CandidateModelStatus, SplitName
+from learning.models import CandidateModelArtifact, EvaluationMetrics, EvaluationResult, LearningExperimentRecord, TrainingDataset
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -1095,4 +1098,173 @@ def payload_to_risk_checked_position(data: dict) -> RiskCheckedPosition:
         provenance=TradeProvenance(data["provenance"]),
         experiment_id=data.get("experiment_id"),
         recorded_at=_dt_from_iso(data.get("recorded_at")),
+    )
+
+
+# --------------------------------------------------------------------
+# learning.models
+# --------------------------------------------------------------------
+
+
+def _evaluation_metrics_to_dict(m: EvaluationMetrics) -> dict:
+    return {
+        "sample_count": m.sample_count,
+        "mean_absolute_error": m.mean_absolute_error,
+        "mean_squared_error": m.mean_squared_error,
+        "mean_label": m.mean_label,
+    }
+
+
+def _dict_to_evaluation_metrics(data: dict) -> EvaluationMetrics:
+    return EvaluationMetrics(
+        sample_count=data["sample_count"],
+        mean_absolute_error=data.get("mean_absolute_error"),
+        mean_squared_error=data.get("mean_squared_error"),
+        mean_label=data.get("mean_label"),
+    )
+
+
+def training_dataset_to_payload(dataset: TrainingDataset) -> dict:
+    return {
+        "dataset_id": dataset.dataset_id,
+        "dataset_version": dataset.dataset_version,
+        "created_at": _dt_iso(dataset.created_at),
+        "source_experience_ids": list(dataset.source_experience_ids),
+        "provenance": dataset.provenance.value,
+        "feature_version": dataset.feature_version,
+        "label_version": dataset.label_version,
+        "data_version": list(dataset.data_version),
+        "cleaning_config_version": dataset.cleaning_config_version,
+        "label_config_version": dataset.label_config_version,
+        "split_config_version": dataset.split_config_version,
+        "sampling_config_version": dataset.sampling_config_version,
+        "configuration_version": dataset.configuration_version,
+        "sample_count": dataset.sample_count,
+        "excluded_count": dataset.excluded_count,
+        "quality_status": dataset.quality_status,
+        "splits": {split.value: list(ids) for split, ids in dataset.splits.items()},
+        "as_of_cutoff": _dt_iso(dataset.as_of_cutoff) if dataset.as_of_cutoff is not None else None,
+    }
+
+
+def payload_to_training_dataset(data: dict) -> TrainingDataset:
+    return TrainingDataset(
+        dataset_id=data["dataset_id"],
+        dataset_version=data["dataset_version"],
+        created_at=_dt_from_iso(data["created_at"]),
+        source_experience_ids=tuple(data.get("source_experience_ids") or ()),
+        provenance=TradeProvenance(data["provenance"]),
+        feature_version=data.get("feature_version"),
+        label_version=data["label_version"],
+        data_version=tuple(data.get("data_version") or ()),
+        cleaning_config_version=data["cleaning_config_version"],
+        label_config_version=data["label_config_version"],
+        split_config_version=data["split_config_version"],
+        sampling_config_version=data["sampling_config_version"],
+        configuration_version=data["configuration_version"],
+        sample_count=data["sample_count"],
+        excluded_count=data["excluded_count"],
+        quality_status=data["quality_status"],
+        splits={SplitName(k): tuple(v) for k, v in (data.get("splits") or {}).items()},
+        as_of_cutoff=_dt_from_iso(data.get("as_of_cutoff")),
+    )
+
+
+def candidate_model_to_payload(candidate: CandidateModelArtifact) -> dict:
+    return {
+        "candidate_id": candidate.candidate_id,
+        "status": candidate.status.value,
+        "trainer_version": candidate.trainer_version,
+        "dataset_id": candidate.dataset_id,
+        "dataset_version": candidate.dataset_version,
+        "feature_version": candidate.feature_version,
+        "label_version": candidate.label_version,
+        "parameters": candidate.parameters,
+        "seed": candidate.seed,
+        "trained_at": _dt_iso(candidate.trained_at),
+        "provenance": candidate.provenance.value,
+        "experiment_id": candidate.experiment_id,
+    }
+
+
+def payload_to_candidate_model(data: dict) -> CandidateModelArtifact:
+    return CandidateModelArtifact(
+        candidate_id=data["candidate_id"],
+        status=CandidateModelStatus(data["status"]),
+        trainer_version=data["trainer_version"],
+        dataset_id=data["dataset_id"],
+        dataset_version=data["dataset_version"],
+        feature_version=data.get("feature_version"),
+        label_version=data["label_version"],
+        parameters=data.get("parameters") or {},
+        seed=data.get("seed"),
+        trained_at=_dt_from_iso(data["trained_at"]),
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+    )
+
+
+def evaluation_result_to_payload(evaluation: EvaluationResult) -> dict:
+    return {
+        "evaluation_id": evaluation.evaluation_id,
+        "candidate_id": evaluation.candidate_id,
+        "dataset_id": evaluation.dataset_id,
+        "dataset_version": evaluation.dataset_version,
+        "train_metrics": _evaluation_metrics_to_dict(evaluation.train_metrics),
+        "validation_metrics": _evaluation_metrics_to_dict(evaluation.validation_metrics),
+        "test_metrics": _evaluation_metrics_to_dict(evaluation.test_metrics),
+        "baseline_metrics": _evaluation_metrics_to_dict(evaluation.baseline_metrics),
+        "evaluator_version": evaluation.evaluator_version,
+        "evaluated_at": _dt_iso(evaluation.evaluated_at),
+        "provenance": evaluation.provenance.value,
+    }
+
+
+def payload_to_evaluation_result(data: dict) -> EvaluationResult:
+    return EvaluationResult(
+        evaluation_id=data["evaluation_id"],
+        candidate_id=data["candidate_id"],
+        dataset_id=data["dataset_id"],
+        dataset_version=data["dataset_version"],
+        train_metrics=_dict_to_evaluation_metrics(data["train_metrics"]),
+        validation_metrics=_dict_to_evaluation_metrics(data["validation_metrics"]),
+        test_metrics=_dict_to_evaluation_metrics(data["test_metrics"]),
+        baseline_metrics=_dict_to_evaluation_metrics(data["baseline_metrics"]),
+        evaluator_version=data["evaluator_version"],
+        evaluated_at=_dt_from_iso(data["evaluated_at"]),
+        provenance=TradeProvenance(data["provenance"]),
+    )
+
+
+def learning_experiment_to_payload(experiment: LearningExperimentRecord) -> dict:
+    return {
+        "experiment_id": experiment.experiment_id,
+        "dataset_id": experiment.dataset_id,
+        "dataset_version": experiment.dataset_version,
+        "trainer_version": experiment.trainer_version,
+        "evaluator_version": experiment.evaluator_version,
+        "candidate_id": experiment.candidate_id,
+        "evaluation_id": experiment.evaluation_id,
+        "configuration_version": experiment.configuration_version,
+        "seed": experiment.seed,
+        "provenance": experiment.provenance.value,
+        "status": experiment.status,
+        "created_at": _dt_iso(experiment.created_at),
+    }
+
+
+def payload_to_learning_experiment(data: dict) -> LearningExperimentRecord:
+    return LearningExperimentRecord(
+        experiment_id=data["experiment_id"],
+        dataset_id=data["dataset_id"],
+        dataset_version=data["dataset_version"],
+        trainer_version=data["trainer_version"],
+        evaluator_version=data["evaluator_version"],
+        candidate_id=data["candidate_id"],
+        evaluation_id=data["evaluation_id"],
+        configuration_version=data["configuration_version"],
+        seed=data.get("seed"),
+        provenance=TradeProvenance(data["provenance"]),
+        status=data["status"],
+        created_at=_dt_from_iso(data["created_at"]),
     )

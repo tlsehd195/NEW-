@@ -1,0 +1,115 @@
+"""Category: Unit Test -- DataCleaner (Phase 9 spec section 7).
+
+Covers: required field presence, invalid numeric values (NaN/infinity),
+duplicate sample, invalid timestamp (unresolvable decision), missing
+outcome, invalid reward, provenance mismatch.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import math
+
+from learning_helpers import build_journal_with_closed_trades, build_journal_with_open_trade, utc
+
+from learning.cleaning import DataCleaner
+from learning.config import DataCleaningConfig
+from learning.enums import SampleStatus
+
+from trade_journal.enums import TradeProvenance
+
+
+class TestValidSamples:
+    def test_normal_closed_trades_are_all_valid(self) -> None:
+        journal, records = build_journal_with_closed_trades(5)
+        results = DataCleaner().clean(records, journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert len(results) == 5
+        assert all(r.status == SampleStatus.VALID for r in results)
+        assert all(r.reason == "ok" for r in results)
+        assert all(r.sample_as_of_time is not None for r in results)
+
+
+class TestMissingOutcome:
+    def test_open_trade_with_no_realized_return_is_excluded(self) -> None:
+        journal, records = build_journal_with_open_trade()
+        results = DataCleaner().clean(records, journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].status == SampleStatus.EXCLUDED
+        assert results[0].reason == "no_realized_outcome"
+
+    def test_require_realized_outcome_false_allows_it_through(self) -> None:
+        journal, records = build_journal_with_open_trade()
+        cleaner = DataCleaner(DataCleaningConfig(require_realized_outcome=False))
+        results = cleaner.clean(records, journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].status == SampleStatus.VALID
+
+
+class TestInvalidTimestamp:
+    def test_unresolvable_decision_is_unknown(self) -> None:
+        journal, records = build_journal_with_closed_trades(1)
+        bad_record = dataclasses.replace(records[0], decision_id="NO-SUCH-DECISION")
+        results = DataCleaner().clean([bad_record], journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].status == SampleStatus.UNKNOWN
+        assert results[0].reason == "missing_decision"
+        assert results[0].sample_as_of_time is None
+
+
+class TestInvalidNumeric:
+    def test_nan_reward_is_invalid(self) -> None:
+        journal, records = build_journal_with_closed_trades(1)
+        bad_record = dataclasses.replace(records[0], reward=float("nan"))
+        results = DataCleaner().clean([bad_record], journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].status == SampleStatus.INVALID
+        assert results[0].reason == "invalid_reward_numeric"
+
+    def test_infinite_reward_is_invalid(self) -> None:
+        journal, records = build_journal_with_closed_trades(1)
+        bad_record = dataclasses.replace(records[0], reward=float("inf"))
+        results = DataCleaner().clean([bad_record], journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].status == SampleStatus.INVALID
+        assert results[0].reason == "invalid_reward_numeric"
+
+    def test_nan_realized_return_is_invalid(self) -> None:
+        journal, records = build_journal_with_closed_trades(1)
+        bad_outcome = dict(records[0].actual_outcome)
+        bad_outcome["realized_return"] = float("nan")
+        bad_record = dataclasses.replace(records[0], actual_outcome=bad_outcome)
+        results = DataCleaner().clean([bad_record], journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].status == SampleStatus.INVALID
+        assert results[0].reason == "invalid_realized_return_numeric"
+
+    def test_infinite_realized_return_is_invalid(self) -> None:
+        journal, records = build_journal_with_closed_trades(1)
+        bad_outcome = dict(records[0].actual_outcome)
+        bad_outcome["realized_return"] = float("-inf")
+        bad_record = dataclasses.replace(records[0], actual_outcome=bad_outcome)
+        results = DataCleaner().clean([bad_record], journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].status == SampleStatus.INVALID
+        assert results[0].reason == "invalid_realized_return_numeric"
+
+
+class TestDuplicateSample:
+    def test_duplicate_trade_id_in_the_same_batch_is_invalid_for_the_second_occurrence(self) -> None:
+        journal, records = build_journal_with_closed_trades(1)
+        results = DataCleaner().clean([records[0], records[0]], journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].status == SampleStatus.VALID
+        assert results[1].status == SampleStatus.INVALID
+        assert results[1].reason == "duplicate_trade_id"
+
+
+class TestProvenanceMismatch:
+    def test_record_with_a_different_provenance_is_invalid(self) -> None:
+        journal, records = build_journal_with_closed_trades(1, provenance=TradeProvenance.PAPER_TRADING)
+        results = DataCleaner().clean(records, journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].status == SampleStatus.INVALID
+        assert results[0].reason == "provenance_mismatch"
+
+
+class TestNeverSilentlyDrops:
+    def test_every_input_record_gets_exactly_one_result(self) -> None:
+        journal, records = build_journal_with_closed_trades(8)
+        _, open_records = build_journal_with_open_trade(decision_time=utc(2024, 6, 1))
+        all_records = list(records) + list(open_records)
+        results = DataCleaner().clean(all_records, journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        # open_records' decision lives in a different journal -- unresolvable here -> UNKNOWN, not dropped
+        assert len(results) == len(all_records)
+        assert all(isinstance(r.status, SampleStatus) for r in results)

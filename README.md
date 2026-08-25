@@ -64,8 +64,8 @@
 
 ## 현재 상태
 
-**Phase 8 — Position Sizing + Portfolio Risk Engine** (설계 및 참조
-구현 완료). 상세는 `docs/PROJECT_STATUS.md` 참조.
+**Phase 9 — Learning Engine** (설계 및 참조 구현 완료).
+상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
 - Phase 1 — Data Infrastructure: 완료 (`src/data_infra/`, 57 tests)
@@ -109,11 +109,27 @@
   저장소(`position_sizing_results`/`risk_assessments` 테이블)에
   영속화, Phase 2 현금 소진 버그의 전용 regression test — Order
   Creation/Validation/Broker/Paper·Live Trading은 명시적 범위 밖
-  (Phase 9+) — `DECISION REQUIRED` 3건 여전히 미결(벤치마크 return
-  type, per-decision data version, corporate-action-aware portfolio
-  state 재구성) — `docs/PROJECT_STATUS.md` 참조
+  (Phase 9+)
+- Phase 9 — Learning Engine: 완료 (`src/learning/`, 70 tests) — Trade
+  Journal의 Experience Dataset을 Data Cleaning(VALID/INVALID/EXCLUDED/
+  UNKNOWN 4상태, 절대 조용히 버리지 않음) → Labeling(각 거래의 실제
+  realized_return을 label로 사용) → Training Dataset(시간순
+  non-shuffled train/validation/test split, 실제 sample 내용을 해싱하는
+  content-hash 버전으로 재현 가능) → Candidate Training
+  (`MeanRewardBaselineTrainer` — TRAIN split 평균만 사용하는
+  null-hypothesis baseline, 항상 CANDIDATE 상태만 생산) → Evaluation
+  (MAE/MSE + baseline 비교, candidate 우위 주장 없음)까지 연결하는
+  파이프라인. `CandidateModelStatus`는 Master Plan의 7개 상태를 전부
+  예약하되 이번 Phase 코드는 APPROVED/DEPLOYED를 생성할 수 있는 경로가
+  전혀 없음(사람의 승인 없이는 배포되지 않는다는 원칙을 구조적으로
+  보장). Phase 4 저장소(`training_datasets`/`candidate_models`/
+  `evaluation_results`/`learning_experiments` 테이블)에 영속화 —
+  Order/Broker/Model Deployment는 명시적 범위 밖(Phase 10+) —
+  `DECISION REQUIRED` 3건 여전히 미결(벤치마크 return type,
+  per-decision data version, corporate-action-aware portfolio state
+  재구성) — `docs/PROJECT_STATUS.md` 참조
 
-전체 테스트: **483 passed** (Phase 1+2+3+4+5+6+7+8 합산).
+전체 테스트: **553 passed** (Phase 1+2+3+4+5+6+7+8+9 합산).
 
 ## 테스트 실행
 
@@ -214,6 +230,43 @@ DuckDB 저장소(`position_sizing_results`/`risk_assessments` 테이블)에
 이후 Phase의 몫으로 명시적으로 범위 밖에 있다. 자세한 설계는
 `docs/specifications/PHASE-8-position-sizing-and-risk.md`와
 `docs/decisions/ADR-0014-position-sizing-and-risk-engine.md` 참조.
+
+## Learning Engine (Phase 9)
+
+`src/learning/`는 Trade Journal의 Experience Dataset(Phase 3/4)을
+`Experience → Data Cleaning → Labeling → Training Dataset → Candidate
+Training → Evaluation` 순서로 연결하는 Learning Engine이다.
+`DataCleaner`는 모든 샘플에 VALID/INVALID/EXCLUDED/UNKNOWN 중 하나의
+상태와 사실적인 reason을 부여하며 절대 조용히 제거하지 않는다.
+`Labeler`는 각 거래의 이미 실현된 `realized_return`만 label로 사용하고
+(가격 데이터 기반의 새로운 forward-return 계산 없음), feature cutoff와
+label 시작 시점을 구조적으로 분리해 유지한다. `build_training_dataset`
+은 `as_of_cutoff`가 주어지면 그 이후 시점의 experience를 Data Cleaning이
+보기도 전에 배제하고(`AsOfDataView`의 "미래 데이터는 존재하지 않는다"
+원칙을 Experience Dataset 구성에도 동일하게 적용), 시간순
+non-shuffled train/validation/test 분할을 만들며, 실제 sample 내용을
+해싱한 content-hash `dataset_version`으로 재현성을 보장한다.
+`MeanRewardBaselineTrainer`는 TRAIN split 평균만 사용하는
+null-hypothesis baseline "trainer"로 VALIDATION/TEST에는 전혀 접근하지
+않으며, `CandidateModelArtifact.status`는 항상
+`CandidateModelStatus.CANDIDATE`만 생산한다 — Master Plan §11.2의 나머지
+6개 상태(BACKTESTED/VALIDATED/OOS_TESTED/PAPER_TESTED/APPROVED/
+DEPLOYED)는 enum에 예약만 되어 있을 뿐 `learning/*.py` 어디에도 이를
+생성하는 코드 경로가 없다(사람의 명시적 승인 없이 배포로 전이될 수
+없다는 Master Plan §11.5 원칙이 구조적으로 보장됨). `Evaluator`는
+MAE/MSE와 trivial baseline 비교만 제공하며 candidate가 baseline보다
+우수하다고 주장하는 필드는 존재하지 않는다. provenance는
+`build_training_dataset`의 `provenance` 파라미터에 기본값을 두지 않아
+HISTORICAL_SIMULATION/PAPER_TRADING/LIVE_TRADING이 섞이는 것을 구조적으로
+방지한다. 결과는 Phase 4의 DuckDB 저장소(`training_datasets`/
+`candidate_models`/`evaluation_results`/`learning_experiments` 테이블)에
+영속화되며, 각 저장소는 자연키로 멱등성을 확인한 뒤 storage-level
+시퀀스로 새 id를 발급한다(독립적인 두 파이프라인 실행이 in-process
+allocator 충돌로 PRIMARY KEY를 침해하지 않도록 하는, Phase 4가 이미
+확립한 것과 동일한 패턴). Order Creation, Broker, Model Registry/
+Deployment는 모두 이후 Phase의 몫으로 명시적으로 범위 밖에 있다. 자세한
+설계는 `docs/specifications/PHASE-9-learning-engine.md`와
+`docs/decisions/ADR-0015-learning-engine.md` 참조.
 
 ## 개발 원칙
 
