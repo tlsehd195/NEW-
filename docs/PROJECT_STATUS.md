@@ -4,16 +4,65 @@
 > 진행되었는지 파악할 수 있어야 한다. 이 파일은 각 세션 종료 시 반드시
 > 최신 상태로 갱신한다.
 
-**Last Updated:** 2026-08-25
-**Updated By:** Claude Code (Session 16 — Phase 15 Paper Trading)
+**Last Updated:** 2026-08-26
+**Updated By:** Claude Code (Session 17 — Phase 16 Live Trading)
 
 ---
 
 ## Current Phase
 
-**Phase 15 — Paper Trading** (설계 및 참조 구현 완료)
+**Phase 16 — Live Trading** (안전 인프라 설계 및 참조 구현 완료 — 실제
+Toss 계좌 활성화는 여전히 구조적으로 불가능, §6/Known Limitations 참조)
 
-## Current Subtask (Session 16 — Phase 15)
+## Current Subtask (Session 17 — Phase 16)
+
+Phase 16 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
+지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-15-paper-trading`,
+HEAD `eae021270f409b30fb36791e5518545876fa1d48` "Phase 15: Paper
+Trading", working tree clean)에서 시작. `git log --oneline --graph
+--decorate --all`로 단일 선형 히스토리(병합 커밋 0개) 확인,
+`git merge-base HEAD origin/main`이 `origin/main` 자신의 HEAD
+(`c3abad0eb9b2ba1ed4dda5ee158b448606a87d59`)를 그대로 반환(발산 없음).
+Phase 16용 원격 브랜치가 아직 없어 검증된 현재 HEAD에서
+`claude/phase-16-live-trading` 브랜치를 새로 생성. 착수 전 **1127/1127
+테스트 통과(baseline)** 확인. 상세:
+`docs/specifications/PHASE-16-live-trading.md` §0.
+
+Master Plan §9.4(Live Trading)/§1.5(kill switch는 AI가 해제 불가)/
+§12(Kill Switch & 장애/복구 규칙)/§14.4(LIVE_TRADING=false 기본값)를
+재확인한 뒤 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-16-live-trading.md`) + ADR-0022 +
+`docs/operations/LIVE-TRADING-RUNBOOK.md` + `src/broker/live/`(신규
+서브패키지, Phase 0~15 소스 전혀 수정 없이 완전히 독립적인 안전 계층으로
+추가) + `src/storage/live_repository.py`(신규 DuckDB 저장소 2종 — 나머지
+order status/request-response 감사 기록은 Phase 13의 기존 테이블을
+변경 없이 그대로 재사용) + 신규 137개 테스트 전부 통과.
+
+**중요 발견**: `evaluate_safety_gate`가 11개 조건을 독립적으로 검사하는데,
+그중 broker capability 검증 조건이 `TossBrokerAdapter.get_capabilities()`
+(Phase 13이 이미 정직하게 `ACCOUNT_BALANCE`/`POSITIONS`/`ORDER_STATUS`/
+`CANCEL_ORDER`를 `UNKNOWN`으로 보고하도록 구현해 둔 것)와 결합되어,
+다른 모든 조건이 충족되어도 실제 Toss 계좌에 대한 Live Trading이
+구조적으로 활성화될 수 없음을 실제 코드 실행으로 직접 확인함(추측이 아닌
+`tests/broker/live/test_live_safety_gate.py::
+TestRealTossCapabilitiesStructurallyBlockLiveTrading`과
+`tests/integration/test_live_trading_lineage.py::
+test_toss_real_capabilities_block_the_gate_end_to_end`로 검증). 이는
+새로운 제약이 아니라 Phase 13이 이미 내린 정직한 설계 결정의 자연스러운
+결과이며, ADR-0022 §2/Known Limitations에 명시.
+
+Kill switch는 `engage_kill_switch`(deterministic 코드가 자동 호출 가능)와
+`release_kill_switch`(`LiveActivationApproval` — 사람 신원/타임스탬프/
+확인 문구/체크리스트 완료를 전부 요구하며 `approved_by`가 "AI"/"SYSTEM"/
+"CLAUDE"이면 구조적으로 거부)로 비대칭 설계되어, `release_kill_switch`의
+실제 호출 지점이 저장소 전체에서 자기 자신의 테스트 외에는 없음을 AST
+스캔으로 검증(`test_live_boundary.py`). Reconciliation은 계좌/포지션/
+주문상태 3종 순수 비교 함수로 구현되어 불일치·불명 상태를 절대
+MATCHED로 강제 변환하지 않으며, 불일치 시 세션 전체의 신규 주문을 차단.
+제출 중 예외(timeout/connection lost)는 절대 재시도하지 않고 UNKNOWN으로
+기록 후 reconciliation을 요구.
+
+## Previous Subtask (Session 16 — Phase 15)
 
 Phase 15 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
 지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-14-monitoring`,
@@ -113,38 +162,138 @@ Decision/Risk/AI Gateway를 우회하는 경로 전혀 없음(`decision.agent`/
 `risk.sizing`/`risk.engine`/`ai_gateway.gateway`/`learning.enums` import
 자체가 `broker/*.py` 어디에도 없음을 AST 스캔으로 검증).
 
-## Previous Subtask (Session 13 — Phase 12)
+## Completed (Session 17 — Phase 16)
 
-Phase 12 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
-지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-11-model-evolution-7hpibr`,
-HEAD `b957ac2bd45befe6bcea3e8ca110f34417518623` "Update README to Phase
-11 status", working tree clean)에서 시작. `git log --oneline --graph
---decorate --all`로 단일 선형 히스토리(병합 커밋 0개)를 확인하고,
-인수인계 문서가 제시한 두 참조 커밋(Phase 10
-`483600fb571c2f392bcc193f7ebbe733b6122a4b`, Phase 11
-`1f0194f89d24a33db57af8f2d0c0eb4a605d29ed`)이 실제로 현재 HEAD의 조상임을
-`git merge-base --is-ancestor`로 각각 확인. Phase 12용으로 지정된
-원격 브랜치가 아직 없어(`git branch -r` 확인) 검증된 현재 HEAD에서
-`claude/phase-12-ai-gateway` 브랜치를 새로 생성(Phase 11 세션이 겪었던
-"main에서 잘못 생성" 사례를 반복하지 않도록 반드시 현재 HEAD 기준으로
-생성). 의존성은 이전 세션에서 이미 설치되어 있었으며, 착수 전
-**669/669 테스트 통과** 확인. 상세:
-`docs/specifications/PHASE-12-ai-gateway.md` §0.
-
-Master Plan §5(AI API Gateway)/§6(무료 한도 로테이션)/§18.4(Phase
-12부터 AI API 연동이 Phase 목적 자체이나 실제 키 없이도 안전하게
-동작함을 우선 확인)를 재확인한 뒤 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-12-ai-gateway.md`) + ADR-0018 +
-`src/ai_gateway/`(신규 패키지, Phase 0~11 소스 전혀 수정 없이 완전히
-독립적인 새 계층으로 추가) + `src/storage/ai_gateway_repository.py`
-(신규 DuckDB 저장소 3종) + 신규 99개 테스트 전부 통과. 실제 AI
-provider 연동/API key 요구/네트워크 호출은 전혀 없음(`MockProviderAdapter`
-만 유일한 구현체, `os.environ`/`os.getenv`/`socket`/`http`/`urllib`/
-`requests`/`httpx` 중 어느 것도 `ai_gateway/*.py`에 존재하지 않음을
-AST 스캔으로 검증) — Decision/Risk/Position Sizing/Order/Broker/Model
-Evolution의 APPROVED·DEPLOYED로 가는 어떤 경로도 없음(`DecisionAction`/
-`CandidateModelStatus` import 자체가 패키지 어디에도 없음을 AST
-스캔으로 검증).
+- [x] **Git/Branch Integrity Check 선행 수행** — 위 "Current Subtask
+      (Session 17 — Phase 16)" 참조. 단일 선형 lineage, 병합 커밋 0개,
+      `origin/main`이 HEAD의 조상, working tree clean, Phase 16용
+      원격 브랜치가 없어 검증된 HEAD에서 새로 생성 → **PASS 판정 후
+      Phase 16 진행**
+- [x] `PROJECT_MASTER_PLAN.md` §9.4/§1.5/§12/§13.11-13.12/§14, ADR-0001
+      ~0022, Phase 8(risk.config)/Phase 13(broker, ADR-0019)/Phase
+      14(monitoring)/Phase 15(paper trading) 전체 재조사.
+      `TossBrokerAdapter.get_capabilities()`를 실제로 호출해
+      `ACCOUNT_BALANCE`/`POSITIONS`/`ORDER_STATUS`/`CANCEL_ORDER`가
+      여전히 `UNKNOWN`임을 코드로 직접 재확인(Phase 13이 남긴 미해결
+      항목, 이번 Phase가 그대로 물려받음)
+- [x] `docs/specifications/PHASE-16-live-trading.md` 작성(Git Integrity
+      Check 결과를 §0에 포함, Activation Model/Safety Gate/Kill
+      Switch/Reconciliation/Idempotency/Trade Journal/Monitoring/
+      Persistence/Fail-Closed/Known Limitations 등 20개 섹션)
+- [x] `docs/decisions/ADR-0022-live-trading.md` 작성(10개 결정 사항 +
+      alternatives considered + consequences)
+- [x] `docs/operations/LIVE-TRADING-RUNBOOK.md` 작성(prerequisites/
+      startup/shutdown/reconciliation/emergency halt/kill switch/broker
+      outage/unknown order/account mismatch/recovery/audit review —
+      실제 secret 값은 전혀 포함하지 않음)
+- [x] `src/broker/live/` 서브패키지 구현: `config.py`(LiveTradingConfig
+      — `environment`가 구조적으로 `"live"` 값만 허용,
+      `live_trading_enabled` 기본값 `False`), `approval.py`
+      (LiveActivationApproval — `approved_by`가 "AI"/"SYSTEM"/"CLAUDE"
+      이면 구조적으로 거부, 고정 confirmation phrase 요구),
+      `safety_gate.py`(evaluate_safety_gate — 11개 조건 독립 검사,
+      순수 함수), `kill_switch.py`(engage_kill_switch — deterministic
+      코드가 자동 호출 가능/release_kill_switch — LiveActivationApproval
+      필수, append-only 이력), `reconciliation.py`(compare_account/
+      compare_positions/compare_order_status — 3종 순수 비교 함수,
+      불일치·불명 상태를 절대 MATCHED로 강제 변환하지 않음),
+      `session.py`(LiveTradingSession — gate 평가 → 제출 → 예외 시
+      UNKNOWN 기록 후 재시도 없이 세션 전체 신규 주문 차단,
+      run_startup_checks/run_shutdown_checks), `journal.py`
+      (build_trade_record — Phase 3 TradeRecord 재사용,
+      provenance=LIVE_TRADING 고정, reference_price=price로 측정
+      불가능한 slippage를 정직하게 문서화), `guard.py`
+      (assert_live_environment_broker_safe — Paper Trading의 guard와
+      대칭, `TossBrokerAdapter` isinstance 전용 참조가 패키지 전체에서
+      유일)
+- [x] `src/storage/live_repository.py`(2종 DuckDB Repository) +
+      `schema.py`/`serialization.py`에 `kill_switch_events`/
+      `reconciliation_events`(둘 다 append-only, Phase 5/11/12/14/15
+      패턴) 테이블 + 2개 시퀀스 신규 추가 — 기존 테이블 스키마 변경
+      없음. Live는 Phase 15의 `paper_orders`/`paper_fills`와 달리
+      자체 order/fill ledger가 불필요함(실제 broker가 항상 authoritative
+      이므로 replay가 아닌 reconciliation으로 재시작 안전성 확보 —
+      ADR-0022 §7)
+- [x] Phase 1~15 소스코드 변경 없음 — `schema.py`/`serialization.py`에
+      대한 순수 추가만 있으며(`git diff src/storage/schema.py
+      src/storage/serialization.py | grep '^-'` 결과 두 파일 모두
+      삭제/변경 없음으로 확인), 그 외 Phase 1~15 코드 전혀 수정하지
+      않음
+- [x] `tests/broker/live/`(128: config 11 + safety_gate 18 +
+      kill_switch 18 + reconciliation 14 + session 16 + approval 12 +
+      journal 7 + boundary 14 + leakage 10 + reproducibility 3 +
+      repository_inmemory 5) + `tests/storage/test_live_repository.py`
+      (7) + `tests/integration/test_live_trading_lineage.py`(2) — 신규
+      137개 테스트 작성 및 전부 통과(`test_live_*` prefix로 명명해 기존
+      트리 전체와 basename 충돌 없음을 사전 확인). MockBrokerAdapter만
+      사용, `TossHttpTransport`는 자기 자신의 Phase 13 단위 테스트
+      외에는 어디에서도 참조되지 않음(기존 Phase 13 안전망 테스트로
+      재확인)
+- [x] **전체 테스트 스위트 1264개 전부 통과**(Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57 + Phase6 39 + Phase7 40 + Phase8
+      94 + Phase9 70 + Phase10 54 + Phase11 62 + Phase12 99 + Phase13
+      133 + Phase14 135 + Phase15 91 + Phase16 137) — Phase 1~15 기존
+      테스트 무손상 확인
+- [x] **핵심 발견 (구조적 결과, 새 제약 아님)**: `evaluate_safety_gate`가
+      broker capability 조건을 `TossBrokerAdapter.get_capabilities()`의
+      실제 반환값(Phase 13이 이미 정직하게 `UNKNOWN`으로 보고하도록
+      구현)과 대조하도록 설계했더니, 다른 모든 조건이 충족되어도 실제
+      Toss 계좌에 대한 Live Trading이 구조적으로 활성화 불가능함을 직접
+      코드 실행으로 확인(`test_live_safety_gate.py::
+      TestRealTossCapabilitiesStructurallyBlockLiveTrading`,
+      `test_live_trading_lineage.py::
+      test_toss_real_capabilities_block_the_gate_end_to_end`). ADR-0022
+      §2/Known Limitations에 명시 — Phase 13의 미해결 endpoint 확인이
+      선행되어야 실제 활성화가 가능함
+- [x] Boundary 검증 — `broker.live.*` 어디에도 `ai_gateway.gateway`/
+      `decision.agent`/`risk.sizing`/`risk.engine`/`risk.config`/
+      `data_infra.repository`/`backtest.asof`/네트워크 모듈/
+      `os.environ`/`os.getenv` import가 없음을(단 `guard.py`의
+      `TossBrokerAdapter` isinstance 참조는 예외) AST 스캔으로 검증,
+      `LiveActivationApproval`이 `broker.live.approval` 밖 어디에서도
+      생성되지 않음을 저장소 전체 AST 스캔으로 검증,
+      `release_kill_switch`의 실제 호출 지점이 자기 자신의 테스트 외에는
+      없음을 확인(`test_live_boundary.py`)
+- [x] Fail-Closed 검증 — 11개 안전 게이트 조건 각각이 독립적으로 제출을
+      차단함을 개별 테스트로 확인, kill switch 자동 트리거(broker/risk/
+      monitoring health UNAVAILABLE·UNKNOWN, account/position 상태
+      불명, daily loss/order frequency 설정 시에만 적용) 검증,
+      reconciliation UNKNOWN·MISMATCH가 절대 MATCHED로 강제 변환되지
+      않음을 확인(`test_live_safety_gate.py`, `test_live_kill_switch.py`,
+      `test_live_reconciliation.py`)
+- [x] Idempotency/UNKNOWN 검증 — 동일 client_order_id 재제출이 중복
+      체결을 만들지 않음, 제출 중 broker 예외(timeout/connection lost)
+      발생 시 재시도 없이 UNKNOWN으로 기록되고 세션 전체의 이후 제출이
+      reconciliation 완료 전까지 차단됨을 확인(`test_live_session.py`)
+- [x] Point-in-time/Leakage 검증 — 모든 timestamp-민감 함수(gate/kill
+      switch/reconciliation/session)가 기본값 없는 필수 파라미터임을
+      `inspect.signature`로 검증, `datetime.now()`/`datetime.utcnow()`
+      호출이 패키지 어디에도 없음을 AST 스캔으로 확인
+      (`test_live_leakage.py`)
+- [x] Reproducibility 검증 — `random` import가 패키지 어디에도 없음을
+      AST 스캔으로 확인, 동일 context → 동일 gate/kill-switch 판정 결과
+      확인(`test_live_reproducibility.py`)
+- [x] Restart Safety 검증 — kill switch 이력/reconciliation 이력이 실제
+      DuckDB 카탈로그 재시작 후에도 완전히 동일하게 복구됨을 확인
+      (`test_live_repository.py`)
+- [x] Trade Journal/Monitoring 통합 검증 — `build_trade_record`가
+      provenance=LIVE_TRADING을 항상 사용함을 확인, Phase 14의
+      `collect_broker`가 `monitoring/*.py` 수정 없이 Live의
+      `broker_requests`/`broker_responses`를 그대로 관찰함을 확인
+      (`test_live_journal.py`, `test_live_trading_lineage.py`)
+- [x] SQL join으로 lineage 증명: `risk_assessments`⋈`broker_requests`
+      ⋈`trades`(3-way join, 한 DuckDB 카탈로그) + 프로세스 재시작 후
+      동일 결과 확인(`test_live_trading_lineage.py`)
+- [x] Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+      않다고 판단, 계속 이연
+- [x] Phase 8/9/10/11/12/13/14/15 Known Issue 재검토 — Live Trading과
+      무관, 변경 불필요
+- [x] daily loss limit/drawdown 구체적 숫자, 자본 배분 정책, 상시 실행
+      스케줄러, Toss cancel/status/account/positions endpoint 확인,
+      shutdown 시 미체결 주문 자동 취소 정책, `APPROVED`/`DEPLOYED` 자동
+      전이는 이번 Phase 범위에서 명시적으로 제외 — 실제 실계좌 주문은
+      여전히 발생하지 않음(코드상 어떤 경로도 이를 자동으로 활성화할 수
+      없음)
 
 ## Completed (Session 16 — Phase 15)
 

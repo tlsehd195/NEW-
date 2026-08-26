@@ -87,6 +87,10 @@ from monitoring.models import Alert, ComponentHealth, DriftResult, MonitoringEve
 from broker.models import ValidatedOrder
 from broker.paper.models import PaperFillRecord, PaperOrderRecord
 
+from broker.live.enums import ReconciliationStatus
+from broker.live.kill_switch import KillSwitchEvent
+from broker.live.reconciliation import ReconciliationResult
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -1887,4 +1891,53 @@ def payload_to_paper_fill_record(data: dict) -> PaperFillRecord:
         fill=payload_to_fill(data["fill"]),
         configuration_version=data["configuration_version"],
         recorded_at=_dt_from_iso(data["recorded_at"]),
+    )
+
+
+# -- Phase 16: Live Trading ------------------------------------------------
+
+
+def kill_switch_event_to_payload(event: KillSwitchEvent) -> dict:
+    return {
+        "event_id": event.event_id,
+        "engaged": event.engaged,
+        "reason": event.reason,
+        "triggered_by": event.triggered_by,
+        "occurred_at": _dt_iso(event.occurred_at),
+        "configuration_version": event.configuration_version,
+    }
+
+
+def payload_to_kill_switch_event(data: dict) -> KillSwitchEvent:
+    return KillSwitchEvent(
+        event_id=data["event_id"],
+        engaged=data["engaged"],
+        reason=data["reason"],
+        triggered_by=data["triggered_by"],
+        occurred_at=_dt_from_iso(data["occurred_at"]),
+        configuration_version=data["configuration_version"],
+    )
+
+
+def reconciliation_result_to_payload(result: ReconciliationResult) -> dict:
+    return {
+        "reconciliation_id": result.reconciliation_id,
+        "target": result.target,
+        "subject_id": result.subject_id,
+        "status": result.status.value,
+        "as_of_time": _dt_iso(result.as_of_time),
+        "details": result.details,
+        "configuration_version": result.configuration_version,
+    }
+
+
+def payload_to_reconciliation_result(data: dict) -> ReconciliationResult:
+    return ReconciliationResult(
+        reconciliation_id=data["reconciliation_id"],
+        target=data["target"],
+        subject_id=data["subject_id"],
+        status=ReconciliationStatus(data["status"]),
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        details=data.get("details") or {},
+        configuration_version=data.get("configuration_version", "unknown"),
     )

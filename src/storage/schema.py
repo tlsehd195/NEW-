@@ -679,6 +679,35 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 16: Live Trading --
+    """
+    CREATE SEQUENCE IF NOT EXISTS kill_switch_event_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS kill_switch_events (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('kill_switch_event_seq'),
+        event_id TEXT NOT NULL,
+        engaged BOOLEAN NOT NULL,
+        reason TEXT NOT NULL,
+        triggered_by TEXT NOT NULL,
+        occurred_at TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS reconciliation_event_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS reconciliation_events (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('reconciliation_event_seq'),
+        reconciliation_id TEXT NOT NULL,
+        target TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        as_of_time TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

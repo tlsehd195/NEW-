@@ -64,7 +64,8 @@
 
 ## 현재 상태
 
-**Phase 15 — Paper Trading** (설계 및 참조 구현 완료).
+**Phase 16 — Live Trading** (안전 인프라 설계 및 참조 구현 완료 — 실제
+Toss 계좌 활성화는 여전히 구조적으로 불가능).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -241,8 +242,33 @@
   상시 실행 Trading Engine 스케줄러, `paper_account_equity` 등 계정
   단위 지표의 Monitoring 연결은 여전히 범위 밖(Phase 16+, ADR-0021
   §8에 근거 명시)
+- Phase 16 — Live Trading: 완료 (`src/broker/live/`, 137 tests) —
+  Master Plan §9.4/§1.5/§12/§14.4를 구현하는 Live Trading 안전 계층.
+  `evaluate_safety_gate`가 environment/live_trading_enabled/사람 승인/
+  broker capability/risk health/order validator/kill switch/계좌·
+  포지션 상태/model 상태/configuration integrity 11개 조건을 모두
+  독립적으로 검사하는 순수 함수이며, 단 하나라도 실패하면 제출을 차단.
+  **핵심 발견**: 이 게이트를 실제 `TossBrokerAdapter.get_capabilities()`
+  (Phase 13이 `ACCOUNT_BALANCE`/`POSITIONS`/`ORDER_STATUS`/
+  `CANCEL_ORDER`를 이미 정직하게 `UNKNOWN`으로 보고하도록 구현해 둔
+  것)와 결합하면, 다른 모든 조건이 충족되어도 실제 Toss 계좌에 대한
+  Live Trading이 구조적으로 활성화 불가능함을 실제 코드 실행으로 직접
+  확인(새로운 제약이 아니라 Phase 13의 정직한 설계가 낳은 자연스러운
+  결과, ADR-0022 §2). Kill switch는 `engage_kill_switch`(deterministic
+  코드가 자동 호출 가능)와 `release_kill_switch`(`LiveActivationApproval`
+  필수 — `approved_by`가 "AI"/"SYSTEM"/"CLAUDE"이면 구조적으로 거부)로
+  비대칭 설계되어 해제 경로가 저장소 전체에서 자기 자신의 테스트 외에는
+  없음을 AST로 검증. Reconciliation(계좌/포지션/주문상태 3종 순수 비교)
+  은 불일치·불명 상태를 절대 MATCHED로 강제 변환하지 않고 세션 전체의
+  신규 주문을 차단하며, 제출 중 예외는 재시도 없이 UNKNOWN으로 기록.
+  `build_trade_record`가 Phase 3의 `TradeRecord`를 그대로 생성
+  (provenance=LIVE_TRADING 고정)하고, Phase 14의 `collect_broker`가
+  `monitoring/*.py` 수정 없이 Live의 감사 기록을 그대로 관찰함을 확인.
+  Phase 1~15 소스코드 변경 없이 완전히 additive. daily loss limit 구체
+  숫자, 자본 배분 정책, 상시 스케줄러, Toss 미확인 endpoint 확인은
+  여전히 범위 밖(운영 절차는 `docs/operations/LIVE-TRADING-RUNBOOK.md`)
 
-전체 테스트: **1127 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15 합산).
+전체 테스트: **1264 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15+16 합산).
 
 ## 테스트 실행
 
@@ -636,6 +662,65 @@ enum을 확장할지 여부)은 임의로 결정하지 않고 이번 Phase 범�
 의도적으로 보류했다(ADR-0021 §8). Phase 1~14 소스코드는 전혀 수정하지
 않았다. 자세한 설계는 `docs/specifications/PHASE-15-paper-trading.md`와
 `docs/decisions/ADR-0021-paper-trading.md` 참조.
+
+## Live Trading (Phase 16)
+
+`src/broker/live/`는 Master Plan §9.4(Live Trading)/§1.5(kill switch는
+AI가 해제 불가)/§12(Kill Switch & 장애/복구 규칙)/§14.4(`LIVE_TRADING
+= false` 기본값)를 구현하는 안전 계층이다. Phase 15의 `PaperBrokerAdapter`
+와 마찬가지로 `broker.protocol.BrokerAdapter`를 감싸지만, 목적은
+"실제 broker를 호출한다"가 아니라 "언제, 어떤 조건 아래에서만 그것이
+허용되는가"를 결정하는 것이다.
+
+`broker.live.safety_gate.evaluate_safety_gate`는 순수 함수로 11개
+조건 — environment == "live" / `live_trading_enabled` / 사람이 만든
+`LiveActivationApproval` / broker capability 검증 / risk engine
+health / order validator 결과 / kill switch / 계좌 상태 / 포지션
+상태 / model 상태(`APPROVED`/`DEPLOYED`만 유효 — Phase 11이 애초에 그
+경로를 만들지 않았으므로 오늘 기준 항상 미충족) / configuration
+integrity — 를 전부 독립적으로 검사하며, 단 하나라도 실패하면 주문이
+broker에 도달하지 않는다.
+
+**가장 중요한 발견**: 이 게이트의 broker capability 조건을 실제
+`TossBrokerAdapter.get_capabilities()`(Phase 13이 `ACCOUNT_BALANCE`/
+`POSITIONS`/`ORDER_STATUS`/`CANCEL_ORDER`를 이미 정직하게 `UNKNOWN`
+으로 보고하도록 구현해 둔 것, ADR-0019)과 결합해 실제로 실행해 보면,
+다른 열 가지 조건이 전부 충족되어도 실제 Toss 계좌에 대한 Live
+Trading이 구조적으로 활성화되지 않는다(`tests/broker/live/
+test_live_safety_gate.py::TestRealTossCapabilitiesStructurallyBlockLiveTrading`
+로 직접 검증). 이는 이번 Phase가 만든 새로운 제약이 아니라, Phase
+13이 "확인되지 않은 endpoint는 추측하지 않는다"고 정직하게 내린
+설계 결정이 활성화 게이트까지 그대로 이어진 자연스러운 결과다
+(ADR-0022 §2).
+
+Kill switch는 비대칭으로 설계된다: `engage_kill_switch`는
+deterministic 파이프라인 코드(`LiveTradingSession` 자신)가 자동으로
+호출할 수 있지만, `release_kill_switch`는 `LiveActivationApproval`을
+반드시 요구하며 그 객체의 `approved_by` 필드가 "AI"/"SYSTEM"/"CLAUDE"
+이면 구조적으로 생성 자체가 거부된다 — 저장소 전체를 AST로 스캔해
+`release_kill_switch`의 실제 호출 지점이 자기 자신의 테스트 외에는
+없음을 확인했다. Reconciliation(`compare_account`/`compare_positions`/
+`compare_order_status`)은 내부 상태와 broker의 authoritative 상태가
+다르거나 어느 한쪽이라도 확인 불가능하면 절대 `MATCHED`로 강제
+변환하지 않고, `LiveTradingSession`은 그 결과가 해소되기 전까지 세션
+전체의 신규 주문을 차단한다. 제출 중 timeout/connection lost가
+발생해도 재시도하지 않고 주문을 `UNKNOWN`으로 기록한다 — "응답을 받지
+못했다"는 "주문이 생성되지 않았다"는 뜻이 아니기 때문이다.
+
+`broker.live.journal.build_trade_record`는 Phase 3의 `TradeRecord`를
+그대로 생성하며(provenance=LIVE_TRADING 고정), Toss의 확인된 응답
+스키마가 기준가/스프레드/슬리피지 분해를 제공하지 않는다는 사실을
+`reference_price = price`로 정직하게 문서화한다(측정되지 않은 값을
+0으로 조작하지 않음). Phase 14의 `collect_broker`는 `monitoring/*.py`
+수정 없이 Live의 `broker_requests`/`broker_responses`를 그대로
+관찰한다. Phase 1~15 소스코드는 전혀 수정하지 않았다. daily loss
+limit 구체 숫자나 자본 배분 정책은 이번 Phase가 임의로 정하지 않고
+`LiveTradingConfig.max_daily_loss=None`(미설정)으로 남겨두었다 —
+운영자가 명시적으로 설정해야만 효과가 있다. 실제 활성화 절차는
+`docs/operations/LIVE-TRADING-RUNBOOK.md`에 별도로 문서화했다(어떤
+secret 값도 포함하지 않음). 자세한 설계는
+`docs/specifications/PHASE-16-live-trading.md`와
+`docs/decisions/ADR-0022-live-trading.md` 참조.
 
 ## 개발 원칙
 
