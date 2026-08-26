@@ -150,6 +150,48 @@ section 5 for the full analysis. No code was changed as a result of
 raising this.
 ```
 
+### Phase 19 analysis of Option A vs. Option B (still no decision made)
+
+Phase 19's instruction required weighing both options explicitly before
+concluding this must stay a human decision, rather than re-raising the
+same DECISION REQUIRED without further analysis. That weighing:
+
+**In favor of Option A (keep `None` = not enforced):**
+- It is Phase 16's own considered, documented design
+  (`LiveTradingConfig`'s own comment: an operator must set these
+  explicitly for them to have any effect), not an oversight.
+- The other 11 `evaluate_safety_gate` conditions already require
+  affirmative, verified-healthy signals (capability ENABLED, approval
+  present and valid, risk/account/position state known, kill switch
+  not engaged) -- these three fields are the only ones designed as
+  opt-in *extras* layered on top of an already-fail-closed base, not
+  the base itself.
+- Forcing a mandatory numeric default would require *this project* to
+  invent one to keep the system usable, which is exactly what section
+  6/20 of this phase's own instructions forbid.
+
+**In favor of Option B (None blocks Live outright):**
+- A daily loss limit specifically is, in most real trading operations,
+  considered a baseline capital-protection control, not an optional
+  extra -- its absence is a materially different risk category than
+  "we don't yet know the account balance" (a state-uncertainty
+  problem); it is closer to "we have decided not to cap the damage."
+- `PROJECT_MASTER_PLAN.md`'s fail-closed principle is stated broadly
+  enough that a reasonable reading could extend it to "an unset risk
+  boundary is itself an unknown-risk state."
+
+**Why this remains undecided rather than resolved by this analysis:**
+Both readings are internally consistent; picking between them is a
+statement about how much automatic protection this specific operator
+wants versus how much they trust manual oversight for an initial
+activation -- a risk-tolerance question, not a correctness question.
+`evaluate_safety_gate`'s current behavior is not a bug (it does exactly
+what its own tests and documentation say it does); changing it is a
+policy change. It is also currently inert either way: the Toss
+capability gap independently blocks Live regardless of which option is
+chosen, so no immediate safety consequence follows from leaving this
+open through Phase 19.
+
 ## Known Issues surfaced while writing this document
 
 - **#8 (liquidity limit) enforcement depends on the caller supplying

@@ -5,18 +5,172 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-26
-**Updated By:** Claude Code (Session 19 — Phase 18 Production Safety Follow-up + Paper Trading Validation)
+**Updated By:** Claude Code (Session 20 — Phase 19 Production Blocker Resolution)
 
 ---
 
 ## Current Phase
 
+**Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
+마지막 공식 Phase다. **Phase 17/18/19는 Master Plan의 정식 Phase가
+아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된 안전성·검증 문제를
+보완하기 위한 사후 검증(post-hoc verification) 작업**이며, 이 문서의
+"Phase 19" 표기는 세션 추적 편의를 위한 라벨일 뿐 Master Plan의 Phase
+목록을 확장하는 것이 아니다. **Phase 20/21/22 같은 후속 번호를 임의로
+새로 만들지 않는다** — 이후 필요한 작업은 기존 blocker의 해결
+여부(A. 해결/B. 문서 보완/C. DECISION REQUIRED/D. BLOCKED 기록)로만
+분류한다.
+
+**Phase 19 — Production Blocker Resolution** (Live Trading은 여전히
+구조적으로 비활성 — Toss capability가 UNKNOWN인 한 활성화 불가,
+`docs/operations/PRODUCTION-READINESS-MATRIX.md` 참조)
+
+### Completed (Session 20 — Phase 19)
+
+- **Git/Branch Integrity Check 선행 수행**: Phase 18 검증된 HEAD
+  (`9c2ccdd209fcd134630a6d136d0cc9fc1ad51f98`, parent
+  `c1d738e843398ad62fe2ceaa5ebf90846e6428d6`)에서 직접
+  `claude/phase-19-production-blocker-resolution` 브랜치 생성. 사용자가
+  제시한 커밋 해시를 그대로 신뢰하지 않고 `git log`/`git rev-parse`로
+  직접 재확인 — 정확히 일치함을 확인. 착수 전 **1399/1399 테스트
+  통과(baseline)** 확인(추측하지 않고 실제 실행).
+- **BLOCKER A (Toss API) 재조사**: 이번 세션에서 4개의 서로 다른
+  `tossinvest.com` 서브도메인에 대해 직접 접근을 시도 —
+  `openapi.tossinvest.com`, `developers.tossinvest.com`(Phase 13/17과
+  동일하게 재확인), 그리고 이번에 새로 시도한
+  `home.tossinvest.com`/`corp.tossinvest.com`(공식 회사/마케팅
+  페이지) — **전부 `EGRESS_BLOCKED`**. 도메인 전체가 차단되어 있음을
+  확인(특정 경로만의 문제가 아님). 웹 검색으로도 새로운 공식 출처는
+  발견되지 않음(기존에 알려진 3rd-party 미러만 재등장, 승격하지 않음).
+  **결론: CASE C(BLOCKED, 외부 의존성) — capability 4종
+  (`ACCOUNT_BALANCE`/`POSITIONS`/`ORDER_STATUS`/`CANCEL_ORDER`) 전부
+  UNKNOWN 유지, 코드 변경 없음.**
+- **Risk Policy 재분석**: `max_daily_loss`/`max_turnover`/
+  `max_order_frequency_per_hour`가 `None`일 때 "미집행"으로 둘지
+  ("Option A") Live를 구조적으로 차단할지("Option B") 양쪽 근거를
+  구체적으로 전개(`docs/operations/LIVE-RISK-POLICY.md` Phase 19
+  분석 섹션). 두 옵션 모두 내적으로 일관되며 이는 위험 허용도에 대한
+  정책 판단이지 정오답이 있는 기술 문제가 아님을 확인 — 여전히
+  DECISION REQUIRED로 유지, 임의 결정하지 않음. 어느 쪽이든 현재는
+  Toss capability gap이 독립적으로 Live를 차단하고 있어 실질적 영향
+  없음도 확인.
+- **Walk-Forward/PBO/Deflated Sharpe 판정**: Live Safety Gate에 반드시
+  필요한지(아니오 — gate는 실행 안전성 문제, 이것은 모델 신뢰도 문제),
+  기존 backtest/validation 아키텍처와 충돌하는지(아니오), 현재
+  적용 대상이 있는지(없음 — 모든 trainer는 명시적으로 null-hypothesis
+  baseline) 분석 후 **DEFER**로 판정(구현 불필요/시급하지 않음,
+  IMPLEMENT NOW 아님, 채택 여부 자체는 이미 별도 DECISION REQUIRED로
+  기록되어 있어 중복 상향하지 않음). 코드 변경 없음.
+  (`docs/research/walk-forward-pbo-deflated-sharpe.md` §8)
+- **Paper Trading 상시 실행 loop 조사**: `PaperMarketDataSource`의
+  유일한 구현체가 `InMemoryPaperMarketDataSource`(테스트 fixture,
+  수동 `register()`만 가능)뿐이며 실제 실시간/지연 시세를 공급하는
+  provider가 전혀 없음을 확인 — 이는 ADR-0005가 이미 미해결로 남긴
+  "실제 외부 데이터 provider 없음" 문제와 **동일한 외부 의존성 gap**임을
+  발견. 즉 상시 loop를 지금 구현해도 무엇을 대상으로 advance()를
+  호출할지가 없다 — 단순 `while True` + `datetime.now()` 루프는
+  point-in-time 원칙(§13) 위반이므로 만들지 않음. **DEFER**로 판정,
+  코드 변경 없음.
+- **Benchmark 재확인**: ADR-0005 원문 재확인 — 실 데이터 provider
+  선정은 여전히 전용 후속 ADR(예: ADR-0006-data-provider-selection)로
+  미뤄져 있으며 라이선스/point-in-time/historical coverage 등 기준만
+  정의되어 있고 실제 provider는 선정되지 않음. 가짜 벤치마크 데이터
+  생성 없음, `yfinance` 등 외부 라이브러리 하드코딩 없음. 여전히
+  `BENCHMARK_UNAVAILABLE` 유지 — CASE C(BLOCKED, 외부 의존성).
+- **Model Safety 재확인**: 저장소 전체 AST 스캔(Phase 17/18에서 이미
+  구축된 테스트) 재실행 — `CandidateModelStatus.APPROVED`/`.DEPLOYED`
+  생성 경로 여전히 전무 확인(17개 테스트 통과).
+- **Security 재확인**: repo-wide secret scan 재실행 — `os.environ`/
+  `os.getenv` 사용이 여전히 `broker/toss/auth.py` 단 한 곳으로 제한됨
+  확인. `broker/toss/auth.py`의 secret 접근 구조 확장 없음.
+- **Lineage 재확인**: `decision_id`/`sizing_id`/`risk_assessment_id`가
+  `ValidatedOrder.__post_init__`에서 여전히 비어있음을 구조적으로
+  거부함을 확인 — 체인 끊김 없음.
+- **버그**: 발견된 것 없음. 이번 세션은 실제 코드 변경을 하지 않음
+  (CASE C/D 판정 — 외부 의존성 또는 사용자 정책 결정 필요, 강제로
+  고칠 대상이 없음).
+- 기존 1399개 테스트 전부 그대로 유지, 삭제/약화 없음. 신규 테스트
+  없음(신규 코드가 없으므로).
+
+### In Progress (Session 20 — Phase 19)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 20 — Phase 19)
+
+Live Trading 활성화 — Toss `ACCOUNT_BALANCE`/`POSITIONS`/
+`ORDER_STATUS`/`CANCEL_ORDER` 4개 capability가 UNKNOWN인 한 구조적으로
+불가(변경 없음). 이번 세션은 4개 서브도메인에 대한 직접 접근을 재시도해
+전부 `EGRESS_BLOCKED`임을 재확인했다 — 이는 이 세션이 통제할 수 없는
+외부(네트워크 환경) 제약이다.
+
+### Decision Required (Session 20 — Phase 19)
+
+1. (Phase 18에서 이어짐) Risk policy(`max_daily_loss`/`max_turnover`/
+   `max_order_frequency_per_hour`)가 `None`일 때 Live를 구조적으로
+   차단할지 여부 — 이번 세션에서 양쪽 옵션을 구체적으로 분석했으나
+   여전히 사람의 위험 허용도 판단이 필요(`docs/operations/
+   LIVE-RISK-POLICY.md` Phase 19 분석 섹션).
+2. (Phase 17에서 이어짐) daily loss limit/turnover limit/order
+   frequency 숫자값 자체.
+3. (Phase 16에서 이어짐) cancel-on-shutdown 자동화 여부.
+4. (Phase 18에서 이어짐, 채택 여부만 — 시기는 이번 세션에서 DEFER로
+   판정) Walk-Forward/PBO/Deflated Sharpe Ratio를 향후 모델 신뢰
+   기준으로 채택할지 여부.
+
+### Known Issues (Session 20 — Phase 19)
+
+- Paper Trading 상시 실행 loop가 ADR-0005의 실 데이터 provider
+  미해결 문제와 동일한 외부 의존성으로 인해 구현 불가능함을 이번
+  세션에서 명확히 함(이전에는 "아직 안 만듦"으로만 기록되어 있었음).
+- 변경 없음(Phase 18의 나머지 Known Issues 전부 유지).
+
+### Architecture Changes (Session 20 — Phase 19)
+
+없음 — 이번 세션은 코드를 전혀 수정하지 않음(순수 조사 + 문서 갱신).
+
+### Paper Trading Status (Session 20 — Phase 19)
+
+변경 없음(Phase 18 PASS 유지). 상시 실행 loop는 DEFER — 실 시세
+provider가 없어 지금 구현해도 무엇을 대상으로 동작할지가 없음.
+
+### Learning Status (Session 20 — Phase 19)
+
+변경 없음 — 저장소 전체 AST 스캔 재실행으로 PASS 재확인.
+
+### Live Trading Status (Session 20 — Phase 19)
+
+변경 없음 — 구조적으로 비활성(`LIVE_TRADING_ENABLED=false`, 이번
+세션에서 전혀 건드리지 않음). Toss capability gap이 유일하지만
+확실한 차단 사유이며 이번 세션이 통제할 수 없는 외부 제약임을 재확인.
+
+### Toss API Status (Session 20 — Phase 19)
+
+여전히 UNKNOWN(4개 capability). 이번 세션에서 공식 도메인 4곳에 대한
+직접 접근을 재시도해 전부 차단됨을 재확인(도메인 전체 차단, 경로별
+문제 아님) — `docs/operations/TOSS-API-GAP-ANALYSIS.md` Phase 19
+addendum 참조.
+
+### Last Validation (Session 20 — Phase 19)
+
+`python -m pytest tests/ -q` — baseline **1399 passed** → 최종
+**1399 passed, 0 failed, 0 skipped**(코드 변경이 없었으므로 테스트
+개수도 변경 없음). 기존 테스트 전부 삭제/약화 없이 유지.
+
+### Next Task (Session 20 — Phase 19)
+
+1. 위 Decision Required 4건에 대한 사람의 판단.
+2. Toss 공식 문서에 대한 실제 네트워크 접근이 가능한 환경이 확보되면
+   4개 capability 재조사 — 이것이 Live 활성화의 유일한 독립 차단
+   사유다.
+3. 실 데이터 provider 선정(ADR-0005 기준 후속 ADR) — 확보되면 실
+   벤치마크 데이터와 Paper Trading 상시 실행 loop 둘 다 가능해진다.
+
+## Previous Subtask (Session 19 — Phase 18)
+
 **Phase 18 — Production Safety Follow-up + Paper Trading Validation**
 (Phase 17 Production Safety Review에서 확인된 BLOCKED/PARTIAL 항목의
-후속 조치. 신규 기능 개발 phase가 아니며, 실제 자금 투입이나 Toss Live
-Trading 활성화는 여전히 하지 않는다. Live Trading은 여전히 구조적으로
-비활성 — Toss capability가 UNKNOWN인 한 활성화 불가,
-`docs/operations/PRODUCTION-READINESS-MATRIX.md` 참조)
+후속 조치)
 
 ### Completed (Session 19 — Phase 18)
 
@@ -345,42 +499,6 @@ Kill switch는 `engage_kill_switch`(deterministic 코드가 자동 호출 가능
 MATCHED로 강제 변환하지 않으며, 불일치 시 세션 전체의 신규 주문을 차단.
 제출 중 예외(timeout/connection lost)는 절대 재시도하지 않고 UNKNOWN으로
 기록 후 reconciliation을 요구.
-
-## Previous Subtask (Session 16 — Phase 15)
-
-Phase 15 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
-지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-14-monitoring`,
-HEAD `e04faba7cbbf163f21b65cca074bb1ffadd7a1e8` "Phase 14: Monitoring",
-working tree clean)에서 시작. `git log --oneline --graph --decorate
---all`로 단일 선형 히스토리(병합 커밋 0개) 확인, `git merge-base HEAD
-origin/main`이 `origin/main` 자신의 HEAD
-(`c3abad0eb9b2ba1ed4dda5ee158b448606a87d59`)를 그대로 반환(발산 없음).
-Phase 15용 원격 브랜치가 아직 없어 검증된 현재 HEAD에서
-`claude/phase-15-paper-trading` 브랜치를 새로 생성. 착수 전 **1036/1036
-테스트 통과(baseline)** 확인. 상세:
-`docs/specifications/PHASE-15-paper-trading.md` §0.
-
-Master Plan §9.4(Paper Trading — Trading Engine → Broker Interface →
-Paper Broker(개발/검증 기본값)/Toss Broker(Live 전용))와 Phase 13의
-`BrokerAdapter` Protocol/Phase 2의 `TransactionCostModel`/
-`SlippageModel`/`Fill`/`PortfolioAccounting`/Phase 3의 `TradeRecord`/
-Phase 14의 `collect_broker`를 재확인한 뒤 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-15-paper-trading.md`) + ADR-0021 +
-`src/broker/paper/`(신규 서브패키지, Phase 0~14 소스 전혀 수정 없이
-완전히 독립적인 새 계층으로 추가 — `PaperBrokerAdapter`가
-`broker.protocol.BrokerAdapter`를 그대로 구현하고, 실행/비용 계산은
-Phase 2의 `TransactionCostModel`/`SlippageModel`/`Fill`을, 현금·포지션
-회계는 Phase 2의 `PortfolioAccounting`을 그대로 재사용) +
-`src/storage/paper_repository.py`(신규 DuckDB 저장소 2종 — 나머지
-order status/request-response 감사 기록은 Phase 13의 기존 테이블을
-변경 없이 그대로 재사용) + 신규 91개 테스트 전부 통과. Paper 환경은
-`PaperTradingConfig.environment`가 구조적으로 `"paper"` 값만 허용하고,
-`broker.paper.guard.assert_paper_environment_safe`가 `TossBrokerAdapter`
-조합을 거부(AST 스캔으로 `broker.toss.*`/`os.environ`/`os.getenv`/
-네트워크 모듈 import가 `broker/paper/*.py` 어디에도 없음을 확인, 유일한
-예외는 `guard.py`의 `isinstance` 전용 참조). 프로세스 재시작 후 현금/
-포지션/주문 상태가 완전히 동일하게 복구됨을 실제 DuckDB 카탈로그로
-검증(`PaperTradingSession.restore`).
 
 ## Completed (Session 17 — Phase 16)
 

@@ -64,10 +64,22 @@
 
 ## 현재 상태
 
-**Phase 18 — Production Safety Follow-up + Paper Trading Validation**
-(Phase 17 후속 조치. Live Trading 활성화는 여전히 구조적으로 불가능.
-Toss capability gap이 유일하지만 확실한 차단 사유, `docs/operations/
-PRODUCTION-READINESS-MATRIX.md` 참조).
+Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
+**Phase 17/18/19는 Master Plan의 정식 Phase가 아니라, Live 전환 전에
+발견된 안전성·검증 문제를 보완하는 사후 검증 작업**이다.
+
+**Phase 19 — Production Blocker Resolution** (Live Trading 활성화는
+여전히 구조적으로 불가능. Toss capability gap이 유일하지만 확실한
+차단 사유, `docs/operations/PRODUCTION-READINESS-MATRIX.md` 참조).
+이번 phase는 코드를 전혀 수정하지 않았다 — Toss 공식 도메인 4곳
+(`openapi`/`developers`/`home`/`corp`.tossinvest.com) 전부가 여전히
+네트워크 차단되어 있음을 재확인했고, risk policy/Walk-Forward 채택
+여부는 여전히 사람의 정책 판단이 필요하며, Paper Trading 상시 실행
+loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 외부
+의존성) 지금 구현할 수 없음을 확인했다. 이 phase의 성공 기준은 "Live를
+어떻게든 활성화하는 것"이 아니라 "불확실한 부분은 UNKNOWN으로,
+정책 결정이 필요한 부분은 DECISION REQUIRED로 남기고 안전성을
+유지하는 것"이었다.
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -313,7 +325,22 @@ PRODUCTION-READINESS-MATRIX.md` 참조).
   으로 차단할지 여부도 별도 DECISION REQUIRED로 보고 — 임의로 결정하지
   않음.
 
-전체 테스트: **1399 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15+16+17+18 합산).
+- Phase 19 — Production Blocker Resolution: 완료, **코드 변경 없음**
+  (조사만 수행). Toss 공식 도메인 4곳(`openapi`/`developers`/`home`/
+  `corp`.tossinvest.com) 전부 재시도했으나 여전히 네트워크 차단 —
+  도메인 전체 차단(경로별 문제 아님)임을 확인. Risk policy `None` 값을
+  "미집행"으로 둘지 Live를 구조적으로 차단할지 양쪽 근거를 상세 분석
+  했으나 여전히 사람의 위험 허용도 판단이 필요해 DECISION REQUIRED로
+  유지(임의 결정 안 함). Walk-Forward/PBO/Deflated Sharpe는 Live
+  Safety Gate에 불필요하고(gate는 실행 안전성, 이것은 모델 신뢰도
+  문제) 적용할 후보 모델도 아직 없어 DEFER로 판정. Paper Trading 상시
+  실행 loop는 실 시세 provider가 없어(ADR-0005 미해결과 동일한 외부
+  의존성) 구현 불가능함을 확인 — DEFER. 이 모든 결론은 "Live를 어떻게든
+  활성화하는 것"이 아니라 "불확실하면 UNKNOWN, 정책이 필요하면 DECISION
+  REQUIRED, 해결 불가능하면 BLOCKED로 정직하게 남기는 것"을 기준으로
+  내려졌다.
+
+전체 테스트: **1399 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15+16+17+18 합산, Phase 19는 코드 변경 없어 테스트 개수 동일).
 
 ## 테스트 실행
 

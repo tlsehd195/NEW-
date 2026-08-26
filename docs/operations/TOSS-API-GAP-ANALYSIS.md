@@ -26,6 +26,27 @@ the real `TossBrokerAdapter` + `LiveTradingSession`, not just the
 isolated mapping function (`tests/broker/live/
 test_live_partial_fill_and_5xx_regression.py`).
 
+**Phase 19 addendum**: Phase 19's explicit first task was to determine
+whether reliable access to Toss's official API documentation had
+become available in this environment. It has not. Direct fetch
+attempts against four distinct `tossinvest.com` subdomains all
+returned `EGRESS_BLOCKED` this session: `openapi.tossinvest.com`
+(the OpenAPI spec host), `developers.tossinvest.com` (the docs host,
+both previously tested in Phase 13/17), and, newly tested this phase,
+`home.tossinvest.com` and `corp.tossinvest.com` (the public marketing/
+corporate pages, found via a fresh web search). All four are blocked,
+confirming this is a domain-wide network restriction, not a
+path-specific one -- there is no unblocked corner of `tossinvest.com`
+this environment can reach. A web search this session surfaced no new
+official source; the same third-party leads already recorded (Tier 2,
+`BEOKS/tossinvest-skill`) reappeared, unchanged, and were not
+re-promoted. **No capability status was changed this phase.**
+`ACCOUNT_BALANCE`/`POSITIONS`/`ORDER_STATUS`/`CANCEL_ORDER` remain
+`CapabilityStatus.UNKNOWN`. This is classified CASE C (BLOCKED by an
+external dependency -- network access this environment does not
+control) in `docs/PROJECT_STATUS.md`'s Phase 19 entry, not a task this
+session could resolve by working harder at it.
+
 ## Evidence tiers
 
 This document distinguishes three tiers of evidence, ranked from

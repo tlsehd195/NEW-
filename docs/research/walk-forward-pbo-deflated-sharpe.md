@@ -219,6 +219,53 @@ prior phase's own disclosure of the same limitation, not a new risk
 introduced this phase.
 ```
 
+## 8. Phase 19 classification: IMPLEMENT NOW / DEFER / DECISION REQUIRED
+
+Phase 19 required a specific classification, not just a restatement of
+the open question. Analysis:
+
+- **Is it required for the Live Safety Gate specifically?** No.
+  `evaluate_safety_gate`'s job is structural execution safety (broker
+  capability, human approval, kill switch, reconciliation, account/
+  position state) -- a fail-closed gate about whether it is safe to
+  *submit an order at all* right now. Walk-Forward/PBO/DSR answer a
+  different question -- "should this specific model be trusted" -- which
+  belongs to the model validation pipeline
+  (`evolution.criteria`/`CandidateModelStatus`), not the order-submission
+  gate. Conflating the two would blur a boundary this project has kept
+  deliberately clean since Phase 13 (`docs/decisions/ADR-0019` and every
+  subsequent broker-layer ADR: the broker layer never re-implements
+  Decision/Risk/model-quality logic).
+- **Does it conflict with the existing backtest/validation
+  architecture?** No -- it would extend `learning.config.SplitConfig`'s
+  existing chronological split, not replace or contradict it.
+- **Does it duplicate the current validation protocol?** Partially --
+  OOS testing (a single chronological held-out split) already exists;
+  PBO/DSR would add a new statistical layer on top, not re-implement
+  the split itself.
+- **Is there anything to apply it to right now?** No. Every trainer
+  this codebase has ever shipped (`MeanRewardBaselineTrainer`, Phase 9;
+  `TrailingWindowMeanTrainer`, Phase 11) is an explicitly-documented
+  null-hypothesis/pipeline-exercise baseline, never claimed to have real
+  forecasting skill. Applying PBO or a Deflated Sharpe correction to a
+  baseline that was never meant to look skillful in the first place
+  would produce a real number about a question nobody is asking.
+- **Implementation risk**: unchanged from section 4 -- PBO/DSR both
+  need a real, recorded trial count this codebase does not track
+  anywhere yet; building that tracking incorrectly would be worse than
+  not building it.
+
+**Classification: DEFER.** Not `IMPLEMENT NOW` (nothing to apply it to,
+not required for the safety gate) and not itself a fresh
+`DECISION REQUIRED` beyond the one already on record in section 7 above
+(that one concerns whether to adopt this *at all* for a future
+candidate; this section only concerns *timing*, and concludes there is
+no urgency forcing that decision now). This is a technical/
+architectural scheduling judgment ("is this the right time to build
+statistical-validation infrastructure nothing yet needs"), not a
+financial-policy number, so Phase 19 makes it directly rather than
+escalating it.
+
 ## Sources
 
 - [The Probability of Backtest Overfitting (SSRN 2326253)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253) -- Bailey, Borwein, López de Prado, Zhu (2015)
