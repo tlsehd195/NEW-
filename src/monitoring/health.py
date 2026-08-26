@@ -122,6 +122,43 @@ def evaluate_data_health(
     )
 
 
+def evaluate_account_health(
+    *, sample_count: Optional[float], equity: Optional[float], drawdown: Optional[float],
+    max_drawdown: Optional[float], config: MonitoringConfig, as_of_time: datetime,
+    health_id: str, event_id: Optional[str] = None,
+) -> ComponentHealth:
+    """Phase 17 Production Safety Review addition. `max_drawdown` is
+    caller-supplied and `None` by default ("not enforced") -- the same
+    convention `broker.live.config.LiveTradingConfig`'s own threshold
+    fields already use -- so this function never invents a drawdown
+    number of its own; a caller who wants alerting sets one explicitly
+    (e.g. from the same `risk.config.RiskConfig.max_drawdown` already
+    enforced pre-trade, or a value chosen specifically for alerting)."""
+    checks = {
+        "sample_count_present": sample_count is not None,
+        "sample_count_sufficient": sample_count is not None and sample_count >= config.min_sample_count,
+        "equity_present": _finite(equity),
+    }
+    if not all(checks.values()):
+        return ComponentHealth(
+            health_id=health_id, component=MonitoringComponent.ACCOUNT, status=ComponentHealthStatus.UNKNOWN,
+            as_of_time=as_of_time, reason="insufficient_data", checks=checks,
+            configuration_version=config.configuration_version(), event_id=event_id,
+        )
+
+    if max_drawdown is not None and _finite(drawdown) and drawdown >= max_drawdown:
+        status = ComponentHealthStatus.UNAVAILABLE
+        reason = f"drawdown={drawdown:.4f}_exceeds_max_drawdown={max_drawdown:.4f}"
+    else:
+        status = ComponentHealthStatus.HEALTHY
+        reason = "within_max_drawdown" if max_drawdown is not None else "max_drawdown_not_configured"
+
+    return ComponentHealth(
+        health_id=health_id, component=MonitoringComponent.ACCOUNT, status=status, as_of_time=as_of_time,
+        reason=reason, checks=checks, configuration_version=config.configuration_version(), event_id=event_id,
+    )
+
+
 def evaluate_pipeline_health(
     component_healths: Sequence[ComponentHealth], *, as_of_time: datetime, health_id: str,
     config: MonitoringConfig,

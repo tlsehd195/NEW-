@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import Optional
 
 from broker.enums import BrokerOrderStatus
-from broker.errors import BrokerAuthError, BrokerRateLimitError
+from broker.errors import BrokerAuthError, BrokerProviderError, BrokerRateLimitError
 from broker.models import BrokerOrderResponse
 from broker.transport import TransportResponse
 
@@ -82,6 +82,13 @@ def parse_order_response(
         raise BrokerAuthError(_sanitize_message((response.body or {}).get("message")) or "authentication failed")
     if response.status_code == 429:
         raise BrokerRateLimitError(_sanitize_message((response.body or {}).get("message")) or "rate limited")
+    if response.status_code >= 500:
+        # A provider-side failure, not a broker decision about the order
+        # -- REJECTED would falsely assert certainty this response never
+        # gives (Phase 17 Production Safety Review finding).
+        raise BrokerProviderError(
+            _sanitize_message((response.body or {}).get("message")) or f"provider error: HTTP {response.status_code}"
+        )
 
     if response.body is None:
         return BrokerOrderResponse(

@@ -36,11 +36,13 @@ from monitoring.alerts import severity_for_health_status
 from monitoring.config import MonitoringConfig
 from monitoring.enums import MonitoringComponent
 from monitoring.health import (
+    evaluate_account_health,
     evaluate_data_health,
     evaluate_existence_health,
     evaluate_health_from_failure_rate,
 )
 from monitoring.metrics import (
+    compute_account_metrics,
     compute_ai_gateway_metrics,
     compute_broker_metrics,
     compute_data_quality_metrics,
@@ -206,6 +208,34 @@ def collect_broker(
         event_id=event_id, component=MonitoringComponent.BROKER, event_type="broker_observation",
         health=health, observed_at=observed_at, as_of_time=as_of_time, metrics=metrics, config=config,
         source_record_ids=tuple(r.response_id for r in filtered_responses),
+    )
+    return event, health
+
+
+def collect_account(
+    equity_history: Sequence[tuple[datetime, float]], *, initial_cash: Optional[float] = None,
+    as_of_time: datetime, observed_at: datetime, config: MonitoringConfig, event_id: str, health_id: str,
+    max_drawdown: Optional[float] = None,
+) -> tuple[MonitoringEvent, ComponentHealth]:
+    """Phase 17 Production Safety Review addition -- closes the Phase
+    15/ADR-0021 known limitation (docs/specifications/
+    PHASE-15-paper-trading.md section 16, "paper_account_equity/
+    paper_pnl/paper_drawdown are not yet a MonitoringEvent"). Additive
+    to Phase 14: no existing collector's signature or behavior changes.
+    `equity_history` is caller-assembled from successive
+    `broker.paper.session.PaperTradingSession.account_summary()` (or a
+    Live equivalent) snapshots -- this module still performs no account
+    access of its own, matching every other collector in this file."""
+    filtered = _filter_by_time(equity_history, as_of_time, key=lambda pair: pair[0])
+    metrics = compute_account_metrics(filtered, initial_cash=initial_cash)
+    health = evaluate_account_health(
+        sample_count=metrics["count"], equity=metrics["latest_equity"], drawdown=metrics["drawdown"],
+        max_drawdown=max_drawdown, config=config, as_of_time=as_of_time, health_id=health_id, event_id=event_id,
+    )
+    event = _make_event(
+        event_id=event_id, component=MonitoringComponent.ACCOUNT, event_type="account_observation",
+        health=health, observed_at=observed_at, as_of_time=as_of_time, metrics=metrics, config=config,
+        source_record_ids=tuple(t.isoformat() for t, _ in filtered),
     )
     return event, health
 

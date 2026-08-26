@@ -10,6 +10,7 @@ See docs/specifications/PHASE-14-monitoring.md section 5.
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime
 from typing import Optional, Sequence
 
 from ai_gateway.enums import RequestStatus
@@ -209,6 +210,36 @@ def compute_capability_unknown_count(capabilities: BrokerCapabilities) -> int:
     from broker.enums import CapabilityStatus
 
     return sum(1 for status in capabilities.capabilities.values() if status == CapabilityStatus.UNKNOWN)
+
+
+def compute_account_metrics(
+    equity_history: Sequence[tuple[datetime, float]], *, initial_cash: Optional[float] = None,
+) -> dict:
+    """Phase 17 Production Safety Review addition -- closes the Phase
+    15/ADR-0021 known limitation that `paper_account_equity`/
+    `paper_pnl`/`paper_drawdown` were computable
+    (`PaperTradingSession.account_summary()`) but never wired into a
+    `MonitoringEvent`. Pure over an already-filtered
+    `(as_of_time, equity)` sequence the caller assembles from
+    successive `account_summary()`/`get_account()`+`get_positions()`
+    snapshots -- this module performs no account access itself, the
+    same "read-only over already-materialized records" contract every
+    other function in this file follows. `initial_cash` is optional
+    (`pnl` is `None` without it, never a fabricated baseline)."""
+    if not equity_history:
+        return {"count": 0.0, "latest_equity": None, "peak_equity": None, "drawdown": None, "pnl": None}
+
+    ordered = sorted(equity_history, key=lambda pair: pair[0])
+    equities = [equity for _, equity in ordered]
+    latest_equity = equities[-1]
+    peak_equity = max(equities)
+    drawdown = (peak_equity - latest_equity) / peak_equity if peak_equity > 0 else None
+    pnl = (latest_equity - initial_cash) if initial_cash is not None else None
+
+    return {
+        "count": float(len(equities)), "latest_equity": latest_equity, "peak_equity": peak_equity,
+        "drawdown": drawdown, "pnl": pnl,
+    }
 
 
 def compute_ai_gateway_metrics(responses: Sequence[AIResponse]) -> dict:

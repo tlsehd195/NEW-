@@ -35,6 +35,33 @@ class TestIdempotency:
         assert t1.trade_id == t2.trade_id
         assert len(journal.list_trades()) == 1
 
+    def test_two_distinct_partial_fills_of_the_same_order_are_not_deduplicated_against_each_other(self) -> None:
+        """Phase 17 Production Safety Review regression test. Before
+        this phase's fix, the natural key was `(experiment_id,
+        fill.order_id)` alone -- since every partial fill of one order
+        shares the same `order_id` (Fill.order_id is the
+        client_order_id, never a per-fill id), the second and later
+        partial fill of any order was silently discarded as a
+        "duplicate" of the first, permanently losing real fills from
+        the Trade Journal. Two fills of the *same order* at two
+        different `execution_time`s must both be recorded."""
+        from dataclasses import replace
+
+        journal = InMemoryTradeJournalRepository()
+        order = make_order()
+        decision = journal.record_decision(decision_time=order.decision_time, security_id="AAA",
+                                             decision=DecisionAction.BUY, order=order, experiment_id="BT-000001")
+        first_fill = make_fill(quantity=100.0, execution_time=utc(2024, 1, 2))
+        second_fill = replace(first_fill, quantity=50.0, execution_time=utc(2024, 1, 3))
+        assert first_fill.order_id == second_fill.order_id  # same order, two separate fill events
+
+        t1 = journal.record_trade(decision_id=decision.snapshot_id, fill=first_fill, position_after=100.0,
+                                   experiment_id="BT-000001")
+        t2 = journal.record_trade(decision_id=decision.snapshot_id, fill=second_fill, position_after=150.0,
+                                   experiment_id="BT-000001")
+        assert t1.trade_id != t2.trade_id
+        assert len(journal.list_trades()) == 2
+
     def test_different_experiment_ids_are_not_deduplicated_against_each_other(self) -> None:
         # The natural key includes experiment_id — the same order_id
         # from two different backtest runs must not collide.

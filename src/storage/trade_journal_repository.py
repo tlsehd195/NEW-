@@ -160,7 +160,13 @@ class DuckDBTradeJournalRepository:
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         recorded_at: Optional[datetime] = None,
     ) -> TradeRecord:
-        key_str = f"trade|{experiment_id}|{fill.order_id}"
+        # Phase 17 Production Safety Review bug fix -- see the identical
+        # fix and full explanation in
+        # trade_journal.repository.InMemoryTradeJournalRepository.record_trade:
+        # fill.order_id alone collides across every partial fill of one
+        # order, silently dropping all but the first from the Trade
+        # Journal.
+        key_str = f"trade|{experiment_id}|{fill.order_id}|{fill.execution_time.isoformat()}"
         conn = self._engine.connection
         existing = conn.execute(
             "SELECT payload_json FROM trades WHERE natural_key = ?", [key_str]

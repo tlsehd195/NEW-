@@ -153,7 +153,23 @@ class InMemoryTradeJournalRepository:
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         recorded_at: Optional[datetime] = None,
     ) -> TradeRecord:
-        key = ("trade", experiment_id, fill.order_id)
+        # Phase 17 Production Safety Review bug fix: `fill.order_id` is
+        # the client_order_id, identical across every partial fill of
+        # one order (`backtest.fills.Fill.order_id = order.order_id`,
+        # never a per-fill id). Keying only on it meant the *second and
+        # later* partial fill of any order was silently dropped as a
+        # "duplicate" of the first -- a real order that filled in three
+        # pieces produced exactly one TradeRecord, permanently losing
+        # two real fills from the Trade Journal (and therefore from
+        # Experience/Learning). `fill.execution_time` distinguishes
+        # genuinely different fills of the same order (each partial
+        # fill happens at its own simulated time) while a true retry of
+        # the *same* fill event (same execution_time) still dedupes
+        # exactly as before -- see
+        # tests/trade_journal/test_idempotency.py::
+        # test_recording_the_same_fill_twice_does_not_duplicate, which
+        # still passes unchanged.
+        key = ("trade", experiment_id, fill.order_id, fill.execution_time)
         if key in self._trade_natural_keys:
             return self._trades[self._trade_natural_keys[key]]
 

@@ -64,8 +64,10 @@
 
 ## 현재 상태
 
-**Phase 16 — Live Trading** (안전 인프라 설계 및 참조 구현 완료 — 실제
-Toss 계좌 활성화는 여전히 구조적으로 불가능).
+**Phase 17 — Production Safety Review** (신규 기능 개발이 아닌 검증
+단계 — Live Trading 활성화는 여전히 구조적으로 불가능. Toss capability
+gap이 유일하지만 확실한 차단 사유, `docs/operations/
+PRODUCTION-READINESS-MATRIX.md` 참조).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -268,7 +270,27 @@ Toss 계좌 활성화는 여전히 구조적으로 불가능).
   숫자, 자본 배분 정책, 상시 스케줄러, Toss 미확인 endpoint 확인은
   여전히 범위 밖(운영 절차는 `docs/operations/LIVE-TRADING-RUNBOOK.md`)
 
-전체 테스트: **1264 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15+16 합산).
+- Phase 17 — Production Safety Review: 완료 (신규 기능 없음, 검증 +
+  최소 수정 + 신규 테스트 81개) — 10개 검토 영역 전부 판정. **실제
+  버그 발견/수정**: Trade Journal의 `record_trade` 자연키가
+  `fill.order_id`만 사용해 한 주문의 두 번째 이후 partial fill이
+  조용히 소실되던 문제(Phase 3부터, Paper/Live 공통)를 `fill.
+  execution_time` 추가로 수정. Toss 5xx 응답이 `REJECTED`로 오분류되던
+  문제를 신규 `BrokerProviderError`로 분리해 수정. Kill Switch에
+  `data_health` 트리거 추가, Phase 15/ADR-0021이 미해결로 남긴 계좌
+  equity/PnL/drawdown → Monitoring 연결(`MonitoringComponent.ACCOUNT`)을
+  완료(신규 ADR-0023). Candidate→APPROVED/DEPLOYED 자동 전이 경로 없음을
+  `evolution` 패키지 한정이 아닌 저장소 전체 AST 스캔으로 재확인.
+  Paper→Journal→Experience→Learning 5개 시나리오(A-E)를 실제 코드로
+  추적. Toss 공식 문서 접근은 여전히 차단(3rd-party 미러에서 후보
+  endpoint 발견했으나 승격하지 않음). 신규 문서: `docs/operations/
+  LIVE-RISK-POLICY.md`, `docs/operations/TOSS-API-GAP-ANALYSIS.md`,
+  `docs/operations/PRODUCTION-READINESS-MATRIX.md`, ADR-0023. 남은
+  Known Issue: Paper Trading에 Sharpe/Sortino/Calmar 등 자체 성과
+  리포트가 아직 없음 — "Paper 수익률 > benchmark"만으로 Live 자격을
+  판단하지 않는다는 원칙에 따라 향후 Phase에서 구축 필요.
+
+전체 테스트: **1345 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15+16+17 합산).
 
 ## 테스트 실행
 
@@ -721,6 +743,67 @@ limit 구체 숫자나 자본 배분 정책은 이번 Phase가 임의로 정하�
 secret 값도 포함하지 않음). 자세한 설계는
 `docs/specifications/PHASE-16-live-trading.md`와
 `docs/decisions/ADR-0022-live-trading.md` 참조.
+
+## Production Safety Review (Phase 17)
+
+Phase 16이 만든 Live Trading 안전 인프라를 실제 돈이 들어가기 전에
+검증하는 단계 — 새 기능을 만드는 phase가 아니다. "자동화된 테스트
+통과 ≠ 프로덕션 준비 완료"를 원칙으로 10개 영역(Toss API capability,
+Live risk policy, Paper Trading readiness, Paper→Learning lineage,
+Candidate 검증 경계, Live activation 안전성, Broker reconciliation,
+Monitoring/drift, Kill switch/rollback, Runbook)을 실제 코드를
+실행하고 읽어 재검증했다.
+
+이 과정에서 실제 버그 두 건을 발견해 수정했다: (1) Trade Journal의
+`record_trade`가 `fill.order_id`만으로 자연키를 구성해, 한 주문이 여러
+번에 나뉘어 체결될 때(partial fill) 두 번째 이후 체결이 "이미 기록된
+중복"으로 오인되어 조용히 소실되고 있었다 — Paper와 Live 모두에
+영향을 미치는, Phase 3부터 존재했던 결함이다. `fill.execution_time`을
+자연키에 추가해 수정했고, 기존 idempotency 테스트는 전부 그대로
+통과한다(진짜 재시도는 여전히 중복 제거됨). (2) Toss의 5xx 응답이
+`REJECTED`(확정적 거부)로 매핑되고 있었는데, 5xx는 브로커 인프라
+장애일 뿐 주문이 실제로 처리되었는지 여부를 전혀 알려주지 않는다 —
+신규 `BrokerProviderError`로 분리해 `LiveTradingSession`이 이미 갖고
+있던 UNKNOWN/RECONCILIATION_REQUIRED 경로로 정확히 흐르게 했다
+(`session.py` 자체는 수정 불필요).
+
+추가로 Phase 15/ADR-0021이 미해결로 남겨둔 "`paper_account_equity`/
+`paper_pnl`/`paper_drawdown`이 MonitoringEvent로 연결되지 않음" 문제를
+`MonitoringComponent.ACCOUNT`(신규, additive)로 해결했고, Phase 14의
+data quality health가 지금까지 Kill Switch 트리거에 연결되어 있지
+않았던 gap도 메웠다. Candidate 모델이 `APPROVED`/`DEPLOYED`로 자동
+전이하는 경로가 없다는 사실은 `evolution` 패키지 범위가 아닌 **저장소
+전체(`src/`)**를 AST로 스캔해 재확인했다.
+
+Toss 공식 문서(`openapi.tossinvest.com`, `developers.tossinvest.com`)에
+대한 네트워크 접근은 이번 세션에서도 여전히 차단되어 있음을 직접
+재확인했다. 제3자 GitHub 저장소(`BEOKS/tossinvest-skill`)가 미러링하는
+OpenAPI 스펙에서 `/api/v1/accounts`/`/api/v1/holdings`/`/api/v1/orders`
+후보 endpoint를 발견했지만, 공식 1차 문서가 아니므로 어떤 capability도
+`ENABLED`로 승격하지 않았다 — `ACCOUNT_BALANCE`/`POSITIONS`/
+`ORDER_STATUS`/`CANCEL_ORDER`는 여전히 `UNKNOWN`이며, 이는 지금도
+Live Trading을 구조적으로 차단하는 유일하지만 확실한 사유다.
+
+Paper Trading의 실제 코드 경로(Order→Fill→Journal→Experience)를 5개
+시나리오(BUY 체결, partial→full 체결, Risk에 의한 REJECTED, 브로커
+장애, 완결된 거래→Post Trade Analysis→Counterfactual→Learning
+Dataset)로 추적해 모두 통과를 확인했다. 다만 Paper Trading에는
+`backtest.metrics.PerformanceReport`에 해당하는 자체 성과 리포트
+(Sharpe/Sortino/Calmar/변동성/turnover/benchmark 비교)가 전혀 없다는
+사실도 함께 확인했다 — "Paper 수익률이 벤치마크보다 높다"는 것만으로
+Live 자격을 판단해서는 안 된다는 원칙을 지키기 위해 반드시 필요하지만,
+이번 phase의 최소 수정 범위를 넘어서는 신규 구축이므로 향후 Phase로
+남겼다.
+
+신규 문서: `docs/specifications/PHASE-17-production-safety-review.md`,
+`docs/operations/LIVE-RISK-POLICY.md`(13개 정책 항목 분류, 숫자를
+임의로 정하지 않고 DECISION REQUIRED 3건으로 남김),
+`docs/operations/TOSS-API-GAP-ANALYSIS.md`,
+`docs/operations/PRODUCTION-READINESS-MATRIX.md`,
+`docs/decisions/ADR-0023-production-safety-review.md`. 이번 phase가
+내린 최종 판정은 하나: **READY FOR HUMAN REVIEW** — "사람의 최종
+검토를 받을 만큼 기술적으로 준비되었다"는 뜻이며, "실제 돈을 넣어도
+안전하다"는 뜻이 결코 아니다.
 
 ## 개발 원칙
 

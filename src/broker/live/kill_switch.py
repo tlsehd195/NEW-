@@ -72,6 +72,19 @@ class KillSwitchTriggerContext:
     daily_loss: Optional[float]  # realized + unrealized loss so far today; None if not computed
     orders_in_last_hour: Optional[int]
     config: LiveTradingConfig
+    # Phase 17 Production Safety Review addition: `monitoring.collectors.
+    # collect_data_quality` (Phase 14) already evaluates market-data
+    # pipeline health, but nothing fed it into this trigger evaluation --
+    # a real data outage (stale/invalid bars) could go undetected by the
+    # kill switch even though broker/risk/monitoring-pipeline health all
+    # looked fine. Optional with a `None` default so every existing
+    # caller/test keeps constructing this dataclass unchanged; `None`
+    # means "not supplied," not "healthy," and is therefore never
+    # treated as safe (see `_CRITICAL_STATUSES` check below, which
+    # triggers only on an explicit UNAVAILABLE/UNKNOWN value, mirroring
+    # how the three pre-existing health fields already behave when
+    # `None`).
+    data_health: Optional[ComponentHealthStatus] = None
 
 
 _CRITICAL_STATUSES = frozenset({ComponentHealthStatus.UNAVAILABLE, ComponentHealthStatus.UNKNOWN})
@@ -87,6 +100,8 @@ def evaluate_kill_switch_triggers(context: KillSwitchTriggerContext) -> Optional
         return f"risk_health_{context.risk_health.value.lower()}"
     if context.monitoring_pipeline_health in _CRITICAL_STATUSES:
         return f"monitoring_pipeline_health_{context.monitoring_pipeline_health.value.lower()}"
+    if context.data_health in _CRITICAL_STATUSES:
+        return f"data_health_{context.data_health.value.lower()}"
     if not context.account_state_known:
         return "account_state_unknown"
     if not context.position_state_known:

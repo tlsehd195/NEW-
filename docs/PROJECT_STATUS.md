@@ -5,16 +5,142 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-26
-**Updated By:** Claude Code (Session 17 — Phase 16 Live Trading)
+**Updated By:** Claude Code (Session 18 — Phase 17 Production Safety Review)
 
 ---
 
 ## Current Phase
 
-**Phase 16 — Live Trading** (안전 인프라 설계 및 참조 구현 완료 — 실제
-Toss 계좌 활성화는 여전히 구조적으로 불가능, §6/Known Limitations 참조)
+**Phase 17 — Production Safety Review** (신규 기능 개발이 아닌 검증
+단계. Live Trading은 여전히 구조적으로 비활성 — Toss capability가
+UNKNOWN인 한 활성화 불가, `docs/operations/PRODUCTION-READINESS-MATRIX.md`
+참조)
 
-## Current Subtask (Session 17 — Phase 16)
+### Completed (Session 18 — Phase 17)
+
+- 10개 검토 영역 전부 PASS/FAIL/BLOCKED/UNKNOWN/PARTIAL로 판정, 근거
+  파일 명시 (`docs/specifications/PHASE-17-production-safety-review.md`
+  §3).
+- **실제 버그 발견 및 수정**: `TradeRecord` 자연키가 `fill.order_id`만
+  사용해, 한 주문의 두 번째 이후 partial fill이 Trade Journal에서
+  조용히 소실되는 문제(Phase 3부터 존재, Paper/Live 공통) — `fill.
+  execution_time`을 자연키에 추가해 수정, in-memory/DuckDB 양쪽 회귀
+  테스트 추가.
+- Toss 5xx 응답이 `REJECTED`로 오분류되던 문제 수정 — 신규
+  `BrokerProviderError`로 분리, `LiveTradingSession`은 기존 코드
+  변경 없이 UNKNOWN/RECONCILIATION_REQUIRED로 정확히 처리.
+- Kill Switch에 `data_health` 트리거 추가 (Phase 14의 data quality
+  health가 지금까지 kill switch에 연결되어 있지 않았음).
+- Phase 15/ADR-0021이 미해결로 남겨둔 `paper_account_equity`/
+  `paper_pnl`/`paper_drawdown` → MonitoringEvent 연결을 완료
+  (`MonitoringComponent.ACCOUNT`, additive, 신규 ADR-0023).
+- Toss API 재조사 — 공식 문서 접근 여전히 차단됨을 재확인, 3rd-party
+  OpenAPI 미러(`BEOKS/tossinvest-skill`)에서 `/api/v1/accounts`/
+  `/api/v1/holdings`/`/api/v1/orders` 후보 endpoint 발견(Tier 2 증거,
+  공식 아님 — capability는 UNKNOWN 유지).
+- `docs/operations/LIVE-RISK-POLICY.md`(13개 정책 항목 분류, DECISION
+  REQUIRED 3건), `docs/operations/TOSS-API-GAP-ANALYSIS.md`,
+  `docs/operations/PRODUCTION-READINESS-MATRIX.md`, ADR-0023 신규 작성.
+- Paper→Journal→Experience→Learning 5개 시나리오(A-E)를 실제 코드로
+  추적(import 존재 확인이 아님), provenance 안전성(PAPER_TRADING→
+  LIVE_TRADING 전환 불가)을 filter-bypass 방식으로도 재확인.
+- Candidate→APPROVED/DEPLOYED 자동 전이 경로 없음을 `evolution`
+  패키지 한정이 아닌 **저장소 전체(`src/`)** AST 스캔으로 재확인.
+- 신규 테스트 81개 (Toss contract, risk policy completeness, paper
+  lineage A-E, candidate boundary repo-wide, kill switch data_health,
+  monitoring account, cross-cutting reconciliation/idempotency/
+  failure-recovery/environment-isolation/secret-safety/runbook).
+- 전체 테스트: 1264 (baseline) → **1345 passed, 0 failed**.
+
+### In Progress
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked
+
+Live Trading 활성화 — Toss `ACCOUNT_BALANCE`/`POSITIONS`/
+`ORDER_STATUS`/`CANCEL_ORDER` 4개 capability가 UNKNOWN인 한 구조적으로
+불가 (`evaluate_safety_gate`가 실제로 차단, 추측이 아님).
+
+### Decision Required
+
+1. Live daily loss limit 숫자 (`LiveTradingConfig.max_daily_loss`) —
+   `docs/operations/LIVE-RISK-POLICY.md` DECISION REQUIRED #1.
+2. Turnover limit 숫자 (`RiskConfig.max_turnover`, 강제 로직은 이미
+   존재) — 동 문서 DECISION REQUIRED #2.
+3. Order frequency limit 숫자 (`LiveTradingConfig.
+   max_order_frequency_per_hour`) — 동 문서 DECISION REQUIRED #3.
+4. Cancel-on-shutdown 자동화 여부 (Phase 16부터 의도적으로 미결,
+   ADR-0022 §8) — 이번 세션에서 재논의하지 않음, 여전히 사람 판단 대기.
+5. Walk-Forward/PBO/Deflated Sharpe 검증을 향후 도입할지 여부(Phase 9
+   §13/ADR-0017 §3부터 의도적 이연) — Live 활성화의 하드 세이프티
+   조건은 아니나 모델 신뢰도 판단에 필요.
+
+### Known Issues
+
+- Paper Trading에 `backtest.metrics.PerformanceReport` 상당의 자체
+  성과 리포트(Sharpe/Sortino/Calmar/변동성/turnover/benchmark 비교)가
+  전혀 없음 — "Paper 수익률 > benchmark"만으로 Live 자격을 판단할 수
+  없다는 원칙을 지키기 위해 반드시 필요하나 이번 세션에서 신규 구축은
+  범위 밖으로 판단(향후 Phase).
+- `MockBrokerAdapter`의 `"account_unavailable"` 모드에서 `get_positions()`가
+  빈 튜플 `()`을 반환 — "포지션 없음(flat)"과 "포지션 조회 불가(unknown)"가
+  구분되지 않는 정직하지만 불완전한 설계 (수정하지 않고 기록만 함).
+- PROJECT_STATUS.md 하단의 `## In Progress`/`## Blocked`/`## Last
+  Validation`/`## Not Yet Implemented`/`## Next Recommended Task`
+  섹션이 Phase 9~10 시점 이후 갱신되지 않아 실제 상태와 불일치함을
+  발견 — 전면 재작성은 이번 세션 범위 밖(문서 히스토리 대규모 리팩터링
+  금지 원칙)으로 판단, 발견 사실만 기록.
+
+### Architecture Changes
+
+`src/trade_journal/repository.py`, `src/storage/trade_journal_repository.py`
+(자연키 수정), `src/broker/errors.py`, `src/broker/toss/mapping.py`
+(5xx 처리), `src/broker/live/kill_switch.py`(`data_health` 필드),
+`src/monitoring/enums.py`/`metrics.py`/`health.py`/`collectors.py`
+(`MonitoringComponent.ACCOUNT`) — 전부 additive 또는 최소 정정, 기존
+Phase 0-16 동작 변경 없음(ADR-0023 상세).
+
+### Paper Trading Status
+
+주문 생애주기/Trade Journal/Experience Dataset 연결은 실제 코드
+추적으로 PASS. 자체 성과 리포트(Sharpe 등)는 미구현 — 위 Known Issues
+참조.
+
+### Learning Status
+
+Provenance 안전성 재확인 PASS(필터 우회 시나리오까지 포함). Candidate
+model이 APPROVED/DEPLOYED로 자동 전이하는 경로 없음을 저장소 전체
+스캔으로 재확인 PASS.
+
+### Live Trading Status
+
+구조적으로 비활성(`LIVE_TRADING_ENABLED=false` 기본값 유지, 세션 내내
+변경 안 함). Kill switch/Reconciliation/Idempotency/환경 격리 전부
+재검증 PASS. Toss capability gap이 유일하지만 확실한 차단 사유.
+
+### Toss API Status
+
+`/oauth2/token`, `POST /api/v1/orders`만 확인됨(Tier 2 증거). 계좌/
+포지션/주문상태/취소는 여전히 UNKNOWN — 이번 세션 조사로 3rd-party
+OpenAPI 미러에서 후보 endpoint 발견했으나 공식 문서 기준에 미달해
+승격하지 않음. 상세: `docs/operations/TOSS-API-GAP-ANALYSIS.md`.
+
+### Last Validation
+
+`python -m pytest tests/ -q` — baseline 1264 passed → 최종 **1345
+passed, 0 failed, 0 skipped**. 기존 Phase 0-16 테스트는 삭제/약화 없이
+전부 그대로 유지.
+
+### Next Task
+
+1. 위 Decision Required 5건에 대한 사람의 판단.
+2. Toss 공식 문서에 대한 실제 네트워크 접근 확보 후 Gap Analysis
+   4개 capability 재조사.
+3. Paper Trading 자체 성과 리포트(Sharpe/Sortino/Calmar/turnover/
+   benchmark 비교) 구축 — 별도 Phase로 진행 권장.
+
+## Previous Subtask (Session 17 — Phase 16)
 
 Phase 16 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
 지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-15-paper-trading`,
@@ -126,41 +252,6 @@ UNKNOWN`은 어디에서도 `HEALTHY`/`NO_DRIFT`로 강제 변환되지 않으�
 `learning.enums.CandidateModelStatus.APPROVED`/`DEPLOYED`를 생성하는
 코드 경로가 전혀 없음(AST 스캔으로 검증) — Broker/Risk/Decision을
 mutate하거나 AI provider를 직접 호출하는 경로도 전혀 없음.
-
-## Previous Subtask (Session 14 — Phase 13)
-
-Phase 13 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
-지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-12-ai-gateway`,
-HEAD `3511d7b9fa534895e649dce4bb1bcf43f3dc4b85` "Phase 12: AI Gateway",
-working tree clean)에서 시작. `git log --oneline --graph --decorate
---all`로 단일 선형 히스토리(병합 커밋 0개) 확인, `git merge-base HEAD
-origin/main`이 `origin/main` 자신의 HEAD를 그대로 반환(발산 없음),
-`git merge-base HEAD origin/claude/autonomous-ai-investment-system-wvscwe`
-도 동일하게 확인(wvscwe에만 있는 커밋 0개), `git log <phase12-hash>..HEAD`
-가 비어 있어 현재 HEAD가 정확히 Phase 12 커밋 그 자체임을 확인. Phase
-13용 원격 브랜치가 아직 없어 검증된 현재 HEAD에서
-`claude/phase-13-toss-securities-adapter` 브랜치를 새로 생성. 착수 전
-**768/768 테스트 통과(baseline)** 확인. 상세:
-`docs/specifications/PHASE-13-toss-securities-adapter.md` §0.
-
-Master Plan §9.3(Toss Securities Adapter 구조)을 재확인하고, 실제 Toss
-증권 Open API를 리서치(공식 문서 호스트가 이 환경의 network egress
-proxy에 차단되어 있어 WebSearch로 공식 GA 발표(2026-08-13) 및 제3자
-기술 문서를 통해 간접 확인 — 자세한 내용은 spec의 "Toss API
-Verification" §8 참조)한 뒤 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-13-toss-securities-adapter.md`) + ADR-0019 +
-`src/broker/`(신규 패키지 + `toss/` 서브패키지, Phase 0~12 소스 전혀
-수정 없이 완전히 독립적인 새 계층으로 추가) +
-`src/storage/broker_repository.py`(신규 DuckDB 저장소 3종) + 신규
-133개 테스트 전부 통과. `execution_mode` 기본값은 `OFFLINE`이며 `LIVE`
-전환에는 `execution_mode=LIVE`와 `live_opt_in=True` 두 개의 독립적인
-명시적 신호가 모두 필요(credential 존재만으로 활성화 불가) —
-`MockBrokerAdapter`만이 이 저장소 자체 코드/테스트/backtest가 실제로
-호출하는 유일한 adapter. `os.environ`/`os.getenv`는
-`broker/toss/auth.py` 단 한 곳에서만 사용(AST 스캔으로 검증) —
-Decision/Risk/AI Gateway를 우회하는 경로 전혀 없음(`decision.agent`/
-`risk.sizing`/`risk.engine`/`ai_gateway.gateway`/`learning.enums` import
-자체가 `broker/*.py` 어디에도 없음을 AST 스캔으로 검증).
 
 ## Completed (Session 17 — Phase 16)
 

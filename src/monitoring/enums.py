@@ -13,6 +13,13 @@ class MonitoringComponent(str, Enum):
     `PROJECT_MASTER_PLAN.md` section 4.1's pipeline order."""
 
     DATA = "DATA"
+    # Phase 17 Production Safety Review addition -- closes the Phase 15/
+    # ADR-0021 "paper_account_equity/paper_pnl/paper_drawdown are not
+    # yet a MonitoringEvent" known limitation, additively (see
+    # monitoring.collectors.collect_account). Portfolio-level (equity/
+    # cash/PnL/drawdown), not broker-request-level, so a new component
+    # rather than folding into BROKER's existing failure-rate metrics.
+    ACCOUNT = "ACCOUNT"
     REGIME = "REGIME"
     PREDICTION = "PREDICTION"
     DECISION = "DECISION"

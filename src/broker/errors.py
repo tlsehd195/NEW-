@@ -27,6 +27,19 @@ class BrokerRateLimitError(BrokerError):
     pass
 
 
+class BrokerProviderError(BrokerError):
+    """A 5xx response -- the broker's own infrastructure failed, not a
+    definitive judgment about the order itself. Deliberately distinct
+    from a mapped `BrokerOrderStatus.REJECTED` (Phase 17 Production
+    Safety Review finding): REJECTED asserts the broker looked at the
+    order and declined it, which a 5xx never establishes -- the order
+    may or may not have been accepted server-side. Raising this (like
+    `BrokerAuthError`/`BrokerRateLimitError`) lets `LiveTradingSession`
+    treat it as `BrokerOrderStatus.UNKNOWN` plus
+    `OperationalState.RECONCILIATION_REQUIRED`, never as a safe-to-retry
+    rejection."""
+
+
 class BrokerTransportError(BrokerError):
     """Connection failure / malformed response at the transport layer
     -- distinct from an authenticated, well-formed error the broker

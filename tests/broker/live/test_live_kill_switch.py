@@ -57,6 +57,30 @@ class TestEachTriggerIndependently:
         reason = evaluate_kill_switch_triggers(_ctx(monitoring_pipeline_health=ComponentHealthStatus.UNKNOWN))
         assert reason == "monitoring_pipeline_health_unknown"
 
+    def test_data_health_unavailable_triggers(self) -> None:
+        """Phase 17 Production Safety Review: before this phase,
+        `KillSwitchTriggerContext` had no `data_health` field at all --
+        a real market-data outage could not engage the kill switch even
+        though `monitoring.collectors.collect_data_quality` (Phase 14)
+        already computes exactly this signal."""
+        reason = evaluate_kill_switch_triggers(_ctx(data_health=ComponentHealthStatus.UNAVAILABLE))
+        assert reason == "data_health_unavailable"
+
+    def test_data_health_unknown_triggers(self) -> None:
+        reason = evaluate_kill_switch_triggers(_ctx(data_health=ComponentHealthStatus.UNKNOWN))
+        assert reason == "data_health_unknown"
+
+    def test_data_health_degraded_does_not_trigger(self) -> None:
+        assert evaluate_kill_switch_triggers(_ctx(data_health=ComponentHealthStatus.DEGRADED)) is None
+
+    def test_data_health_defaults_to_none_and_does_not_trigger(self) -> None:
+        """`None` means "not supplied," not "healthy" -- it must never
+        be silently treated as safe, but it also must not force every
+        pre-Phase-17 caller that never set this field to start
+        triggering the kill switch unexpectedly."""
+        reason = evaluate_kill_switch_triggers(_ctx())
+        assert reason is None
+
     def test_account_state_unknown_triggers(self) -> None:
         assert evaluate_kill_switch_triggers(_ctx(account_state_known=False)) == "account_state_unknown"
 

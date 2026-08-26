@@ -89,6 +89,38 @@ class TestMonitoringEventPersistence:
 
         engine2 = new_engine(tmp_path)
         assert DuckDBMonitoringEventRepository(engine2).get(event.event_id) == event
+
+    def test_account_component_event_from_collect_account_persists_and_survives_restart(self, tmp_path) -> None:
+        """Phase 17 Production Safety Review -- proves the new
+        MonitoringComponent.ACCOUNT event (monitoring.collectors.
+        collect_account) round-trips through this same generic,
+        unmodified repository, not just an in-memory assertion. No
+        schema change was needed: `component` is a plain TEXT column
+        with no CHECK constraint restricting its values."""
+        from monitoring.collectors import collect_account
+        from monitoring.config import MonitoringConfig
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBMonitoringEventRepository(engine)
+        health_repo = DuckDBComponentHealthRepository(engine)
+
+        event, health = collect_account(
+            [(utc(2024, 1, 2), 1_000_000.0), (utc(2024, 1, 3), 950_000.0)], initial_cash=1_000_000.0,
+            as_of_time=utc(2024, 1, 3), observed_at=utc(2024, 1, 3), config=MonitoringConfig(min_sample_count=1),
+            event_id="ACCEVT-PERSIST-1", health_id="ACCHEALTH-PERSIST-1", max_drawdown=0.20,
+        )
+        repo.record(event)
+        health_repo.record(health)
+        engine.close()
+
+        engine2 = new_engine(tmp_path)
+        reloaded_event = DuckDBMonitoringEventRepository(engine2).get(event.event_id)
+        assert reloaded_event.component == MonitoringComponent.ACCOUNT
+        assert reloaded_event.metrics["pnl"] == -50_000.0
+        reloaded_health = DuckDBComponentHealthRepository(engine2).get_latest(MonitoringComponent.ACCOUNT)
+        assert reloaded_health.component == MonitoringComponent.ACCOUNT
+        assert reloaded_health.status == ComponentHealthStatus.HEALTHY  # 5% drawdown, under the 20% max
+        engine2.close()
         engine2.close()
 
 

@@ -77,6 +77,27 @@ class TestIdempotency:
         assert len(journal.list_trades()) == 1
         engine.close()
 
+    def test_two_distinct_partial_fills_of_the_same_order_are_both_recorded(self, tmp_path) -> None:
+        """Phase 17 Production Safety Review regression test (DuckDB
+        backend) -- mirrors tests/trade_journal/test_idempotency.py::
+        test_two_distinct_partial_fills_of_the_same_order_are_not_deduplicated_against_each_other."""
+        from dataclasses import replace
+
+        engine = new_engine(tmp_path)
+        journal = DuckDBTradeJournalRepository(engine)
+        order = make_order()
+        decision = journal.record_decision(
+            decision_time=order.decision_time, security_id="AAA", decision=DecisionAction.BUY,
+            order=order, experiment_id="EXP-1",
+        )
+        first_fill = make_fill(quantity=100.0, execution_time=utc(2024, 1, 2))
+        second_fill = replace(first_fill, quantity=50.0, execution_time=utc(2024, 1, 3))
+        t1 = journal.record_trade(decision_id=decision.snapshot_id, fill=first_fill, position_after=100.0, experiment_id="EXP-1")
+        t2 = journal.record_trade(decision_id=decision.snapshot_id, fill=second_fill, position_after=150.0, experiment_id="EXP-1")
+        assert t1.trade_id != t2.trade_id
+        assert len(journal.list_trades()) == 2
+        engine.close()
+
 
 class TestImmutability:
     def test_decision_snapshot_is_frozen(self, tmp_path) -> None:
