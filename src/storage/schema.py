@@ -648,6 +648,37 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 15: Paper Trading --
+    """
+    CREATE TABLE IF NOT EXISTS paper_orders (
+        client_order_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        side TEXT NOT NULL,
+        quantity DOUBLE NOT NULL,
+        initial_status TEXT NOT NULL,
+        requested_at TIMESTAMP NOT NULL,
+        decision_id TEXT NOT NULL,
+        sizing_id TEXT NOT NULL,
+        risk_assessment_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE SEQUENCE IF NOT EXISTS paper_fill_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS paper_fills (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('paper_fill_seq'),
+        fill_id TEXT NOT NULL,
+        client_order_id TEXT NOT NULL,
+        security_id TEXT NOT NULL,
+        side TEXT NOT NULL,
+        quantity DOUBLE NOT NULL,
+        price DOUBLE NOT NULL,
+        recorded_at TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 

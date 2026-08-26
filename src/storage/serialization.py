@@ -84,6 +84,9 @@ from broker.models import BrokerRequestRecord, BrokerResponseRecord, OrderStatus
 from monitoring.enums import AlertSeverity, ComponentHealthStatus, DriftStatus, MonitoringComponent
 from monitoring.models import Alert, ComponentHealth, DriftResult, MonitoringEvent
 
+from broker.models import ValidatedOrder
+from broker.paper.models import PaperFillRecord, PaperOrderRecord
+
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
@@ -1773,4 +1776,115 @@ def payload_to_alert(data: dict) -> Alert:
         event_id=data.get("event_id"),
         provenance=TradeProvenance(data["provenance"]),
         experiment_id=data.get("experiment_id"),
+    )
+
+
+# -- Phase 15: Paper Trading ----------------------------------------------
+
+
+def validated_order_to_payload(order: ValidatedOrder) -> dict:
+    return {
+        "client_order_id": order.client_order_id,
+        "security_id": order.security_id,
+        "side": order.side.value,
+        "quantity": order.quantity,
+        "order_type": order.order_type.value,
+        "as_of_time": _dt_iso(order.as_of_time),
+        "decision_id": order.decision_id,
+        "sizing_id": order.sizing_id,
+        "risk_assessment_id": order.risk_assessment_id,
+        "configuration_version": order.configuration_version,
+        "provenance": order.provenance.value,
+        "experiment_id": order.experiment_id,
+    }
+
+
+def payload_to_validated_order(data: dict) -> ValidatedOrder:
+    return ValidatedOrder(
+        client_order_id=data["client_order_id"],
+        security_id=data["security_id"],
+        side=OrderSide(data["side"]),
+        quantity=data["quantity"],
+        order_type=OrderType(data["order_type"]),
+        as_of_time=_dt_from_iso(data["as_of_time"]),
+        decision_id=data["decision_id"],
+        sizing_id=data["sizing_id"],
+        risk_assessment_id=data["risk_assessment_id"],
+        configuration_version=data["configuration_version"],
+        provenance=TradeProvenance(data["provenance"]),
+        experiment_id=data.get("experiment_id"),
+    )
+
+
+def fill_to_payload(fill: Fill) -> dict:
+    return {
+        "order_id": fill.order_id,
+        "security_id": fill.security_id,
+        "side": fill.side.value,
+        "quantity": fill.quantity,
+        "reference_price": fill.reference_price,
+        "price": fill.price,
+        "commission": fill.commission,
+        "spread_cost": fill.spread_cost,
+        "slippage_cost": fill.slippage_cost,
+        "decision_time": _dt_iso(fill.decision_time),
+        "execution_time": _dt_iso(fill.execution_time),
+        "data_version": fill.data_version,
+    }
+
+
+def payload_to_fill(data: dict) -> Fill:
+    return Fill(
+        order_id=data["order_id"],
+        security_id=data["security_id"],
+        side=OrderSide(data["side"]),
+        quantity=data["quantity"],
+        reference_price=data["reference_price"],
+        price=data["price"],
+        commission=data["commission"],
+        spread_cost=data["spread_cost"],
+        slippage_cost=data["slippage_cost"],
+        decision_time=_dt_from_iso(data["decision_time"]),
+        execution_time=_dt_from_iso(data["execution_time"]),
+        data_version=data["data_version"],
+    )
+
+
+def paper_order_record_to_payload(record: PaperOrderRecord) -> dict:
+    return {
+        "validated_order": validated_order_to_payload(record.validated_order),
+        "requested_at": _dt_iso(record.requested_at),
+        "initial_status": record.initial_status.value,
+        "rejection_reason": record.rejection_reason,
+        "configuration_version": record.configuration_version,
+    }
+
+
+def payload_to_paper_order_record(data: dict) -> PaperOrderRecord:
+    return PaperOrderRecord(
+        validated_order=payload_to_validated_order(data["validated_order"]),
+        requested_at=_dt_from_iso(data["requested_at"]),
+        initial_status=BrokerOrderStatus(data["initial_status"]),
+        rejection_reason=data.get("rejection_reason"),
+        configuration_version=data["configuration_version"],
+    )
+
+
+def paper_fill_record_to_payload(record: PaperFillRecord) -> dict:
+    return {
+        "fill_id": record.fill_id,
+        "client_order_id": record.client_order_id,
+        "fill": fill_to_payload(record.fill),
+        "configuration_version": record.configuration_version,
+        "recorded_at": _dt_iso(record.recorded_at),
+    }
+
+
+def payload_to_paper_fill_record(data: dict) -> PaperFillRecord:
+    return PaperFillRecord(
+        fill_id=data["fill_id"],
+        client_order_id=data["client_order_id"],
+        fill=payload_to_fill(data["fill"]),
+        configuration_version=data["configuration_version"],
+        recorded_at=_dt_from_iso(data["recorded_at"]),
     )

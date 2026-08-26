@@ -5,15 +5,51 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-25
-**Updated By:** Claude Code (Session 15 — Phase 14 Monitoring)
+**Updated By:** Claude Code (Session 16 — Phase 15 Paper Trading)
 
 ---
 
 ## Current Phase
 
-**Phase 14 — Monitoring** (설계 및 참조 구현 완료)
+**Phase 15 — Paper Trading** (설계 및 참조 구현 완료)
 
-## Current Subtask (Session 15 — Phase 14)
+## Current Subtask (Session 16 — Phase 15)
+
+Phase 15 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
+지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-14-monitoring`,
+HEAD `e04faba7cbbf163f21b65cca074bb1ffadd7a1e8` "Phase 14: Monitoring",
+working tree clean)에서 시작. `git log --oneline --graph --decorate
+--all`로 단일 선형 히스토리(병합 커밋 0개) 확인, `git merge-base HEAD
+origin/main`이 `origin/main` 자신의 HEAD
+(`c3abad0eb9b2ba1ed4dda5ee158b448606a87d59`)를 그대로 반환(발산 없음).
+Phase 15용 원격 브랜치가 아직 없어 검증된 현재 HEAD에서
+`claude/phase-15-paper-trading` 브랜치를 새로 생성. 착수 전 **1036/1036
+테스트 통과(baseline)** 확인. 상세:
+`docs/specifications/PHASE-15-paper-trading.md` §0.
+
+Master Plan §9.4(Paper Trading — Trading Engine → Broker Interface →
+Paper Broker(개발/검증 기본값)/Toss Broker(Live 전용))와 Phase 13의
+`BrokerAdapter` Protocol/Phase 2의 `TransactionCostModel`/
+`SlippageModel`/`Fill`/`PortfolioAccounting`/Phase 3의 `TradeRecord`/
+Phase 14의 `collect_broker`를 재확인한 뒤 Definition of Done 충족: 명세
+(`docs/specifications/PHASE-15-paper-trading.md`) + ADR-0021 +
+`src/broker/paper/`(신규 서브패키지, Phase 0~14 소스 전혀 수정 없이
+완전히 독립적인 새 계층으로 추가 — `PaperBrokerAdapter`가
+`broker.protocol.BrokerAdapter`를 그대로 구현하고, 실행/비용 계산은
+Phase 2의 `TransactionCostModel`/`SlippageModel`/`Fill`을, 현금·포지션
+회계는 Phase 2의 `PortfolioAccounting`을 그대로 재사용) +
+`src/storage/paper_repository.py`(신규 DuckDB 저장소 2종 — 나머지
+order status/request-response 감사 기록은 Phase 13의 기존 테이블을
+변경 없이 그대로 재사용) + 신규 91개 테스트 전부 통과. Paper 환경은
+`PaperTradingConfig.environment`가 구조적으로 `"paper"` 값만 허용하고,
+`broker.paper.guard.assert_paper_environment_safe`가 `TossBrokerAdapter`
+조합을 거부(AST 스캔으로 `broker.toss.*`/`os.environ`/`os.getenv`/
+네트워크 모듈 import가 `broker/paper/*.py` 어디에도 없음을 확인, 유일한
+예외는 `guard.py`의 `isinstance` 전용 참조). 프로세스 재시작 후 현금/
+포지션/주문 상태가 완전히 동일하게 복구됨을 실제 DuckDB 카탈로그로
+검증(`PaperTradingSession.restore`).
+
+## Previous Subtask (Session 15 — Phase 14)
 
 Phase 14 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
 지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-13-toss-securities-adapter`,
@@ -110,37 +146,136 @@ Evolution의 APPROVED·DEPLOYED로 가는 어떤 경로도 없음(`DecisionActio
 `CandidateModelStatus` import 자체가 패키지 어디에도 없음을 AST
 스캔으로 검증).
 
-## Previous Subtask (Session 12 — Phase 11)
+## Completed (Session 16 — Phase 15)
 
-Phase 11 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자 지시) —
-이번 세션은 새 컨테이너에서 시작했고, 지정된 작업 브랜치
-`claude/phase-11-model-evolution-7hpibr`가 실제로는 `main`에서 새로
-생성되어 `Initial commit`(`c3abad0`) 하나만 갖고 있었으며(원격의 동일
-이름 브랜치는 이미 삭제된 상태), 실제 Phase 0~10 lineage는
-`origin/claude/phase-10-counterfactual-attribution-ubum6u`(HEAD
-`483600fb571c2f392bcc193f7ebbe733b6122a4b`, "Phase 10: Counterfactual /
-Attribution", 13개 커밋의 단일 선형 히스토리, 병합 커밋 0개)에 있음을
-발견 — 지정 브랜치가 손실 없이(유일한 커밋이 실제 lineage의 조상이었음)
-`git checkout -B claude/phase-11-model-evolution-7hpibr
-origin/claude/phase-10-counterfactual-attribution-ubum6u`로 브랜치
-포인터를 재설정(공유 히스토리에 대한 rewrite/force-push 아님 — 원격의
-stale 브랜치는 이미 삭제되어 있었음). 인수인계 문서가 명시한 Phase 10
-commit hash(`483600fb571c2f392bccbe73f7ebbe733b6122a4b`, 42자)는 실제
-40자 SHA-1과 글자 수부터 다른 오기로 판단(주제 줄과 실제 HEAD 해시로
-동일 커밋 확인). 의존성(duckdb/pyarrow/pytest, 컨테이너에 미설치
-상태였음) 설치 후 **607/607 테스트 통과** → **PASS 판정 후 Phase 11
-착수**. 상세: `docs/specifications/PHASE-11-model-evolution.md` §0.
-
-Master Plan §18.1(Phase 11 = Model Evolution)과 Phase 9/10이 명시적으로
-이연한 항목(ADR-0015 §1/§10 "Phase 11 (Model Evolution/Registry)",
-Phase 9 spec §2.2/§22 "Model Registry completion (Phase 11)", ADR-0016
-§7 "`alternative_action_1`/`alternative_action_2` … deferred to Phase 11
-(Model Evolution)")을 재확인한 뒤 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-11-model-evolution.md`) + ADR-0017 +
-`src/evolution/`(신규 패키지, Phase 9 `learning.*`/Phase 3·10
-`trade_journal.*`를 전혀 수정하지 않고 그 위에 계층으로 추가) +
-`src/storage/evolution_repository.py`(신규 DuckDB 저장소 2종) + 신규
-62개 테스트 전부 통과.
+- [x] **Git/Branch Integrity Check 선행 수행** — 위 "Current Subtask
+      (Session 16 — Phase 15)" 참조. 단일 선형 lineage, 병합 커밋 0개,
+      `origin/main`이 HEAD의 조상, working tree clean, Phase 15용
+      원격 브랜치가 없어 검증된 HEAD에서 새로 생성 → **PASS 판정 후
+      Phase 15 진행**
+- [x] `PROJECT_MASTER_PLAN.md` §9.4(Paper Trading), ADR-0001~0021,
+      Phase 2(backtest.costs/fills/portfolio)/Phase 3(trade_journal)/
+      Phase 8(risk)/Phase 13(broker)/Phase 14(monitoring) 전체 재조사.
+      `backtest.fills.FillSimulator`/`backtest.costs.
+      TransactionCostModel`/`SlippageModel`/`backtest.portfolio.
+      PortfolioAccounting`이 이미 원하는 실행/비용/회계 로직을 정확히
+      제공함을 확인해 재사용 결정(신규 병렬 로직 없음)
+- [x] `docs/specifications/PHASE-15-paper-trading.md` 작성(Git Integrity
+      Check 결과를 §0에 포함, Order State Machine/Execution Model/
+      Slippage & Cost/Account Model/Fail-Closed/Safety Boundary/
+      Idempotency & Restart/Trade Journal/Monitoring/Persistence 각
+      설계, Known Limitations 포함 17개 섹션)
+- [x] `docs/decisions/ADR-0021-paper-trading.md` 작성(8개 결정 사항 +
+      alternatives considered + consequences)
+- [x] `src/broker/paper/` 서브패키지 구현: `config.py`(PaperTradingConfig
+      — `environment`가 구조적으로 `"paper"` 값만 허용), `market_data.py`
+      (PaperMarketDataSource Protocol + InMemory 구현 — `available_time
+      <= as_of` 필터링으로 미래 데이터 유출을 구조적으로 차단),
+      `models.py`(PaperOrderRecord/PaperFillRecord — `broker.models.
+      ValidatedOrder`/`backtest.fills.Fill`을 그대로 감싸는 얇은
+      wrapper), `execution.py`(simulate_fill — Phase 2 FillSimulator와
+      동일한 spread→slippage 수식 재사용), `adapter.py`
+      (PaperBrokerAdapter — `broker.protocol.BrokerAdapter` 구현,
+      `backtest.portfolio.PortfolioAccounting` 재사용, 부분 체결이
+      여러 `advance_simulation` 호출에 걸쳐 누적, idempotent 재제출,
+      7종 failure_mode), `repository.py`(2종 Repository Protocol +
+      InMemory 구현 — order status 이력은 Phase 13의 기존
+      `order_status_events`를 변경 없이 재사용), `session.py`
+      (PaperTradingSession — submit/advance/cancel/capture + restore를
+      통한 재시작 복구), `journal.py`(build_trade_record —
+      `trade_journal.models.TradeRecord`를 그대로 재사용,
+      provenance=PAPER_TRADING 고정), `guard.py`
+      (assert_paper_environment_safe — `TossBrokerAdapter`에 대한
+      isinstance 전용 참조가 패키지 전체에서 유일하게 존재하는 지점)
+- [x] `src/storage/paper_repository.py`(2종 DuckDB Repository) +
+      `schema.py`/`serialization.py`에 `paper_orders`(caller-assigned
+      client_order_id 신뢰 패턴)/`paper_fills`(append-only, Phase
+      5/11/12/14 패턴) 테이블 + `paper_fill_seq` 시퀀스 신규 추가 —
+      기존 테이블 스키마 변경 없음. `ValidatedOrder`/`Fill` 직렬화
+      함수도 이번에 신규 작성(이전 Phase는 둘 다 영속화하지 않았음)
+- [x] Phase 1~14 소스코드 변경 없음 — `schema.py`/`serialization.py`에
+      대한 순수 추가만 있으며(`git diff src/storage/schema.py
+      src/storage/serialization.py | grep '^-'` 결과 두 파일 모두
+      삭제/변경 없음으로 확인), 그 외 Phase 1~14 코드 전혀 수정하지
+      않음
+- [x] `tests/broker/paper/`(91: adapter 17 + accounting_invariants 12 +
+      execution 8 + config 12 + boundary 10 + leakage 9 +
+      reproducibility 3 + session 6 + journal 3 + repository_inmemory
+      4) + `tests/storage/test_paper_repository.py`(5) +
+      `tests/integration/test_paper_trading_lineage.py`(2) — 신규
+      91개 테스트 작성 및 전부 통과(`test_paper_*` prefix로 명명해
+      기존 트리 전체와 basename 충돌 없음을 사전 확인, `paper_helpers.py`
+      는 `tests/broker/broker_helpers.py`와 나란히 위치시켜 conftest의
+      sys.path 규칙을 그대로 활용)
+- [x] **전체 테스트 스위트 1127개 전부 통과**(Phase1 57 + Phase2 82 +
+      Phase3 63 + Phase4 51 + Phase5 57 + Phase6 39 + Phase7 40 + Phase8
+      94 + Phase9 70 + Phase10 54 + Phase11 62 + Phase12 99 + Phase13
+      133 + Phase14 135 + Phase15 91) — Phase 1~14 기존 테스트 무손상
+      확인
+- [x] Boundary 검증 — `broker.paper.*` 어디에도 `broker.toss.*`/
+      `decision.agent`/`risk.sizing`/`risk.engine`/`ai_gateway.gateway`/
+      `data_infra.repository`/`backtest.asof` import가 없음을(단
+      `guard.py`의 `TossBrokerAdapter` isinstance 참조는 예외) AST
+      스캔으로 검증, `os.environ`/`os.getenv`/네트워크 모듈 import가
+      패키지 어디에도 없음을 확인, `PaperTradingConfig.environment`가
+      구조적으로 `"paper"`만 허용함을 확인, `assert_paper_environment_safe`
+      가 `TossBrokerAdapter` 조합을 거부하고 `MockBrokerAdapter`는
+      허용함을 확인(`test_paper_boundary.py`)
+- [x] Fail-Closed/Accounting Invariant 검증 — 현금 부족 시 REJECTED(음수
+      cash 발생 안 함), 보유 없이 매도 시 REJECTED(allow_short=False),
+      max quantity/notional 초과 시 REJECTED, malformed 응답은 예외 없이
+      UNKNOWN 반환, unknown_status 모드에서 실제 체결 후에도 상태 조회는
+      UNKNOWN(UNKNOWN ≠ FILLED 확인), 취소/체결 완료 주문은 추가 체결
+      불가, commission/spread/slippage 전부 음수 불가, slippage 방향이
+      매수/매도에 일관됨을 전부 전용 테스트로 검증
+      (`test_paper_adapter.py`, `test_paper_accounting_invariants.py`)
+- [x] Point-in-time/Leakage 검증 — `InMemoryPaperMarketDataSource`가
+      `available_time <= as_of`인 bar만 반환함을 확인, 미래 bar 등록
+      이후에도 과거 시점 체결 결과가 완전히 동일함을 확인,
+      `submit_order`/`advance_simulation`/`get_order_status`/
+      `get_reference_bar` 전부 기본값 없는 필수 timestamp 파라미터임을
+      `inspect.signature`로 검증, `datetime.now()`/`datetime.utcnow()`
+      호출이 패키지 어디에도 없음을 AST 스캔으로 확인
+      (`test_paper_leakage.py`)
+- [x] Reproducibility 검증 — `random` import가 패키지 어디에도 없음을
+      AST 스캔으로 확인, 동일 input+config → 동일 order/fill/cash/
+      position 결과 확인(`test_paper_reproducibility.py`)
+- [x] Restart Safety 검증 — in-memory와 실제 DuckDB 카탈로그 양쪽에서
+      order submit → partial fill → advance → 재시작 →
+      `PaperTradingSession.restore`로 재구성한 현금/포지션/주문 상태가
+      재시작 전과 완전히 동일함을 확인, 재시작 후 동일 주문 재제출도
+      중복 체결을 만들지 않음을 확인(`test_paper_session.py`,
+      `test_paper_repository.py`)
+- [x] Trade Journal 통합 검증 — `build_trade_record`가
+      `trade_journal.models.TradeRecord`를 그대로 생성하고 provenance가
+      항상 PAPER_TRADING임을 확인, `DuckDBTradeJournalRepository.
+      record_trade`가 Paper fill을 변경 없이 그대로 받아들임을 확인
+      (`test_paper_journal.py`, `test_paper_trading_lineage.py`)
+- [x] Monitoring 통합 검증 — Phase 14의 `monitoring.collectors.
+      collect_broker`/`compute_broker_metrics`가 `src/monitoring/*.py`
+      수정 없이 Paper Trading의 `broker_requests`/`broker_responses`를
+      그대로 관찰함을 확인. `paper_account_equity`/`paper_pnl`/
+      `paper_drawdown`은 `PaperTradingSession.account_summary()`로
+      값 자체는 제공하되 `MonitoringEvent`로의 실제 연결은 이번 Phase
+      범위에서 의도적으로 보류(ADR-0021 §8, spec §16 Known Limitations
+      에 명시 — Phase 14의 닫힌 enum을 확장할지 여부는 임의로 결정하지
+      않음)
+- [x] SQL join으로 lineage 증명: `risk_assessments`⋈`broker_requests`
+      ⋈`paper_fills`(3-way join, 한 DuckDB 카탈로그) + 프로세스 재시작
+      후 동일 결과 확인, `broker.paper.*`가 `final_target_quantity`나
+      `DecisionAction`을 스스로 재생성하지 않고 Phase 8/13 산출물을
+      그대로 이어받기만 함을 확인(`test_paper_trading_lineage.py`)
+- [x] Phase 3의 DECISION REQUIRED 3건 재검토 — 이번 Phase 완료에 필요하지
+      않다고 판단, 계속 이연
+- [x] Phase 8/9/10/11/12/13/14 Known Issue 재검토 — Paper Trading과
+      무관, 변경 불필요(Phase 2 §8.1의 average-cost 컨벤션을 그대로
+      재사용했을 뿐, Phase 8의 average_cost proxy Known Issue는 별개의
+      포트폴리오 risk-limit 계층 이슈로 영향 없음을 확인)
+- [x] Live Trading(Phase 16)/실제 실계좌 주문/자동 model 승인·배포·
+      재학습/상시 실행되는 Trading Engine 스케줄러/실제 alert 발송
+      채널/LIMIT 주문/기본 short selling은 이번 Phase 범위에서 명시적으로
+      제외 — `execution_mode=LIVE`로 가는 어떤 코드 경로도 `broker/
+      paper/*.py`에 없음
 
 ## Completed (Session 15 — Phase 14)
 

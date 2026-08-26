@@ -64,7 +64,7 @@
 
 ## 현재 상태
 
-**Phase 14 — Monitoring** (설계 및 참조 구현 완료).
+**Phase 15 — Paper Trading** (설계 및 참조 구현 완료).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
@@ -216,8 +216,33 @@
   `json_extract`)으로 lineage 증명. Phase 1~13 소스코드 변경 없이
   완전히 additive. 실제 alert 발송 채널(email/Slack), Alert
   승인·해제 워크플로우, Paper/Live Trading은 여전히 범위 밖(Phase 15+)
+- Phase 15 — Paper Trading: 완료 (`src/broker/paper/`, 91 tests) —
+  Master Plan §9.4("Trading Engine → Broker Interface → Paper
+  Broker(개발/검증 기본값) / Toss Broker(Live 전용)")를 구현하는 완전히
+  시뮬레이션된 `broker.protocol.BrokerAdapter`. 실행 가격 계산은 Phase
+  2의 `TransactionCostModel`/`SlippageModel`/`Fill`을, 현금·포지션
+  회계는 Phase 2의 `PortfolioAccounting`을 그대로 재사용(신규 병렬
+  로직 없음). 주문은 여러 `advance_simulation` 호출에 걸쳐 부분
+  체결이 누적될 수 있고(`PENDING`→`PARTIAL_FILLED`→`FILLED`), 동일
+  `client_order_id` 재제출은 중복 체결을 만들지 않음. 시장 데이터는
+  항상 caller가 공급하는 `PaperMarketDataSource`를 통해서만 접근하며
+  (`available_time <= as_of`인 bar만 반환해 미래 데이터 유출을 구조적
+  차단), `broker.paper.*` 어디에도 `data_infra.repository`/
+  `backtest.asof`/`broker.toss.*`/`os.environ`/`os.getenv`/네트워크
+  모듈 import가 없음(AST 스캔으로 검증, 유일한 예외는 `guard.py`의
+  `TossBrokerAdapter` isinstance 전용 참조). `PaperTradingConfig.
+  environment`는 구조적으로 `"paper"` 값만 허용. `PaperTradingSession.
+  restore`가 재시작 후 현금/포지션/주문 상태를 완전히 동일하게
+  재구성함을 실제 DuckDB 카탈로그로 검증. `build_trade_record`가
+  Phase 3의 `TradeRecord`를 그대로 생성(provenance=PAPER_TRADING
+  고정)하고, Phase 14의 `collect_broker`가 `monitoring/*.py` 수정 없이
+  Paper의 request/response 감사 기록을 그대로 관찰함을 확인. Phase
+  1~14 소스코드 변경 없이 완전히 additive. Live Trading 활성화 로직,
+  상시 실행 Trading Engine 스케줄러, `paper_account_equity` 등 계정
+  단위 지표의 Monitoring 연결은 여전히 범위 밖(Phase 16+, ADR-0021
+  §8에 근거 명시)
 
-전체 테스트: **1036 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14 합산).
+전체 테스트: **1127 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15 합산).
 
 ## 테스트 실행
 
@@ -548,6 +573,69 @@ Phase 1~13 소스코드는 전혀 수정하지 않았다. 실제 alert 발송 �
 따라 이번 Phase 범위에서 의도적으로 제외했다. 자세한 설계는
 `docs/specifications/PHASE-14-monitoring.md`와
 `docs/decisions/ADR-0020-monitoring.md` 참조.
+
+## Paper Trading (Phase 15)
+
+`src/broker/paper/`는 Master Plan §9.4("Trading Engine → Broker
+Interface → Paper Broker(개발/검증 기본값) / Toss Broker(Live에서만,
+명시적 활성화 후)")를 구현하는 완전히 시뮬레이션된
+`broker.protocol.BrokerAdapter`(Phase 13) 구현체다. `PaperBrokerAdapter`
+는 절대로 `TossBrokerAdapter`/Toss API/실제 네트워크/실계좌를 호출하지
+않는다 — `broker.paper.*` 어디에도 `broker.toss.*`/`os.environ`/
+`os.getenv`/`socket`/`http`/`urllib`/`requests`/`httpx` import가 없음을
+AST 스캔으로 검증했고(유일한 예외는 `broker.paper.guard`의
+`TossBrokerAdapter` isinstance 전용 참조 — 절대 생성/호출하지 않음),
+`PaperTradingConfig.environment`는 구조적으로 `"paper"` 값만 허용한다.
+
+실행 로직은 새로 만들지 않고 Phase 2를 그대로 재사용한다:
+`backtest.costs.TransactionCostModel`/`FixedBpsSlippageModel`이 스프레드
+·슬리피지·수수료를 계산하고, `backtest.portfolio.PortfolioAccounting`이
+average-cost 기준으로 현금·포지션·realized PnL을 추적하며,
+`backtest.fills.Fill`이 체결 결과 타입 그대로 쓰인다. 주문은
+`floor(bar.volume × max_participation)`만큼만 한 번에 체결되고, 남은
+수량은 이후 `advance_simulation(as_of)` 호출(시장 데이터가 더 확보될
+때마다 명시적으로 시뮬레이션 시간을 진행시키는 Paper 전용 훅)에 걸쳐
+누적 체결된다 — `PENDING → PARTIAL_FILLED → FILLED`. 동일
+`client_order_id` 재제출은 새 주문을 만들지 않고 기존 응답을 그대로
+반환한다(Phase 13의 idempotency 설계 그대로 재사용). 시장 데이터는
+`PaperMarketDataSource`(caller가 직접 공급 — `broker.paper.*`는
+`data_infra.repository`/`backtest.asof`를 전혀 import하지 않는다)를
+통해서만 접근하며, `available_time <= as_of`인 bar만 반환해 미래 가격
+유출을 구조적으로 차단한다.
+
+현금 부족(`insufficient_cash`)/보유 초과 매도(`insufficient_position`,
+`allow_short=False` 기본값)/최대 수량·명목가 초과는 전부 `REJECTED`로
+fail-closed 처리하며, `failure_mode`(`timeout`/`auth`/`rate_limit`/
+`unavailable`/`malformed`/`unknown_status`/`rejected`)로 실제 장애를
+결정적으로 시뮬레이션할 수 있다 — `malformed`/`unknown_status`는
+`UNKNOWN` 상태를 반환할 뿐 절대 체결(`FILLED`)로 오인되지 않는다.
+
+`PaperBrokerAdapter` 자체는 Phase 13의 `MockBrokerAdapter`처럼 순수
+in-memory이며 아무것도 영속화하지 않는다 — 영속화와 재시작 복구는
+오케스트레이션 계층인 `PaperTradingSession`의 역할이다.
+`PaperTradingSession.restore(...)`가 영속화된 주문(`paper_orders`)과
+체결(`paper_fills`)만으로 어댑터의 현금·포지션·주문 상태를 완전히
+동일하게 재구성함을 실제 DuckDB 카탈로그 재시작 테스트로 검증했다.
+주문 상태 이력은 Phase 13의 기존 `order_status_events` 테이블을,
+request/response 감사 로그는 기존 `broker_requests`/`broker_responses`
+테이블을 스키마 변경 없이 그대로 재사용한다 — 신규 테이블은
+`paper_orders`/`paper_fills` 2개뿐이다.
+
+`broker.paper.journal.build_trade_record`는 Phase 3의
+`trade_journal.models.TradeRecord`를 그대로 생성한다(별도의 독립적인
+journal 체계를 만들지 않음) — provenance는 항상
+`TradeProvenance.PAPER_TRADING`으로 고정된다. Phase 14의
+`monitoring.collectors.collect_broker`/`compute_broker_metrics`는
+`src/monitoring/*.py`를 전혀 수정하지 않고도 Paper Trading의
+`broker_requests`/`broker_responses`를 그대로 관찰한다 — Monitoring
+입장에서 Paper는 "또 하나의 broker_id"일 뿐이다.
+`paper_account_equity`/`paper_pnl`/`paper_drawdown`은
+`PaperTradingSession.account_summary()`로 값 자체는 제공하지만,
+`MonitoringEvent`로의 실제 연결(Phase 14의 닫힌 `MonitoringComponent`
+enum을 확장할지 여부)은 임의로 결정하지 않고 이번 Phase 범위에서
+의도적으로 보류했다(ADR-0021 §8). Phase 1~14 소스코드는 전혀 수정하지
+않았다. 자세한 설계는 `docs/specifications/PHASE-15-paper-trading.md`와
+`docs/decisions/ADR-0021-paper-trading.md` 참조.
 
 ## 개발 원칙
 
