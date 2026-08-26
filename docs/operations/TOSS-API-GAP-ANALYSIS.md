@@ -14,6 +14,18 @@ any Live submission that requires one of them
 (`tests/broker/live/test_live_safety_gate.py::
 TestRealTossCapabilitiesStructurallyBlockLiveTrading`).
 
+**Phase 18 addendum**: no new Toss API research was attempted this
+phase -- the official documentation hosts remain unreachable from this
+environment (unchanged since Phase 17), and Phase 18's own instruction
+explicitly forbids guessing an endpoint without official confirmation.
+This document's findings are otherwise unchanged. Phase 18 did fix a
+related, previously-mismapped response-handling bug: a Toss `5xx`
+response was mapped to a definitive `REJECTED` instead of `UNKNOWN`
+(Phase 17, ADR-0023); Phase 18 re-verified this fix end to end through
+the real `TossBrokerAdapter` + `LiveTradingSession`, not just the
+isolated mapping function (`tests/broker/live/
+test_live_partial_fill_and_5xx_regression.py`).
+
 ## Evidence tiers
 
 This document distinguishes three tiers of evidence, ranked from

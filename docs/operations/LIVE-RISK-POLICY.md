@@ -124,6 +124,32 @@ against, but not perfectly, per Known Issues elsewhere in this review)
 has one fewer independent backstop.
 ```
 
+```
+DECISION REQUIRED (Phase 18 addition)
+Problem: Items #1/#6/#7 above are all UNDEFINED (None). Phase 16's own
+design treats None as "not enforced" -- evaluate_safety_gate does not
+read any of these three fields at all; they only feed
+evaluate_kill_switch_triggers, a separate mechanism an operator must
+also remember to invoke.
+Current Design: Live can structurally activate (pending the separate,
+independently-blocking Toss capability gap) with zero automatic daily-
+loss/turnover/order-frequency circuit breakers, if an operator never
+sets values for #1/#6/#7.
+Option A: Keep None = not enforced. Simpler; relies on manual oversight
+plus the other 11 safety-gate conditions until an operator explicitly
+opts into automatic limits.
+Option B: Change evaluate_safety_gate so any of #1/#6/#7 being None
+becomes itself a blocking condition, structurally requiring all three
+to be explicitly decided before Live can activate at all.
+Recommendation: None given -- this is a financial-policy decision, not
+a technical one, and changing Phase 16's documented design
+unilaterally is exactly what this project's discipline forbids an AI
+from doing on its own.
+Impact: See docs/specifications/PHASE-18-paper-performance-and-validation.md
+section 5 for the full analysis. No code was changed as a result of
+raising this.
+```
+
 ## Known Issues surfaced while writing this document
 
 - **#8 (liquidity limit) enforcement depends on the caller supplying

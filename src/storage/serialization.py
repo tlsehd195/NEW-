@@ -90,6 +90,7 @@ from broker.paper.models import PaperFillRecord, PaperOrderRecord
 from broker.live.enums import ReconciliationStatus
 from broker.live.kill_switch import KillSwitchEvent
 from broker.live.reconciliation import ReconciliationResult
+from broker.paper.performance import BenchmarkComparison, PaperPerformanceReport
 
 
 def to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
@@ -1940,4 +1941,97 @@ def payload_to_reconciliation_result(data: dict) -> ReconciliationResult:
         as_of_time=_dt_from_iso(data["as_of_time"]),
         details=data.get("details") or {},
         configuration_version=data.get("configuration_version", "unknown"),
+    )
+
+
+# --------------------------------------------------------------------
+# broker.paper.performance (Phase 18)
+# --------------------------------------------------------------------
+
+
+def _benchmark_comparison_to_payload(comparison: BenchmarkComparison) -> dict:
+    return {
+        "status": comparison.status,
+        "benchmark_id": comparison.benchmark_id,
+        "benchmark_return_type": comparison.benchmark_return_type,
+        "benchmark_cumulative_return": comparison.benchmark_cumulative_return,
+        "benchmark_cagr": comparison.benchmark_cagr,
+        "benchmark_max_drawdown": comparison.benchmark_max_drawdown,
+        "excess_return": comparison.excess_return,
+        "annualized_excess_return": comparison.annualized_excess_return,
+    }
+
+
+def _payload_to_benchmark_comparison(data: dict) -> BenchmarkComparison:
+    return BenchmarkComparison(
+        status=data["status"],
+        benchmark_id=data.get("benchmark_id"),
+        benchmark_return_type=data.get("benchmark_return_type"),
+        benchmark_cumulative_return=data.get("benchmark_cumulative_return"),
+        benchmark_cagr=data.get("benchmark_cagr"),
+        benchmark_max_drawdown=data.get("benchmark_max_drawdown"),
+        excess_return=data.get("excess_return"),
+        annualized_excess_return=data.get("annualized_excess_return"),
+    )
+
+
+def paper_performance_report_to_payload(report: PaperPerformanceReport) -> dict:
+    return {
+        "report_id": report.report_id,
+        "paper_session_id": report.paper_session_id,
+        "evaluated_at": _dt_iso(report.evaluated_at),
+        "period_start": _dt_iso(report.period_start),
+        "period_end": _dt_iso(report.period_end),
+        "total_return": report.total_return,
+        "cagr": report.cagr,
+        "volatility": report.volatility,
+        "sharpe_ratio": report.sharpe_ratio,
+        "sortino_ratio": report.sortino_ratio,
+        "calmar_ratio": report.calmar_ratio,
+        "max_drawdown": report.max_drawdown,
+        "turnover": report.turnover,
+        "total_transaction_cost": report.total_transaction_cost,
+        "total_slippage": report.total_slippage,
+        "num_trades": report.num_trades,
+        "win_rate": report.win_rate,
+        "avg_trade_return": report.avg_trade_return,
+        "realized_pnl": report.realized_pnl,
+        "benchmark": _benchmark_comparison_to_payload(report.benchmark),
+        "configuration_version": report.configuration_version,
+        "provenance": report.provenance.value,
+        "strategy_version": report.strategy_version,
+        "model_version": report.model_version,
+        "experiment_id": report.experiment_id,
+        "reasons": report.reasons,
+    }
+
+
+def payload_to_paper_performance_report(data: dict) -> PaperPerformanceReport:
+    return PaperPerformanceReport(
+        report_id=data["report_id"],
+        paper_session_id=data["paper_session_id"],
+        evaluated_at=_dt_from_iso(data["evaluated_at"]),
+        period_start=_dt_from_iso(data.get("period_start")),
+        period_end=_dt_from_iso(data.get("period_end")),
+        total_return=data.get("total_return"),
+        cagr=data.get("cagr"),
+        volatility=data.get("volatility"),
+        sharpe_ratio=data.get("sharpe_ratio"),
+        sortino_ratio=data.get("sortino_ratio"),
+        calmar_ratio=data.get("calmar_ratio"),
+        max_drawdown=data.get("max_drawdown"),
+        turnover=data.get("turnover"),
+        total_transaction_cost=data.get("total_transaction_cost"),
+        total_slippage=data.get("total_slippage"),
+        num_trades=data["num_trades"],
+        win_rate=data.get("win_rate"),
+        avg_trade_return=data.get("avg_trade_return"),
+        realized_pnl=data.get("realized_pnl"),
+        benchmark=_payload_to_benchmark_comparison(data["benchmark"]),
+        configuration_version=data.get("configuration_version", "unknown"),
+        provenance=TradeProvenance(data.get("provenance", TradeProvenance.PAPER_TRADING.value)),
+        strategy_version=data.get("strategy_version", "unknown"),
+        model_version=data.get("model_version"),
+        experiment_id=data.get("experiment_id"),
+        reasons=data.get("reasons") or {},
     )

@@ -64,9 +64,9 @@
 
 ## 현재 상태
 
-**Phase 17 — Production Safety Review** (신규 기능 개발이 아닌 검증
-단계 — Live Trading 활성화는 여전히 구조적으로 불가능. Toss capability
-gap이 유일하지만 확실한 차단 사유, `docs/operations/
+**Phase 18 — Production Safety Follow-up + Paper Trading Validation**
+(Phase 17 후속 조치. Live Trading 활성화는 여전히 구조적으로 불가능.
+Toss capability gap이 유일하지만 확실한 차단 사유, `docs/operations/
 PRODUCTION-READINESS-MATRIX.md` 참조).
 상세는 `docs/PROJECT_STATUS.md` 참조.
 
@@ -290,7 +290,30 @@ PRODUCTION-READINESS-MATRIX.md` 참조).
   리포트가 아직 없음 — "Paper 수익률 > benchmark"만으로 Live 자격을
   판단하지 않는다는 원칙에 따라 향후 Phase에서 구축 필요.
 
-전체 테스트: **1345 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15+16+17 합산).
+- Phase 18 — Production Safety Follow-up + Paper Trading Validation:
+  완료 (`src/broker/paper/performance.py`, 신규 테스트 54개) — Paper
+  Trading의 자체 성과 리포트(Sharpe/Sortino/Calmar/drawdown/turnover/
+  transaction cost/slippage/승률/평균 거래 수익/실현 손익 + S&P 500
+  벤치마크 비교)를 신규 구현. 데이터가 부족하거나 분모가 0인 모든
+  경우를 `0.0`으로 임의 대체하지 않고 명시적 reason(`insufficient_data`/
+  `zero_volatility`/`zero_downside_deviation`/`zero_drawdown`)으로
+  기록. `backtest.metrics`는 수정하지 않고 병렬 모듈로 구현(기존 동작
+  보존), `PaperBrokerAdapter`가 이미 쓰던 `PortfolioAccounting`을
+  읽기 전용 property 1개로 노출해 재사용(중복 accounting 시스템 없음).
+  실제 S&P 500 데이터가 이 저장소에 없음을 재확인 — 벤치마크 비교는
+  `BENCHMARK_UNAVAILABLE`을 정직하게 반환. Phase 17의 두 버그 수정
+  (partial fill 자연키, Toss 5xx 처리)을 Live 경로와 전체 파이프라인
+  으로 재검증. Live Safety Gate의 9개 차단 차원(계좌/포지션/주문상태/
+  브로커 capability/reconciliation/model/risk/data health/monitoring
+  health) 전부가 실제로 차단하는지 확인 — 이미 보장되던 구조는
+  중복 구현하지 않고 regression test만 추가. Walk-Forward/PBO/Deflated
+  Sharpe Ratio를 원 논문 인용과 함께 연구
+  (`docs/research/walk-forward-pbo-deflated-sharpe.md`), 구현 여부는
+  DECISION REQUIRED로 남김. risk policy가 미설정일 때 Live를 구조적
+  으로 차단할지 여부도 별도 DECISION REQUIRED로 보고 — 임의로 결정하지
+  않음.
+
+전체 테스트: **1399 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15+16+17+18 합산).
 
 ## 테스트 실행
 
@@ -804,6 +827,52 @@ Live 자격을 판단해서는 안 된다는 원칙을 지키기 위해 반드�
 내린 최종 판정은 하나: **READY FOR HUMAN REVIEW** — "사람의 최종
 검토를 받을 만큼 기술적으로 준비되었다"는 뜻이며, "실제 돈을 넣어도
 안전하다"는 뜻이 결코 아니다.
+
+## Paper Trading Performance Report (Phase 18)
+
+Phase 17이 남긴 가장 명확한 gap — Paper Trading에 raw PnL 외의 성과
+평가가 전혀 없었던 문제 — 를 해결하는 phase. `broker.paper.performance`
+가 total return/CAGR/변동성/Sharpe/Sortino/Calmar/최대 drawdown/
+turnover/거래비용/슬리피지/거래 건수/승률/평균 거래 수익/실현 손익과
+S&P 500 벤치마크 비교를 계산한다. `backtest.metrics`(Phase 2)는 데이터
+부족이나 0으로 나누는 경우를 전부 `0.0`으로 대체하는데, 이는 이번
+phase의 "값이 없으면 0을 임의로 넣지 않는다" 원칙과 충돌하므로 그
+모듈을 수정하는 대신(기존 Phase 2/4 동작을 깨뜨릴 위험) 완전히 새로운
+병렬 모듈을 만들었다 — 모든 계산 불가 상황은 `insufficient_data`/
+`zero_volatility`/`zero_downside_deviation`/`zero_drawdown`/
+`not_supplied` 같은 명시적 사유로 기록된다.
+
+중복 회계 시스템을 만들지 않기 위해, `PaperBrokerAdapter`가 이미
+내부적으로 쓰고 있던 `backtest.portfolio.PortfolioAccounting` 인스턴스를
+읽기 전용 property(`adapter.accounting`) 하나로 노출해 그대로
+재사용했다 — 기존 호출자 누구의 동작도 바뀌지 않는다. 거래 건수/승률/
+평균 수익/실현 손익/거래비용/슬리피지는 `PortfolioAccounting`의 자체
+거래 목록이 아니라 Trade Journal(Phase 3)의 `TradeRecord`에서 집계한다
+— 두 개의 경쟁하는 거래 목록을 만들지 않기 위함이다. 벤치마크는
+`backtest.benchmark.BenchmarkEngine`(Phase 2)을 그대로 재사용했는데,
+이 저장소에는 실제 S&P 500 가격 데이터가 전혀 없으므로(ADR-0005 미해결)
+가짜 데이터를 만드는 대신 `BENCHMARK_UNAVAILABLE`을 정직하게 반환하도록
+설계했다.
+
+이번 phase는 또한 Phase 17이 고친 두 버그 — Trade Journal의 partial
+fill 자연키 충돌, Toss 5xx 오분류 — 를 Live 경로/전체 파이프라인으로
+재검증했고, Live Safety Gate의 9개 차단 차원(계좌/포지션/주문상태/
+브로커 capability/reconciliation/model/risk/data health/monitoring
+health)이 실제로 신규 주문을 막는지 확인했다 — `evaluate_safety_gate`의
+실제 호출 지점이 정확히 두 곳뿐이고 둘 다 이미 reconciliation을
+독립적으로 확인하고 있음을 발견해, 코드를 중복 추가하는 대신 각
+차원의 실제 집행 경로를 증명하는 regression test만 추가했다.
+
+Walk-Forward Validation/Purged K-Fold/Embargo/PBO/Deflated Sharpe
+Ratio는 원 논문(Bailey/Borwein/López de Prado/Zhu 2015; Bailey/López
+de Prado 2014)을 인용해 연구했지만(`docs/research/
+walk-forward-pbo-deflated-sharpe.md`) 구현하지 않았다 — 이를 향후 모델
+신뢰 기준으로 채택할지는 DECISION REQUIRED로 남겼다. Risk policy가
+`None`(미설정)일 때 Live를 구조적으로 차단할지 여부도 마찬가지로
+DECISION REQUIRED로 보고했다 — 둘 다 이 프로젝트의 "AI가 정책을 임의로
+결정하지 않는다"는 원칙에 따라 코드로 임의 결정하지 않았다. 자세한
+설계는 `docs/specifications/PHASE-18-paper-performance-and-validation.md`
+와 `docs/decisions/ADR-0024-paper-performance-and-validation.md` 참조.
 
 ## 개발 원칙
 

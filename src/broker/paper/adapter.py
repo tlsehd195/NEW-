@@ -80,6 +80,20 @@ class PaperBrokerAdapter:
         self._observation_ids = _IdAllocator("PAPEROSTAT")
         self._fill_ids = _IdAllocator("PAPERFILL")
 
+    @property
+    def accounting(self) -> PortfolioAccounting:
+        """Phase 18 addition -- read-only access to the same
+        `backtest.portfolio.PortfolioAccounting` instance this adapter
+        already uses internally (Phase 2, unmodified), so a Performance
+        Report can be computed from `value_series`/`closed_trades`/
+        `turnover()`/`transaction_costs` directly rather than a second,
+        duplicate accounting system. Callers wanting a real equity
+        curve for performance metrics must call
+        `adapter.accounting.mark_to_market(prices, as_of)` themselves at
+        each valuation point -- this adapter never calls it on its own
+        (no behavior change for any existing caller)."""
+        return self._accounting
+
     # -- rehydration (restart safety) -- never re-runs failure_mode/
     # cash-check logic, only replays what already happened. --
 

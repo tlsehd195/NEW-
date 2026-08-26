@@ -5,11 +5,169 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-26
-**Updated By:** Claude Code (Session 18 — Phase 17 Production Safety Review)
+**Updated By:** Claude Code (Session 19 — Phase 18 Production Safety Follow-up + Paper Trading Validation)
 
 ---
 
 ## Current Phase
+
+**Phase 18 — Production Safety Follow-up + Paper Trading Validation**
+(Phase 17 Production Safety Review에서 확인된 BLOCKED/PARTIAL 항목의
+후속 조치. 신규 기능 개발 phase가 아니며, 실제 자금 투입이나 Toss Live
+Trading 활성화는 여전히 하지 않는다. Live Trading은 여전히 구조적으로
+비활성 — Toss capability가 UNKNOWN인 한 활성화 불가,
+`docs/operations/PRODUCTION-READINESS-MATRIX.md` 참조)
+
+### Completed (Session 19 — Phase 18)
+
+- **Paper Trading Performance Report** 신규 구현
+  (`src/broker/paper/performance.py`): total_return/CAGR/volatility/
+  Sharpe/Sortino/Calmar/max_drawdown/turnover/transaction_cost/
+  slippage/num_trades/win_rate/avg_trade_return/realized_pnl 계산.
+  모든 계산 불가 상황(데이터 부족/zero variance/zero downside
+  deviation/zero drawdown)을 `0.0`으로 임의 대체하지 않고 명시적
+  reason 문자열(`insufficient_data`/`zero_volatility`/
+  `zero_downside_deviation`/`zero_drawdown`/`not_supplied`)로 기록.
+  `backtest.metrics`는 수정하지 않고(기존 Phase 2/4 동작 보존) 완전히
+  새로운 병렬 모듈로 구현 (`docs/decisions/ADR-0024` 결정 1).
+- **중복 accounting 시스템을 만들지 않음**: `PaperBrokerAdapter`가 이미
+  내부적으로 사용 중이던 `backtest.portfolio.PortfolioAccounting`
+  인스턴스를 읽기 전용 property(`adapter.accounting`, 신규 1줄
+  추가)로 노출해 재사용 — 기존 동작 변화 없음, 전체 기존 Paper Trading
+  테스트 그대로 통과 확인.
+- **Trade Journal을 거래 경제성의 단일 권위 소스로 사용**:
+  거래 건수/승률/평균 수익/실현 손익/거래비용/슬리피지는 모두
+  `TradeRecord`(Phase 3, Trade Journal)에서 집계 — `PortfolioAccounting.
+  closed_trades`(별도의 경쟁하는 거래 목록)는 사용하지 않음.
+- **벤치마크**: `backtest.benchmark.BenchmarkEngine`을 그대로 재사용.
+  이 저장소에는 실제 S&P 500(또는 어떤) 벤치마크 가격 데이터도 전혀
+  없음을 재확인(ADR-0005 미해결) — 데이터가 없으면 `BenchmarkComparison.
+  status="BENCHMARK_UNAVAILABLE"`을 구조적으로 반환하도록 설계, 가짜
+  데이터를 생성하지 않음.
+- **영속화**: `paper_performance_reports` 신규 DuckDB 테이블 + 저장소
+  (`storage/paper_performance_repository.py`) — Phase 16
+  `live_repository.py`와 동일한 natural-key idempotency 패턴, schema는
+  순수 additive.
+- **Phase 17 버그 수정 재검증**: partial fill 자연키 수정을 Live
+  journal 경로(`broker.live.journal`)로도 직접 재검증(같은
+  client_order_id, 다른 execution_time인 두 `BrokerOrderResponse`가
+  모두 Trade Journal에 보존됨). Toss 5xx→UNKNOWN 수정을 실제
+  `TossBrokerAdapter`+`LiveTradingSession` 전체 파이프라인으로
+  재검증(정확히 1회 transport 호출, blind retry 없음, 2차 제출은
+  세션 레벨에서 차단).
+- **Live Safety Gate 9개 차원 재검증**: account/positions/order
+  status/broker capability/reconciliation/model status/risk status/
+  data health/monitoring health 9개 전부가 실제로 신규 주문을
+  차단하는지 확인. `evaluate_safety_gate`의 실제 production 호출
+  지점이 정확히 2곳(`run_startup_checks`, `LiveTradingSession.submit`)
+  뿐이며 둘 다 이미 reconciliation 상태를 독립적으로 확인하고 있음을
+  확인 — `SafetyGateContext`/`KillSwitchTriggerContext`에 중복 필드를
+  추가하지 않고, 9개 차원 각각의 실제 집행 경로를 증명하는 regression
+  test만 추가 (`docs/decisions/ADR-0024` 결정 6).
+- **Paper Trading 8개 시나리오(A-H) 실제 pipeline 검증**: BUY→FILLED→
+  SELL→CLOSED, partial→full fill→SELL, 현금 부족→REJECTED, 포지션
+  부족→REJECTED, 중복 client_order_id→중복 없음, 브로커 장애→UNKNOWN,
+  거래비용+슬리피지 반영, drawdown 발생 — 전부 Order→Fill→Journal→
+  Accounting→Performance lineage 유지 확인.
+- **Walk-Forward/PBO/Deflated Sharpe 연구** (구현 아님):
+  `docs/research/walk-forward-pbo-deflated-sharpe.md` — 원 논문
+  인용(Bailey/Borwein/López de Prado/Zhu 2015 — PBO; Bailey/López de
+  Prado 2014 — Deflated Sharpe Ratio; López de Prado의 purging/embargo
+  기법)과 함께 각 기법을 정의하고 현재 아키텍처 적용 지점을 문서화,
+  DECISION REQUIRED로 마무리(구현 여부는 결정하지 않음).
+- **신규 DECISION REQUIRED 2건**: (1) risk policy가 `None`일 때 Live를
+  구조적으로 차단할지 여부(현재는 "미설정=미집행", Phase 16의 의도된
+  설계) — 임의로 변경하지 않음. (2) Walk-Forward/PBO/Deflated Sharpe를
+  향후 모델 신뢰 기준으로 채택할지 여부.
+- 신규 테스트 다수 (성과 지표/영속화/시나리오 A-H/Live 부분체결+5xx
+  회귀/Safety Gate 9차원/Monitoring 연결/boundary) — 정확한 최종
+  개수는 아래 Last Validation 항목 참조.
+- 기존 1345개 테스트 전부 그대로 유지, 삭제/약화 없음.
+
+### In Progress (Session 19 — Phase 18)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 19 — Phase 18)
+
+Live Trading 활성화 — Toss `ACCOUNT_BALANCE`/`POSITIONS`/
+`ORDER_STATUS`/`CANCEL_ORDER` 4개 capability가 UNKNOWN인 한 구조적으로
+불가 (변경 없음, Phase 13부터 지속).
+
+### Decision Required (Session 19 — Phase 18)
+
+1. Risk policy(`max_daily_loss`/`max_turnover`/
+   `max_order_frequency_per_hour`)가 `None`일 때 Live를 구조적으로
+   차단할지 여부 — `docs/operations/LIVE-RISK-POLICY.md` 참조.
+2. Walk-Forward/PBO/Deflated Sharpe Ratio를 향후 모델 신뢰/Live 진입
+   기준으로 채택할지 여부 — `docs/research/walk-forward-pbo-deflated-sharpe.md`
+   참조.
+3. (Phase 17에서 이어짐, 미해결) daily loss limit/turnover limit/order
+   frequency 숫자값 자체.
+4. (Phase 16에서 이어짐, 미해결) cancel-on-shutdown 자동화 여부.
+
+### Known Issues (Session 19 — Phase 18)
+
+- `backtest.metrics`(Phase 2, zero-fallback)와 `broker.paper.
+  performance`(Phase 18, Optional+reason) 두 가지 Sharpe/Sortino/Calmar
+  계산 방식이 공존 — 의도된 비대칭(ADR-0024 결정 1), 통합하지 않음.
+- 실제 S&P 500 데이터가 없어 모든 Paper Performance Report의 benchmark
+  상태는 당분간 `BENCHMARK_UNAVAILABLE`로 유지됨.
+- `MockBrokerAdapter`의 `"account_unavailable"` 모드는 `get_positions()`에서
+  빈 튜플을 반환 — "포지션 없음"과 "포지션 조회 불가"가 구분되지 않는
+  기존 한계, 이번 phase에서도 수정하지 않음(Phase 17에서 이미 기록).
+
+### Architecture Changes (Session 19 — Phase 18)
+
+`src/broker/paper/adapter.py`(읽기 전용 property 1개 추가),
+`src/storage/schema.py`/`src/storage/serialization.py`(additive),
+신규 `src/broker/paper/performance.py`,
+`src/storage/paper_performance_repository.py`. `backtest.metrics`/
+`backtest.benchmark`/`backtest.portfolio`/`broker.live.safety_gate`/
+`broker.live.kill_switch`/`broker.live.config`/`risk.config`/
+`broker.toss.adapter`의 capability 보고는 전혀 수정하지 않음.
+
+### Paper Trading Status (Session 19 — Phase 18)
+
+주문 생애주기/Trade Journal/Experience Dataset 연결은 PASS(Phase 17).
+Phase 18에서 자체 성과 리포트(Sharpe/Sortino/Calmar/drawdown/turnover/
+비용/슬리피지/승률/벤치마크)를 신규 구현하고 8개 시나리오로 실제
+pipeline 검증 완료 — PASS.
+
+### Learning Status (Session 19 — Phase 18)
+
+변경 없음 (Phase 17에서 PASS 확인, 이번 phase의 신규 코드는 learning/
+evolution 패키지를 전혀 import하지 않음을 boundary test로 재확인).
+
+### Live Trading Status (Session 19 — Phase 18)
+
+변경 없음 — 구조적으로 비활성(`LIVE_TRADING_ENABLED=false`).
+Kill switch/Reconciliation/Idempotency/환경 격리 전부 재검증 PASS(9개
+차원 전부). Toss capability gap이 유일하지만 확실한 차단 사유.
+
+### Toss API Status (Session 19 — Phase 18)
+
+변경 없음 — 이번 phase는 신규 Toss API 조사를 시도하지 않음(공식 문서
+접근 여전히 차단, 추측 구현 금지 원칙 유지). 5xx→UNKNOWN 처리(Phase
+17 수정)만 전체 파이프라인으로 재검증.
+
+### Last Validation (Session 19 — Phase 18)
+
+`python -m pytest tests/ -q` — baseline **1345 passed** → 최종
+**1399 passed, 0 failed, 0 skipped** (신규 테스트 54개). 기존 Phase
+0-17 테스트는 삭제/약화 없이 전부 그대로 유지.
+
+### Next Task (Session 19 — Phase 18)
+
+1. 위 Decision Required 4건에 대한 사람의 판단.
+2. Toss 공식 문서 실제 네트워크 접근 확보 후 4개 capability 재조사.
+3. 실 벤치마크 데이터 확보(ADR-0005) 후 Paper Performance Report의
+   실제 벤치마크 비교 가능하게 함.
+4. Paper Trading을 실제로 운영하는 상시 실행 루프 구축.
+5. Walk-Forward 검증(가장 실현 가능성 높은 첫 단계)을 향후 phase에서
+   구현할지 결정.
+
+## Previous Subtask (Session 18 — Phase 17)
 
 **Phase 17 — Production Safety Review** (신규 기능 개발이 아닌 검증
 단계. Live Trading은 여전히 구조적으로 비활성 — Toss capability가
@@ -223,35 +381,6 @@ order status/request-response 감사 기록은 Phase 13의 기존 테이블을
 예외는 `guard.py`의 `isinstance` 전용 참조). 프로세스 재시작 후 현금/
 포지션/주문 상태가 완전히 동일하게 복구됨을 실제 DuckDB 카탈로그로
 검증(`PaperTradingSession.restore`).
-
-## Previous Subtask (Session 15 — Phase 14)
-
-Phase 14 착수 전 **Git/Branch Integrity Check를 먼저 수행**(사용자
-지시) — 이번 세션은 이전 세션이 남긴 상태(`claude/phase-13-toss-securities-adapter`,
-HEAD `5b4b30cfd50c233ac83181b7dd5db7f36bd2feb9` "Phase 13: Toss
-Securities Adapter", working tree clean)에서 시작. `git log --oneline
---graph --decorate --all`로 단일 선형 히스토리(병합 커밋 0개) 확인,
-`git merge-base HEAD origin/main`이 `origin/main` 자신의 HEAD
-(`c3abad0eb9b2ba1ed4dda5ee158b448606a87d59`)를 그대로 반환(발산 없음).
-Phase 14용 원격 브랜치가 아직 없어 검증된 현재 HEAD에서
-`claude/phase-14-monitoring` 브랜치를 새로 생성. 착수 전 **901/901
-테스트 통과(baseline)** 확인. 상세:
-`docs/specifications/PHASE-14-monitoring.md` §0.
-
-Master Plan §12(Kill Switch & 장애/복구 규칙 — §12.4 Monitoring metrics
-목록/§12.5 Alerting severity)와 §11.6(Drift는 재검증 프로세스를
-트리거할 뿐 자동으로 모델을 교체하지 않음), §3 모듈 표의 명시적 금지
-("모델 재학습 자체 실행")를 재확인한 뒤 Definition of Done 충족: 명세
-(`docs/specifications/PHASE-14-monitoring.md`) + ADR-0020(handoff가
-제안한 ADR-0019는 Phase 13이 이미 사용 중이어서 ADR-0020으로 재번호
-부여, 완료 보고에 명시) + `src/monitoring/`(신규 패키지, Phase 0~13
-소스 전혀 수정 없이 완전히 독립적인 읽기 전용 관찰 계층으로 추가) +
-`src/storage/monitoring_repository.py`(신규 DuckDB 저장소 4종) + 신규
-135개 테스트 전부 통과. `ComponentHealthStatus.UNKNOWN`/`DriftStatus.
-UNKNOWN`은 어디에서도 `HEALTHY`/`NO_DRIFT`로 강제 변환되지 않으며,
-`learning.enums.CandidateModelStatus.APPROVED`/`DEPLOYED`를 생성하는
-코드 경로가 전혀 없음(AST 스캔으로 검증) — Broker/Risk/Decision을
-mutate하거나 AI provider를 직접 호출하는 경로도 전혀 없음.
 
 ## Completed (Session 17 — Phase 16)
 
@@ -1568,17 +1697,28 @@ mutate하거나 AI provider를 직접 호출하는 경로도 전혀 없음.
 
 ## In Progress
 
-없음 (Phase 13 설계+참조구현 완료).
+없음 (Phase 18 — Production Safety Follow-up + Paper Trading
+Validation — 완료. Live Trading은 Toss capability가 UNKNOWN인 한
+여전히 구조적으로 비활성).
 
 ## Blocked
 
+Live Trading 활성화 — Toss `ACCOUNT_BALANCE`/`POSITIONS`/
+`ORDER_STATUS`/`CANCEL_ORDER` 4개 capability가 UNKNOWN인 한 구조적으로
+불가 (`evaluate_safety_gate`가 실제로 차단). 상세는 위 "Current Phase"
+섹션 및 `docs/operations/PRODUCTION-READINESS-MATRIX.md` 참조 — 이
+섹션 이하는 Phase 4~9 시절에 작성된 이후 갱신되지 않고 있던 하위
+섹션으로, Phase 17에서 그 사실 자체를 stale-doc 발견 사항으로
+기록했고 이번 Phase 18에서 현재 상태에 맞게 갱신한다.
+
 **DECISION REQUIRED 3건 누적 (Phase 2/3에서 이어짐) — 사용자 확인 필요.**
 Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, Phase 11,
-Phase 12, Phase 13 세션 모두 세 항목을 재검토했으며, 매번 이번 Phase의
-완료 조건과 무관함을 확인하여 여전히 해결하지 않고 이연한다(재검토했으며 이번 Phase와
-무관하여 이연) (Phase 4 spec §19, Phase 5 spec §16, Phase 6 spec §16,
-Phase 7 spec §14, Phase 8 spec §20, Phase 9 spec §20에 각각 재검토 근거
-상세 기록):
+Phase 12, Phase 13, Phase 14, Phase 15, Phase 16, Phase 17, Phase 18
+세션 모두(Phase 14~18은 이번 갱신에서 일괄 재확인) 세 항목을
+재검토했으며, 매번 이번 Phase의 완료 조건과 무관함을 확인하여 여전히
+해결하지 않고 이연한다(재검토했으며 이번 Phase와 무관하여 이연) (Phase
+4 spec §19, Phase 5 spec §16, Phase 6 spec §16, Phase 7 spec §14, Phase
+8 spec §20, Phase 9 spec §20에 각각 재검토 근거 상세 기록):
 
 1. (Phase 2에서 이어짐) 벤치마크 return type (PRICE_RETURN vs
    TOTAL_RETURN)
@@ -2114,132 +2254,115 @@ portfolio_state 스냅샷은 근사치일 수 있다. 둘 다 성능/정확성 �
 
 ## Recent Experiments
 
-없음 (실제 데이터 기반 실험 없음). Phase 4/5/6/7/8/9의 baseline runner,
-regime conditioning 실험, regime-aware prediction 실험, baseline rule
-decision 실험, deterministic position sizing/risk 실험, mean-reward
-baseline learning 실험 모두 기존 Phase 1/2/3 목 데이터셋 패턴(테스트
-fixture)으로만 검증되었으며, 실 시장 데이터 기반 실험은 아직 실행되지
-않았다 (실 데이터 provider가 없으므로 — ADR-0005). Phase 5의
-regime-conditioning 실험, Phase 6의 `RegimeAwarePredictor` 실험, Phase 7의
-`BaselineRuleDecisionAgent`, Phase 8의 `DeterministicPositionSizer`+
-`DeterministicPortfolioRiskEngine`를 `RecordingStrategy`로 백테스트
-루프에 관찰자로 연결한 실험, Phase 9의 `MeanRewardBaselineTrainer`
-학습/평가 실험 모두 조건부/파생/학습 버전이 baseline보다 우수하다고
-주장하지 않는다 — mechanism 검증 목적으로만 존재.
+(이 섹션은 Phase 9~10 시점 이후 갱신되지 않고 있던 것을 Phase 18에서
+현재 상태로 갱신함.) 여전히 실 시장 데이터 기반 실험은 없다 (실 데이터
+provider가 없으므로 — ADR-0005, Phase 1부터 이연). Phase 11의
+`TrailingWindowMeanTrainer`(Phase 9 baseline과 다른 두 번째
+deterministic trainer, ML 의존성 추가 없이 비교/검증/lineage 기계를
+실제로 exercise), Phase 18의 `broker.paper.performance` 성과 지표
+계산(Sharpe/Sortino/Calmar/drawdown/turnover 등, 목 fixture 기반 pipeline
+검증)까지 전부 mechanism 검증 목적이며, 조건부/파생/학습 버전이
+baseline보다 우수하다고 주장하지 않는다. Paper Trading을 통한 실제
+전략 실험은 아직 수행되지 않았다 — Phase 18이 만든 것은 실험 결과를
+평가할 도구(Performance Report)이지 실험 자체가 아니다.
 
 ## Current Model / Current Benchmark
 
 Phase 2와 동일한 baseline 전략(Buy & Hold, Simple Momentum)과 벤치마크
 엔진(S&P 500 Buy & Hold, PRICE_RETURN/TOTAL_RETURN 미결) — 변화 없음.
-Phase 6는 baseline predictor 2종(RandomWalk, Drift), Phase 7은
-`BaselineRuleDecisionAgent` 1종, Phase 8은 `DeterministicPositionSizer`+
-`DeterministicPortfolioRiskEngine` 1쌍, Phase 9는
-`MeanRewardBaselineTrainer` 1종(TRAIN split 평균만 예측하는
-null-hypothesis baseline)을 추가했으나 "현재 채택된 예측/의사결정/
-사이징/학습 모델"이라 부를 수 있는 것은 없다 — 전부 향후 모델 비교의
-기준선으로만 존재하며 실제 주문 생성/Live 배포에 연결되지 않는다.
+Phase 6 baseline predictor 2종, Phase 7 `BaselineRuleDecisionAgent`,
+Phase 8 `Deterministic*` 사이징/리스크 1쌍, Phase 9
+`MeanRewardBaselineTrainer`, Phase 11 `TrailingWindowMeanTrainer` 모두
+"현재 채택된 모델"이 아니라 향후 비교의 기준선으로만 존재 — 실제 주문
+생성/Live 배포에 연결되지 않는다. **Phase 18 갱신**: S&P 500 벤치마크는
+여전히 실제 가격 데이터가 이 repository에 전혀 없다 (ADR-0005 미해결) —
+`backtest.benchmark.BenchmarkEngine`/`broker.paper.performance.
+BenchmarkComparison` 둘 다 이 경우 정직하게 `None`/`BENCHMARK_UNAVAILABLE`을
+반환하도록 이미 설계되어 있으며, Phase 18은 실제 벤치마크 데이터를
+생성하거나 추정하지 않았다.
 
 ## Last Validation
 
-`python3 -m pytest tests/ -q` — **553 passed**
-(Phase 1: 57, Phase 2: 82, Phase 3: 63, Phase 4: 51, Phase 5: 57, Phase 6: 39, Phase 7: 40, Phase 8: 94, Phase 9: 70).
-Phase 9의 70개 테스트는 Unit(Data Cleaning 11 + Labeling 5 + Dataset
-construction/versioning/split 8 + Candidate Training 6 + Evaluation 5)/
-Leakage(cutoff 필터링, feature/label 분리, temporal split integrity —
-7)/Provenance(HISTORICAL_SIMULATION/PAPER_TRADING/LIVE_TRADING 격리 —
-4)/Boundary(order/broker/risk mutation 없음, candidate 자동 승인/배포
-없음, reflection + AST 스캔 — 7)/Reproducibility(동일 입력 → 동일 결과,
-random 모듈 미사용 확인 — 5)/Persistence(저장/재시작/멱등성/id-collision
-regression — 8)/Integration(전체 파이프라인 + 4-way SQL join lineage —
-4) 카테고리를 모두 포함하며, 자체 발견한 dataset_version content-hash
-버그와 storage id 충돌 버그의 전용 regression test도 포함한다.
+(이 섹션은 Phase 9 시점 이후 갱신되지 않고 있던 것을 Phase 18에서
+갱신함 — 정확한 현재 수치는 아래 "Current Phase" 섹션 참조.)
+`python -m pytest tests/ -q` — Phase 17 종료 시점 1345 passed → Phase
+18 종료 시점 최종 수치는 이 문서 상단 "Current Phase" 섹션의 Last
+Validation 항목을 참조할 것(이 섹션은 요약이며, 매 세션 정확한 숫자는
+상단 Current Phase 섹션에만 기록한다 — 중복 유지로 인한 불일치를
+방지하기 위함).
 
 ---
 
 ## Not Yet Implemented
 
-- AI trading decision / LLM API 호출 / Toss Securities / Live Trading
-- 실제 외부 데이터 provider (ADR-0005 — Phase 1부터 이연)
-- Limit order, Purged K-Fold/Embargo, 5종 corporate action 처리 (Phase
-  2부터)
-- Order Creation/Validation, Broker/Toss Securities API, Paper/Live
-  Trading, Model Evolution/Model Registry 완성 (Phase 10+) — Market
-  Regime Detection(Phase 5), Prediction(Phase 6), Decision Agent(Phase 7),
-  Position Sizing/Portfolio Risk Engine(Phase 8), Learning Engine
-  기반(Phase 9)은 완료
-- Prediction의 model-based(통계적/ML) 구현 — `PredictionMethodType.
-  MODEL_BASED`는 예약만 되어 있고 구현체 없음
-- Decision Agent의 model-based(AI) 구현 — `DecisionAgent` Protocol은
-  `BaselineRuleDecisionAgent` 1종만 구현, 향후 model 기반 agent를 위한
-  drop-in 확장 지점만 마련됨
-- Position Sizing/Risk Engine의 model-based 구현 — `PositionSizer`/
-  `PortfolioRiskEngine` Protocol은 각각 `Deterministic*` 1종만 구현
-- Learning Engine의 실제 ML/통계 trainer 구현 — `CandidateTrainer`
-  Protocol은 `MeanRewardBaselineTrainer`(null-hypothesis baseline)
-  1종만 구현
-- Risk Engine이 검증한 `RiskCheckedPosition`을 실제로 소비해 주문을
-  만드는 Order Creation/Strategy — 의도적으로 Phase 8 범위 밖
-- Sector/Factor limit 실제 검사 — `SecurityMaster`에 해당 데이터
-  필드 자체가 없어 구현 불가(`RiskConfig`에 확장 지점만 예약)
-- 일반화된 Feature Registry (Phase 5/6는 각자에게 필요한 범위만 구현;
-  더 넓은 registry는 필요가 확인되는 시점에)
-- 실제 Post Trade Analysis 알고리즘(prediction/timing/risk/regime/
-  signal error), 실제 Performance Attribution(market/sector/factor/
-  selection/timing), 모델 기반 Counterfactual — 전부 구조만 준비됨
-  (Regime 필드는 Phase 5에서 실제로 채워지기 시작함 — `market_regime`).
-  Phase 10의 몫으로 명시적으로 남겨짐
-- Paper/Live 브로커 어댑터 (Trade Journal의 `PAPER_TRADING`/
-  `LIVE_TRADING` provenance를 실제로 생산할 producer 없음)
-- Candidate Model의 BACKTESTED/VALIDATED/OOS_TESTED/PAPER_TESTED/
-  APPROVED/DEPLOYED 상태 전이 로직 (Phase 10/11) — `CandidateModelStatus`
-  enum에 예약만 되어 있고, 이를 실제로 부여하는 검증/승인 절차는
-  구현되지 않음(사람의 명시적 승인 없이는 `APPROVED`로 전이할 수 없다는
-  Master Plan §11.5 원칙이 구조적으로 보장됨)
-- Model Registry / "왜 모델이 변경되었는가" 감사 질문 (Phase 11)
-- DuckDB 다중 프로세스 동시 writer 지원 (Phase 15/16 필요 시 재검토)
-- Regime의 HMM/통계적/ML 기반 확장 (baseline 검증 없이 조기 구현하지
-  않음 — 지시사항에 따라 의도적으로 보류)
+(이 섹션은 Phase 9~10 시점 이후 갱신되지 않고 있던 것을 Phase 18에서
+현재 상태로 전면 갱신함.)
+
+- 실제 Toss API 주문/계좌/포지션/주문상태/취소 (endpoint 4종 여전히
+  UNKNOWN — `docs/operations/TOSS-API-GAP-ANALYSIS.md`), Live Trading
+  활성화 (`LIVE_TRADING_ENABLED=false` 유지)
+- 실제 외부 데이터 provider (ADR-0005 — Phase 1부터 이연), 따라서 실제
+  S&P 500 벤치마크 데이터도 없음 (Phase 18이 재확인)
+- Limit order 실사용(Toss 자체는 지원 확인되었으나 상위 레이어에 가격
+  소싱 입력이 없음), Purged K-Fold/Embargo(Phase 18 연구 완료,
+  `docs/research/walk-forward-pbo-deflated-sharpe.md` — 현재 아키텍처에
+  아직 적용 대상 없음), 5종 corporate action 처리
+- Prediction/Decision/Sizing/Risk/Learning의 model-based(통계적/ML/AI)
+  실제 구현 — 전부 baseline 1~2종만 존재, drop-in 확장 지점만 마련됨
+- Sector/Factor limit 실제 검사 — `SecurityMaster`에 해당 데이터 필드
+  자체가 없어 구현 불가 (`RiskConfig`에 확장 지점만 예약,
+  `docs/operations/LIVE-RISK-POLICY.md` #5)
+- 일반화된 Feature Registry
+- 실제 Post Trade Analysis 알고리즘의 일부(prediction/timing/risk/regime
+  error 등), 모델 기반 Counterfactual — Phase 10에서 구조/일부 채워짐,
+  전체 정밀도는 여전히 제한적
+- Candidate Model의 APPROVED/DEPLOYED 상태 전이 로직 — 구조적으로
+  자동 전이 불가능하도록 설계(Phase 11 ADR-0017, Phase 17/18에서
+  저장소 전체 AST 스캔으로 재확인, 사람의 명시적 승인 필수)
+- Model Registry / "왜 모델이 변경되었는가" 감사 질문 (Phase 11 lineage로
+  일부 충족, 전용 서비스는 미구현 — 의도적, ADR-0017 alternatives #5)
+- DuckDB 다중 프로세스 동시 writer 지원
+- Regime의 HMM/통계적/ML 기반 확장
+- **Paper Trading 자체 성과 리포트의 실제 사용** — Phase 18이 계산
+  도구(`broker.paper.performance`)는 만들었으나, 이를 실제 Paper 세션
+  운영에 자동으로 연결하는 상시 실행 루프는 없음(Phase 15부터
+  "상시 실행 Trading Engine 루프 없음"으로 이미 문서화된 한계)
+- Walk-Forward / PBO / Deflated Sharpe Ratio 검증 (Phase 18 연구 완료,
+  구현은 미착수 — `docs/research/walk-forward-pbo-deflated-sharpe.md`
+  의 DECISION REQUIRED 참조)
+- Toss `cancel_order`/`get_order_status`/`get_account`/`get_positions`
+  (endpoint 미확인 — 추측 구현 금지 원칙 유지)
 
 ---
 
 ## Next Recommended Task
 
-1. **DECISION REQUIRED 3건 확인**: 벤치마크 return type, per-decision
-   data_version, corporate-action-aware portfolio_state 재구성 (여전히
-   미결, 사용자 판단 대기).
-2. **Phase 10 — Counterfactual / Attribution** 착수: `PROJECT_MASTER_PLAN.md`
-   §18.1의 Phase 순서를 따를 것. Phase 9의 `TrainingDataset`/
-   `CandidateModelArtifact`/`EvaluationResult`까지 Learning Engine의
-   기반이 갖춰졌으므로, 이제 실제 Counterfactual Analysis 알고리즘과
-   Performance Attribution을 구현할 준비가 되어 있다(현재 구조만 준비된
-   `prediction_error`/`timing_error`/`risk_estimation_error`/
-   `market`/`sector`/`factor`/`selection`/`timing` attribution을 실제로
-   채우는 작업). 참고: Master Plan §18.1의 Phase 목록에는 "Order
-   Creation/Validation/Broker Adapter"를 위한 전용 Phase 번호가
-   명시적으로 없음(§2 아키텍처 다이어그램에는 존재) — Phase 13(Toss
-   Securities Adapter) 또는 그 이전 어느 시점에 Order Creation이
-   실질적으로 필요해질 것으로 예상되나, 이는 어떤 완료된 Phase도 막는
-   문제가 아니며 사용자 판단 없이 임의로 Phase 번호를 재배치하지
-   않는다(§18.4).
-3. Phase 10/11 착수 시점에 DECISION REQUIRED 2건(데이터 버전/corporate
-   action lineage)을 재평가.
-4. 실 데이터 provider 선정(ADR-0005 기준)이 이루어지면, `data/` 아래
-   실제 `StorageConfig.root_dir`를 지정하여 장기 ingestion을 시작할 수
-   있다 — Phase 4/5/6/7/8/9가 그 대상 저장소를 이미 구현했다.
-5. 향후 Phase 6의 `PredictionMethodType.MODEL_BASED`, Phase 7의
-   model-based `DecisionAgent`, Phase 8의 model-based `PositionSizer`/
-   `PortfolioRiskEngine`, Phase 9의 model-based `CandidateTrainer`를
-   실제로 사용하는 첫 모델이 추가될 때, 반드시 각 baseline
-   (`RandomWalkPredictor`/`DriftPredictor`/`BaselineRuleDecisionAgent`/
-   `DeterministicPositionSizer`/`DeterministicPortfolioRiskEngine`/
-   `MeanRewardBaselineTrainer`)과 비교해 실제로 가치가 있는지 검증할
-   것 (baseline 우선 원칙).
-6. Phase 11(Model Evolution/Model Registry)에서 Phase 9의
-   `CandidateModelArtifact`를 `BACKTESTED`→`VALIDATED`→`OOS_TESTED`→
-   `PAPER_TESTED`→`APPROVED`→`DEPLOYED`로 전이시키는 검증/승인 절차를
-   설계할 때, `APPROVED` 전이는 반드시 사람의 명시적 승인을 거쳐야
-   하며 Claude Code/AI가 스스로 부여할 수 없다는 원칙(Master Plan
-   §11.5)을 그대로 유지할 것.
+(이 섹션은 Phase 9~10 시점 이후 갱신되지 않고 있던 것을 Phase 18에서
+현재 상태로 전면 갱신함. Phase 2/3 벤치마크 return type 등 3건의 legacy
+DECISION REQUIRED는 위 "Blocked" 섹션에서 계속 추적한다.)
+
+1. **Phase 18의 신규 DECISION REQUIRED 2건에 대한 사람의 판단**: (a)
+   risk policy가 미설정(`None`)일 때 Live를 구조적으로 차단할지 여부
+   (`docs/operations/LIVE-RISK-POLICY.md`), (b) Walk-Forward/PBO/
+   Deflated Sharpe를 향후 모델 신뢰 기준으로 채택할지 여부
+   (`docs/research/walk-forward-pbo-deflated-sharpe.md`).
+2. **Toss 공식 문서에 대한 실제 네트워크 접근 확보** 후 4개 미확인
+   capability(계좌/포지션/주문상태/취소) 재조사 — 이것이 유일하게
+   독립적으로 Live 활성화를 막는 항목이다.
+3. **실 벤치마크 데이터 확보** (ADR-0005 기준 데이터 provider 선정 후) —
+   `broker.paper.performance`/`backtest.benchmark` 둘 다 이미 이를
+   소비할 준비가 되어 있다.
+4. **Paper Trading을 실제로 운영하는 상시 실행 루프** 구축 — 현재는
+   `PaperTradingSession`/`compute_paper_performance_report` 둘 다
+   호출자가 명시적으로 구동해야 하는 primitive일 뿐, 스케줄러가 없다.
+5. 향후 model-based Prediction/Decision/Sizing/Risk/Learning 구현 시
+   반드시 각 baseline과 비교해 실제로 가치가 있는지 검증할 것
+   (baseline 우선 원칙, 변경 없음).
+6. Candidate Model이 실제로 `APPROVED`/`DEPLOYED`로 전이되는 상황이
+   생기면, 그 과정이 항상 사람의 명시적 승인을 거치며 AI가 스스로
+   부여할 수 없다는 원칙(Master Plan §11.5)이 그대로 유지되는지 매
+   Phase마다 재확인할 것 — Phase 17/18 모두 이를 저장소 전체 스캔으로
+   재확인했다.
 
 ---
 

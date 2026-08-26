@@ -708,6 +708,20 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # Phase 18 -- Paper Trading Performance Report persistence, purely
+    # additive (docs/specifications/PHASE-18-paper-performance-and-validation.md).
+    """
+    CREATE SEQUENCE IF NOT EXISTS paper_performance_report_seq START 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS paper_performance_reports (
+        seq BIGINT PRIMARY KEY DEFAULT nextval('paper_performance_report_seq'),
+        report_id TEXT NOT NULL,
+        paper_session_id TEXT NOT NULL,
+        evaluated_at TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
 )
 
 
