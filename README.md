@@ -65,9 +65,42 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20은 Master Plan의 정식 Phase가 아니라, Live 전환 전에
-발견된 안전성·검증 문제를 보완하고 실제 시장 데이터 기반을 놓는 사후
-검증/기반 작업**이다.
+**Phase 17/18/19/20/21은 Master Plan의 정식 Phase가 아니라, Live 전환
+전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커 기반을
+놓는 사후 검증/기반 작업**이다.
+
+**Phase 21 — Toss Broker Adapter Completion** (Live Trading 활성화는
+여전히 구조적으로 불가능 — 사유는 바뀌었지만 차단 자체는 그대로다).
+Phase 20에서 사용자가 제공한 Toss 공식 OpenAPI 스펙(Tier 1)을 근거로
+`TossBrokerAdapter`의 나머지 4개 capability
+(`get_account`/`get_positions`/`get_order_status`/`cancel_order`)를
+실제로 구현했다: `GET /api/v1/buying-power`(현금), `GET /api/v1/holdings`
+(포지션), `GET /api/v1/orders/{orderId}`(단건 주문 상태 — 목록
+엔드포인트가 아니라 상세 엔드포인트를 사용, Protocol이
+`client_order_id` 하나에 대한 상태를 요구하기 때문), `POST /api/v1/
+orders/{orderId}/cancel`(취소). 취소 응답이 원 주문과 다른 새 orderId를
+반환한다는 비직관적인 공식 스펙 semantics를 정확히 보존하기 위해
+`BrokerOrderResponse`에 `cancel_reference_id` 필드를 additive로 추가
+(`broker_order_id`는 항상 원 주문 id를 유지). `BrokerOrderStatus`에
+공식 스펙 기준 신규 상태 `CANCEL_REJECTED`/`REPLACE_REJECTED` 2종 추가
+(기존 8종 → 10종). `client_order_id → Toss orderId` 매핑은 어댑터
+내부 in-memory map으로 해결(`MockBrokerAdapter`의 기존 패턴 재사용) —
+프로세스 재시작 시 유실되는 known limitation을 정직하게 문서화(향후
+`broker_responses` 테이블 기반 rehydration으로 해결 가능, 이번 Phase
+에서는 구현하지 않음). **핵심 결정**: 코드가 4개 capability를 전부
+구현했음에도 `get_capabilities()`는 여전히 전부 `UNKNOWN`을 보고한다
+— `CapabilityStatus.UNKNOWN`의 정의 자체가 "연구로 존재는 확인됐지만
+end-to-end로 독립 검증되지 않음"이며, 이 코드는 실제 Toss 계좌에
+단 한 번도 호출된 적이 없으므로 정확히 이 상태에 해당한다. `ENABLED`로
+바꾸는 것은 `evaluate_safety_gate`의 실제 동작을 조용히 바꾸는 것이므로
+하지 않았다 — Live 활성화는 여전히 동일한 이유(Toss capability
+UNKNOWN)로 차단된 채다. 신규 테스트 63개(mapping 단위 테스트, adapter
+레벨 테스트, `LiveTradingSession.reconcile_order`를 실제
+`TossBrokerAdapter`로 구동해 MATCHED/MISMATCH/UNKNOWN을 검증하는
+integration 테스트 포함) — 전부 stub transport만 사용, 실제 네트워크
+호출 없음. 신규 문서: ADR-0027. Phase 1~20 소스코드 중 broker 계층
+외부는 전혀 수정하지 않음(전략/AI Gateway/Learning/backtest 등은
+범위 밖).
 
 **Phase 20 — Real Market Data Foundation & Documentation Sync** (Live
 Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이
@@ -409,9 +442,23 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   전혀 수정하지 않음). Live Trading 활성화, 실제 Tiingo 네트워크 접근
   검증, 실 SPY 데이터 수집은 여전히 범위 밖/BLOCKED.
 
+- Phase 21 — Toss Broker Adapter Completion: 완료 (`src/broker/toss/`
+  수정, 신규 테스트 63개) — Phase 20에서 확보한 Toss 공식 OpenAPI
+  스펙(Tier 1)을 근거로 `get_account`/`get_positions`/
+  `get_order_status`/`cancel_order` 4개 capability를 전부 실제 구현.
+  `BrokerOrderResponse.cancel_reference_id`(additive) 및
+  `BrokerOrderStatus.CANCEL_REJECTED`/`REPLACE_REJECTED`(additive)
+  추가. `get_capabilities()`는 의도적으로 4개 전부 `UNKNOWN` 유지
+  (구현 완료 ≠ 실제 계좌 대상 운영 검증 완료 — ADR-0027). Live Trading은
+  동일한 이유로 여전히 구조적 차단 상태. 신규 문서: ADR-0027,
+  `TOSS-API-GAP-ANALYSIS.md`/`PRODUCTION-READINESS-MATRIX.md`/
+  `LIVE-TRADING-RUNBOOK.md` Phase 21 갱신. broker 계층 외부(전략/AI
+  Gateway/Learning/backtest/market data)는 전혀 수정하지 않음.
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
-(Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 이상; 정확한 최종
-숫자는 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
+(Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
+63 = 1511; 정확한 최종 숫자는 이 Phase의 최종 전체 테스트 실행 결과를
+따른다).
 
 ## 테스트 실행
 

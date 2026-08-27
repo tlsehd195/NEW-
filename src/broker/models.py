@@ -116,6 +116,17 @@ class BrokerOrderResponse:
     responded_at: datetime
     provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION
     experiment_id: Optional[str] = None
+    # Phase 21 addition: Toss's cancel-order response returns a *newly
+    # issued* order id for the cancel operation itself, explicitly
+    # documented as different from the original order's id
+    # (docs/operations/TOSS-API-GAP-ANALYSIS.md Phase 20 addendum).
+    # `broker_order_id` above always keeps its existing meaning --
+    # the id of the order this response is about (the original order,
+    # even for a cancel_order response) -- so it is never overwritten
+    # with this new id. `cancel_reference_id` is only ever set on a
+    # `cancel_order` response where the broker actually returned one;
+    # `None` everywhere else, including for every pre-Phase-21 caller.
+    cancel_reference_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.response_id or not self.request_client_order_id:

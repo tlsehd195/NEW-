@@ -269,16 +269,25 @@ class TestFailureRecoveryMatrixDefaultsToNoTrade:
         assert positions == ()
 
     def test_order_status_unavailable_via_capability_gap_is_unknown_not_guessed(self, monkeypatch) -> None:
+        """Phase 21: TossBrokerAdapter.get_order_status is now
+        implemented against the Tier 1 spec, but a client_order_id this
+        adapter instance never submitted (no known Toss orderId to query)
+        still cannot be resolved -- it must never be guessed at, and
+        must never raise either (mirrors broker.mock.MockBrokerAdapter's
+        own "no history for this client_order_id" -> UNKNOWN pattern,
+        rather than the old BrokerCapabilityError this test asserted
+        before the capability existed at all)."""
         monkeypatch.setenv("TOSS_API_KEY", "k")
         monkeypatch.setenv("TOSS_API_SECRET", "s")
         monkeypatch.setenv("TOSS_ACCOUNT_ID", "a")
-        from broker.errors import BrokerCapabilityError
+        from broker.enums import BrokerOrderStatus
         from broker.toss.adapter import TossBrokerAdapter
         from broker.transport import MockTransport
 
         adapter = TossBrokerAdapter(BrokerConfig(execution_mode=BrokerExecutionMode.LIVE, live_opt_in=True), MockTransport())
-        with pytest.raises(BrokerCapabilityError):
-            adapter.get_order_status("CID-X", as_of=utc(2024, 1, 2))
+        observation = adapter.get_order_status("CID-X", as_of=utc(2024, 1, 2))
+        assert observation.status == BrokerOrderStatus.UNKNOWN
+        assert observation.broker_order_id is None
 
 
 class TestRunbookReferencesStillResolveInCode:

@@ -5,25 +5,167 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-27
-**Updated By:** Claude Code (Session 21 — Phase 20 Real Market Data Foundation & Documentation Sync)
+**Updated By:** Claude Code (Session 22 — Phase 21 Toss Broker Adapter Completion)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19/20은 Master Plan의 정식 Phase가
-아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된 안전성·검증 문제를
-보완하고 실 시장 데이터 기반을 놓기 위한 사후 검증/기반 구축 작업**이며,
-이 문서의 "Phase 20" 표기는 세션 추적 편의를 위한 라벨일 뿐 Master
-Plan의 Phase 목록을 확장하는 것이 아니다. Phase 19가 남긴 "Phase
-20/21/22 같은 후속 번호를 임의로 새로 만들지 않는다"는 원칙은 **AI가
-스스로 새 Phase를 발명하지 말라**는 뜻이었다 — 이번 "Phase 20"은 사용자
-본인이 직접 "PHASE 20 — REAL MARKET DATA FOUNDATION & PROJECT
-DOCUMENTATION SYNC"라는 이름으로 명시적으로 지시한 작업이며, 그 원칙을
-어긴 것이 아니라 정확히 그 원칙이 예외로 허용하는 경우(사람의 명시적
-지시)에 해당한다. 이후 Phase 21 이상도 동일하게 사용자의 명시적 지시
-없이는 스스로 만들지 않는다.
+마지막 공식 Phase다. **Phase 17/18/19/20/21은 Master Plan의 정식
+Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된 안전성·검증
+문제를 보완하고 실 시장 데이터/브로커 기반을 놓기 위한 사후 검증/기반
+구축 작업**이며, 이 문서의 "Phase 21" 표기는 세션 추적 편의를 위한
+라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이 아니다. 이 번호들은
+전부 사용자 본인이 직접 "PHASE N — ..." 형식으로 명시적으로 지시한
+작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase 번호를 발명하지
+말라"는 원칙에 대한 예외(사람의 명시적 지시)에 정확히 해당한다. 이후
+Phase 22 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
+않는다.
+
+**Phase 21 — Toss Broker Adapter Completion** (Live Trading은 여전히
+구조적으로 비활성 — Toss capability가 `CapabilityStatus.UNKNOWN`인 한
+활성화 불가, 단 이제는 "미구현"이 아니라 "구현/테스트 완료, 운영
+미검증"이 정확한 사유, `docs/operations/PRODUCTION-READINESS-MATRIX.md`
+참조)
+
+### Completed (Session 22 — Phase 21)
+
+- **Git/Branch Integrity 선행 확인**: Phase 20 HEAD
+  (`2bab1623ecf89b39365f23cb9bbb31e0b0ae4e1f`)를 `git rev-parse`/
+  `git log`로 직접 재확인 — `origin/main`은 여전히 Phase 19
+  (`1d0003f...`)에 머물러 있음을 확인(Phase 20이 main에 병합되지
+  않았음, 이 세션이 통제할 필요 없는 이미 알려진 상태). merge commit
+  0개, `2bab1623..HEAD` 0 commits(작업 시작 시점)을 확인 후 새
+  `claude/phase-21-toss-broker-completion` 브랜치를 Phase 20 HEAD에서
+  직접 생성. Baseline **1448/1448 테스트 통과** 확인(추측하지 않고
+  실제 실행).
+- **Toss 공식 스펙 Tier 1 근거 재확인**: 이 세션은 원본 OpenAPI JSON
+  전문을 다시 갖고 있지 않으므로, Phase 20이 이미 직접 읽고
+  `TOSS-API-GAP-ANALYSIS.md`에 추출해 둔 Tier 1 근거(엔드포인트/
+  요청·응답 스키마/에러 코드)를 source of truth로 그대로 사용 — 이
+  추출 자체가 원본을 직접 읽어 만들어진 것이므로 재추측이 아님.
+- **4개 capability 실제 구현**(`src/broker/toss/adapter.py`,
+  `endpoints.py`, `mapping.py`): `get_account`(`GET /api/v1/
+  buying-power?currency=USD`, 기존 `X-Tossinvest-Account` 헤더 패턴
+  재사용, 신규 account-discovery 로직 없음), `get_positions`(`GET
+  /api/v1/holdings`, 손상된 항목 하나라도 있으면 부분 목록을 반환하지
+  않고 전체를 실패 처리), `get_order_status`(`GET /api/v1/orders/
+  {orderId}` 단건 상세 — 목록 엔드포인트 아님, `client_order_id →
+  Toss orderId` 매핑은 `submit_order` 시점에 채워지는 어댑터 내부
+  in-memory map으로 해결, `MockBrokerAdapter`의 기존 패턴 재사용),
+  `cancel_order`(`POST /api/v1/orders/{orderId}/cancel`, 취소 응답의
+  새 orderId를 원 주문 id와 절대 혼동하지 않도록 신규 additive 필드
+  `BrokerOrderResponse.cancel_reference_id` 추가).
+- **`BrokerOrderStatus` 확장**: 공식 스펙의 10개 상태값 중 기존에
+  없던 `CANCEL_REJECTED`/`REPLACE_REJECTED` 2종 추가(additive, 기존
+  8종 매칭 로직 전부 `==`/`in` 비교라 안전 확인 후 추가).
+- **`get_capabilities()`는 의도적으로 변경하지 않음**: 4개 전부
+  여전히 `CapabilityStatus.UNKNOWN`. `UNKNOWN`의 정의("연구로 존재는
+  확인됐지만 end-to-end 독립 검증 안 됨")가 정확히 이번 Phase의
+  결과이므로, `ENABLED`로 바꾸면 `evaluate_safety_gate` 동작을
+  조용히 바꾸게 되어 이번 Phase 지침이 명시적으로 금지함(ADR-0027
+  decision 5). Live Trading은 동일한 이유로 여전히 구조적 차단.
+- **신규 테스트 63개**: mapping 단위 테스트(buying-power/holdings/
+  order-detail/cancel 각각 성공/malformed/401/429/5xx/미확인 코드),
+  adapter 레벨 테스트(4개 capability + idempotent double-cancel),
+  `LiveTradingSession.reconcile_order`를 실제 `TossBrokerAdapter`로
+  구동해 MATCHED/MISMATCH/UNKNOWN 3가지 결과를 전부 증명하는
+  integration 테스트(`tests/integration/
+  test_toss_live_reconciliation_integration.py`) — 전부 stub
+  transport만 사용, 실제 네트워크 호출 없음.
+- **기존 테스트 4개 갱신(약화 아님)**: `TestUnsupportedOperations`
+  (더 이상 사실이 아닌 "미지원" 전제를 실제 구현된 동작 검증으로
+  교체), order-status capability-gap 테스트(예외 대신 정직한
+  `UNKNOWN` observation을 반환하는, 테스트 이름의 취지에 오히려 더
+  부합하는 새 동작으로 갱신), endpoints 상수 테스트(`None` → 실제
+  확정된 경로 문자열로 갱신) — 전부 이번 Phase가 의도적으로 만든
+  동작 변화의 자연스러운 결과, regression 은폐 아님.
+- **AST boundary scan 재실행**: `os.environ`/`os.getenv` 여전히
+  `broker/toss/auth.py`/`data_infra/providers/tiingo_auth.py` 2곳
+  으로만 제한됨을 재확인. `TossHttpTransport` 실사용 금지 스캔에서
+  신규 테스트 파일 2개가 docstring 텍스트로 인한 오탐(false positive)
+  이었음을 발견 — scan rule을 바꾸지 않고 docstring 표현만 수정해
+  해결(가장 최소한의 수정).
+- 기존 1448개 테스트 중 4개(위 언급)를 의도된 동작 변화에 맞춰
+  갱신, 나머지 전부 삭제/약화 없이 유지. 최종 **1511 passed**.
+
+### In Progress (Session 22 — Phase 21)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 22 — Phase 21)
+
+Live Trading 활성화 — 변경 없음. Toss capability 4종이 여전히
+`CapabilityStatus.UNKNOWN`(코드 구현/테스트는 완료됐으나 실제 계좌
+대상 운영 검증이 없음)인 한 구조적으로 불가.
+
+### Decision Required (Session 22 — Phase 21)
+
+1. (Phase 17/18/19/20에서 이어짐) Risk policy `None` 값 관련 — 변경
+   없음.
+2. (Phase 20에서 이어짐) daily loss/turnover/order frequency 제안값
+   (2%/3.0/30) 승인 여부 — 변경 없음, 여전히 사용자 승인 대기.
+3. (Phase 16에서 이어짐) cancel-on-shutdown 자동화 여부 — 이번
+   Phase가 `cancel_order`를 실제로 구현했다고 해서 자동화하지 않음
+   (별도 정책 결정, instruction section 22).
+4. (Phase 18/19/20에서 이어짐) Walk-Forward/PBO/Deflated Sharpe 채택
+   여부 — 변경 없음.
+5. **(신규, 이번 Phase가 유일하게 실질적으로 앞당긴 항목)** 실제
+   Toss 계좌 credential 확보 + 사람의 운영 검증 — 코드/테스트는
+   완료됐으므로, 이제 남은 유일한 단계는 실제 계좌를 가진 사람이
+   각 endpoint를 직접 확인하는 것뿐이다. 자동화 세션이 스스로 완료할
+   수 없는 단계.
+
+### Known Issues (Session 22 — Phase 21)
+
+- `get_positions()`의 반환 타입(`tuple[BrokerPosition, ...]`)은
+  "포지션 0개"와 "조회 실패"를 구조적으로 구분할 수 없다(instruction
+  section 7이 이미 알려진 문제로 명시). 이번 Phase는 실패 시 예외를
+  발생시켜 이 모호성을 최대한 좁혔으나(성공한 빈 목록만 `()`), 근본
+  해결(Protocol 자체 변경)은 이번 Phase 범위 밖.
+- `client_order_id → Toss orderId` 매핑이 in-memory 전용이라
+  프로세스 재시작 시 유실됨(`TossBrokerAdapter.__init__`의 자체
+  docstring에 명시). `broker_responses.broker_order_id`가 이미
+  영속화되어 있어 향후 rehydration 구현이 가능하나 이번 Phase는
+  만들지 않음.
+- `GET /api/v1/accounts`(계좌 목록 조회/discovery)는 Tier 1 문서화만
+  되고 연결하지 않음 — 기존 단일 계좌 사전설정 모델(`TOSS_ACCOUNT_ID`)
+  을 그대로 재사용했기 때문.
+- 그 외 Phase 20까지의 Known Issues 전부 유지.
+
+### Architecture Changes (Session 22 — Phase 21)
+
+`BrokerOrderResponse.cancel_reference_id`(신규 additive optional
+필드), `BrokerOrderStatus.CANCEL_REJECTED`/`REPLACE_REJECTED`(신규
+additive enum 값) — 둘 다 기존 호출부에 영향 없음(keyword-only 생성,
+`==`/`in` 비교만 사용 확인). 그 외 `broker/toss/*.py` 내부 구현
+추가만 존재, Protocol/스토리지 스키마 변경 없음.
+
+### Toss API Status (Session 22 — Phase 21)
+
+코드: `submit_order` + 4개 신규(`get_account`/`get_positions`/
+`get_order_status`/`cancel_order`) 전부 구현/테스트 완료.
+`CapabilityStatus`: 여전히 5개(취소/상태조회/계좌/포지션) 중 4개가
+`UNKNOWN`(주문생성만 확인된 상태에서 변화 없음) — **구현 완료가 곧
+ENABLED를 의미하지 않는다**는 이번 Phase의 핵심 원칙. 실제 계좌 검증
+전까지 이 상태 유지.
+
+### Last Validation (Session 22 — Phase 21)
+
+`python -m pytest tests/ -q` — baseline **1448 passed** → 최종
+**1511 passed, 0 failed, 0 skipped**. 기존 테스트 중 의도된 동작
+변화를 반영한 4개를 제외하고 전부 삭제/약화 없이 유지.
+
+### Next Task (Session 22 — Phase 21)
+
+1. 실제 Toss 계좌 credential 확보 + 사람의 운영 검증(위 Decision
+   Required #5) — 이것이 남은 유일한 Toss 관련 항목이다.
+2. 실 Tiingo API 키/네트워크 접근이 확보되면(Phase 20에서 이미 제안):
+   실 시세 수집, SPY total-return 벤치마크 실제 생성.
+3. 위 Decision Required 5건에 대한 사람의 판단(risk policy 승인 포함).
+
+## Previous Subtask (Session 21 — Phase 20)
 
 **Phase 20 — Real Market Data Foundation & Documentation Sync** (Live
 Trading은 여전히 구조적으로 비활성 — Toss capability가 UNKNOWN인 한
@@ -2684,28 +2826,30 @@ Validation 항목을 참조할 것(이 섹션은 요약이며, 매 세션 정확
   `docs/research/walk-forward-pbo-deflated-sharpe.md`의 DECISION
   REQUIRED 참조)
 - Toss `cancel_order`/`get_order_status`/`get_account`/`get_positions`
-  **구현** — Phase 20에서 공식 스펙(Tier 1) 기반 엔드포인트/스키마
-  문서화는 완료했으나(`TOSS-API-GAP-ANALYSIS.md`), 어댑터 코드 자체는
-  다음 Phase로 의도적으로 미룸(추측 구현 금지 원칙과는 무관 — 이번엔
-  공식 문서가 있음에도 별도 Phase로 분리한 것)
+  **실제 계좌 대상 운영 검증** — Phase 21에서 코드 구현/테스트는
+  완료했으나(`ADR-0027`), `CapabilityStatus`는 여전히 4개 전부
+  `UNKNOWN`이다. 남은 유일한 단계는 실제 credential을 가진 사람이
+  각 endpoint를 직접 검증하는 것뿐이며, 이는 자동화 세션이 스스로
+  완료할 수 없다(instruction 상 실제 Toss API를 호출하는 자동 테스트
+  자체가 금지됨).
 
 ---
 
 ## Next Recommended Task
 
 (이 섹션은 Phase 9~10 시점 이후 갱신되지 않고 있던 것을 Phase 18에서
-전면 갱신했고, Phase 20에서 다시 갱신함. legacy DECISION REQUIRED
+전면 갱신했고, Phase 20/21에서 다시 갱신함. legacy DECISION REQUIRED
 항목은 위 "Blocked"/"Current Phase → Decision Required" 섹션에서 계속
 추적한다.)
 
-1. **Toss Securities 어댑터를 공식 OpenAPI 스펙(Tier 1, Phase 20에서
-   확보/문서화 완료) 기준으로 실제 구현하는 전용 Phase** —
-   `TossBrokerAdapter`/`endpoints.py`/`BrokerOrderStatus`에
-   ACCOUNT_BALANCE/POSITIONS/ORDER_STATUS/CANCEL_ORDER를 실제로 구현.
-   더 이상 "공식 문서가 없어서 못 함"이 아니라 "문서는 있고 구현만
-   남음" 상태이므로, 남은 후속 작업 중 가장 명확하고 가치가 큰 단일
-   항목이다(`docs/operations/TOSS-API-GAP-ANALYSIS.md` Phase 20
-   addendum 참조). 이것이 이번 Phase의 **최우선 권장 다음 작업**이다.
+1. **실제 Toss 계좌 credential 확보 + 사람의 운영 검증** — Phase 21이
+   4개 capability를 전부 코드로 구현하고 테스트했으므로(ADR-0027),
+   남은 유일한 단계는 실제 계좌를 가진 사람이 각 endpoint(계좌조회/
+   포지션조회/주문상태조회/취소)를 직접 호출해 확인하고
+   `CapabilityStatus`를 `ENABLED`로 승격하는 것뿐이다. 이 저장소의
+   자체 원칙상 자동화 세션이 실제 Toss API를 호출하는 것 자체가
+   금지되어 있으므로, 이것은 **사람만 완료할 수 있는 유일한 다음
+   단계**다.
 2. **실 Tiingo API 키/네트워크 접근 확보** — 확보되는 즉시:
    (a) `TiingoDataProvider`의 실제 응답 스키마를 Tier 2 문서 기반
    가정과 대조 검증, (b) 16종목 pilot universe 실제 수집, (c) SPY
@@ -2717,7 +2861,9 @@ Validation 항목을 참조할 것(이 섹션은 요약이며, 매 세션 정확
    근거를 갖춘 제안값(2%/3.0/30)을 제시했으니 이제 승인/수정만 남음
    (`docs/operations/LIVE-RISK-POLICY.md`), (c) Walk-Forward/PBO/
    Deflated Sharpe 채택 여부 — trigger 조건은 Phase 20이 구체화함
-   (`docs/research/walk-forward-pbo-deflated-sharpe.md` §9).
+   (`docs/research/walk-forward-pbo-deflated-sharpe.md` §9), (d)
+   cancel-on-shutdown 자동화 여부 — Phase 21이 `cancel_order`를
+   구현했다고 해서 자동으로 결정되지 않는 별도 정책 질문.
 4. **Paper Trading을 실제로 운영하는 상시 실행 루프** 구축 — 실 데이터
    연결 경로는 Phase 20이 구조적으로 증명했으나(`tests/integration/
    test_paper_trading_real_market_data.py`), `PaperTradingSession`/
@@ -2729,7 +2875,7 @@ Validation 항목을 참조할 것(이 섹션은 요약이며, 매 세션 정확
 6. Candidate Model이 실제로 `APPROVED`/`DEPLOYED`로 전이되는 상황이
    생기면, 그 과정이 항상 사람의 명시적 승인을 거치며 AI가 스스로
    부여할 수 없다는 원칙(Master Plan §11.5)이 그대로 유지되는지 매
-   Phase마다 재확인할 것 — Phase 17/18/20 모두 이를 저장소 전체
+   Phase마다 재확인할 것 — Phase 17/18/20/21 모두 이를 저장소 전체
    스캔으로 재확인했다.
 
 ---

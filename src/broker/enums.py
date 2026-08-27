@@ -30,12 +30,20 @@ class BrokerOrderStatus(str, Enum):
     Verification section), not the generic placeholder list this
     phase's instructions suggested. Toss groups orders into OPEN
     (PENDING/PARTIAL_FILLED/PENDING_CANCEL/PENDING_REPLACE) and CLOSED
-    (FILLED/CANCELED/REJECTED/REPLACED); this enum keeps that same
-    vocabulary rather than inventing a parallel one. `UNKNOWN` is
-    PROJECT_MASTER_PLAN.md section 9.1's required broker-disconnected
-    state: "Broker API와 연결이 끊긴 경우 주문이 실제로 체결됐는지
-    시스템이 모를 수 있다" -- never treated as a terminal or safe
-    state."""
+    (FILLED/CANCELED/REJECTED/REPLACED/CANCEL_REJECTED/REPLACE_REJECTED);
+    this enum keeps that same vocabulary rather than inventing a
+    parallel one. `UNKNOWN` is PROJECT_MASTER_PLAN.md section 9.1's
+    required broker-disconnected state: "Broker API와 연결이 끊긴 경우
+    주문이 실제로 체결됐는지 시스템이 모를 수 있다" -- never treated as
+    a terminal or safe state.
+
+    `CANCEL_REJECTED`/`REPLACE_REJECTED` (Phase 21 addition, Tier 1
+    evidence -- the official Toss OpenAPI spec's `Order.status` enum has
+    10 values, not the 8 this enum originally had): Toss represents "a
+    cancel/modify request was itself rejected" as its own distinct
+    terminal order-status value, not a `REJECTED` original order and not
+    a silent no-op -- see docs/operations/TOSS-API-GAP-ANALYSIS.md Phase
+    20 addendum."""
 
     PENDING = "PENDING"
     PARTIAL_FILLED = "PARTIAL_FILLED"
@@ -45,6 +53,8 @@ class BrokerOrderStatus(str, Enum):
     CANCELED = "CANCELED"
     REJECTED = "REJECTED"
     REPLACED = "REPLACED"
+    CANCEL_REJECTED = "CANCEL_REJECTED"
+    REPLACE_REJECTED = "REPLACE_REJECTED"
     UNKNOWN = "UNKNOWN"
 
 
@@ -55,6 +65,7 @@ _OPEN_STATUSES = frozenset({
 _CLOSED_STATUSES = frozenset({
     BrokerOrderStatus.FILLED, BrokerOrderStatus.CANCELED,
     BrokerOrderStatus.REJECTED, BrokerOrderStatus.REPLACED,
+    BrokerOrderStatus.CANCEL_REJECTED, BrokerOrderStatus.REPLACE_REJECTED,
 })
 
 

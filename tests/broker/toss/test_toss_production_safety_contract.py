@@ -158,8 +158,14 @@ class TestIdempotencyDoesNotDependOnBrokerDeduplication:
     documentation-level contract so a future change to endpoints.py
     cannot silently start assuming server-side dedup exists."""
 
-    def test_cancel_order_path_remains_unconfirmed_not_guessed(self) -> None:
-        from broker.toss.endpoints import CANCEL_ORDER_PATH, ORDER_STATUS_PATH
+    def test_cancel_order_path_is_now_tier_1_confirmed_phase_21(self) -> None:
+        """Phase 21: the official OpenAPI spec (Tier 1, provided by the
+        user in Phase 20) confirmed cancel/order-detail paths that were
+        previously None -- this test now pins that they resolve to the
+        documented paths, not a guess (the class's own idempotency point
+        above is otherwise unaffected: TossBrokerAdapter still never
+        relies on server-side dedup for a resubmitted clientOrderId)."""
+        from broker.toss.endpoints import CANCEL_ORDER_PATH_TEMPLATE, ORDER_DETAIL_PATH_TEMPLATE
 
-        assert CANCEL_ORDER_PATH is None
-        assert ORDER_STATUS_PATH is None
+        assert CANCEL_ORDER_PATH_TEMPLATE == "/api/v1/orders/{order_id}/cancel"
+        assert ORDER_DETAIL_PATH_TEMPLATE == "/api/v1/orders/{order_id}"

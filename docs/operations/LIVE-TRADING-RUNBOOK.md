@@ -28,13 +28,18 @@ log, or record the value itself here or anywhere else.
       (`docs/decisions/ADR-0022-live-trading.md` §"Known Limitations" —
       until this is done, `evaluate_safety_gate` will refuse to
       authorize any submission needing those capabilities, by design).
-      **Phase 20 status**: the official OpenAPI spec for all four
-      endpoints/schemas is now documented (Tier 1 evidence,
-      `docs/operations/TOSS-API-GAP-ANALYSIS.md` Phase 20 addendum) —
-      but `TossBrokerAdapter` itself has not yet been updated to
-      implement them, and no real credentials have been used against
-      them. This checkbox is still unchecked until that implementation
-      phase is done *and* independently verified against a real account.
+      **Phase 21 status**: the official OpenAPI spec for all four
+      endpoints/schemas is documented (Tier 1 evidence,
+      `docs/operations/TOSS-API-GAP-ANALYSIS.md` Phase 21 addendum) and
+      `TossBrokerAdapter` now implements all four against it
+      (`docs/decisions/ADR-0027-toss-broker-adapter-completion.md`,
+      63 new tests, all against a stub transport). **No real
+      credentials have ever been used against them, and
+      `get_capabilities()` still reports all four `UNKNOWN`.** This
+      checkbox stays unchecked until a human operator independently
+      verifies each call against a real account and only then promotes
+      the corresponding `CapabilityStatus` to `ENABLED` in code —
+      implemented and tested is not the same as operationally verified.
 - [ ] `TOSS_API_KEY`/`TOSS_API_SECRET`/`TOSS_ACCOUNT_ID` are set in the
       deployment environment, never in a file tracked by git.
 - [ ] A specific `max_daily_loss`, `max_turnover`, and, if desired, a

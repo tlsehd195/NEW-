@@ -1,35 +1,38 @@
 # Production Readiness Matrix
 
 Phase 17 Production Safety Review, updated in Phase 18 (Paper
-Trading Performance Report) and Phase 20 (Real Market Data Foundation
-& Documentation Sync). One row per area the review instruction
-names. "Status" is one of PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL.
-"Blocking?" answers "does this alone prevent Live activation today"
-independent of every other row. "Human Decision Required?" names the
-specific decision, or "No" if none remains.
+Trading Performance Report), Phase 20 (Real Market Data Foundation
+& Documentation Sync), and Phase 21 (Toss Broker Adapter Completion).
+One row per area the review instruction names. "Status" is one of
+PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
+this alone prevent Live activation today" independent of every other
+row. "Human Decision Required?" names the specific decision, or "No"
+if none remains.
 
-**Phase 20 note on the four Toss-related BLOCKING rows below**: the
-user provided the official Toss Securities OpenAPI 3.1.0 specification
-directly this session, upgrading the evidence tier for all four
-UNKNOWN capabilities from Tier 2 (secondary sources) to **Tier 1
-(official, read directly)** — see `docs/operations/
-TOSS-API-GAP-ANALYSIS.md` Phase 20 addendum for the extracted
-endpoints/schemas. **This does not change any row's Status or Blocking
-column**: `TossBrokerAdapter`/`endpoints.py`/`BrokerOrderStatus` were
-deliberately left unimplemented this phase (Phase 20's own instruction:
-analyze the spec, do not implement inline; propose a dedicated
-implementation phase instead). The rows are still BLOCKED, but for a
-different, better reason than before — "endpoint unconfirmed" has
-become "endpoint confirmed, implementation not yet built."
+**Phase 21 note on the four Toss-related BLOCKING rows below**: Phase
+20 upgraded these four capabilities' evidence from Tier 2 to Tier 1
+(the user provided the official OpenAPI spec directly). Phase 21 then
+**implemented all four in code** against that Tier 1 schema
+(`docs/decisions/ADR-0027-toss-broker-adapter-completion.md`). **This
+still does not change any row's Status or Blocking column**:
+`get_capabilities()` deliberately still reports `CapabilityStatus.UNKNOWN`
+for all four, because `UNKNOWN`'s own definition ("exists per research,
+never independently verified end-to-end") is exactly this phase's
+outcome -- implemented, never operationally verified against a real
+account, since no automated test may ever call the real Toss API. The
+rows are still BLOCKED, but the reason has progressed twice now:
+"endpoint unconfirmed" (pre-Phase-20) -> "endpoint confirmed,
+implementation not yet built" (Phase 20) -> "implemented and tested,
+never operationally verified" (Phase 21, current).
 
 | Area | Requirement | Current State | Evidence | Status | Blocking? | Human Decision Required? | Next Action |
 |---|---|---|---|---|---|---|---|
-| Toss API (general) | Endpoints confirmed against official documentation before use | All 4 previously-UNKNOWN capabilities now have Tier 1 (official OpenAPI spec, provided by the user in-session, Phase 20) endpoint/schema documentation; `TossBrokerAdapter` code itself deliberately not yet updated to use them | `docs/operations/TOSS-API-GAP-ANALYSIS.md` Phase 20 addendum | **DOCUMENTED, NOT IMPLEMENTED** | **Yes** (code still reports UNKNOWN) | No (an implementation-scheduling matter, not a policy choice) | Dedicated Phase to implement `TossBrokerAdapter`/`endpoints.py`/`BrokerOrderStatus` against the now-confirmed spec |
+| Toss API (general) | Endpoints confirmed against official documentation before use | All 4 previously-UNKNOWN capabilities now Tier 1 documented (Phase 20) **and implemented in code (Phase 21)**, against `GET /api/v1/buying-power`/`GET /api/v1/holdings`/`GET /api/v1/orders/{orderId}`/`POST /api/v1/orders/{orderId}/cancel`; `get_capabilities()` still reports `UNKNOWN` for all four (implemented != operationally verified) | `docs/operations/TOSS-API-GAP-ANALYSIS.md` Phase 21 addendum; `docs/decisions/ADR-0027-toss-broker-adapter-completion.md` | **IMPLEMENTED & TESTED, NOT OPERATIONALLY VERIFIED** | **Yes** (code still reports UNKNOWN) | No (operational verification against a real account, not a policy choice) | Real credential availability + a human operator exercising each call against an actual Toss account, then promoting `CapabilityStatus` to `ENABLED` only for what is actually confirmed working |
 | Authentication | OAuth2 Client Credentials, credentials never logged/persisted | Implemented, confined to `broker/toss/auth.py` | `tests/broker/toss/test_toss_auth.py`; repo-wide scan `tests/broker/live/test_production_safety_cross_cutting.py::TestSecretAccessIsConfinedToOneFileAcrossTheWholeSrcTree` | **PASS** | No | No | None |
-| Account (balance query) | `get_account` against a confirmed endpoint | Raises `BrokerCapabilityError`; endpoint now confirmed (Tier 1, Phase 20: `GET /api/v1/accounts` + `GET /api/v1/buying-power`) but not yet implemented in code | `src/broker/toss/adapter.py`; `docs/operations/TOSS-API-GAP-ANALYSIS.md` | **BLOCKED** | **Yes** | No | Same as Toss API row |
-| Positions | `get_positions` against a confirmed endpoint | Raises `BrokerCapabilityError`; endpoint now confirmed (Tier 1, Phase 20) but not yet implemented in code | same | **BLOCKED** | **Yes** | No | Same as Toss API row |
+| Account (balance query) | `get_account` against a confirmed endpoint | **Implemented (Phase 21)**: calls `GET /api/v1/buying-power?currency=USD` with the existing `X-Tossinvest-Account` header pattern; 4 new tests cover success/zero-balance/malformed/5xx | `src/broker/toss/adapter.py`; `tests/broker/toss/test_toss_adapter.py::TestGetAccount` | **BLOCKED** (pending operational verification, not the code) | **Yes** | No | Same as Toss API row |
+| Positions | `get_positions` against a confirmed endpoint | **Implemented (Phase 21)**: calls `GET /api/v1/holdings`; a malformed item raises rather than silently dropping a position from the list (Known Issue: `()` is still ambiguous between "zero positions" and a caught failure, per the Protocol's return type -- unchanged limitation, not fixed this phase) | `src/broker/toss/adapter.py`; `tests/broker/toss/test_toss_adapter.py::TestGetPositions` | **BLOCKED** (pending operational verification) | **Yes** | No | Same as Toss API row |
 | Orders (creation) | Submit order against a confirmed endpoint, correctly mapped responses | Implemented and confirmed; 5xx handling fixed this phase | `tests/broker/toss/test_toss_production_safety_contract.py` | **PASS** | No | No | None |
-| Cancellation | `cancel_order` against a confirmed endpoint | Raises `BrokerCapabilityError`; endpoint now confirmed (Tier 1, Phase 20: `POST /api/v1/orders/{orderId}/cancel`, note the response's `orderId` is a newly issued id, not the original) but not yet implemented in code | `docs/operations/TOSS-API-GAP-ANALYSIS.md` | **BLOCKED** | **Yes** | No | Same as Toss API row; also blocks Runbook's automated-cancellation step |
+| Cancellation | `cancel_order` against a confirmed endpoint | **Implemented (Phase 21)**: calls `POST /api/v1/orders/{orderId}/cancel`; the response's newly-issued `orderId` is captured in a new, additive `BrokerOrderResponse.cancel_reference_id` field, never confused with the original order's id (`broker_order_id`, unchanged) | `src/broker/toss/adapter.py`; `tests/broker/toss/test_toss_adapter.py::TestCancelOrder`; `docs/decisions/ADR-0027` decision 3 | **BLOCKED** (pending operational verification) | **Yes** | No | Same as Toss API row; cancel-on-shutdown automation remains a separate, undecided policy question regardless (instruction section 22, unchanged from Phase 16) |
 | Reconciliation | UNKNOWN/MISMATCH never MATCHED; blocks further submissions | Implemented, re-verified this phase | `tests/broker/live/test_production_safety_cross_cutting.py::TestReconciliationNeverBecomesMatchedOnceUnknownOrMismatched` | **PASS** | No | No | None |
 | Risk (policy completeness) | Every named risk limit DEFINED or explicitly deferred with a human decision on file | 1 DEFINED, 6 INHERITED (never re-approved for real capital specifically), 3 UNDEFINED, 3 BLOCKING (no field exists). `evaluate_safety_gate` does not itself read any of the three UNDEFINED fields at all -- `None` means "not enforced," never "blocked," by Phase 16's own deliberate design. Phase 20 added reasoned *proposed* values for the 3 UNDEFINED fields (`max_daily_loss` = 2% of eventual initial capital, `max_turnover` = 3.0, `max_order_frequency_per_hour` = 30) -- proposals only, not ratified | `docs/operations/LIVE-RISK-POLICY.md` ("Phase 20 -- Proposed initial values" section); `docs/specifications/PHASE-18-paper-performance-and-validation.md` section 5 | **PARTIAL** | **Yes** (daily loss / order frequency limits still unset in config) | **Yes** -- ratify or revise the 3 Phase 20 proposed values in `LIVE-RISK-POLICY.md`, plus the still-open design-level `DECISION REQUIRED` (should `None` block Live outright?) | Human ratifies/revises the 3 proposed values and decides whether their absence should structurally block Live |
 | Kill Switch | Auto-engage on critical conditions; AI cannot release | Implemented; `data_health` trigger added this phase | `tests/broker/live/test_live_kill_switch.py` | **PASS** | No | No | None |
@@ -60,16 +63,24 @@ per `docs/decisions/ADR-0022-live-trading.md` decision 2 and reconfirmed
 structurally this phase.
 
 **Phase 20 update**: those four rows' evidence improved from Tier 2 to
-Tier 1 this session (the user provided the official Toss OpenAPI spec
-directly), but their Status/Blocking columns are unchanged on purpose
--- `CapabilityStatus` in code still reports `UNKNOWN` because
-implementation was deliberately deferred to a dedicated future phase,
-not because the documentation gap reopened. Separately, Phase 20 built
-a real (if network-access-unverified) market data foundation
-(`ADR-0025`/`ADR-0026`, `src/data_infra/providers/tiingo.py`,
+Tier 1 (the user provided the official Toss OpenAPI spec directly).
+Separately, Phase 20 built a real (if network-access-unverified) market
+data foundation (`ADR-0025`/`ADR-0026`, `src/data_infra/providers/tiingo.py`,
 `src/backtest/total_return.py`) and proved the Paper Trading pipeline
 can structurally consume it end to end
-(`tests/integration/test_paper_trading_real_market_data.py`) -- neither
-of these changes any row's Blocking status, since Live activation was
-already, and remains, independently blocked by the four Toss rows
-above regardless of market-data or Paper Trading readiness.
+(`tests/integration/test_paper_trading_real_market_data.py`).
+
+**Phase 21 update**: all four capabilities are now implemented in code
+against that Tier 1 schema and covered by 63 new tests, including a
+real `TossBrokerAdapter` (stub transport, never the network) driven
+through `LiveTradingSession.reconcile_order`/`compare_account`/
+`compare_positions` producing correct MATCHED/MISMATCH/UNKNOWN outcomes
+(`tests/integration/test_toss_live_reconciliation_integration.py`).
+**None of this changes any row's Blocking status.**
+`get_capabilities()` still reports all four `UNKNOWN` by design
+(`docs/decisions/ADR-0027` decision 5) -- code completeness is not
+operational verification, and this project's own discipline forbids
+any automated test from calling the real Toss API. Live activation
+remains exactly as blocked as it was before this phase, for the same
+underlying reason (Toss capability status), now for a more precise
+reason than either Phase 13 or Phase 20 could state.
