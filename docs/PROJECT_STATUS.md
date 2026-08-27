@@ -5,23 +5,172 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-27
-**Updated By:** Claude Code (Session 24 — Phase 23 Strategy Research & Real Market Data Validation)
+**Updated By:** Claude Code (Session 25 — Phase 24 Real Market Data + Expandable US Equity Universe)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23은 Master Plan의 정식
-Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된 안전성·검증
-문제를 보완하고 실 시장 데이터/브로커 기반을 놓기 위한 사후 검증/기반
-구축 작업**이며, 이 문서의 "Phase 23" 표기는 세션 추적 편의를 위한
-라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이 아니다. 이 번호들은
-전부 사용자 본인이 직접 "PHASE N — ..." 형식으로 명시적으로 지시한
-작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase 번호를 발명하지
+마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24는 Master Plan의
+정식 Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된
+안전성·검증 문제를 보완하고 실 시장 데이터/브로커 기반을 놓기 위한 사후
+검증/기반 구축 작업**이며, 이 문서의 "Phase 24" 표기는 세션 추적 편의를
+위한 라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이 아니다. 이
+번호들은 전부 사용자 본인이 직접 "PHASE N — ..." 형식으로 명시적으로
+지시한 작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase 번호를 발명하지
 말라"는 원칙에 대한 예외(사람의 명시적 지시)에 정확히 해당한다. 이후
-Phase 24 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
+Phase 25 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
 않는다.
+
+**REAL MARKET DATA: BLOCKED BY EXECUTION ENVIRONMENT** — Phase 20부터
+매 phase 재확인해 온 상태가 이번 phase도 변화 없음. 실제 ingestion은
+수행되지 않았고, 이번 phase가 산출한 전략/universe 관련 코드는 전부
+SYNTHETIC fixture 또는 구조 검증용이다.
+
+**Phase 24 — Real Market Data + Expandable US Equity Universe** (Live
+Trading은 여전히 구조적으로 비활성 — Toss capability가
+`CapabilityStatus.UNKNOWN`인 한 활성화 불가, 이번 Phase도 Toss 코드를
+전혀 건드리지 않았으므로 Phase 21의 사유가 그대로 유지된다). 목표는
+"종목 수를 늘리는 것"이 아니라 16종목을 영구적인 시스템 설계로 만들지
+않는 확장 가능한 Universe 아키텍처를 만드는 것이었다.
+
+### Completed (Session 25 — Phase 24)
+
+- **Git/Branch Integrity 선행 확인**: 지침이 제시한 Phase 23 HEAD
+  (`746b4d016a977f040c6051cccf757002c2f76866`)가 이 세션 시작 시점의
+  실제 HEAD와 정확히 일치함을 `git rev-parse`로 직접 확인(로컬==원격,
+  working tree clean, merge commit 0개). 그 HEAD에서
+  `claude/phase-24-real-data-expandable-universe` 브랜치를 새로 생성.
+  Baseline **1587/1587 테스트 통과, 0 failed, 0 skipped, 0 warnings**를
+  실제 실행으로 확인(지침이 "1547?가 아니라 실제로 측정하라"고 명시했으므로
+  추측하지 않고 직접 실행).
+- **실 시장 데이터 접근성 재확인(세 번째, 독립 경로 2개)**: `curl`을
+  통한 egress proxy 상태 조회에 더해 이번에는 `WebFetch`(별도 fetch
+  경로)로 `www.tiingo.com`/`stooq.com`을 추가로 시도 — 둘 다
+  `EGRESS_BLOCKED`. 실 ingestion 수행 **없음**.
+- **`src/data_infra/universe.py` 신규**: `UniverseDefinition`(name/
+  version/role/description/symbols) + `SymbolMetadata`(symbol 외
+  전부 기본값 `None` — 실제 provider 응답으로 확인된 적 없는 필드는
+  일반 상식으로도 채우지 않음, 모듈 자체 원칙). `role`은 `"PILOT"`/
+  `"RESEARCH"`만 허용, `BENCHMARK_SYMBOL`("SPY")이 멤버로 포함되면
+  `__post_init__`에서 `ValueError` — 지침 section 32의 "전략 universe와
+  benchmark를 혼동하지 않는다"를 구조적으로 강제. `PILOT_UNIVERSE_V1`
+  (Phase 22의 기존 15개 거래대상 종목 그대로 보존)과
+  `RESEARCH_UNIVERSE_STAGE1`(현재는 동일 — provider 무료 tier 한도가
+  이 세션에서 검증 불가하므로 확장하지 않음, 다른 이름으로 미래 확장
+  지점만 마련). `build_universe_memberships`/`build_security_masters`
+  변환 함수가 Phase 1의 기존 `UniverseMembership`/`SecurityMaster`
+  point-in-time 저장 메커니즘(무수정)을 채움 — 이전에는 이 두 테이블을
+  채우는 코드가 `src/` 어디에도 없었음(테스트 fixture만 채웠음).
+- **`scripts/ingest_real_market_data.py` 갱신**: `--universe`
+  (`PILOT_UNIVERSE`/`RESEARCH_UNIVERSE`)로 named universe 선택(스크립트
+  내부 하드코딩 리스트 대체), `--symbols`는 명시적 override로 유지.
+  `SecurityMaster`/`UniverseMembership`도 함께 영속화하도록 갱신(이전엔
+  가격 bar만 저장). Manifest에 `data_infra.versioning.compute_data_version`
+  (무수정) 기반 content checksum 추가. Stub transport로 수동
+  end-to-end smoke test 실행(universe 해석 → ingestion → quality
+  check → checksum → 재시작 후 SecurityMaster/UniverseMembership 유지
+  전부 확인) — 자동화 테스트로 커밋하지 않음(스크립트는 실 네트워크
+  전용, 테스트가 import하면 안 됨).
+- **`strategy_research` 코드 변경 없음**: 기존 `security_ids:
+  Sequence[str]` 파라미터가 이미 어떤 심볼 시퀀스도 받으므로
+  `UniverseDefinition.symbol_ids`가 그대로 흘러 들어감. 신규 테스트가
+  `src/strategy_research/`에 `PILOT_UNIVERSE` 실 종목의 Python 문자열
+  리터럴이 전혀 없음을 정적으로 확인(단순 substring 검사는 "V"/"MA"/
+  "COST" 같은 짧은 티커가 일반 단어 안에서 오탐되는 것을 발견하고,
+  정규식으로 실제 문자열 리터럴만 매칭하도록 수정).
+- **provider 무료 tier 체크리스트 문서화**(`MARKET-DATA-PROVIDER.md`):
+  historical/coverage/limit/corporate-action/adjusted 등 지침이 요구한
+  항목별로 Tier 2 기존 근거(ADR-0025) 재인용 또는 UNKNOWN 명시 — 이
+  세션에서 새로 확인된 사실 없음(재시도 자체는 위에서 이미 실패).
+- **신규 테스트 18개**: `UniverseDefinition`/`SymbolMetadata` 검증
+  (빈 목록/중복 심볼/benchmark 심볼 거부/잘못된 role), 이 모듈의
+  변환 함수를 통한 point-in-time 회귀(늦은 valid_from 멤버십이 이른
+  as_of 쿼리에 노출되지 않음), universe↔strategy_research 연결 증명,
+  DuckDB 기반 SecurityMaster/UniverseMembership 영속화 + 재시작 검증.
+- **신규 문서**: ADR-0030(Universe 아키텍처 7개 결정). `LIVE-RISK-POLICY.md`
+  (숫자 변경 없음, PROPOSED / AWAITING USER RATIFICATION 재확인,
+  `RiskConfig.max_turnover` gate-visibility gap 재검토 결과 변경 없음
+  확인)/`PRODUCTION-READINESS-MATRIX.md`/`MARKET-DATA-PROVIDER.md`
+  갱신. README.md/PROJECT_STATUS.md 갱신(이 항목).
+- **Toss/Live 활성화 코드는 전혀 건드리지 않음** — `src/broker/toss/*`,
+  `LiveTradingSession`, Decision/Risk 로직, 모델 승인/배포 전부 이번
+  Phase 범위 밖.
+- 기존 1587개 테스트 전부 삭제/약화 없이 유지 + 신규 18개 추가.
+  최종 **1605 passed**.
+
+### In Progress (Session 25 — Phase 24)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 25 — Phase 24)
+
+- Live Trading 활성화 — 변경 없음, Toss capability 4종이 여전히
+  `CapabilityStatus.UNKNOWN`인 한 구조적으로 불가.
+- 실 시장 데이터 ingestion — 세 번째 재확인 결과도 여전히
+  `BLOCKED`(egress 차단, `curl`+`WebFetch` 두 경로 모두 실패).
+- `RESEARCH_UNIVERSE` Stage 2 이상 확장 — provider 무료 tier
+  request/symbol/rate limit이 전부 UNKNOWN인 한 임의로 진행하지 않음.
+- 실 데이터 기반 전략 평가/Walk-Forward 실제 적용/PBO·Deflated Sharpe
+  채택 — 전부 위 ingestion BLOCKED 상태에 종속.
+
+### Decision Required (Session 25 — Phase 24)
+
+1. (Phase 17-23에서 이어짐) `RiskConfig.max_turnover`의 None-semantics
+   — 변경 없음, 여전히 미결(이번 phase가 재확인만 하고 변경하지 않음).
+2. (Phase 20/22에서 이어짐) risk 기본값 3개 최종 승인 — 변경 없음,
+   여전히 PROPOSED / AWAITING USER RATIFICATION.
+3. (Phase 16에서 이어짐) cancel-on-shutdown 자동화 — 변경 없음.
+4. (Phase 18-23에서 이어짐) Walk-Forward/PBO/Deflated Sharpe 채택 —
+   변경 없음, DEFER 유지.
+5. (Phase 21에서 이어짐) 실제 Toss 계좌 credential 확보 + 사람의
+   운영 검증 — 여전히 유일하게 자동화 세션이 완료할 수 없는 항목.
+6. **(신규)** `RESEARCH_UNIVERSE` Stage 2 확장 시점/방법 — 실 네트워크
+   접근이 확보되어 provider 무료 tier 한도가 실제로 확인된 이후에만
+   진행 가능.
+
+### Known Issues (Session 25 — Phase 24)
+
+- `SymbolMetadata.exchange` 등 메타데이터 필드가 전부 `None`(UNKNOWN)
+  상태로 남아 있어, `SecurityMaster.exchange`는 항상 `"UNKNOWN"`
+  sentinel — 실제 provider 응답이 확보되기 전까지 이 상태 유지.
+- 그 외 Phase 23까지의 Known Issues 전부 유지.
+
+### Architecture Changes (Session 25 — Phase 24)
+
+`src/data_infra/universe.py`(신규), `scripts/ingest_real_market_data.py`
+(`--universe`/checksum/SecurityMaster·UniverseMembership 영속화 추가) —
+전부 기존 코드에 대한 순수 추가 또는 스크립트(자동화 테스트 범위 밖)의
+확장. `src/strategy_research/`, `src/backtest/*`, `src/broker/*`,
+`src/risk/*` 등 무수정.
+
+### Toss API Status (Session 25 — Phase 24)
+
+변경 없음(Phase 21 상태 그대로): `CapabilityStatus` 전부 `UNKNOWN`
+유지 — 이번 Phase는 Toss 코드를 전혀 건드리지 않았음.
+
+### Last Validation (Session 25 — Phase 24)
+
+`python -m pytest tests/ -q` — baseline **1587 passed** → 최종
+**1605 passed, 0 failed, 0 skipped**. 기존 1587개 테스트 전부
+삭제/약화 없이 유지, 신규 18개 추가.
+
+### Next Task (Session 25 — Phase 24)
+
+1. 실 네트워크 접근이 가능한 환경에서 `scripts/ingest_real_market_data.py
+   --universe PILOT_UNIVERSE`를 실행 — 실 시세 데이터 확보의 유일한
+   남은 단계.
+2. 실 데이터 확보 후: `strategy_research.runner.run_gross_and_net`을
+   실제 유니버스에 대해 실행, 처음으로 `has_real_evaluation_data=True`
+   classification 시도.
+3. provider 무료 tier 실제 한도가 확인되면: `RESEARCH_UNIVERSE` Stage 2
+   설계/구현 검토.
+4. 실제 Toss 계좌 credential 확보 + 사람의 운영 검증(위 Decision
+   Required #5) — 여전히 유일하게 남은 Toss 관련 항목.
+5. 위 Decision Required 6건에 대한 사람의 판단.
+
+## Previous Subtask (Session 24 — Phase 23)
 
 **Phase 23 — Strategy Research & Real Market Data Validation** (Live
 Trading은 여전히 구조적으로 비활성 — Toss capability가

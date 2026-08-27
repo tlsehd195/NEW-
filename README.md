@@ -65,9 +65,51 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20/21/22/23은 Master Plan의 정식 Phase가 아니라, Live
+**Phase 17/18/19/20/21/22/23/24는 Master Plan의 정식 Phase가 아니라, Live
 전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
 기반을 놓는 사후 검증/기반 작업**이다.
+
+**REAL MARKET DATA: BLOCKED BY EXECUTION ENVIRONMENT** — 이 저장소가
+실행되는 현재 환경에서 `api.tiingo.com`/`stooq.com`/
+`openapi.tossinvest.com` 전부 egress proxy에서 403 CONNECT 거부. Phase
+20부터 Phase 24까지 매 phase 재확인했으며 변화 없음(이번 phase는 `curl`과
+`WebFetch` 두 개의 독립 경로로 재확인). "실 데이터 검증 완료"라는 표현은
+실제 ingestion이 성공했을 때만 사용하며, 이 문서 어디에도 그런 주장은
+없다.
+
+**Phase 24 — Real Market Data + Expandable US Equity Universe** (Live
+Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이 그대로
+유일한 차단 사유다). 목표는 종목 수를 늘리는 것 자체가 아니라, 16종목을
+영구적인 시스템 설계로 만들지 않는 확장 가능한 Universe 아키텍처를
+만드는 것이었다. `src/data_infra/universe.py` 신규: 이름/버전을 가진
+`UniverseDefinition`(`PILOT_UNIVERSE` v1 = 기존 15개 거래대상 종목,
+`RESEARCH_UNIVERSE` stage1 = 현재는 동일 — provider 무료 tier 한도를
+이 세션에서 검증할 수 없어 임의로 확장하지 않음, 확장 지점만 문서화)과
+`SymbolMetadata`(symbol 외 모든 필드는 실제로 provider 응답으로 확인된
+적 없으므로 전부 미확인 상태 `None` — "AAPL은 NASDAQ 상장"처럼 널리 알려진
+사실도 이 세션이 직접 검증한 적 없다는 이유로 채워 넣지 않음). SPY
+benchmark 심볼은 `UniverseDefinition`에 포함될 수 없도록 구조적으로
+차단(포함 시 `ValueError`). Phase 1의 기존 `UniverseMembership`/
+`SecurityMaster`(point-in-time-safe, survivorship-bias-free 쿼리를 위해
+이미 설계되어 있었으나 실제로 채우는 코드가 없었음) 저장 메커니즘은
+무수정 재사용, 이를 채우는 `build_universe_memberships`/
+`build_security_masters` 변환 함수만 신규 추가. `scripts/
+ingest_real_market_data.py`는 `--universe`로 named universe를 선택하고
+(스크립트 내부 하드코딩 리스트 대체), `SecurityMaster`/
+`UniverseMembership`도 함께 영속화하며(기존에는 가격 bar만 저장),
+manifest에 content checksum을 기록하도록 갱신. `strategy_research`는
+코드 변경 전혀 없음 — 기존 `security_ids: Sequence[str]` 파라미터가
+이미 어떤 심볼 시퀀스도 받아들였으므로 `UniverseDefinition.symbol_ids`가
+그대로 흘러 들어감(신규 테스트가 `src/strategy_research/`에 실 종목
+문자열 리터럴이 전혀 없음을 정적으로 확인). 실 시장 데이터 접근은 이
+세션에서 `curl`과 `WebFetch` 두 경로로 재확인 결과 여전히 **BLOCKED**
+— 실제 ingestion 수행 없음, 실제 전략 성과 주장 없음. 신규 문서:
+ADR-0030. `LIVE-RISK-POLICY.md`(risk 기본값 3개 변경 없음, PROPOSED /
+AWAITING USER RATIFICATION으로 명시)/`PRODUCTION-READINESS-MATRIX.md`/
+`MARKET-DATA-PROVIDER.md`(provider 무료 tier 체크리스트 — 대부분 여전히
+UNKNOWN) 갱신. 신규 테스트 18개 — 기존 1587개 테스트는 전부 그대로 유지,
+약화 없음. Toss/Live 활성화 코드는 전혀 건드리지 않음. 상세는
+`docs/PROJECT_STATUS.md` 참조.
 
 **Phase 23 — Strategy Research & Real Market Data Validation** (Live
 Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이 그대로
@@ -567,10 +609,27 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   `MARKET-DATA-PROVIDER.md` 갱신. Toss/Live 활성화 코드는 전혀 수정하지
   않음 — Live Trading은 동일한 이유로 여전히 구조적 차단 상태.
 
+- Phase 24 — Real Market Data + Expandable US Equity Universe: 완료
+  (`src/data_infra/universe.py` 신규, `scripts/ingest_real_market_data.py`
+  수정, 신규 테스트 18개) — 이름/버전을 가진 `UniverseDefinition`
+  (`PILOT_UNIVERSE`/`RESEARCH_UNIVERSE`, benchmark 심볼 구조적 배제)과
+  Phase 1의 기존 `UniverseMembership`/`SecurityMaster` point-in-time
+  저장소를 채우는 변환 함수 신규 추가(저장 메커니즘 자체는 무수정).
+  `strategy_research`는 코드 변경 없이 그대로 새 universe를 받아들임.
+  실 데이터 접근성 세 번째 재확인(`curl` + `WebFetch` 두 경로, 여전히
+  BLOCKED) — 16종목을 넘는 확장은 provider 무료 tier 한도가 UNKNOWN이라
+  이번 phase에서 수행하지 않음(임의 가정 금지). 신규 문서: ADR-0030.
+  `LIVE-RISK-POLICY.md`(숫자 변경 없음, PROPOSED / AWAITING USER
+  RATIFICATION 명시)/`PRODUCTION-READINESS-MATRIX.md`/
+  `MARKET-DATA-PROVIDER.md`(provider 무료 tier 체크리스트) 갱신.
+  Toss/Live 활성화 코드는 전혀 수정하지 않음 — Live Trading은 동일한
+  이유로 여전히 구조적 차단 상태.
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
-63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587; 정확한
-최종 숫자는 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
+63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587 +
+Phase 24 신규 18 = 1605; 정확한 최종 숫자는 이 Phase의 최종 전체 테스트
+실행 결과를 따른다).
 
 ## 테스트 실행
 
