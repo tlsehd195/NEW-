@@ -28,14 +28,25 @@ log, or record the value itself here or anywhere else.
       (`docs/decisions/ADR-0022-live-trading.md` §"Known Limitations" —
       until this is done, `evaluate_safety_gate` will refuse to
       authorize any submission needing those capabilities, by design).
+      **Phase 20 status**: the official OpenAPI spec for all four
+      endpoints/schemas is now documented (Tier 1 evidence,
+      `docs/operations/TOSS-API-GAP-ANALYSIS.md` Phase 20 addendum) —
+      but `TossBrokerAdapter` itself has not yet been updated to
+      implement them, and no real credentials have been used against
+      them. This checkbox is still unchecked until that implementation
+      phase is done *and* independently verified against a real account.
 - [ ] `TOSS_API_KEY`/`TOSS_API_SECRET`/`TOSS_ACCOUNT_ID` are set in the
       deployment environment, never in a file tracked by git.
-- [ ] A specific `max_daily_loss` and, if desired, a
+- [ ] A specific `max_daily_loss`, `max_turnover`, and, if desired, a
       `max_order_frequency_per_hour` have been decided by whoever is
       financially responsible for this account and set on
-      `LiveTradingConfig` — this repository ships neither value
-      (`PROJECT_MASTER_PLAN.md` §13.12 defers the capital-policy
-      decision explicitly).
+      `LiveTradingConfig`/`RiskConfig` — this repository ships none of
+      these values by default (`PROJECT_MASTER_PLAN.md` §13.12 defers
+      the capital-policy decision explicitly). Phase 20 added *proposed*
+      starting values with rationale (2% of initial capital / 3.0 /
+      30 — `docs/operations/LIVE-RISK-POLICY.md` "Phase 20 -- Proposed
+      initial values") for review, but they are not ratified and take
+      no effect until explicitly set here.
 - [ ] The capital amount to be exposed has been decided separately, per
       §13.12's "Paper → Small Capital → Controlled Expansion" principle
       — never the full account balance on a first activation.

@@ -65,8 +65,40 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19는 Master Plan의 정식 Phase가 아니라, Live 전환 전에
-발견된 안전성·검증 문제를 보완하는 사후 검증 작업**이다.
+**Phase 17/18/19/20은 Master Plan의 정식 Phase가 아니라, Live 전환 전에
+발견된 안전성·검증 문제를 보완하고 실제 시장 데이터 기반을 놓는 사후
+검증/기반 작업**이다.
+
+**Phase 20 — Real Market Data Foundation & Documentation Sync** (Live
+Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이
+유일하지만 확실한 차단 사유는 그대로다). 실 미국 주식 시장 데이터를
+안전하게 저장/조회할 수 있는 기반을 additive하게 구축했다: Tiingo를
+1순위 provider로 선정(ADR-0025, 이 세션에서 접근 자체는 검증 불가 —
+`api.tiingo.com` 포함 모든 후보 도메인이 네트워크 차단됨), 실제
+`DataProvider` Protocol을 구현하는 `TiingoDataProvider`(가격 데이터 +
+분할/배당 corporate action 추출), 16개 종목(15개 대형주 + SPY) pilot
+universe 설계, 실 데이터용 데이터 품질 검사 5종 추가(Phase 1
+`DataQualityFramework` 확장, 기존 동작 불변), S&P 500 벤치마크는 SPY를
+proxy로 채택하고 TOTAL_RETURN을 목표 수익률 유형으로 결정(ADR-0026,
+Phase 2부터 미결이던 DECISION REQUIRED 해소) — 배당 재투자 total-return
+인덱스 생성기(`backtest.total_return`)까지 구현했으나 실 SPY 데이터는
+아직 없어 실제 벤치마크 데이터는 여전히 없음(BENCHMARK_UNAVAILABLE
+유지). 실 데이터 → `PaperMarketDataSource` → `PaperBrokerAdapter` →
+Trade Journal → Monitoring → Performance Report 전체 경로가 구조적으로
+연결됨을 end-to-end 테스트로 증명(항상 켜져 있는 polling loop는 이번
+phase 요구사항이 아니어서 구현 안 함). Live risk limit 3개
+(`max_daily_loss`/`max_turnover`/`max_order_frequency_per_hour`)에
+대해 근거를 갖춘 제안값을 문서화했으나 최종 승인은 여전히 사람의 몫
+(`docs/operations/LIVE-RISK-POLICY.md`, DECISION REQUIRED 유지).
+Walk-Forward/PBO/Deflated Sharpe는 구체적 trigger 조건(스킬을 주장하는
+첫 trainer 등장/복수 후보 비교/Live 승인 직전)을 문서화했으나 어느
+조건도 아직 발생하지 않아 DEFER 유지. **세션 중간에 사용자가 Toss
+Securities 공식 OpenAPI 3.1.0 스펙 전체를 직접 제공**했고, 이를 Tier 1
+근거로 `TOSS-API-GAP-ANALYSIS.md`에 상세히 반영했으나(ACCOUNT_BALANCE/
+POSITIONS/ORDER_STATUS/CANCEL_ORDER 엔드포인트/스키마 확인) Phase 13
+어댑터 코드 자체는 이번 phase에서 변경하지 않음 — Phase 20 지침 자체가
+"공식 문서가 오면 분석은 하되 구현은 별도 Phase로 제안"을 요구했기
+때문(다음 권장 Phase로 명시). 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 **Phase 19 — Production Blocker Resolution** (Live Trading 활성화는
 여전히 구조적으로 불가능. Toss capability gap이 유일하지만 확실한
@@ -340,7 +372,46 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   REQUIRED, 해결 불가능하면 BLOCKED로 정직하게 남기는 것"을 기준으로
   내려졌다.
 
-전체 테스트: **1399 passed** (Phase 1+2+3+4+5+6+7+8+9+10+11+12+13+14+15+16+17+18 합산, Phase 19는 코드 변경 없어 테스트 개수 동일).
+- Phase 20 — Real Market Data Foundation & Documentation Sync: 완료
+  (`src/data_infra/providers/`, `src/backtest/total_return.py`, 신규
+  테스트 49개 + 문서 다수) — 신규 소스 모듈: `TiingoDataProvider`(실제
+  `DataProvider` Protocol 구현체, 2-인자 `normalize()` 시그니처를
+  `IngestionRunner`와 정확히 맞춤, `_fetched_as_of` 레코드 스탬핑으로
+  `datetime.now()` 없이 point-in-time 준수), 전용 credential 격리
+  파일(`tiingo_auth.py`, AST 스캔으로 `broker/toss/auth.py`와 함께
+  허용 목록에 추가), `TiingoHttpTransport`(stdlib `urllib.request`
+  기반, 모든 테스트는 stub/monkeypatch만 사용 — 실제 네트워크 호출
+  없음). `DataQualityFramework`에 5개 체크 추가
+  (`ingestion_precedes_availability`/`missing_timestamp_gaps`/
+  `split_consistency`/`dividend_consistency`/`insufficient_coverage`,
+  전부 opt-in 파라미터로 기존 호출부 동작 불변). `backtest.
+  total_return.build_total_return_benchmark_points`가 원시 가격 +
+  corporate action으로부터 배당재투자 지수를 point-in-time-safe하게
+  재구성(과거 지수 값이 나중에 발견된 배당/분할로 절대 재계산되지
+  않음, look-ahead guard와 동일한 `available_time` 규율 재사용).
+  **실제로 발견/수정한 버그**: `TiingoDataProvider.
+  normalize_corporate_actions`가 corporate action의 `available_time`을
+  이벤트 발효일로 역산해 설정하고 있었음 — "나중에 발견된 사실이 그
+  발효일 기준으로 즉시 조회 가능해지는" point-in-time 유출이었고, 신규
+  point-in-time regression test(실제 DuckDB 저장소 + 재시작 검증)로
+  발견해 `ingestion_time`으로 수정, 동일 버그 클래스를 잡는
+  `ingestion_precedes_availability` 품질 체크도 함께 추가.
+  세션 중간에 사용자가 제공한 Toss 공식 OpenAPI 스펙을 Tier 1 근거로
+  `TOSS-API-GAP-ANALYSIS.md`에 전면 반영(엔드포인트/스키마/주문취소 시
+  신규 orderId 발급/OAuth2 토큰 TTL 86400초로 정정 등)했으나 어댑터
+  코드는 의도적으로 변경하지 않음 — 구현은 별도 Phase로 제안. 신규
+  문서: ADR-0025(provider 선정), ADR-0026(벤치마크 return type),
+  `docs/operations/MARKET-DATA-PROVIDER.md`(pilot universe),
+  `docs/operations/MARKET-DATA-FX-REFERENCE.md`(KRW/USD, 값 없이
+  placeholder만), `LIVE-RISK-POLICY.md`/`walk-forward-pbo-deflated-
+  sharpe.md` 확장. Phase 1~19 소스코드 변경 없이 완전히 additive(Trade
+  Journal/Monitoring/Paper Trading Session/Broker 계층 등 하위 모듈은
+  전혀 수정하지 않음). Live Trading 활성화, 실제 Tiingo 네트워크 접근
+  검증, 실 SPY 데이터 수집은 여전히 범위 밖/BLOCKED.
+
+전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
+(Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 이상; 정확한 최종
+숫자는 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행
 

@@ -4,22 +4,242 @@
 > 진행되었는지 파악할 수 있어야 한다. 이 파일은 각 세션 종료 시 반드시
 > 최신 상태로 갱신한다.
 
-**Last Updated:** 2026-08-26
-**Updated By:** Claude Code (Session 20 — Phase 19 Production Blocker Resolution)
+**Last Updated:** 2026-08-27
+**Updated By:** Claude Code (Session 21 — Phase 20 Real Market Data Foundation & Documentation Sync)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19는 Master Plan의 정식 Phase가
+마지막 공식 Phase다. **Phase 17/18/19/20은 Master Plan의 정식 Phase가
 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된 안전성·검증 문제를
-보완하기 위한 사후 검증(post-hoc verification) 작업**이며, 이 문서의
-"Phase 19" 표기는 세션 추적 편의를 위한 라벨일 뿐 Master Plan의 Phase
-목록을 확장하는 것이 아니다. **Phase 20/21/22 같은 후속 번호를 임의로
-새로 만들지 않는다** — 이후 필요한 작업은 기존 blocker의 해결
-여부(A. 해결/B. 문서 보완/C. DECISION REQUIRED/D. BLOCKED 기록)로만
-분류한다.
+보완하고 실 시장 데이터 기반을 놓기 위한 사후 검증/기반 구축 작업**이며,
+이 문서의 "Phase 20" 표기는 세션 추적 편의를 위한 라벨일 뿐 Master
+Plan의 Phase 목록을 확장하는 것이 아니다. Phase 19가 남긴 "Phase
+20/21/22 같은 후속 번호를 임의로 새로 만들지 않는다"는 원칙은 **AI가
+스스로 새 Phase를 발명하지 말라**는 뜻이었다 — 이번 "Phase 20"은 사용자
+본인이 직접 "PHASE 20 — REAL MARKET DATA FOUNDATION & PROJECT
+DOCUMENTATION SYNC"라는 이름으로 명시적으로 지시한 작업이며, 그 원칙을
+어긴 것이 아니라 정확히 그 원칙이 예외로 허용하는 경우(사람의 명시적
+지시)에 해당한다. 이후 Phase 21 이상도 동일하게 사용자의 명시적 지시
+없이는 스스로 만들지 않는다.
+
+**Phase 20 — Real Market Data Foundation & Documentation Sync** (Live
+Trading은 여전히 구조적으로 비활성 — Toss capability가 UNKNOWN인 한
+활성화 불가, `docs/operations/PRODUCTION-READINESS-MATRIX.md` 참조)
+
+### Completed (Session 21 — Phase 20)
+
+- **Git/Branch Integrity 선행 확인 + Phase 19 → main fast-forward**:
+  Phase 19 HEAD(`1d0003f12ad39e2807a18991bf82ab9acc7ef77d`)를
+  `git rev-parse`/`git log`로 직접 재확인, baseline **1399/1399 테스트
+  통과** 확인 후 `git merge --ff-only`로만 `origin/main`을 fast-forward
+  (merge commit 0개, `c3abad0..1d0003f`), 이후 `claude/
+  phase-20-market-data-foundation` 브랜치를 새 main HEAD에서 생성.
+- **Market Data Provider 선정(ADR-0025)**: Tiingo/Alpha Vantage/Stooq/
+  Financial Modeling Prep 4개 후보를 17개 기준으로 비교. 이 세션에서
+  모든 후보 도메인(`api.tiingo.com` 포함)이 Toss와 동일하게
+  `EGRESS_BLOCKED`임을 확인 — 모든 free-tier 사실은 Tier 2(2차 출처)로
+  명시. **1순위: Tiingo**(분할/배당이 별도 필드로 분리되어 있어
+  `PriceBar`/`CorporateAction` 구조와 정확히 맞음). **2순위(미구현):
+  Stooq**.
+- **Pilot Universe 설계**: 15개 대형주 + SPY = 16개 종목, 각각 유동성/
+  장기 데이터 보유/corporate action 다양성/섹터 분산 근거 명시
+  (`docs/operations/MARKET-DATA-PROVIDER.md`). GE는 실제 reverse
+  split 사례가 있어 의도적으로 포함.
+- **`TiingoDataProvider` 구현**(`src/data_infra/providers/`,
+  `data_infra.provider.DataProvider` Protocol의 실제(비-mock)
+  구현체): `fetch`/`validate`/`normalize`/`metadata` 4-메서드 정확히
+  구현(`normalize`는 `IngestionRunner`가 실제로 호출하는 2-인자
+  시그니처와 정확히 일치 — 최초 구현에서 키워드 인자로 잘못 만들었다가
+  실제 `IngestionRunner` 호출부를 재확인해 수정). `_fetched_as_of`를
+  raw record에 stamping해 `datetime.now()` 없이 point-in-time 준수.
+  전용 credential 파일 `tiingo_auth.py`(AST 스캔으로 `os.environ`/
+  `os.getenv` 사용을 이 파일 하나로 제한, `broker/toss/auth.py`와
+  나란히 허용). `TiingoHttpTransport`(stdlib `urllib.request`,
+  5xx/429→Transient, 401/403/404→Permanent 매핑) — 모든 테스트는
+  stub/monkeypatch만 사용, 실제 네트워크 호출 없음(25개 테스트).
+  `fetch_corporate_actions`/`normalize_corporate_actions`은
+  `DataProvider` Protocol을 확장하지 않고 별도 메서드로 추가(다른
+  구현체/`MockDataProvider`에 영향 없음).
+- **point-in-time regression test**(`tests/integration/
+  test_market_data_point_in_time.py`, 실제 `DuckDBDataRepository` +
+  재시작 검증): 과거 raw bar를 저장한 뒤 나중에(effective date보다
+  훨씬 이후) 발견된 분할/배당 이벤트를 등록해도 이미 저장된 raw
+  close/open/volume/adjusted_close가 절대 바뀌지 않음을 증명.
+  **이 테스트를 작성하며 실제 버그를 발견**: `normalize_corporate_
+  actions`가 `available_time`을 이벤트의 발효일(effective_time)로
+  역산해 설정하고 있었음 — "나중에 알게 된 사실이 그 발효일 시점부터
+  이미 조회 가능했던 것처럼" 보이는 point-in-time 유출이었다.
+  `available_time`의 스펙 정의(`PHASE-1-data-infrastructure.md` §7:
+  "when OUR system could have known about it")에 따라
+  `ingestion_time`으로 수정.
+- **`DataQualityFramework` 확장**(`src/data_infra/quality.py`, 기존
+  동작 100% 불변 — 전부 opt-in 파라미터): `ingestion_precedes_
+  availability`(방금 발견한 버그와 동일 클래스를 잡는 체크,
+  `PriceBar`/`CorporateAction` 양쪽에 적용) / `missing_timestamp_
+  gaps`(주말 초과 gap 경고, 시장 휴장일 캘린더 없음을 명시) /
+  `split_consistency`/`dividend_consistency`(등록된 corporate action을
+  실제 가격 시계열과 교차검증) / `insufficient_coverage`(opt-in
+  `min_expected_bars`로 데이터 부족을 조용히 PASS 처리하지 않고 명시적
+  경고) — 13개 신규 테스트.
+- **S&P 500 벤치마크 DECISION REQUIRED 해소(ADR-0026)**: Phase 2부터
+  미결이던 PRICE_RETURN vs TOTAL_RETURN을 **TOTAL_RETURN**으로 결정
+  (장기 투자 목표상 배당이 총수익의 상당 부분이므로 PRICE_RETURN만 쓰면
+  벤치마크를 구조적으로 과소평가하게 됨). S&P 500 자체 데이터가 없어
+  **SPY를 proxy로 채택**하되 expense ratio/tracking difference/ETF
+  구조/배당 타이밍 차이를 명시적으로 문서화(무조건 "S&P 500=SPY"로
+  단순화하지 않음). `backtest.total_return.build_total_return_
+  benchmark_points`로 배당재투자+분할조정 지수를 실제 구현 —
+  `available_time`을 시작부터 해당 시점까지의 누적 최대값으로 전파해
+  "나중에 발견된 배당이 이후 모든 지수값의 available_time을 뒤로
+  미룬다"는 point-in-time 보장을 새로 증명(8개 테스트). `BenchmarkEngine`
+  자체는 무수정(이미 `return_type`을 그대로 읽어 보고하도록 설계되어
+  있었음). **실 SPY 데이터는 여전히 없음 — 실제 벤치마크는 계속
+  BENCHMARK_UNAVAILABLE.**
+- **KRW/USD FX reference placeholder**(`docs/operations/
+  MARKET-DATA-FX-REFERENCE.md`): 실제 환율 값은 기록하지 않음 — 이
+  세션에서 모든 FX 데이터 소스가 접근 불가였고, 검증 안 된 값을
+  "실시간 환율인 척" 적는 것은 지침이 명시적으로 금지하는 행위이므로
+  값 없이 어떻게 채워야 하는지(source/date/value 형식)만 문서화.
+  코드에서 이 값을 사용하는 곳 없음.
+- **Paper Trading 실 데이터 연결 end-to-end 테스트**(`tests/
+  integration/test_paper_trading_real_market_data.py`):
+  `TiingoDataProvider` → `IngestionRunner` → 실제 `DuckDBDataRepository`
+  → `get_bars(as_of_time=...)` → `InMemoryPaperMarketDataSource`(저장소
+  조회 결과로 직접 생성, fixture 아님) → `PaperTradingSession`/
+  `PaperBrokerAdapter` → `DuckDBTradeJournalRepository` →
+  `monitoring.collectors.collect_broker` →
+  `compute_paper_performance_report` 전체 경로가 구조적으로 연결됨을
+  증명. 이 체인의 `TiingoDataProvider` 이후 모든 모듈은 완전히
+  무수정(Phase 3/4/14/15/18 그대로). 상시 polling loop는 지침이 이번
+  Phase의 요구사항이 아니라고 명시했으므로 구현하지 않음.
+- **Risk Policy 제안값 문서화**(`docs/operations/LIVE-RISK-POLICY.md`
+  확장, 결정 아님 — 제안): `max_daily_loss`는 최종 자본금의 2%(자본금
+  자체는 Toss 확인 전까지 미정이므로 절대값은 아직 계산 불가),
+  `max_turnover`는 3.0(`PortfolioAccounting.turnover()`가 누적 지표임을
+  명시하고 주기적 재검토를 권고), `max_order_frequency_per_hour`는
+  30(16종목 pilot universe 전체 리밸런싱이 실제로 최대 몇 건을
+  만들어낼 수 있는지에 근거, "한 자릿수"라는 기존의 막연한 권고보다
+  구체화). 세 필드의 `None` 의미론(체크 미실행, 0도 아니고 fail-closed도
+  아님)을 코드 재확인을 통해 명시적으로 재서술(변경 아님). **DECISION
+  REQUIRED로 유지 — 사용자 최종 승인 대기.**
+- **Walk-Forward/PBO/DSR trigger 조건 문서화**(`docs/research/
+  walk-forward-pbo-deflated-sharpe.md` §9 추가): 어떤 조건이 되면 DEFER를
+  끝내야 하는지(스킬을 주장하는 첫 trainer 등장/복수 후보 비교/Live
+  자본 대상 APPROVED 직전), 그 모델이 무엇일지(아직 존재하지 않음 — 현재
+  두 trainer 모두 명시적 null-hypothesis baseline), Live 활성화 게이팅과
+  어떻게 연결될지(자동 게이트가 아니라 사람의 APPROVED 결정에 첨부되는
+  증거로 제안) 구체화. **분류는 Phase 19와 동일하게 DEFER 유지** — 어느
+  trigger 조건도 아직 발생하지 않음.
+- **Toss 공식 OpenAPI 스펙 반영(세션 중간 이벤트)**: 사용자가 대화
+  도중 Toss Securities Open API OpenAPI 3.1.0 전체 스펙(JSON)을 직접
+  제공. Tier 1(공식 1차 출처) 근거로 `TOSS-API-GAP-ANALYSIS.md`에 전면
+  반영 — ACCOUNT_BALANCE(`GET /api/v1/accounts` +
+  `GET /api/v1/buying-power`), POSITIONS, ORDER_STATUS, CANCEL_ORDER
+  (`POST /api/v1/orders/{orderId}/cancel`, 응답 `orderId`가 원 주문과
+  다른 신규 ID임을 확인) 4개 capability의 엔드포인트/스키마를 전부
+  문서화, OAuth2 토큰 TTL을 Phase 17의 Tier 2 추정치(3600초)에서 공식
+  스펙 기준 86400초로 정정. **어댑터 코드(`TossBrokerAdapter`/
+  `endpoints.py`/`BrokerOrderStatus`)는 이번 Phase에서 의도적으로
+  변경하지 않음** — Phase 19/20 지침이 이미 "공식 문서가 오면 분석은
+  하되 구현은 별도 Phase로 제안"을 요구했기 때문. 다음 권장 Phase로
+  명시.
+- 기존 1399개 테스트 전부 삭제/약화 없이 유지. 신규 테스트 49개 추가
+  (Tiingo transport 13 + auth 3 + provider 9 + point-in-time 2 +
+  quality 13 + total_return 8 + paper-trading e2e 1 = 49) — 최종
+  **1448 passed**(정확한 최종 숫자는 이 Phase 마지막 전체 실행 결과로
+  재확인).
+
+### In Progress (Session 21 — Phase 20)
+
+README.md/PROJECT_STATUS.md/PRODUCTION-READINESS-MATRIX.md/
+LIVE-TRADING-RUNBOOK.md 문서 동기화 마무리, 최종 security/leakage/
+reproducibility 재검증, 최종 커밋/푸시, 최종 리포트 작성.
+
+### Blocked (Session 21 — Phase 20)
+
+- Live Trading 활성화 — 변경 없음, Toss capability gap이 여전히 유일한
+  독립 차단 사유.
+- 실 Tiingo 데이터 수집 — 이 환경에서 `api.tiingo.com` 접근 자체가
+  차단되어 있어 실제 시세를 단 하나도 수집하지 못함. 이번 Phase의 모든
+  `TiingoDataProvider` 테스트는 stub transport 기반.
+- 실 SPY 벤치마크 데이터 — 위와 동일한 이유로 여전히 없음.
+
+### Decision Required (Session 21 — Phase 20)
+
+1. (Phase 17/18/19에서 이어짐) Risk policy `None` 값이 Live를 구조적으로
+   차단해야 하는지 여부 — 여전히 사람의 위험 허용도 판단 필요.
+2. (Phase 17에서 이어짐, 이번 Phase에서 제안값 추가) daily loss limit/
+   turnover limit/order frequency 숫자값 — 이번 Phase가 근거를 갖춘
+   제안값(2%/3.0/30)을 제시했으나 최종 승인은 사용자 몫.
+3. (Phase 16에서 이어짐) cancel-on-shutdown 자동화 여부.
+4. (Phase 18/19에서 이어짐, 채택 여부만) Walk-Forward/PBO/Deflated
+   Sharpe Ratio를 향후 모델 신뢰 기준으로 채택할지 여부 — trigger
+   조건은 이번 Phase에서 구체화했으나 채택 자체는 여전히 미결.
+5. (신규) Toss 어댑터를 공식 스펙 기준으로 실제 구현하는 별도 Phase를
+   언제 착수할지.
+
+### Known Issues (Session 21 — Phase 20)
+
+- 이 환경에서 시장 데이터 provider 도메인이 전부 차단되어 있어
+  `TiingoDataProvider`가 실제 응답 스키마에 대해 검증되지 않았다(Tier 2
+  문서 기반 구현). 실 API 키/네트워크 접근이 확보되면 최우선 재검증
+  대상.
+- Paper Trading 상시 실행 loop는 이번 Phase에서도 요구되지 않았으므로
+  여전히 없음(DEFER, Phase 19와 동일).
+- 그 외 Phase 18까지의 Known Issues 전부 유지.
+
+### Architecture Changes (Session 21 — Phase 20)
+
+`src/data_infra/providers/`(신규 서브패키지), `src/backtest/
+total_return.py`(신규 모듈) 추가 — 둘 다 기존 모듈을 전혀 수정하지
+않는 순수 추가. `DataQualityFramework.run()`에 opt-in 파라미터 2개
+(`corporate_actions`, `min_expected_bars`) 추가 — 기존 호출부 동작
+불변.
+
+### Paper Trading Status (Session 21 — Phase 20)
+
+Phase 18 PASS 유지 + 실 데이터 연결 경로가 구조적으로 연결됨을 신규
+end-to-end 테스트로 증명. 상시 실행 loop는 여전히 DEFER.
+
+### Learning Status (Session 21 — Phase 20)
+
+변경 없음.
+
+### Live Trading Status (Session 21 — Phase 20)
+
+변경 없음 — 구조적으로 비활성. Toss capability gap이 유일하지만 확실한
+차단 사유.
+
+### Toss API Status (Session 21 — Phase 20)
+
+CONFIRMED(Tier 1, 공식 OpenAPI 스펙): `POST /oauth2/token`,
+`POST /api/v1/orders`(Phase 13부터), 그리고 이번 Phase에서 신규로
+문서화된 ACCOUNT_BALANCE/POSITIONS/ORDER_STATUS/CANCEL_ORDER 4개
+capability의 엔드포인트/스키마(`TOSS-API-GAP-ANALYSIS.md` Phase 20
+addendum). **`CapabilityStatus`는 코드상 여전히 UNKNOWN — 문서화만
+했고 구현은 하지 않음**(의도적, 다음 Phase로 제안).
+
+### Last Validation (Session 21 — Phase 20)
+
+`python -m pytest tests/ -q` — baseline **1399 passed** → 최종
+**1448 passed, 0 failed, 0 skipped**(정확한 최종 숫자는 이 Phase의
+마지막 전체 테스트 실행으로 재확인). 기존 테스트 전부 삭제/약화 없이
+유지.
+
+### Next Task (Session 21 — Phase 20)
+
+1. Toss 어댑터를 공식 스펙(Tier 1, 이번 Phase에서 문서화 완료) 기준으로
+   실제 구현하는 전용 Phase — README/PROJECT_STATUS 모두 이를 "다음
+   권장 Phase"로 명시.
+2. 실 Tiingo API 키/네트워크 접근이 확보되면: 실제 응답 스키마 검증,
+   pilot universe 16종목 실제 수집, 실 SPY 데이터로 total-return
+   벤치마크 실제 생성.
+3. 위 Decision Required 5건에 대한 사람의 판단.
+
+## Previous Subtask (Session 20 — Phase 19)
 
 **Phase 19 — Production Blocker Resolution** (Live Trading은 여전히
 구조적으로 비활성 — Toss capability가 UNKNOWN인 한 활성화 불가,
@@ -2386,18 +2606,23 @@ baseline보다 우수하다고 주장하지 않는다. Paper Trading을 통한 �
 
 ## Current Model / Current Benchmark
 
-Phase 2와 동일한 baseline 전략(Buy & Hold, Simple Momentum)과 벤치마크
-엔진(S&P 500 Buy & Hold, PRICE_RETURN/TOTAL_RETURN 미결) — 변화 없음.
-Phase 6 baseline predictor 2종, Phase 7 `BaselineRuleDecisionAgent`,
-Phase 8 `Deterministic*` 사이징/리스크 1쌍, Phase 9
-`MeanRewardBaselineTrainer`, Phase 11 `TrailingWindowMeanTrainer` 모두
-"현재 채택된 모델"이 아니라 향후 비교의 기준선으로만 존재 — 실제 주문
-생성/Live 배포에 연결되지 않는다. **Phase 18 갱신**: S&P 500 벤치마크는
-여전히 실제 가격 데이터가 이 repository에 전혀 없다 (ADR-0005 미해결) —
-`backtest.benchmark.BenchmarkEngine`/`broker.paper.performance.
-BenchmarkComparison` 둘 다 이 경우 정직하게 `None`/`BENCHMARK_UNAVAILABLE`을
-반환하도록 이미 설계되어 있으며, Phase 18은 실제 벤치마크 데이터를
-생성하거나 추정하지 않았다.
+Phase 2와 동일한 baseline 전략(Buy & Hold, Simple Momentum) — 변화
+없음. Phase 6 baseline predictor 2종, Phase 7
+`BaselineRuleDecisionAgent`, Phase 8 `Deterministic*` 사이징/리스크
+1쌍, Phase 9 `MeanRewardBaselineTrainer`, Phase 11
+`TrailingWindowMeanTrainer` 모두 "현재 채택된 모델"이 아니라 향후
+비교의 기준선으로만 존재 — 실제 주문 생성/Live 배포에 연결되지 않는다.
+**Phase 20 갱신**: 벤치마크의 PRICE_RETURN vs TOTAL_RETURN DECISION
+REQUIRED(Phase 2부터 미결)가 **TOTAL_RETURN으로 결정**됨
+(`docs/decisions/ADR-0026-benchmark-return-type.md`) — S&P 500 자체
+데이터가 없어 SPY를 proxy로 채택하고, `backtest.total_return.
+build_total_return_benchmark_points`로 배당재투자 지수를 실제
+구현했다. 하지만 **실제 SPY 가격/배당 데이터는 여전히 이 repository에
+전혀 없다**(Tiingo가 provider로 선정되었으나 이 환경에서 실제 네트워크
+접근은 검증되지 않음, ADR-0025) — `backtest.benchmark.BenchmarkEngine`/
+`broker.paper.performance.BenchmarkComparison` 둘 다 이 경우 정직하게
+`None`/`BENCHMARK_UNAVAILABLE`을 반환하도록 이미 설계되어 있으며, 실
+데이터가 수집되기 전까지는 계속 그렇게 동작한다.
 
 ## Last Validation
 
@@ -2414,13 +2639,21 @@ Validation 항목을 참조할 것(이 섹션은 요약이며, 매 세션 정확
 ## Not Yet Implemented
 
 (이 섹션은 Phase 9~10 시점 이후 갱신되지 않고 있던 것을 Phase 18에서
-현재 상태로 전면 갱신함.)
+전면 갱신했고, Phase 20에서 다시 갱신함.)
 
-- 실제 Toss API 주문/계좌/포지션/주문상태/취소 (endpoint 4종 여전히
-  UNKNOWN — `docs/operations/TOSS-API-GAP-ANALYSIS.md`), Live Trading
-  활성화 (`LIVE_TRADING_ENABLED=false` 유지)
-- 실제 외부 데이터 provider (ADR-0005 — Phase 1부터 이연), 따라서 실제
-  S&P 500 벤치마크 데이터도 없음 (Phase 18이 재확인)
+- 실제 Toss API 주문상태조회/계좌조회/포지션조회/취소 **구현** — 공식
+  스펙(Tier 1)은 Phase 20에서 전부 확보/문서화됐으나
+  (`docs/operations/TOSS-API-GAP-ANALYSIS.md` Phase 20 addendum),
+  `TossBrokerAdapter`/`endpoints.py`/`BrokerOrderStatus` 코드 자체는
+  의도적으로 아직 구현하지 않음(다음 권장 Phase로 명시) —
+  `CapabilityStatus`는 코드상 여전히 UNKNOWN. Live Trading 활성화
+  (`LIVE_TRADING_ENABLED=false` 유지)도 이와 무관하게 여전히 불가.
+- 실제 시장 데이터 수집 — Phase 20에서 provider 선정(Tiingo,
+  ADR-0025)과 `TiingoDataProvider` 코드는 완성했으나, 이 환경에서
+  `api.tiingo.com` 접근 자체가 차단되어 있어 **실제로 수집된 시세가
+  단 하나도 없음**. 따라서 실 S&P 500(SPY) 벤치마크 데이터도 여전히
+  없음(총수익 계산기(`backtest.total_return`)는 Phase 20에서 구현
+  완료, 투입할 실 데이터만 없는 상태).
 - Limit order 실사용(Toss 자체는 지원 확인되었으나 상위 레이어에 가격
   소싱 입력이 없음), Purged K-Fold/Embargo(Phase 18 연구 완료,
   `docs/research/walk-forward-pbo-deflated-sharpe.md` — 현재 아키텍처에
@@ -2446,41 +2679,58 @@ Validation 항목을 참조할 것(이 섹션은 요약이며, 매 세션 정확
   운영에 자동으로 연결하는 상시 실행 루프는 없음(Phase 15부터
   "상시 실행 Trading Engine 루프 없음"으로 이미 문서화된 한계)
 - Walk-Forward / PBO / Deflated Sharpe Ratio 검증 (Phase 18 연구 완료,
-  구현은 미착수 — `docs/research/walk-forward-pbo-deflated-sharpe.md`
-  의 DECISION REQUIRED 참조)
+  Phase 20이 구체적 trigger 조건을 추가했으나(§9) 어느 조건도 아직
+  발생하지 않아 구현은 여전히 미착수 —
+  `docs/research/walk-forward-pbo-deflated-sharpe.md`의 DECISION
+  REQUIRED 참조)
 - Toss `cancel_order`/`get_order_status`/`get_account`/`get_positions`
-  (endpoint 미확인 — 추측 구현 금지 원칙 유지)
+  **구현** — Phase 20에서 공식 스펙(Tier 1) 기반 엔드포인트/스키마
+  문서화는 완료했으나(`TOSS-API-GAP-ANALYSIS.md`), 어댑터 코드 자체는
+  다음 Phase로 의도적으로 미룸(추측 구현 금지 원칙과는 무관 — 이번엔
+  공식 문서가 있음에도 별도 Phase로 분리한 것)
 
 ---
 
 ## Next Recommended Task
 
 (이 섹션은 Phase 9~10 시점 이후 갱신되지 않고 있던 것을 Phase 18에서
-현재 상태로 전면 갱신함. Phase 2/3 벤치마크 return type 등 3건의 legacy
-DECISION REQUIRED는 위 "Blocked" 섹션에서 계속 추적한다.)
+전면 갱신했고, Phase 20에서 다시 갱신함. legacy DECISION REQUIRED
+항목은 위 "Blocked"/"Current Phase → Decision Required" 섹션에서 계속
+추적한다.)
 
-1. **Phase 18의 신규 DECISION REQUIRED 2건에 대한 사람의 판단**: (a)
-   risk policy가 미설정(`None`)일 때 Live를 구조적으로 차단할지 여부
-   (`docs/operations/LIVE-RISK-POLICY.md`), (b) Walk-Forward/PBO/
-   Deflated Sharpe를 향후 모델 신뢰 기준으로 채택할지 여부
-   (`docs/research/walk-forward-pbo-deflated-sharpe.md`).
-2. **Toss 공식 문서에 대한 실제 네트워크 접근 확보** 후 4개 미확인
-   capability(계좌/포지션/주문상태/취소) 재조사 — 이것이 유일하게
-   독립적으로 Live 활성화를 막는 항목이다.
-3. **실 벤치마크 데이터 확보** (ADR-0005 기준 데이터 provider 선정 후) —
-   `broker.paper.performance`/`backtest.benchmark` 둘 다 이미 이를
-   소비할 준비가 되어 있다.
-4. **Paper Trading을 실제로 운영하는 상시 실행 루프** 구축 — 현재는
-   `PaperTradingSession`/`compute_paper_performance_report` 둘 다
-   호출자가 명시적으로 구동해야 하는 primitive일 뿐, 스케줄러가 없다.
+1. **Toss Securities 어댑터를 공식 OpenAPI 스펙(Tier 1, Phase 20에서
+   확보/문서화 완료) 기준으로 실제 구현하는 전용 Phase** —
+   `TossBrokerAdapter`/`endpoints.py`/`BrokerOrderStatus`에
+   ACCOUNT_BALANCE/POSITIONS/ORDER_STATUS/CANCEL_ORDER를 실제로 구현.
+   더 이상 "공식 문서가 없어서 못 함"이 아니라 "문서는 있고 구현만
+   남음" 상태이므로, 남은 후속 작업 중 가장 명확하고 가치가 큰 단일
+   항목이다(`docs/operations/TOSS-API-GAP-ANALYSIS.md` Phase 20
+   addendum 참조). 이것이 이번 Phase의 **최우선 권장 다음 작업**이다.
+2. **실 Tiingo API 키/네트워크 접근 확보** — 확보되는 즉시:
+   (a) `TiingoDataProvider`의 실제 응답 스키마를 Tier 2 문서 기반
+   가정과 대조 검증, (b) 16종목 pilot universe 실제 수집, (c) SPY
+   실 데이터로 `backtest.total_return`을 실제 실행해 처음으로 진짜
+   벤치마크 비교를 만들어낼 것.
+3. **Phase 17/18/20에 걸쳐 쌓인 DECISION REQUIRED에 대한 사람의
+   판단**: (a) risk policy `None`이 Live를 구조적으로 차단해야 하는지
+   여부, (b) daily loss/turnover/order frequency 숫자값 — Phase 20이
+   근거를 갖춘 제안값(2%/3.0/30)을 제시했으니 이제 승인/수정만 남음
+   (`docs/operations/LIVE-RISK-POLICY.md`), (c) Walk-Forward/PBO/
+   Deflated Sharpe 채택 여부 — trigger 조건은 Phase 20이 구체화함
+   (`docs/research/walk-forward-pbo-deflated-sharpe.md` §9).
+4. **Paper Trading을 실제로 운영하는 상시 실행 루프** 구축 — 실 데이터
+   연결 경로는 Phase 20이 구조적으로 증명했으나(`tests/integration/
+   test_paper_trading_real_market_data.py`), `PaperTradingSession`/
+   `compute_paper_performance_report`를 정기적으로 호출하는 스케줄러는
+   여전히 없다. 실 데이터 수집(#2)이 먼저 확보되어야 의미가 있다.
 5. 향후 model-based Prediction/Decision/Sizing/Risk/Learning 구현 시
    반드시 각 baseline과 비교해 실제로 가치가 있는지 검증할 것
    (baseline 우선 원칙, 변경 없음).
 6. Candidate Model이 실제로 `APPROVED`/`DEPLOYED`로 전이되는 상황이
    생기면, 그 과정이 항상 사람의 명시적 승인을 거치며 AI가 스스로
    부여할 수 없다는 원칙(Master Plan §11.5)이 그대로 유지되는지 매
-   Phase마다 재확인할 것 — Phase 17/18 모두 이를 저장소 전체 스캔으로
-   재확인했다.
+   Phase마다 재확인할 것 — Phase 17/18/20 모두 이를 저장소 전체
+   스캔으로 재확인했다.
 
 ---
 
