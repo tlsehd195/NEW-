@@ -1,0 +1,259 @@
+"""TiingoDataProvider: a real (not mock) `data_infra.provider.DataProvider`
+implementation for US equity daily OHLCV, plus split/dividend corporate
+action fetching (an addition beyond the `DataProvider` Protocol itself
+-- see the module docstring on that distinction below).
+
+See docs/decisions/ADR-0025-market-data-provider-selection.md and
+docs/operations/MARKET-DATA-PROVIDER.md.
+
+**Honesty about evidence tier**: this implementation is built against
+Tier 2 (secondary-source) documentation of Tiingo's long-stable, widely
+publicly documented EOD price and corporate-action API shape -- it has
+never been exercised against a live Tiingo response in this
+environment (network access to `api.tiingo.com` is blocked here; see
+ADR-0025). Every parsing assumption lives in `normalize()`/
+`normalize_corporate_actions()` alone, so it can be corrected in one
+place once real verification is possible, mirroring exactly how
+`broker.toss.mapping` isolated Toss's own unverified assumptions in
+Phase 13.
+
+**Why this module has two more methods than `DataProvider` requires**:
+`data_infra.provider.DataProvider`'s Protocol (`fetch`/`validate`/
+`normalize`/`metadata`) is scoped to price bars alone (Phase 1 never
+needed corporate-action fetching from a *provider* -- Phase 1's own
+mock dataset supplied `CorporateAction` records directly). Rather than
+widen that shared Protocol (which every other `DataProvider`
+implementation, including `MockDataProvider`, would then need to
+satisfy, a change well outside this phase's additive-only scope), this
+class adds `fetch_corporate_actions`/`normalize_corporate_actions` as
+extra methods a caller can use directly -- `IngestionRunner` (Phase 1,
+unmodified) still only ever calls the four Protocol methods.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional, Sequence
+
+from data_infra.enums import CorporateActionType
+from data_infra.models import CorporateAction, PriceBar, Provenance
+from data_infra.provider import PermanentProviderError
+from data_infra.providers.tiingo_auth import resolve_api_key
+from data_infra.providers.tiingo_config import TiingoConfig
+from data_infra.providers.tiingo_transport import TiingoHttpTransport, TiingoTransportResponse
+from data_infra.versioning import compute_data_version
+
+_DAILY_PRICES_PATH_TEMPLATE = "/tiingo/daily/{ticker}/prices"
+_ACTIONS_PATH_TEMPLATE = "/tiingo/daily/{ticker}/prices"  # Tiingo's EOD endpoint carries split/dividend fields inline per row (Tier 2 documentation); see normalize_corporate_actions
+
+_REQUIRED_RAW_FIELDS = ("date", "open", "high", "low", "close", "volume")
+
+
+class TiingoDataProvider:
+    """Implements `data_infra.provider.DataProvider` for real (not
+    mock) Tiingo EOD data. `retrieved_at`/`ingestion_time` must always
+    be supplied explicitly by the caller (never `datetime.now()`/
+    `datetime.utcnow()` -- instruction section 13)."""
+
+    def __init__(self, config: TiingoConfig, transport: TiingoHttpTransport) -> None:
+        self._config = config
+        self._transport = transport
+
+    def _headers_with_token(self) -> dict[str, str]:
+        # Tiingo authenticates via a `token` query parameter, not a
+        # bearer header (Tier 2 documentation) -- resolved once per
+        # call, never cached/logged, mirroring broker.toss.auth's
+        # "resolve transiently, never persist" discipline.
+        return {}
+
+    def _auth_params(self) -> dict[str, str]:
+        api_key = resolve_api_key(self._config)
+        return {"token": api_key, "format": "json"}
+
+    # -- DataProvider Protocol --------------------------------------
+
+    def fetch(self, security_id: str, start: datetime, end: datetime) -> list[dict]:
+        params = dict(self._auth_params())
+        params["startDate"] = start.date().isoformat()
+        params["endDate"] = end.date().isoformat()
+        response = self._transport.get(
+            _DAILY_PRICES_PATH_TEMPLATE.format(ticker=security_id),
+            params=params,
+            timeout=self._config.timeout_seconds,
+        )
+        if not isinstance(response.body, list):
+            raise PermanentProviderError(
+                f"unexpected Tiingo response shape for {security_id}: expected a JSON array"
+            )
+        # `end` -- the caller's own explicit as-of instant for this whole
+        # ingestion call (never datetime.now()/utcnow()) -- is stamped
+        # onto each raw record here, so normalize() (whose signature the
+        # DataProvider Protocol fixes at exactly (security_id,
+        # raw_records), matching IngestionRunner's own call site) can
+        # read it back without a wall-clock call or a Protocol change.
+        # Mirrors MockDataProvider.normalize()'s identical
+        # `record.get("retrieved_at", ...)` pattern.
+        return [dict(row, security_id=security_id, _fetched_as_of=end) for row in response.body]
+
+    def validate(self, raw_records: Sequence[dict]) -> list[str]:
+        issues: list[str] = []
+        for i, record in enumerate(raw_records):
+            missing = [f for f in _REQUIRED_RAW_FIELDS if f not in record]
+            if missing:
+                issues.append(f"record[{i}] missing fields: {missing}")
+        return issues
+
+    def normalize(self, security_id: str, raw_records: Sequence[dict]) -> list[PriceBar]:
+        """Matches the `DataProvider` Protocol's exact 2-argument
+        signature (`IngestionRunner` calls it that way) -- `retrieved_at`/
+        `ingestion_time` are read back from `_fetched_as_of`, which
+        `fetch()` already stamped onto each record from the caller's own
+        explicit `end` parameter (never `datetime.now()`/`utcnow()`
+        here, point-in-time discipline instruction section 13)."""
+        bars: list[PriceBar] = []
+        for record in raw_records:
+            timestamp = _parse_tiingo_date(record["date"])
+            as_of = record["_fetched_as_of"]
+            # data_version must reflect only the actual fetched content
+            # -- excluding the caller-supplied `_fetched_as_of`/
+            # `security_id` keys this module injected in fetch() keeps
+            # re-ingesting the identical real-world bar on a later run
+            # (with a different `end`) idempotent, matching
+            # IngestionRunner's own (security_id, timestamp, source,
+            # data_version) dedup key (Phase 1 spec section 25).
+            content_fields = {k: v for k, v in record.items() if k not in ("_fetched_as_of", "security_id")}
+            provenance = Provenance(
+                source="tiingo",
+                source_dataset=f"tiingo_eod_{security_id}",
+                source_record_id=f"{security_id}:{record['date']}",
+                retrieved_at=as_of,
+                data_version=compute_data_version(content_fields),
+            )
+            bars.append(
+                PriceBar(
+                    security_id=security_id,
+                    timestamp=timestamp,
+                    open=float(record["open"]),
+                    high=float(record["high"]),
+                    low=float(record["low"]),
+                    close=float(record["close"]),
+                    volume=float(record["volume"]),
+                    available_time=timestamp,
+                    ingestion_time=as_of,
+                    provenance=provenance,
+                    # adjClose is a Tiingo-computed, split/dividend-adjusted
+                    # value -- kept as the *optional*, separate
+                    # `adjusted_close` field, never substituted for the
+                    # raw `close` above (ADR-0004 / this project's
+                    # point-in-time discipline: raw OHLCV is the record
+                    # of truth, adjustment is a derived, optional view).
+                    adjusted_close=float(record["adjClose"]) if record.get("adjClose") is not None else None,
+                    currency="USD",
+                )
+            )
+        return bars
+
+    def metadata(self) -> dict:
+        return {
+            "provider_id": self._config.provider_id,
+            "provider_name": "Tiingo",
+            "rate_limit_per_minute": None,  # UNKNOWN -- see ADR-0025, not asserted without Tier 1 confirmation
+            "is_real_external_provider": True,
+            "configuration_version": self._config.configuration_version(),
+        }
+
+    # -- Corporate actions (extra, not part of the DataProvider Protocol) --
+
+    def fetch_corporate_actions(self, security_id: str, start: datetime, end: datetime) -> list[dict]:
+        """Reuses the same EOD endpoint -- Tier 2 documentation
+        describes Tiingo's daily-prices rows as carrying `splitFactor`/
+        `divCash` fields inline per date, rather than a separate
+        actions endpoint. This is recorded as an explicit, isolated
+        assumption (see the module docstring's "Honesty about evidence
+        tier") -- a future session with real access must confirm or
+        correct it."""
+        params = dict(self._auth_params())
+        params["startDate"] = start.date().isoformat()
+        params["endDate"] = end.date().isoformat()
+        response = self._transport.get(
+            _ACTIONS_PATH_TEMPLATE.format(ticker=security_id),
+            params=params,
+            timeout=self._config.timeout_seconds,
+        )
+        if not isinstance(response.body, list):
+            raise PermanentProviderError(
+                f"unexpected Tiingo response shape for {security_id}: expected a JSON array"
+            )
+        return [dict(row, security_id=security_id) for row in response.body]
+
+    def normalize_corporate_actions(
+        self, security_id: str, raw_records: Sequence[dict], *, retrieved_at: datetime, ingestion_time: datetime,
+    ) -> list[CorporateAction]:
+        """A `splitFactor` != 1.0 becomes a SPLIT/REVERSE_SPLIT event;
+        a `divCash` > 0 becomes a DIVIDEND event. Never fabricates an
+        event for a row with neither -- most rows produce zero
+        `CorporateAction` records, which is the honest, expected
+        common case."""
+        actions: list[CorporateAction] = []
+        for record in raw_records:
+            event_date = _parse_tiingo_date(record["date"])
+            split_factor = record.get("splitFactor")
+            if split_factor is not None and float(split_factor) != 1.0:
+                ratio = float(split_factor)
+                action_type = CorporateActionType.SPLIT if ratio > 1.0 else CorporateActionType.REVERSE_SPLIT
+                actions.append(
+                    CorporateAction(
+                        security_id=security_id,
+                        action_type=action_type,
+                        # available_time = when OUR system could have known
+                        # about this (PHASE-1-data-infrastructure.md section
+                        # 7 / ADR-0004) -- Tiingo's EOD feed only reports
+                        # splitFactor/divCash on ingestion, so that is
+                        # ingestion_time, never the (possibly much earlier)
+                        # event/effective date itself. Backdating this to
+                        # event_date would make a late-discovered action
+                        # falsely visible to an as-of query made before we
+                        # actually knew about it -- exactly the leak
+                        # tests/integration/test_market_data_point_in_time.py
+                        # exists to catch.
+                        available_time=ingestion_time,
+                        ingestion_time=ingestion_time,
+                        provenance=Provenance(
+                            source="tiingo", source_dataset=f"tiingo_eod_{security_id}",
+                            source_record_id=f"{security_id}:{record['date']}:split",
+                            retrieved_at=retrieved_at,
+                            data_version=compute_data_version({"date": record["date"], "splitFactor": split_factor}),
+                        ),
+                        event_time=event_date,
+                        effective_time=event_date,
+                        details={"ratio": ratio},
+                    )
+                )
+            div_cash = record.get("divCash")
+            if div_cash is not None and float(div_cash) > 0.0:
+                actions.append(
+                    CorporateAction(
+                        security_id=security_id,
+                        action_type=CorporateActionType.DIVIDEND,
+                        available_time=event_date,
+                        ingestion_time=ingestion_time,
+                        provenance=Provenance(
+                            source="tiingo", source_dataset=f"tiingo_eod_{security_id}",
+                            source_record_id=f"{security_id}:{record['date']}:dividend",
+                            retrieved_at=retrieved_at,
+                            data_version=compute_data_version({"date": record["date"], "divCash": div_cash}),
+                        ),
+                        event_time=event_date,
+                        effective_time=event_date,
+                        details={"amount": float(div_cash), "currency": "USD"},
+                    )
+                )
+        return actions
+
+
+def _parse_tiingo_date(raw: str) -> datetime:
+    """Tiingo dates are ISO 8601 (Tier 2 documentation), e.g.
+    `"2024-01-02T00:00:00.000Z"` -- always UTC, always timezone-aware
+    once parsed (this project never stores a naive datetime)."""
+    text = raw.replace("Z", "+00:00")
+    return datetime.fromisoformat(text)

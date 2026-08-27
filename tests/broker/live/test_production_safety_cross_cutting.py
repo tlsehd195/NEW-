@@ -48,19 +48,29 @@ class TestSecretAccessIsConfinedToOneFileAcrossTheWholeSrcTree:
 
     def test_os_environ_and_getenv_appear_only_in_broker_toss_auth(self) -> None:
         src_root = Path(broker.__file__).resolve().parent.parent
+        # One dedicated auth file per external integration is the
+        # invariant, not literally "only broker/toss/auth.py" -- Phase 20
+        # added data_infra/providers/tiingo_auth.py as the equivalent,
+        # isolated credential-resolution point for the Tiingo market data
+        # integration (its own AST-scan test, tests/data_infra/
+        # test_tiingo_auth.py, enforces isolation within that subpackage).
+        allowed_files = {
+            ("broker", "toss", "auth.py"),
+            ("data_infra", "providers", "tiingo_auth.py"),
+        }
         offenders: list[str] = []
         for py_file in src_root.rglob("*.py"):
             if "egg-info" in py_file.parts:
                 continue
             relative = py_file.relative_to(src_root)
-            is_allowed = relative.parts == ("broker", "toss", "auth.py")
+            is_allowed = relative.parts in allowed_files
             tree = ast.parse(py_file.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 hits_environ = isinstance(node, ast.Attribute) and node.attr == "environ"
                 hits_getenv = isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "getenv"
                 if (hits_environ or hits_getenv) and not is_allowed:
                     offenders.append(f"{relative}:{node.lineno}")
-        assert offenders == [], f"os.environ/os.getenv used outside broker/toss/auth.py: {offenders}"
+        assert offenders == [], f"os.environ/os.getenv used outside the allowed auth files: {offenders}"
 
 
 class TestEnvironmentGuardSymmetry:
