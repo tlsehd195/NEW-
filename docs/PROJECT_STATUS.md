@@ -5,23 +5,208 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-27
-**Updated By:** Claude Code (Session 22 — Phase 21 Toss Broker Adapter Completion)
+**Updated By:** Claude Code (Session 23 — Phase 22 Real-Data Paper Trading / US Long-Term System Hardening)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19/20/21은 Master Plan의 정식
+마지막 공식 Phase다. **Phase 17/18/19/20/21/22는 Master Plan의 정식
 Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된 안전성·검증
 문제를 보완하고 실 시장 데이터/브로커 기반을 놓기 위한 사후 검증/기반
-구축 작업**이며, 이 문서의 "Phase 21" 표기는 세션 추적 편의를 위한
+구축 작업**이며, 이 문서의 "Phase 22" 표기는 세션 추적 편의를 위한
 라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이 아니다. 이 번호들은
 전부 사용자 본인이 직접 "PHASE N — ..." 형식으로 명시적으로 지시한
 작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase 번호를 발명하지
 말라"는 원칙에 대한 예외(사람의 명시적 지시)에 정확히 해당한다. 이후
-Phase 22 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
+Phase 23 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
 않는다.
+
+**Phase 22 — Real-Data Paper Trading / US Long-Term System Hardening**
+(Live Trading은 여전히 구조적으로 비활성 — Toss capability가
+`CapabilityStatus.UNKNOWN`인 한 활성화 불가, 이번 Phase는 Toss 코드를
+전혀 건드리지 않았으므로 Phase 21의 사유가 그대로 유지된다). 사용자가
+실 Toss 자격증명을 여전히 제공할 수 없다는 전제 아래, "1,000만원 상당
+가상 자본으로 미국 주식 장기 Paper Trading을 반복 실행할 수 있는" 상태를
+목표로 Toss 이외의 모든 부분을 강화했다.
+
+### Completed (Session 23 — Phase 22)
+
+- **Git/Branch Integrity 선행 확인**: Phase 21 HEAD
+  (`2158c362944b31775509f54a4e99042267d473de`)를 `git rev-parse`로 직접
+  재확인, 실제 ancestor임을 확인 후 `claude/phase-22-us-longterm-
+  paper-trading` 브랜치를 해당 HEAD에서 직접 생성. Baseline **1511/1511
+  테스트 통과** 확인(추측하지 않고 실제 실행) 후 구현 시작.
+- **16종목 US 장기 Paper Trading 유니버스 채택**: AAPL/MSFT/NVDA/AMZN/
+  GOOGL/META/AVGO/TSLA/JPM/V/MA/COST/WMT/JNJ/XOM/SPY — Phase 20의 이전
+  목록을 대체(`MARKET-DATA-PROVIDER.md` Phase 22 섹션, 이전 목록은
+  역사적 참조로 보존).
+- **Stooq를 2차(fallback) 시장 데이터 provider로 신규 구현**
+  (`src/data_infra/providers/stooq*.py`) — API 키 불필요 CSV 엔드포인트
+  (Tier 2 근거, ADR-0028). 가격 데이터만 제공, corporate action(분할/
+  배당) 데이터는 전혀 없음을 `metadata()["supports_corporate_actions"]
+  = False`로 명시(꾸며내지 않음).
+- **`FallbackDataProvider` 신규 구현**(`src/data_infra/providers/
+  fallback.py`) — 1차 provider 실패 시 2차로 전환하되, 실제 응답한
+  provider를 절대 숨기지 않음: 각 raw record에 `_answered_by` 스탬프,
+  `normalize()`가 이를 근거로 정확한 provider의 정규화 로직으로
+  라우팅 — `PriceBar.provenance.source`가 항상 진짜 출처를 가리킴.
+  두 provider 모두 실패 시 `PermanentProviderError`가 둘 다의 이름을
+  명시.
+- **USD 표시 Paper 계좌 채택**(`src/broker/paper/us_longterm_config.py`)
+  — 사용자가 명시한 `10,000,000` KRW 목표를 그대로
+  `PAPER_CAPITAL_KRW_STATED_TARGET`으로 기록하되, 이 세션에서 검증
+  가능한 실 KRW/USD 환율이 없으므로(모든 FX 데이터 소스 도메인 접근
+  차단 — Phase 20 이후 동일) 환율을 조작하는 대신 지침이 명시적으로
+  허용한 대안인 USD 표시 계좌를 채택: `PAPER_CAPITAL_USD = 10,000.0`
+  (통화 환산이 아니라 자릿수만 맞춘 명시적 대체값, 어떤 환율도
+  내포하지 않음). `MARKET-DATA-FX-REFERENCE.md`에 결정 기록.
+- **결정론적 Buy & Hold reference 전략 신규 구현**
+  (`run_buy_and_hold_paper_session`,
+  `src/broker/paper/us_longterm_runner.py`) — 벽시계를 전혀 읽지 않고
+  호출자가 명시한 `buy_time`에 세션의 현재 현금을 유니버스 전체에
+  균등 배분해 심볼당 1회 MARKET BUY만 실행. 매 심볼 처리 직전 실제
+  잔여 현금을 다시 조회해 나누는 방식(고정 최초 분할 아님)과
+  `_COST_SAFETY_MARGIN=0.02`로 수수료/스프레드를 포함한 실제 비용
+  경계에서의 과다지출을 방지 — 두 가지 모두 테스트를 실제로 실행해
+  실패를 관찰한 뒤 수정(추측으로 통과시키지 않음, 상세는 커밋 로그).
+  Momentum/rule-based 대비 회전율/이해가능성/재현성/비용모델
+  호환성/leakage 검증가능성/장기 적합성 기준의 선정 근거는 ADR-0028에
+  명시. Phase 2의 `TransactionCostModel`/`SlippageModel`을 변경 없이
+  그대로 재사용 — 비용을 0으로 가정하지 않음. 항상 "baseline"으로만
+  지칭, "alpha"/"전략" 단독으로 지칭하지 않음.
+- **Risk policy 기본값을 실제 설정값으로 채택**(더 보수적, Phase 20
+  제안 대비): `max_daily_loss=0.02`(비율, Phase 20과 동일),
+  `max_turnover=2.0`(Phase 20 제안 3.0에서 하향), `max_order_
+  frequency_per_hour=6`(Phase 20 제안 30에서 하향) — **INITIAL
+  CONSERVATIVE SYSTEM DEFAULT**로만 명시, 재무적 진실이 아니며 실
+  Live 계좌에 자동 적용되지 않음(`LIVE-RISK-POLICY.md` Phase 22
+  섹션).
+- **None-semantics Option B 채택**(`src/broker/live/safety_gate.py`)
+  — `evaluate_safety_gate`가 `LiveTradingConfig.max_daily_loss`
+  또는 `max_order_frequency_per_hour`가 `None`이면 그 자체를 `SAFETY
+  GATE FAILURE`로 취급하도록 변경(Phase 17-20에서 미결이던 Option
+  A/B 중 이번 Phase 지침이 명시적으로 B를 지시). **`RiskConfig.
+  max_turnover`는 범위 밖** — 게이트가 `LiveTradingConfig`만 보고
+  별도 config 객체인 `RiskConfig`는 구조적으로 볼 수 없어 여전히
+  미결(`LIVE-RISK-POLICY.md`에 명시). 회귀 테스트 5개 신규
+  (`TestRiskLimitNoneSemanticsOptionB`) — 이 변경이 기존 ~20개 안전
+  게이트 통과 테스트를 깨지 않도록 호출부 하나하나를 실제로 읽고
+  필요한 6개만 수정, 불필요한 4개는 건드리지 않음(과잉 수정 방지).
+  Paper Trading은 `evaluate_safety_gate`를 호출하지 않으므로 영향
+  없음.
+- **전체 lineage 재시작 통합 테스트 신규 작성**
+  (`tests/integration/test_us_longterm_paper_trading_lineage.py`) —
+  TiingoDataProvider(TEST FIXTURE 데이터) → IngestionRunner →
+  실제 온디스크 DuckDB → point-in-time `get_bars` → `InMemoryPaper
+  MarketDataSource` → Buy & Hold runner → `PaperTradingSession`/
+  `PaperBrokerAdapter` → Trade Journal → Monitoring
+  (`collect_broker`) → Performance Report(`compute_paper_performance
+  _report`) → `engine.close()` 후 재시작 → 원본 raw bar/trade/order가
+  변경 없이 그대로 복원됨을 확인. 실제 네트워크 호출 없음, 전부
+  TEST FIXTURE/SYNTHETIC로 명시.
+- **Data Quality Framework에 timestamp monotonicity 체크 추가**
+  (`src/data_infra/quality.py`) — 기존 체크들은 전부 내부적으로
+  timestamp 기준 재정렬 후 분석하므로, provider 응답이 시간순이
+  아닌 경우를 감지하지 못하던 gap을 신규 체크로 해소(정확한 동일
+  timestamp 중복은 기존 `duplicate_records` ERROR가 그대로 담당,
+  이 체크는 실제 역전만 WARNING으로 표시).
+- **`.gitignore` 강화**: `*.duckdb`/`*.duckdb.wal`/`*.db`/`*.parquet`/
+  `*.csv` 패턴 추가(사전 방어 — `git ls-files`로 현재 추적 중인 해당
+  확장자 파일이 없음을 먼저 확인 후 추가).
+- **신규 문서**: ADR-0028(Phase 22 운영 모델 전체 8개 결정 기록).
+  `LIVE-RISK-POLICY.md`(Phase 22 섹션 — 보수적 제안값 + Option B
+  적용 기록), `MARKET-DATA-FX-REFERENCE.md`(Phase 22 결정 기록),
+  `MARKET-DATA-PROVIDER.md`(16종목 유니버스 갱신).
+  README.md/PROJECT_STATUS.md 갱신(이 항목).
+- **Toss/Live 활성화 코드는 전혀 건드리지 않음** — `src/broker/toss/*`,
+  `LiveTradingSession` 자동 승인, Decision/Risk 로직, 모델 자동
+  승인/배포, 실제 broker 주문 제출, credential 저장 전부 이번 Phase
+  범위 밖(instruction 명시적 경계).
+- 기존 1511개 테스트 전부 삭제/약화 없이 유지 + 신규 36개 추가.
+  최종 **1547 passed**.
+
+### In Progress (Session 23 — Phase 22)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 23 — Phase 22)
+
+Live Trading 활성화 — 변경 없음. Toss capability 4종이 여전히
+`CapabilityStatus.UNKNOWN`인 한 구조적으로 불가(Phase 21과 동일한
+사유, 이번 Phase는 Toss 코드를 전혀 수정하지 않음).
+
+### Decision Required (Session 23 — Phase 22)
+
+1. (Phase 17-20에서 이어짐, 이번 Phase가 `max_daily_loss`/
+   `max_order_frequency_per_hour` 2개에 한해 Option B로 코드
+   차원에서는 해소) `RiskConfig.max_turnover`의 None-semantics
+   (Option A vs B) — 안전 게이트가 이 필드를 구조적으로 볼 수 없어
+   여전히 미결.
+2. (Phase 20에서 이어짐, 이번 Phase가 더 보수적인 값으로 갱신)
+   `max_daily_loss=0.02`/`max_turnover=2.0`/
+   `max_order_frequency_per_hour=6` 최종 승인 여부 — 여전히 사용자
+   승인 대기, 자동 적용되지 않음.
+3. (Phase 16에서 이어짐) cancel-on-shutdown 자동화 여부 — 변경 없음
+   (Live 기준, Paper는 필요 시 세션 종료 시 시뮬레이션 상태 정리
+   가능하나 이번 Phase에서 별도 구현하지 않음).
+4. (Phase 18-20에서 이어짐) Walk-Forward/PBO/Deflated Sharpe 채택
+   여부 — 변경 없음, DEFER 유지(어떤 trigger 조건도 아직 미발생).
+5. (Phase 21에서 이어짐) 실제 Toss 계좌 credential 확보 + 사람의
+   운영 검증 — 이번 Phase도 진전시킬 수 없는 유일한 항목(자동화
+   세션이 스스로 완료할 수 없음).
+
+### Known Issues (Session 23 — Phase 22)
+
+- Stooq의 실제 네트워크 접근 가능 여부는 이 세션에서 검증 불가
+  (`stooq.com`을 포함한 모든 시장 데이터 provider 도메인이 차단됨,
+  Tiingo와 동일한 상황) — `UNKNOWN`으로 남김, provider 정확성과
+  혼동하지 않음.
+- `FallbackDataProvider`는 1차가 실패했을 때만 2차를 호출하는
+  fallback 설계이며, 매 호출마다 두 provider를 모두 조회해
+  교차검증하는 consensus 설계가 아님 — 두 provider가 같은 심볼/
+  날짜에 대해 서로 다른 값을 가지고 있어도 fallback이 발동하지 않는
+  한(1차가 성공하는 한) 그 불일치는 감지되지 않는다. 알려진 설계상
+  한계로 기록.
+- 그 외 Phase 21까지의 Known Issues 전부 유지(client_order_id →
+  Toss orderId 매핑 프로세스 재시작 시 유실 등).
+
+### Architecture Changes (Session 23 — Phase 22)
+
+`src/data_infra/providers/stooq*.py`(신규), `src/data_infra/
+providers/fallback.py`(신규), `src/broker/paper/us_longterm_*.py`
+(신규), `src/broker/live/safety_gate.py`(2개 조건 추가, additive),
+`src/data_infra/quality.py`(`timestamp_monotonicity` 체크 추가,
+additive) — 전부 기존 호출부에 영향 없는 추가 또는, safety_gate의
+경우 지침이 명시적으로 요구한 fail-closed 강화. Toss/Live 활성화/
+Decision/Risk/모델 승인 계층은 무수정.
+
+### Toss API Status (Session 23 — Phase 22)
+
+변경 없음(Phase 21 상태 그대로): `submit_order` + 4개 capability
+전부 구현/테스트 완료, `CapabilityStatus`는 전부 `UNKNOWN` 유지 —
+이번 Phase는 Toss 코드를 전혀 건드리지 않았음.
+
+### Last Validation (Session 23 — Phase 22)
+
+`python -m pytest tests/ -q` — baseline **1511 passed** → 최종
+**1547 passed, 0 failed, 0 skipped**. 기존 1511개 테스트 전부
+삭제/약화 없이 유지, 신규 36개 추가.
+
+### Next Task (Session 23 — Phase 22)
+
+1. 실제 Toss 계좌 credential 확보 + 사람의 운영 검증(위 Decision
+   Required #5) — 여전히 유일하게 남은 Toss 관련 항목.
+2. 실 Tiingo/Stooq 네트워크 접근이 확보되면: 실 시세 수집, SPY
+   total-return 벤치마크 실제 생성.
+3. `RiskConfig.max_turnover`의 None-semantics 결정(위 Decision
+   Required #1) — 안전 게이트에 새 plumbing을 추가할지 여부는 별도
+   설계 결정 필요.
+4. 위 Decision Required 5건에 대한 사람의 판단(risk policy 3개 값
+   최종 승인 포함).
+
+## Previous Subtask (Session 22 — Phase 21)
 
 **Phase 21 — Toss Broker Adapter Completion** (Live Trading은 여전히
 구조적으로 비활성 — Toss capability가 `CapabilityStatus.UNKNOWN`인 한

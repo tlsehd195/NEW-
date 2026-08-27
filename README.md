@@ -69,6 +69,54 @@ Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase�
 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커 기반을
 놓는 사후 검증/기반 작업**이다.
 
+**Phase 22 — Real-Data Paper Trading / US Long-Term System Hardening**
+(Live Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이
+그대로 유일한 차단 사유다). 사용자가 실 Toss 자격증명을 여전히 제공할
+수 없다는 전제 아래, Toss 이외의 모든 영역을 "1,000만원 상당 가상
+자본으로 미국 주식 장기 Paper Trading을 반복 실행할 수 있는" 상태로
+강화했다. 신규 16종목 고정 유니버스(AAPL/MSFT/NVDA/AMZN/GOOGL/META/
+AVGO/TSLA/JPM/V/MA/COST/WMT/JNJ/XOM/SPY, Phase 20 목록을 대체) 채택.
+Stooq를 2차(fallback) provider로 신규 구현(`StooqDataProvider`, 가격
+데이터만 제공 — corporate action 없음, Tier 2 근거)하고, `Provider A →
+실패 → Provider B` 전환 시 실제로 응답한 provider를 절대 숨기지 않는
+`FallbackDataProvider` 신규 구현(각 레코드에 `_answered_by` 스탬프,
+`PriceBar.provenance.source`가 항상 진짜 출처를 가리킴 — 두 provider가
+같은 심볼/날짜에 대해 다른 값을 반환해도 조용히 하나를 정답으로
+결정하지 않음). Paper 자본은 `10,000,000` KRW라는 사용자 목표값을
+명시적으로 기록하되, 이 세션에서 실 KRW/USD 환율을 검증할 방법이
+없으므로 환율을 조작하는 대신 **USD 표시 Paper 계좌**를 채택
+(`PAPER_CAPITAL_USD = 10,000.0` — 통화 환산이 아니라 자릿수만 맞춘
+명시적 대체값, `us_longterm_config.py`/ADR-0028). 벽시계를 전혀 읽지
+않는 결정론적 Buy & Hold 기준 전략(`run_buy_and_hold_paper_session`)을
+"단일 REFERENCE PAPER STRATEGY"로 채택 — Momentum/rule-based 대비
+회전율/이해가능성/재현성/비용모델 호환성/leakage 검증가능성/장기
+투자 적합성 기준으로 선정 근거를 ADR-0028에 명시, "alpha"가 아니라
+"baseline"으로만 지칭. Risk policy 기본값을 Phase 20 제안보다 더
+보수적으로 실제 설정값화: `max_daily_loss=0.02`, `max_turnover=2.0`,
+`max_order_frequency_per_hour=6` (여전히 **INITIAL CONSERVATIVE SYSTEM
+DEFAULT**이며 사람의 최종 승인 전까지 Live에 자동 적용되지 않음).
+None-semantics는 Option B를 채택해 `evaluate_safety_gate`가
+`max_daily_loss`/`max_order_frequency_per_hour`가 `None`이면 그 자체를
+`SAFETY GATE FAILURE`로 처리하도록 변경(`max_turnover`는 게이트가
+구조적으로 볼 수 없는 별도 config라 여전히 미결). Provider →
+IngestionRunner → DuckDB → point-in-time 조회 → PaperMarketDataSource →
+PaperTradingSession → Trade Journal → Monitoring → Performance Report
+전체 lineage를 실제 DuckDB 영속화 + 프로세스 재시작까지 포함해
+end-to-end로 검증(`tests/integration/
+test_us_longterm_paper_trading_lineage.py`). Data Quality Framework에
+timestamp monotonicity 체크 신규 추가(기존 체크들은 내부적으로
+재정렬 후 분석하므로 원본 순서 역전을 감지하지 못하던 gap을 해소).
+`.gitignore`에 실 시장 데이터/DB 파일 방어 패턴 추가(`*.duckdb`/`*.db`/
+`*.parquet`/`*.csv` — 현재 추적 중인 해당 파일은 없음, 사전 방어).
+Toss 어댑터 코드는 이번 phase에서 전혀 건드리지 않음(Phase 21 결과가
+그대로 최종). 신규 문서: ADR-0028. `LIVE-RISK-POLICY.md`/
+`MARKET-DATA-FX-REFERENCE.md`/`MARKET-DATA-PROVIDER.md` Phase 22
+갱신. 신규 테스트 다수 추가(Stooq transport/provider, fallback
+provider, US long-term Buy & Hold runner, 전체 lineage 통합 테스트,
+risk gate Option B 회귀 테스트, timestamp monotonicity) — 기존 1511개
+테스트는 전부 그대로 유지, 약화 없음. 상세는 `docs/PROJECT_STATUS.md`
+참조.
+
 **Phase 21 — Toss Broker Adapter Completion** (Live Trading 활성화는
 여전히 구조적으로 불가능 — 사유는 바뀌었지만 차단 자체는 그대로다).
 Phase 20에서 사용자가 제공한 Toss 공식 OpenAPI 스펙(Tier 1)을 근거로
@@ -455,10 +503,26 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   `LIVE-TRADING-RUNBOOK.md` Phase 21 갱신. broker 계층 외부(전략/AI
   Gateway/Learning/backtest/market data)는 전혀 수정하지 않음.
 
+- Phase 22 — Real-Data Paper Trading / US Long-Term System Hardening:
+  완료 (`src/data_infra/providers/stooq*.py`, `src/data_infra/
+  providers/fallback.py`, `src/broker/paper/us_longterm_*.py`,
+  `src/broker/live/safety_gate.py`, `src/data_infra/quality.py` 수정,
+  신규 테스트 36개) — Stooq fallback provider + provenance 보존,
+  16종목 US 장기 유니버스, USD 표시 Paper 계좌
+  (`PAPER_CAPITAL_USD=10,000.0`), 결정론적 Buy & Hold reference
+  strategy, 더 보수적인 risk 기본값(`0.02`/`2.0`/`6`), 안전 게이트
+  None-semantics Option B(`max_daily_loss`/
+  `max_order_frequency_per_hour`), timestamp monotonicity 데이터
+  품질 체크, 전체 lineage 재시작 통합 테스트. 신규 문서: ADR-0028.
+  `LIVE-RISK-POLICY.md`/`MARKET-DATA-FX-REFERENCE.md`/
+  `MARKET-DATA-PROVIDER.md` 갱신. Toss/Live 활성화 코드는 전혀
+  수정하지 않음 — Live Trading은 동일한 이유(Toss capability UNKNOWN)로
+  여전히 구조적 차단 상태.
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
-63 = 1511; 정확한 최종 숫자는 이 Phase의 최종 전체 테스트 실행 결과를
-따른다).
+63 = 1511 + Phase 22 신규 36 = 1547; 정확한 최종 숫자는 이 Phase의
+최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행
 
