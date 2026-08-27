@@ -32,5 +32,19 @@ experiments/*
 logs/*
 !logs/.gitkeep
 
+# Real market data / broker/database artifacts (Phase 22 instruction section
+# 26): this repo holds schema, metadata, checksums, ingestion code, config,
+# and docs -- never actual vendor data or a populated database file, no
+# matter where in the tree it would otherwise land. Test fixtures use
+# pytest's tmp_path (outside the repo tree entirely -- see
+# tests/storage_helpers.py), so this is a defense-in-depth backstop, not a
+# response to any file these patterns would currently catch (no *.csv/
+# *.parquet/*.db/*.duckdb file is tracked in this repo today).
+*.duckdb
+*.duckdb.wal
+*.db
+*.parquet
+*.csv
+
 # Local overrides
 *.local
