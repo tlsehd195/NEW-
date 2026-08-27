@@ -266,6 +266,123 @@ statistical-validation infrastructure nothing yet needs"), not a
 financial-policy number, so Phase 19 makes it directly rather than
 escalating it.
 
+## 9. Phase 20 addendum — trigger conditions, first applicable model, Live-activation linkage
+
+Phase 20's instruction (section 18) asks for three specific things
+beyond Phase 19's DEFER classification: a concrete trigger condition
+for when DEFER should end, which model would be the first this applies
+to, and how adoption would connect to Live activation gating. None of
+this changes the classification itself (still **DEFER**, confirmed
+again below) — it makes the *conditions for revisiting it* concrete
+rather than leaving "someday" unspecified.
+
+### 9.1 Trigger conditions — when DEFER should end
+
+DEFER should end and section 7's DECISION REQUIRED should be
+re-escalated for an actual adoption decision when **any** of the
+following first becomes true:
+
+1. **A trainer that claims genuine predictive skill is introduced.**
+   Every trainer today (`MeanRewardBaselineTrainer`, Phase 9;
+   `TrailingWindowMeanTrainer`, Phase 11) is explicitly documented as a
+   null-hypothesis/pipeline-exercise baseline — this is *why* section 8
+   concluded "nothing to apply it to." The trigger is the first trainer
+   whose own documentation claims real forecasting skill rather than
+   exercising the pipeline. See 9.2 below for what that model would
+   concretely be.
+2. **Multiple candidate variations are being compared for the same
+   promotion decision.** PBO's entire premise (Bailey et al. 2015) is
+   evaluating a *selection among trials* — it is not meaningful for a
+   single, non-competing candidate. The trigger is the first time
+   `evolution.criteria`/the model registry is asked to choose among more
+   than one seriously-considered candidate for the same slot, since that
+   is the first moment a trial count and a selection-bias question both
+   concretely exist.
+3. **A human is about to make an `APPROVED` decision for a candidate
+   whose target is Live capital**, not Paper Trading continuation. Paper
+   Trading is itself the system's own designed-in overfitting check (an
+   unseen forward period, per `docs/decisions/ADR-0021-paper-trading.md`)
+   — the stakes that justify PBO/DSR's implementation cost (section 4)
+   are specifically real-capital stakes.
+
+None of these three conditions is true today: both existing trainers
+are explicit null-hypothesis baselines, no multi-candidate selection
+has ever occurred, and Live is independently blocked regardless (Toss
+capability gap). **This confirms, rather than merely restates, that
+DEFER remains correct as of Phase 20** — the trigger conditions exist
+and are checkable, and none has fired.
+
+### 9.2 Which model this would first apply to
+
+No such model exists yet, by name — this section states what it would
+look like, not what it is. The first applicable model is: **the first
+trainer registered in `evolution.*`/`learning.*` whose own
+documentation and evaluation criteria claim actual out-of-sample
+predictive skill for a real trading signal**, as opposed to exercising
+the train -> evaluate -> `CandidateModelStatus` pipeline end-to-end
+(which is all `MeanRewardBaselineTrainer` and `TrailingWindowMeanTrainer`
+are documented to do). Until a skill-claiming trainer exists, applying
+PBO/DSR to either current trainer would produce a real statistical
+number answering a question neither trainer's own documentation asks —
+exactly the risk section 8 already flagged, restated here as a positive
+identification criterion rather than a negative one.
+
+### 9.3 How this would connect to Live activation gating
+
+Phase 19 (section 8) already established Walk-Forward/PBO/DSR are not
+part of `evaluate_safety_gate` — that gate answers "is it safe to
+submit an order right now" (broker capability, human approval, kill
+switch, reconciliation, account/position state), a structurally
+different and deliberately narrower question than "should this model's
+apparent skill be trusted." That boundary is not revisited here.
+
+The connection this section adds: **if/when Option A of section 7 is
+adopted (Walk-Forward/PBO/DSR required before a human considers
+approving a candidate), the natural integration point is evidence
+attached to the human `APPROVED` decision itself**
+(`docs/decisions/ADR-0017-model-evolution.md` decision 2 — reaching
+`APPROVED`/`DEPLOYED` already structurally requires a human, never
+automation) — not a new automated precondition inside
+`evaluate_safety_gate` or `evaluate_transition`. Concretely: a
+Walk-Forward/PBO/DSR report would be evidence a human reviewer expects
+to have in hand before approving a candidate targeting Live capital,
+the same way a Paper Trading Performance Report (Phase 18) already is
+today — not a new automated gate that blocks `OOS_TESTED` from being
+reached, and not a new automated blocker inside `LiveTradingSession`.
+This keeps the existing clean separation (broker layer never
+re-implements Decision/Risk/model-quality logic, restated in section 8)
+intact for any future adoption, and requires no architecture change to
+support — `evolution.criteria` and the human-approval boundary already
+have a natural place for additional evidence to be attached (a
+candidate's existing documentation/metrics bundle) without a new gate
+mechanism.
+
+This is a proposed integration pattern for *if* Option A is ever
+chosen, not itself an adoption decision — section 7's DECISION REQUIRED
+(adopt at all, Option A vs. B) remains exactly as open as Phase 19 left
+it.
+
+### 9.4 No architecture conflict with future adoption — reconfirmed
+
+Section 8 already confirmed this ("would extend
+`learning.config.SplitConfig`'s existing chronological split, not
+replace or contradict it"; "would add a new statistical layer... not
+re-implement the split itself"). Nothing in Phase 20's real-market-data
+work changes that: `learning.dataset.build_training_dataset` and
+`evolution.criteria` are both untouched this phase, and the new
+`data_infra.providers.tiingo`/`backtest.total_return` modules sit
+entirely below the model-training layer, feeding it real price data
+through the same `PriceBar`/`DataRepository` interfaces a future
+walk-forward re-fit loop would also consume — no new incompatibility is
+introduced.
+
+### 9.5 Classification (reconfirmed): DEFER
+
+Unchanged from Phase 19, now grounded in checkable trigger conditions
+(9.1) rather than a general "not yet" — **DEFER**. Re-evaluate the
+instant any condition in 9.1 becomes true; do not re-evaluate on a
+calendar schedule absent one of those conditions.
+
 ## Sources
 
 - [The Probability of Backtest Overfitting (SSRN 2326253)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253) -- Bailey, Borwein, López de Prado, Zhu (2015)
