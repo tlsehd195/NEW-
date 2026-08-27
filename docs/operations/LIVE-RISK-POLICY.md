@@ -205,3 +205,122 @@ open through Phase 19.
   about what an order-notional cap or a failure-count policy should
   even mean on top of the existing weight-based and single-failure-halt
   designs. Recorded as gaps, not implemented speculatively.
+
+## Phase 20 — Proposed initial values for #1 / #6 / #7 (NOT a decision)
+
+Phase 19 deliberately stopped short of proposing numbers for items
+#1/#6/#7 ("The exact number is a capital/strategy decision this
+document does not make"). Phase 20's instruction explicitly asks for a
+*reasonable proposed* initial value for each, framed as Claude's
+proposal for human review — not a decision this document is making
+unilaterally. **None of the values below take effect on their own; a
+human must set them in `LiveTradingConfig`/`RiskConfig` before they do
+anything, per the None-semantics section below.** They are grounded in
+this system's actual, current scope: US equities, long-term/low-
+turnover, the 16-symbol pilot universe (`MARKET-DATA-PROVIDER.md`), and
+small experimental capital (per Phase 20's user-set policy) — not
+picked as generic round numbers.
+
+### #1 — `LiveTradingConfig.max_daily_loss`
+
+**Proposal: 2% of whatever initial capital is eventually set**, not an
+absolute dollar figure. The field itself is coded as an absolute
+`float` (Option A of Phase 17's own analysis; a ratio-based variant
+would need new code), so this proposal cannot be reduced to a concrete
+number yet — initial Live capital is explicitly not being decided this
+phase (per the user's own stated policy: only after the Toss capability
+gap is resolved and real account state is visible). Once capital is
+set, `max_daily_loss = 0.02 * initial_capital`.
+
+**Rationale**: 2% is a conservative, commonly used single-day loss
+threshold for equity portfolios generally. For a long-term, low-
+turnover strategy that should not structurally produce large single-day
+drawdowns, 2% is tight enough to catch a genuine problem (a bug, a bad
+fill, a data error) while loose enough not to nuisance-trip on
+ordinary US equity volatility (single-day moves of 1-2% on individual
+names, and sometimes the broad market, are unremarkable).
+
+### #6 — `RiskConfig.max_turnover`
+
+**Proposal: 3.0** (i.e. cumulative trade notional may reach up to 3x
+the account's average historical portfolio value before this check
+rejects a new order).
+
+**Important nuance surfaced while proposing this**: `max_turnover` is
+checked against `PortfolioAccounting.turnover()`
+(`src/backtest/portfolio.py`), which is **cumulative since account
+inception** (`sum(trade notionals) / average historical portfolio
+value`), not a period-normalized "annual turnover %". It is
+monotonically non-decreasing over the account's life. A fixed cap
+therefore does not mean the same thing at month 1 as it does at year 3
+— this is a real property of the existing metric, not something this
+proposal invents.
+
+**Rationale for 3.0 specifically**: building out the initial ~16-symbol
+pilot-universe position from cash contributes roughly 1.0x turnover on
+its own (each symbol bought once, against a still-small average
+portfolio value early in its history). A small number of full or
+partial rebalances over the following one to two years of Live
+operation could plausibly add another 1.0-2.0x without anything being
+wrong. 3.0 gives headroom for that ordinary behavior while still
+rejecting a genuinely runaway pattern (a bug causing repeated buy/sell
+churn would blow past 3.0 quickly). **Because the metric is
+non-stationary, this number should be explicitly re-reviewed
+periodically (e.g. at each quarterly/human policy review), not treated
+as a permanent constant** — that review cadence is itself part of this
+proposal, not a separate decision.
+
+### #7 — `LiveTradingConfig.max_order_frequency_per_hour`
+
+**Proposal: 30**.
+
+**Rationale**: the existing DECISION REQUIRED block already recommended
+"a small fixed number (e.g. single digits per hour)" without computing
+one against this system's actual scope. A single-digit cap would be
+too tight: a legitimate full rebalance across the 16-symbol pilot
+universe (`MARKET-DATA-PROVIDER.md`) could submit up to 16 orders in
+one pass, and partial-fill follow-ups or a retry after a transient
+broker error could add a few more. 30 gives roughly 2x headroom over
+that realistic worst-case legitimate burst, while remaining far below
+what a genuine runaway-order-loop bug would produce (such a bug would
+typically generate many orders per *minute*, not per hour, and would
+still trip this check well within the first hour).
+
+### None-semantics — made explicit (not changed)
+
+Per instruction section 17's request to make this "explicit and
+consistent," restated plainly rather than re-decided (Phase 19 already
+established Option A vs. B remains a human decision, not resolved
+here):
+
+- **`None` on any of `LiveTradingConfig.max_daily_loss`,
+  `RiskConfig.max_turnover`, or
+  `LiveTradingConfig.max_order_frequency_per_hour` means "this specific
+  check does not run" — not "zero," not "unlimited-but-flagged," and
+  not a fail-closed state on its own.** `evaluate_kill_switch_triggers`
+  (`src/broker/live/kill_switch.py`) simply skips the daily-loss and
+  order-frequency triggers when their fields are `None`;
+  `PortfolioRiskEngine.assess` (`src/risk/engine.py` lines 303-311)
+  simply skips the turnover check when `max_turnover` is `None`. This
+  is consistent across all three fields and both modules — verified
+  again while writing this section, not merely asserted.
+- **This is different from the "configured means fail-closed on
+  missing data" pattern that already exists once a value *is* set** —
+  e.g. `if config.max_turnover is not None: ... if turnover is None:
+  reject "turnover_unknown"` (`src/risk/engine.py`). Setting a value
+  turns on fail-closed behavior for missing *inputs* to that check; it
+  is `None` on the *limit itself* that means "check not active at all."
+  Both facts hold simultaneously and are not in tension — this section
+  exists so that is stated once, plainly, rather than left implicit.
+- **Live activation remains disallowed regardless of what values are
+  set for #1/#6/#7** — the independently-blocking Toss capability gap
+  (`docs/operations/TOSS-API-GAP-ANALYSIS.md`) means none of this
+  changes whether Live can activate today.
+
+**DECISION REQUIRED: risk limit values for #1/#6/#7 — awaiting user
+ratification.** The three proposals above are Claude's reasoned
+starting points for review, not approved policy. A human financially
+responsible for the account must explicitly set (or explicitly
+reject/revise) each value in `LiveTradingConfig`/`RiskConfig` before it
+has any effect; until then all three remain `None` and unenforced, per
+the None-semantics above.
