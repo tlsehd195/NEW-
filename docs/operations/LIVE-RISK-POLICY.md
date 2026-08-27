@@ -324,3 +324,74 @@ responsible for the account must explicitly set (or explicitly
 reject/revise) each value in `LiveTradingConfig`/`RiskConfig` before it
 has any effect; until then all three remain `None` and unenforced, per
 the None-semantics above.
+
+## Phase 22 — Revised (more conservative) proposed values, and Option B adopted for #1/#7
+
+Phase 22's instruction directed two concrete changes on top of Phase
+20's proposals, both implemented in code this phase (`ADR-0028` section
+36 covers the full rationale; this section restates only the policy-
+document-facing consequences).
+
+### Revised numeric proposals — still not ratified
+
+| # | Field | Phase 20 proposal | Phase 22 proposal (more conservative) |
+|---|---|---|---|
+| 1 | `LiveTradingConfig.max_daily_loss` | `0.02 * initial_capital` | **`0.02` fraction of capital (unchanged ratio)** — `LiveTradingConfig.max_daily_loss` is still coded as an absolute `float` (`src/broker/live/config.py`; Option A of Phase 17's own analysis), so this ratio still cannot become a concrete number until initial Live capital is set; `max_daily_loss = 0.02 * initial_capital` at that point, exactly as Phase 20 proposed — instruction section 17 restates the 2% figure as the value to carry forward, not to tighten further |
+| 6 | `RiskConfig.max_turnover` | `3.0` | **`2.0`** — tighter cumulative-turnover headroom; still enough to cover initial 16-symbol universe construction (~1.0x) plus one to two ordinary rebalances, per the same non-stationary-metric caveat Phase 20 already recorded (still applies unchanged — re-review at each policy cycle, not a permanent constant) |
+| 7 | `LiveTradingConfig.max_order_frequency_per_hour` | `30` | **`6`** — roughly Phase 20's own worst-case legitimate burst estimate (a full 16-symbol rebalance pass) divided by more than 2x; a genuine runaway-order-loop bug still trips this well within the first hour, and Paper Trading's own long-term/low-frequency orientation makes anything above single-digit hourly orders already anomalous for this system's intended use |
+
+These remain **INITIAL CONSERVATIVE SYSTEM DEFAULT** proposals, not
+financial truth, and not self-ratifying — identical status to Phase
+20's numbers, just tighter. **No code auto-applies these to a real Live
+account.** A human financially responsible for the account must still
+explicitly set (or reject/revise) each value before it has any Live
+effect. `us_longterm_config.build_us_longterm_paper_config` (Paper
+Trading only) does not set any of #1/#6/#7 — Paper Trading has no
+Live-style kill switch/safety gate to enforce them against.
+
+### Option B adopted for #1 and #7 (not #6) — supersedes the Phase 17-20 "still open" framing for those two fields only
+
+Phase 19's analysis (above) weighed Option A ("`None` = not enforced,
+Live can activate anyway") against Option B ("`None` on a required
+Live risk limit is itself a `SAFETY GATE FAILURE`") and left the choice
+open as a risk-tolerance decision. Phase 22's instruction directs
+Option B explicitly for this phase, implemented in
+`evaluate_safety_gate` (`src/broker/live/safety_gate.py`):
+
+```python
+if context.config.max_daily_loss is None:
+    failed.append("risk_limit_not_configured_max_daily_loss")
+if context.config.max_order_frequency_per_hour is None:
+    failed.append("risk_limit_not_configured_max_order_frequency_per_hour")
+```
+
+Both conditions are covered by regression tests
+(`tests/broker/live/test_live_safety_gate.py::
+TestRiskLimitNoneSemanticsOptionB`, 5 tests) proving each field
+independently blocks, both together report both reasons, both set does
+not block on this condition, and the default (unset) `LiveTradingConfig`
+blocks by default — matching the fail-closed framing this document has
+used throughout.
+
+**`RiskConfig.max_turnover` (#6) is NOT part of this change** and
+remains genuinely **UNDEFINED / Option A vs. B still open**, exactly as
+Phase 19 left it. `evaluate_safety_gate` reads only
+`SafetyGateContext.config` (a `LiveTradingConfig`); `max_turnover` lives
+on the separate `RiskConfig` object, which the safety gate has no
+structural reference to today. Making #6 participate in the same
+Option-B fail-closed pattern would require adding a new field or
+parameter to `SafetyGateContext`/`evaluate_safety_gate` itself — new
+plumbing, not a semantics flip on an existing check — and was
+deliberately left out of this phase's additive, minimal-change scope
+rather than done speculatively. This is a real, still-open gap, not an
+oversight papered over: a Live account with `max_daily_loss` and
+`max_order_frequency_per_hour` both set (satisfying the new Option-B
+gate condition) could still have `max_turnover=None`, silently
+unenforced, exactly as before.
+
+**Practical effect today**: because Toss capability verification
+independently and unconditionally blocks Live activation
+(`TOSS-API-GAP-ANALYSIS.md`), this change has no observable effect on
+whether Live can activate right now — it changes what *would* additionally
+block activation once the Toss gap is someday resolved, tightening the
+gate ahead of that eventuality rather than after it.

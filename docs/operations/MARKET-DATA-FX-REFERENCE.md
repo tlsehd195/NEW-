@@ -1,5 +1,32 @@
 # KRW/USD FX Reference (Phase 20, instruction section 14)
 
+## Phase 22 update: USD-denominated Paper account chosen — no rate needed for Paper Trading
+
+Phase 22's instruction reaffirmed the same constraint below (no
+verified real-time or dateable KRW/USD rate is accessible from this
+environment) and explicitly permitted an alternative to filling in this
+document with a rate at all: standing up the Paper Trading account
+natively in USD instead of converting a KRW figure. **That is the path
+taken.**
+
+`src/broker/paper/us_longterm_config.py`'s `PAPER_CAPITAL_USD = 10_000.0`
+is the resulting reference Paper capital — an explicitly-labeled,
+round, order-of-magnitude USD stand-in for the user's stated
+`10,000,000` KRW target, **not a currency conversion**. It carries no
+implied exchange rate, and nothing in this codebase treats it as one.
+`PAPER_CAPITAL_KRW_STATED_TARGET = 10_000_000.0` is recorded alongside
+it purely for traceability back to the user's actual stated figure —
+never used in any arithmetic.
+
+This document's own "no rate recorded" status (below) is **unchanged**
+by this decision — choosing the USD-account path this phase does not
+resolve the underlying FX-access gap, it routes around needing to
+resolve it for Paper Trading specifically. If Live Trading is someday
+seriously planned against a real KRW Toss account, this document's
+placeholder table still needs a real, sourced rate filled in at that
+time — see "When this would actually become necessary" below, also
+unchanged.
+
 ## Status: no rate recorded — placeholder only
 
 This document exists because a real Toss Securities account (the
