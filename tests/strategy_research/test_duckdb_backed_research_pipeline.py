@@ -15,6 +15,7 @@ from research_helpers import days_to_utc
 from storage_helpers import new_engine
 
 from data_infra.calendar import US_EQUITY
+from data_infra.universe import SymbolMetadata, UniverseDefinition, build_security_masters, build_universe_memberships
 
 from backtest.engine import BacktestConfig, BacktestEngine
 
@@ -72,4 +73,60 @@ class TestDuckDBBackedResearchPipeline:
         reloaded = repo2.get_bars("TRENDUP", days_to_utc(date(2020, 1, 2)), as_of, as_of_time=as_of)
         assert len(reloaded) == len(days)
         assert reloaded[0].close == trendup_closes[0]
+        engine2.close()
+
+
+class TestUniverseModuleBackedDuckDBPersistence:
+    """Category: Universe <-> DuckDB persistence (Phase 24, instruction
+    section F). Same shape as the test above, but the `SecurityMaster`/
+    `UniverseMembership` records come from `data_infra.universe`'s
+    converter functions instead of hand-built test fixtures --
+    proving the actual Phase 24 population path (also used by
+    `scripts/ingest_real_market_data.py --universe ...`) round-trips
+    through a real on-disk restart, including `get_universe`'s
+    point-in-time query."""
+
+    def test_universe_membership_and_security_master_survive_restart(self, tmp_path) -> None:
+        from backtest_helpers import trading_days
+
+        days = trading_days(date(2020, 1, 2), date(2021, 6, 1))
+        trendup_closes = [100.0 * (1.0006**i) for i in range(len(days))]
+        trenddown_closes = [100.0 * (0.9997**i) for i in range(len(days))]
+
+        custom_universe = UniverseDefinition(
+            name="TEST_UNIVERSE", version="v1", role="RESEARCH", description="TEST FIXTURE",
+            symbols=(SymbolMetadata(symbol="TRENDUP"), SymbolMetadata(symbol="TRENDDOWN")),
+        )
+        universe_valid_from = days_to_utc(date(2020, 1, 2))
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+        repo.append_bars(_make_bars("TRENDUP", days, trendup_closes))
+        repo.append_bars(_make_bars("TRENDDOWN", days, trenddown_closes))
+        for record in build_security_masters(custom_universe, valid_from=universe_valid_from):
+            repo.add_security(record)
+        for record in build_universe_memberships(custom_universe, valid_from=universe_valid_from):
+            repo.add_universe_membership(record)
+
+        as_of = days_to_utc(date(2021, 6, 2))
+        universe_symbols = repo.get_universe("US_EQUITY", "TEST_UNIVERSE", as_of_time=as_of)
+        assert set(universe_symbols) == {"TRENDUP", "TRENDDOWN"}
+
+        strategy = LongTermMomentumStrategy(list(universe_symbols), LongTermMomentumParameters(lookback_months=6, top_n=1, rebalance_months=3))
+        config = BacktestConfig(
+            market="US_EQUITY", start_date=date(2020, 1, 2), end_date=date(2021, 6, 1),
+            initial_capital=100_000.0, security_ids=tuple(universe_symbols), code_version="test",
+        )
+        result = BacktestEngine(repo, config, strategy).run()
+        assert len(result.fills) > 0
+
+        engine.close()
+
+        engine2 = new_engine(tmp_path)
+        repo2 = DuckDBDataRepository(engine2, calendars={"US_EQUITY": US_EQUITY})
+        reloaded_universe = repo2.get_universe("US_EQUITY", "TEST_UNIVERSE", as_of_time=as_of)
+        assert set(reloaded_universe) == {"TRENDUP", "TRENDDOWN"}
+        reloaded_security = repo2.get_security("TRENDUP", as_of_time=as_of)
+        assert reloaded_security is not None
+        assert reloaded_security.exchange == "UNKNOWN"  # honest sentinel, not a guessed exchange
         engine2.close()
