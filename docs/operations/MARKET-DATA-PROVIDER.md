@@ -148,3 +148,35 @@ be answered from a different environment without needing another
 Claude Code session to rebuild the wiring -- it reuses
 `FallbackDataProvider`/`IngestionRunner`/`DuckDBDataRepository`/
 `DataQualityFramework` exactly as they exist in `src/`, unmodified.
+
+## Phase 24 free-tier limits checklist (instruction section 6)
+
+Re-attempted this session via two independent paths -- direct `curl`
+through the egress proxy, and `WebFetch` (a separate fetch path) against
+`www.tiingo.com` and `stooq.com` -- both returned `EGRESS_BLOCKED` for
+every domain tried. **No new Tier 1 or Tier 2 evidence could be
+gathered this session**; every item below either restates ADR-0025's
+existing Phase 20 findings (re-cited, not re-derived) or is marked
+UNKNOWN where Phase 20 also found nothing.
+
+| Item | Tiingo | Stooq |
+|---|---|---|
+| Historical data availability | "30+ years free" per independent secondary sources (ADR-0025, Tier 2) | Commonly cited as a lightweight free source (ADR-0025, Tier 2); depth **UNKNOWN** |
+| US equity coverage | Described as broad in Tier 2 sources; not independently confirmed | **UNKNOWN** |
+| ETF coverage (needed for SPY) | Assumed included (SPY is treated as an ordinary pilot symbol, ADR-0025/26); not independently confirmed | **UNKNOWN** |
+| EOD availability | Yes, per Tier 2 sources (this is the data shape `TiingoDataProvider` is built against) | Yes -- `stooq.com/q/d/l/` is a daily-EOD CSV endpoint by construction (ADR-0028) |
+| Request limits | **UNKNOWN** -- no exact number found even at Tier 2 in Phase 20 | **UNKNOWN** |
+| Symbol limits | **UNKNOWN** | **UNKNOWN** |
+| Rate limits | **UNKNOWN** | **UNKNOWN** |
+| Corporate action availability | Yes -- "explicit, separate Split/Dividend APIs" per Tier 2 sources (ADR-0025) | **No** -- `StooqDataProvider` documents `supports_corporate_actions=False` by design (Phase 22); no corporate-action feed found in any source |
+| Adjusted/unadjusted price availability | Both -- raw OHLCV plus a separate adjusted-close field per Tier 2 sources | Unadjusted (raw) CSV only; `StooqDataProvider.normalize()` always sets `adjusted_close=None` |
+| Delayed/real-time | **UNKNOWN** (irrelevant to this project's EOD/long-term use case either way) | **UNKNOWN** |
+| Licensing / redistribution restrictions | **UNKNOWN** -- not found in Tier 2 sources | **UNKNOWN** -- ADR-0025 already flags Stooq as having "weakest documentation of licensing/redistribution terms" among the candidates considered |
+
+**Consequence for universe expansion (instruction section 31)**: because
+request/symbol/rate limits are UNKNOWN for both providers, this phase
+does not add any ticker beyond the existing 15-symbol
+`PILOT_UNIVERSE`/16 including `SPY` (`src/data_infra/universe.py`).
+`RESEARCH_UNIVERSE` Stage 2 (~30-50 symbols) remains a documented,
+ready extension point, not populated -- populating it would mean
+guessing a limit this project's own discipline forbids guessing.
