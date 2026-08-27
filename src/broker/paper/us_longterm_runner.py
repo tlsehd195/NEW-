@@ -1,0 +1,153 @@
+"""run_buy_and_hold_paper_session: the deterministic, non-polling
+"runner" instruction section 15/16 asks for -- ties the existing Buy &
+Hold reference baseline (ADR-0028) to `PaperTradingSession` over an
+explicit, caller-supplied decision schedule.
+
+**Never reads wall-clock time.** Every timestamp (`buy_time`, and any
+future extension's decision schedule) is supplied explicitly by the
+caller, exactly like every other point-in-time-safe entry point in this
+project (`data_infra.provider.IngestionRunner.run`,
+`backtest.total_return.build_total_return_benchmark_points`). No
+`while True`/daemon loop is built here -- this function runs one
+Buy & Hold allocation and returns; a future phase can wrap it in a real
+scheduler if that is ever decided.
+
+Deliberately reuses the existing Decision->Risk->Broker lineage
+boundary rather than inventing a new one: this module constructs a
+`risk.models.RiskCheckedPosition` directly (the same "the reference
+strategy's already-risk-checked decision" pattern
+`tests/integration/test_paper_trading_real_market_data.py` and
+`tests/broker/broker_helpers.py` already establish for test/reference
+scenarios), then calls the real, unmodified
+`broker.validation.build_validated_order` and
+`broker.paper.session.PaperTradingSession.submit` -- no new order
+construction path, no bypass of existing validation.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional, Sequence
+
+from broker.models import BrokerOrderResponse
+from broker.paper.market_data import PaperMarketDataSource
+from broker.paper.models import PaperFillRecord
+from broker.paper.session import PaperTradingSession
+from broker.validation import build_validated_order
+
+from risk.enums import RiskCheckStatus
+from risk.models import RiskCheckedPosition
+
+from trade_journal.enums import TradeProvenance
+
+
+class _IdAllocator:
+    def __init__(self, prefix: str) -> None:
+        self._prefix = prefix
+        self._next_id = 1
+
+    def allocate(self) -> str:
+        value = f"{self._prefix}-{self._next_id:06d}"
+        self._next_id += 1
+        return value
+
+
+@dataclass(frozen=True)
+class BuyAndHoldOrderOutcome:
+    security_id: str
+    quantity: float
+    response: BrokerOrderResponse
+    fills: tuple[PaperFillRecord, ...]
+
+
+@dataclass(frozen=True)
+class BuyAndHoldRunResult:
+    buy_time: datetime
+    orders: tuple[BuyAndHoldOrderOutcome, ...]
+    skipped_symbols: tuple[str, ...] = field(default_factory=tuple)
+    skip_reasons: dict = field(default_factory=dict)
+
+
+_COST_SAFETY_MARGIN = 0.02  # mirrors risk.config.PositionSizingConfig.cost_safety_margin's own reasoning
+
+
+def run_buy_and_hold_paper_session(
+    security_ids: Sequence[str],
+    market_data: PaperMarketDataSource,
+    session: PaperTradingSession,
+    *,
+    buy_time: datetime,
+    configuration_version: str,
+    lot_size: float = 1.0,
+) -> BuyAndHoldRunResult:
+    """Allocates the session's current cash equally across
+    `security_ids` at `buy_time`, one MARKET BUY order per symbol,
+    floored to a whole `lot_size` multiple of shares -- then never
+    trades again (true buy & hold, matching ADR-0028's low-turnover
+    baseline selection). A symbol with no reference bar available at
+    `buy_time` (`market_data.get_reference_bar` returns `None`) is
+    skipped, never a fabricated fill at a guessed price -- recorded in
+    `skipped_symbols`/`skip_reasons`, not silently dropped."""
+    risk_ids = _IdAllocator("RISK-BAH")
+    sizing_ids = _IdAllocator("SIZE-BAH")
+    decision_ids = _IdAllocator("DEC-BAH")
+
+    account = session.adapter.get_account(as_of=buy_time)
+    if not account.available or account.cash is None:
+        return BuyAndHoldRunResult(
+            buy_time=buy_time, orders=(),
+            skipped_symbols=tuple(security_ids),
+            skip_reasons={sid: "account_unavailable" for sid in security_ids},
+        )
+
+    orders: list[BuyAndHoldOrderOutcome] = []
+    skipped: list[str] = []
+    skip_reasons: dict = {}
+    remaining = len(security_ids)
+
+    for security_id in security_ids:
+        # Re-fetched fresh before each symbol (never a single up-front
+        # split): commission/spread on each fill consumes slightly more
+        # cash than quantity * price, so a fixed initial_cash / N share
+        # computed once would overspend by the time later symbols are
+        # reached. Dividing the *actual remaining* cash by the *actual
+        # remaining* symbol count at each step keeps the allocation
+        # honestly equal-weight net of real transaction costs, never
+        # producing a fabricated "should have been enough" rejection.
+        current_cash = session.adapter.get_account(as_of=buy_time).cash or 0.0
+        cash_for_this_symbol = current_cash / remaining
+        remaining -= 1
+
+        bar = market_data.get_reference_bar(security_id, as_of=buy_time)
+        if bar is None or bar.close <= 0:
+            skipped.append(security_id)
+            skip_reasons[security_id] = "no_reference_price_available"
+            continue
+
+        usable_cash = cash_for_this_symbol * (1.0 - _COST_SAFETY_MARGIN)  # leaves room for commission/spread
+        quantity = math.floor((usable_cash / bar.close) / lot_size) * lot_size
+        if quantity <= 0:
+            skipped.append(security_id)
+            skip_reasons[security_id] = "insufficient_cash_for_one_lot"
+            continue
+
+        risk_checked = RiskCheckedPosition(
+            risk_id=risk_ids.allocate(), security_id=security_id, as_of_time=buy_time,
+            status=RiskCheckStatus.PASS, reason="buy_and_hold_initial_allocation", breached_limits=(),
+            final_target_weight=None, final_target_quantity=quantity,
+            sizing_id=sizing_ids.allocate(), decision_id=decision_ids.allocate(), prediction_id=None,
+            risk_state=None, risk_version="buy_and_hold_reference_runner_v1",
+            feature_version="buy_and_hold_reference_runner_v1", provenance=TradeProvenance.PAPER_TRADING,
+        )
+        validation = build_validated_order(risk_checked, current_quantity=0.0, configuration_version=configuration_version)
+        if validation.validated_order is None:
+            skipped.append(security_id)
+            skip_reasons[security_id] = f"order_validation_rejected:{validation.reason}"
+            continue
+
+        response, fills = session.submit(validation.validated_order, requested_at=buy_time)
+        orders.append(BuyAndHoldOrderOutcome(security_id=security_id, quantity=quantity, response=response, fills=fills))
+
+    return BuyAndHoldRunResult(buy_time=buy_time, orders=tuple(orders), skipped_symbols=tuple(skipped), skip_reasons=skip_reasons)
