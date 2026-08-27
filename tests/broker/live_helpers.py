@@ -51,7 +51,10 @@ def make_broker_capabilities(
 def make_passing_gate_context(**overrides) -> SafetyGateContext:
     defaults = dict(
         as_of_time=utc(2024, 1, 2),
-        config=make_live_config(live_trading_enabled=True),
+        # Phase 22: evaluate_safety_gate now fails when max_daily_loss/
+        # max_order_frequency_per_hour are None (Option B, LIVE-RISK-POLICY.md)
+        # -- a "passing" gate context fixture must supply both.
+        config=make_live_config(live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=6),
         approval=make_approval(),
         required_capabilities=(BrokerCapability.MARKET_ORDER,),
         broker_capabilities=make_broker_capabilities(),

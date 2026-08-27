@@ -113,7 +113,11 @@ class TestDimension5_Reconciliation:
 
     def test_reconciliation_required_blocks_every_further_submission(self) -> None:
         adapter = MockBrokerAdapter(BrokerConfig(), failure_mode="unavailable")
-        session = LiveTradingSession(make_live_config(live_trading_enabled=True), adapter)
+        # Phase 22: evaluate_safety_gate now requires max_daily_loss/
+        # max_order_frequency_per_hour to be set (Option B, LIVE-RISK-POLICY.md).
+        session = LiveTradingSession(
+            make_live_config(live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=6), adapter,
+        )
         risk = make_risk_checked_position(risk_id="RISK-DIM5", final_target_quantity=10.0, provenance=TradeProvenance.LIVE_TRADING)
         order = build_validated_order(risk, current_quantity=0.0, configuration_version="cfg-v1").validated_order
         gate_context = SafetyGateContext(

@@ -63,8 +63,10 @@ class TestRiskToLiveTradingLineageEndToEnd:
         assert order.provenance == TradeProvenance.LIVE_TRADING
 
         adapter = MockBrokerAdapter(BrokerConfig(broker_id="toss"))
+        # Phase 22: evaluate_safety_gate now requires max_daily_loss/
+        # max_order_frequency_per_hour to be set (Option B, LIVE-RISK-POLICY.md).
         session = LiveTradingSession(
-            make_live_config(live_trading_enabled=True), adapter,
+            make_live_config(live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=6), adapter,
             kill_switch_repository=kill_switch_repo, reconciliation_repository=reconciliation_repo,
         )
 

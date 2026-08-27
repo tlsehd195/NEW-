@@ -86,6 +86,21 @@ def evaluate_safety_gate(context: SafetyGateContext) -> SafetyGateResult:
             if not context.broker_capabilities.is_enabled(capability):
                 failed.append(f"broker_capability_not_verified_{capability.value.lower()}")
 
+    # Phase 22 addition: Option B of the long-open "None means not
+    # enforced vs. structurally blocks Live" DECISION REQUIRED
+    # (docs/operations/LIVE-RISK-POLICY.md) is now adopted for the two
+    # risk limits the gate already has direct visibility into via
+    # LiveTradingConfig -- an unset daily-loss or order-frequency limit
+    # is itself a fail-closed condition for Live, not merely "no
+    # automatic circuit breaker." This does not extend to
+    # RiskConfig.max_turnover, which the gate has no visibility into at
+    # all (a separate config object owned by the pre-trade Risk Engine,
+    # Phase 8) -- see LIVE-RISK-POLICY.md for why that one remains open.
+    if context.config.max_daily_loss is None:
+        failed.append("risk_limit_not_configured_max_daily_loss")
+    if context.config.max_order_frequency_per_hour is None:
+        failed.append("risk_limit_not_configured_max_order_frequency_per_hour")
+
     if context.risk_health != ComponentHealthStatus.HEALTHY:
         failed.append("risk_engine_not_healthy")
     if context.order_validation_status != OrderValidationStatus.ACCEPTED:

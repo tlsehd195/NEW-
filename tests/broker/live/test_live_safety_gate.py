@@ -104,6 +104,53 @@ class TestEachConditionIndependentlyBlocks:
         assert "configuration_integrity_invalid" in result.failed_conditions
 
 
+class TestRiskLimitNoneSemanticsOptionB:
+    """Phase 22: LIVE-RISK-POLICY.md's long-open "None means not
+    enforced vs. structurally blocks Live" DECISION REQUIRED is now
+    resolved as Option B for the two risk limits the gate has direct
+    visibility into. An unset max_daily_loss/max_order_frequency_per_hour
+    is itself a fail-closed condition -- not merely "no automatic
+    circuit breaker," as it was through Phase 21."""
+
+    def test_max_daily_loss_none_blocks(self) -> None:
+        ctx = make_passing_gate_context(config=make_live_config(live_trading_enabled=True, max_daily_loss=None, max_order_frequency_per_hour=6))
+        result = evaluate_safety_gate(ctx)
+        assert result.passed is False
+        assert "risk_limit_not_configured_max_daily_loss" in result.failed_conditions
+
+    def test_max_order_frequency_per_hour_none_blocks(self) -> None:
+        ctx = make_passing_gate_context(config=make_live_config(live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=None))
+        result = evaluate_safety_gate(ctx)
+        assert result.passed is False
+        assert "risk_limit_not_configured_max_order_frequency_per_hour" in result.failed_conditions
+
+    def test_both_none_reports_both_reasons(self) -> None:
+        ctx = make_passing_gate_context(config=make_live_config(live_trading_enabled=True, max_daily_loss=None, max_order_frequency_per_hour=None))
+        result = evaluate_safety_gate(ctx)
+        assert result.passed is False
+        assert "risk_limit_not_configured_max_daily_loss" in result.failed_conditions
+        assert "risk_limit_not_configured_max_order_frequency_per_hour" in result.failed_conditions
+
+    def test_both_set_does_not_block_on_this_condition(self) -> None:
+        ctx = make_passing_gate_context(config=make_live_config(live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=6))
+        result = evaluate_safety_gate(ctx)
+        assert "risk_limit_not_configured_max_daily_loss" not in result.failed_conditions
+        assert "risk_limit_not_configured_max_order_frequency_per_hour" not in result.failed_conditions
+        assert result.passed is True
+
+    def test_default_live_trading_config_is_none_by_default_and_therefore_blocks(self) -> None:
+        """LiveTradingConfig's own class-level default for both fields
+        stays None (Phase 22 does not invent a capital-dependent
+        absolute daily-loss figure -- see LIVE-RISK-POLICY.md), so a
+        caller that forgets to configure these explicitly is correctly
+        blocked, not silently permitted."""
+        ctx = make_passing_gate_context(config=make_live_config(live_trading_enabled=True))
+        result = evaluate_safety_gate(ctx)
+        assert result.passed is False
+        assert "risk_limit_not_configured_max_daily_loss" in result.failed_conditions
+        assert "risk_limit_not_configured_max_order_frequency_per_hour" in result.failed_conditions
+
+
 class TestMultipleFailuresAllReported:
     def test_all_conditions_failing_reports_all_reasons(self) -> None:
         ctx = make_passing_gate_context(

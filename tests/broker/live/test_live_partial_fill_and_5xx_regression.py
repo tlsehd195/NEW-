@@ -117,7 +117,11 @@ class TestLiveToss5xxRegressionEndToEnd:
 
         transport = self._FiveHundredThenTokenTransport()
         adapter = TossBrokerAdapter(self._live_config(), transport)
-        session = LiveTradingSession(make_live_config(live_trading_enabled=True), adapter)
+        # Phase 22: evaluate_safety_gate now requires max_daily_loss/
+        # max_order_frequency_per_hour to be set (Option B, LIVE-RISK-POLICY.md).
+        session = LiveTradingSession(
+            make_live_config(live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=6), adapter,
+        )
 
         outcome1 = session.submit(self._order("RISK-5XX-1"), requested_at=utc(2024, 1, 2), gate_context=self._gate_context(session))
         assert outcome1.submitted is False

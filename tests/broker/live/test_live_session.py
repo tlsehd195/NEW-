@@ -35,7 +35,11 @@ def _order(client_order_id="CID-1", security_id="AAA", side=OrderSide.BUY, quant
 
 def _session(**adapter_kwargs) -> LiveTradingSession:
     adapter = MockBrokerAdapter(BrokerConfig(), **adapter_kwargs)
-    return LiveTradingSession(make_live_config(live_trading_enabled=True), adapter)
+    # Phase 22: max_daily_loss/max_order_frequency_per_hour must be set
+    # for evaluate_safety_gate to pass at all (Option B, LIVE-RISK-POLICY.md).
+    return LiveTradingSession(
+        make_live_config(live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=6), adapter,
+    )
 
 
 def _gate_ctx(session, **overrides):
