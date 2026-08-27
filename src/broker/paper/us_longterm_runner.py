@@ -35,6 +35,8 @@ from broker.models import BrokerOrderResponse
 from broker.paper.market_data import PaperMarketDataSource
 from broker.paper.models import PaperFillRecord
 from broker.paper.session import PaperTradingSession
+from broker.pipeline import submit_validated_order
+from broker.repository import BrokerRequestRepository, BrokerResponseRepository
 from broker.validation import build_validated_order
 
 from risk.enums import RiskCheckStatus
@@ -81,6 +83,8 @@ def run_buy_and_hold_paper_session(
     buy_time: datetime,
     configuration_version: str,
     lot_size: float = 1.0,
+    request_repository: Optional[BrokerRequestRepository] = None,
+    response_repository: Optional[BrokerResponseRepository] = None,
 ) -> BuyAndHoldRunResult:
     """Allocates the session's current cash equally across
     `security_ids` at `buy_time`, one MARKET BUY order per symbol,
@@ -89,7 +93,16 @@ def run_buy_and_hold_paper_session(
     baseline selection). A symbol with no reference bar available at
     `buy_time` (`market_data.get_reference_bar` returns `None`) is
     skipped, never a fabricated fill at a guessed price -- recorded in
-    `skipped_symbols`/`skip_reasons`, not silently dropped."""
+    `skipped_symbols`/`skip_reasons`, not silently dropped.
+
+    `request_repository`/`response_repository` are optional (default
+    `None`, preserving the original `session.submit()`-only behavior
+    when omitted) -- when supplied, each order is submitted through
+    `broker.pipeline.submit_validated_order` instead, so the standard
+    `broker_requests`/`broker_responses` audit trail
+    `monitoring.collectors.collect_broker` reads is populated exactly
+    once per real order, with no separate/duplicate submission needed
+    to also produce it."""
     risk_ids = _IdAllocator("RISK-BAH")
     sizing_ids = _IdAllocator("SIZE-BAH")
     decision_ids = _IdAllocator("DEC-BAH")
@@ -147,7 +160,15 @@ def run_buy_and_hold_paper_session(
             skip_reasons[security_id] = f"order_validation_rejected:{validation.reason}"
             continue
 
-        response, fills = session.submit(validation.validated_order, requested_at=buy_time)
+        if request_repository is not None or response_repository is not None:
+            response = submit_validated_order(
+                session.adapter, validation.validated_order, execution_mode="PAPER", requested_at=buy_time,
+                configuration_version=configuration_version,
+                request_repository=request_repository, response_repository=response_repository,
+            )
+            fills = session.capture(validation.validated_order.client_order_id, as_of=buy_time)
+        else:
+            response, fills = session.submit(validation.validated_order, requested_at=buy_time)
         orders.append(BuyAndHoldOrderOutcome(security_id=security_id, quantity=quantity, response=response, fills=fills))
 
     return BuyAndHoldRunResult(buy_time=buy_time, orders=tuple(orders), skipped_symbols=tuple(skipped), skip_reasons=skip_reasons)
