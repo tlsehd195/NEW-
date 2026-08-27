@@ -60,6 +60,7 @@ _CHECK_NAMES = (
     "missing_values",
     "invalid_timestamps",
     "duplicate_records",
+    "timestamp_monotonicity",
     "ohlc_consistency",
     "negative_or_zero_price",
     "negative_volume",
@@ -148,6 +149,7 @@ class DataQualityFramework:
         """
         issues: list[DataQualityIssue] = []
         issues.extend(self._check_duplicates(bars))
+        issues.extend(self._check_timestamp_monotonicity(bars))
         issues.extend(self._check_ohlc_consistency(bars))
         issues.extend(self._check_negative_or_zero_price(bars))
         issues.extend(self._check_negative_volume(bars))
@@ -204,6 +206,38 @@ class DataQualityFramework:
                         timestamp=timestamp,
                     )
                 )
+        return issues
+
+    @staticmethod
+    def _check_timestamp_monotonicity(bars: Sequence[PriceBar]) -> list[DataQualityIssue]:
+        """Flags a bar whose timestamp is earlier than the immediately
+        preceding bar seen for the same security_id, in the exact order
+        the caller supplied ``bars`` (before any of this framework's
+        other checks internally re-sort for their own analysis). An
+        exact-timestamp repeat is intentionally NOT flagged here (that
+        is `_check_duplicates`'s ERROR-severity job already) -- this
+        check exists specifically to catch a genuine chronological
+        reversal in a provider's raw response, which every other check
+        in this framework silently tolerates by re-sorting before it
+        looks at anything (Phase 22 instruction section 10)."""
+        issues: list[DataQualityIssue] = []
+        last_by_security: dict[str, datetime] = {}
+        for bar in bars:
+            last = last_by_security.get(bar.security_id)
+            if last is not None and bar.timestamp < last:
+                issues.append(
+                    DataQualityIssue(
+                        check="timestamp_monotonicity",
+                        severity=DataQualitySeverity.WARNING,
+                        message=f"timestamp {bar.timestamp.isoformat()} is out of chronological "
+                        f"order for {bar.security_id} (immediately preceded in the input sequence "
+                        f"by a later timestamp {last.isoformat()})",
+                        security_id=bar.security_id,
+                        timestamp=bar.timestamp,
+                    )
+                )
+            if last is None or bar.timestamp > last:
+                last_by_security[bar.security_id] = bar.timestamp
         return issues
 
     @staticmethod
