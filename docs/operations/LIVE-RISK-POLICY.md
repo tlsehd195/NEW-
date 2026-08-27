@@ -395,3 +395,29 @@ independently and unconditionally blocks Live activation
 whether Live can activate right now — it changes what *would* additionally
 block activation once the Toss gap is someday resolved, tightening the
 gate ahead of that eventuality rather than after it.
+
+## Phase 24 confirmation — no change to numbers or architecture
+
+Instruction section 21 asked this phase to keep Phase 22's proposed
+values as-is and confirm their status rather than pick new numbers.
+Confirmed, unchanged:
+
+- `max_daily_loss=0.02`, `max_turnover=2.0`,
+  `max_order_frequency_per_hour=6` remain **PROPOSED / AWAITING USER
+  RATIFICATION** — not applied to any real account, not this project's
+  final investment policy, and no different value was substituted this
+  phase.
+- Option B None-semantics (`max_daily_loss`/
+  `max_order_frequency_per_hour` → `SAFETY GATE FAILURE` when unset)
+  remains implemented exactly as the Phase 22 section above describes.
+  `RiskConfig.max_turnover`'s None-semantics gate-visibility gap
+  (`evaluate_safety_gate` reads only `LiveTradingConfig`, never
+  `RiskConfig`) was re-checked this phase against the current code
+  (`src/broker/live/safety_gate.py`) and found unchanged and still
+  consistent with the description above — no new plumbing was added,
+  per the instruction's explicit "불필요하게 risk architecture를
+  재설계하지 않는다."
+- This phase's own work (`src/data_infra/universe.py`,
+  `strategy_research`) never reads or writes any field in this
+  document's scope — Universe/strategy-research expansion has no
+  interaction with Live risk policy at all.

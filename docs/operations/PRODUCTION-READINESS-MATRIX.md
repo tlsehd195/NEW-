@@ -4,7 +4,8 @@ Phase 17 Production Safety Review, updated in Phase 18 (Paper
 Trading Performance Report), Phase 20 (Real Market Data Foundation
 & Documentation Sync), Phase 21 (Toss Broker Adapter Completion),
 Phase 22 (Real-Data Paper Trading / US Long-Term System Hardening),
-and Phase 23 (Strategy Research & Real Market Data Validation).
+Phase 23 (Strategy Research & Real Market Data Validation), and
+Phase 24 (Real Market Data + Expandable US Equity Universe).
 One row per area the review instruction names. "Status" is one of
 PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
 this alone prevent Live activation today" independent of every other
@@ -115,3 +116,29 @@ this phase produced no real backtest performance evidence, only a
 pipeline proven correct against a clearly-labeled synthetic fixture.
 **No change to any Toss/Live row; Live activation still Blocked for the
 same, unchanged reason.**
+
+**Phase 24 update**: re-verified real market-data provider access a
+third time, via two independent paths (`curl` through the egress proxy
+and `WebFetch`, a separate fetch mechanism) -- both still
+`EGRESS_BLOCKED` for every Tiingo/Stooq domain tried. **REAL DATA
+INGESTION: BLOCKED BY EXECUTION ENVIRONMENT**, unchanged. Built an
+expandable Universe architecture (`src/data_infra/universe.py`,
+`ADR-0030`): named, versioned `UniverseDefinition`s (`PILOT_UNIVERSE`
+v1 = the existing 15 tradeable symbols, `RESEARCH_UNIVERSE` stage1 =
+currently identical, a documented expansion point) with
+`SymbolMetadata` that defaults every field beyond the bare symbol to
+unconfirmed rather than guessed, and converters into Phase 1's existing
+`UniverseMembership`/`SecurityMaster` persistence (previously never
+populated by any code in `src/`). `scripts/ingest_real_market_data.py`
+now selects a universe via `--universe` instead of a script-local
+hardcoded list, and also persists `SecurityMaster`/`UniverseMembership`
+records and a content checksum (previously bars only, no checksum).
+`strategy_research` required zero code changes -- its `security_ids`
+parameter already accepted any symbol sequence; a new test statically
+confirms no `PILOT_UNIVERSE` symbol is hardcoded anywhere in
+`src/strategy_research/`. `RESEARCH_UNIVERSE` was NOT expanded beyond
+16 symbols this phase -- Tiingo/Stooq free-tier request/symbol/rate
+limits remain UNKNOWN (unverifiable from this environment), and this
+project's own discipline forbids assuming a limit. **No change to any
+Toss/Live row; Live activation still Blocked for the same, unchanged
+reason.**
