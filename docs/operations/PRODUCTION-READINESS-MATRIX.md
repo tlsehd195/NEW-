@@ -2,7 +2,9 @@
 
 Phase 17 Production Safety Review, updated in Phase 18 (Paper
 Trading Performance Report), Phase 20 (Real Market Data Foundation
-& Documentation Sync), and Phase 21 (Toss Broker Adapter Completion).
+& Documentation Sync), Phase 21 (Toss Broker Adapter Completion),
+Phase 22 (Real-Data Paper Trading / US Long-Term System Hardening),
+and Phase 23 (Strategy Research & Real Market Data Validation).
 One row per area the review instruction names. "Status" is one of
 PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
 this alone prevent Live activation today" independent of every other
@@ -49,7 +51,7 @@ never operationally verified" (Phase 21, current).
 | Transaction Cost | Modeled and attributed | Implemented in Backtest (`backtest.metrics`) and Paper (`Fill.commission`/`spread_cost`), per-fill and now aggregated into a Paper-level report (`total_transaction_cost`, summed from `TradeRecord.transaction_cost`) | `src/broker/paper/journal.py`; `src/broker/paper/performance.py`; `tests/integration/test_paper_performance_scenarios.py::TestScenarioG_TransactionCostAndSlippageFlowIntoTheReport` | **PASS** | No | No | None |
 | Slippage | Modeled and attributed | Implemented per-fill in both Backtest and Paper (`Fill.slippage_cost`); **not computed at all for Live** (`broker.live.journal.build_fill_from_broker_response` sets `slippage_cost=0.0`, documented as an honest limitation, no independent quote to compare against) | `src/broker/live/journal.py`; `docs/decisions/ADR-0022` decision 9 | **PASS** (Backtest/Paper); **KNOWN LIMITATION** (Live) | No | No | Unchanged from Phase 16 -- would require an independently-sourced quote feed |
 | OOS (Out-of-Sample) | Validation split distinct from training | `learning.config.SplitConfig` (train/validation/test), chronological | `src/learning/config.py`; `src/learning/dataset.py` | **PASS** (split exists) | No | No | None -- statistical robustness (PBO/overfitting) remains explicitly deferred, see next row |
-| Walk Forward | Rolling-window re-validation / PBO / Deflated Sharpe | **Explicitly deferred since Phase 9**; Phase 18 researched all three techniques with primary-source citations; Phase 20 added concrete trigger conditions for ending DEFER (a skill-claiming trainer is introduced; multiple candidates compared for one promotion; a human is about to approve a candidate for Live capital) and confirmed none has fired yet, still not implemented | `docs/research/walk-forward-pbo-deflated-sharpe.md` section 9; `docs/decisions/ADR-0017-model-evolution.md` decision 3 | **RESEARCHED, TRIGGER CONDITIONS DEFINED, NOT IMPLEMENTED** | No (not independently blocking Live, since it gates model *quality* confidence, not a hard safety boundary) | **Yes** -- whether Live activation should ever require this before deploying a non-trivial model | Re-evaluate the instant any Phase 20 §9.1 trigger condition becomes true; until then, no action needed |
+| Walk Forward | Rolling-window re-validation / PBO / Deflated Sharpe | **Explicitly deferred since Phase 9**; Phase 18 researched all three techniques with primary-source citations; Phase 20 added concrete trigger conditions for ending DEFER (a skill-claiming trainer is introduced; multiple candidates compared for one promotion; a human is about to approve a candidate for Live capital) and confirmed none has fired yet. Phase 23 added a strategy-level (not model-evolution-level) walk-forward window *generation mechanism* (`strategy_research.splits.generate_walk_forward_windows`, tested against synthetic dates only) and confirmed no real walk-forward *evaluation* was possible this session (no real historical data obtained) | `docs/research/walk-forward-pbo-deflated-sharpe.md` section 9; `docs/decisions/ADR-0017-model-evolution.md` decision 3; `docs/decisions/ADR-0029-strategy-research-framework.md` decision 5 | **RESEARCHED, MECHANISM IMPLEMENTED, NO REAL EVALUATION RUN** | No (not independently blocking Live, since it gates model *quality* confidence, not a hard safety boundary) | **Yes** -- whether Live activation should ever require this before deploying a non-trivial model | Re-evaluate the instant any Phase 20 §9.1 trigger condition becomes true, or the instant real market data becomes obtainable (whichever the strategy-research track needs first); until then, no action needed |
 
 ## Overall
 
@@ -84,3 +86,32 @@ any automated test from calling the real Toss API. Live activation
 remains exactly as blocked as it was before this phase, for the same
 underlying reason (Toss capability status), now for a more precise
 reason than either Phase 13 or Phase 20 could state.
+
+**Phase 22 update**: real-market-data-shaped Paper Trading hardened
+further -- Stooq added as a credential-free fallback provider
+(`ADR-0028`), the 16-symbol US long-term universe fixed, a USD-denominated
+Paper account adopted in place of a fabricated FX rate, a Buy & Hold
+reference strategy wired through the full Provider→Ingestion→DuckDB→
+Paper Trading→Journal→Monitoring→Performance lineage (including a real
+engine restart), and more conservative risk defaults
+(`max_daily_loss=0.02`/`max_turnover=2.0`/`max_order_frequency_per_hour=6`)
+recorded with `evaluate_safety_gate` now fail-closed on two of the three
+being unset. **Toss rows unchanged; Live activation still Blocked for
+the same reason.**
+
+**Phase 23 update**: re-verified (not assumed) that real market-data
+provider access remains network-BLOCKED from this environment --
+`api.tiingo.com`/`stooq.com`/`openapi.tossinvest.com` all still return a
+403 CONNECT rejection at the egress proxy. Added
+`scripts/ingest_real_market_data.py` (never run by this repo's own
+tests) as the concrete path to real ingestion once network access
+exists elsewhere. Added a strategy research framework
+(`src/strategy_research/`, `ADR-0029`) with three new long-term
+candidates (Long-Term Momentum, Trend+Volatility, Risk-Controlled
+Momentum), all reusing the existing `BacktestEngine`/cost models/
+benchmark engine unchanged. Every candidate's real-data classification
+is **INCONCLUSIVE** (`docs/research/STRATEGY-RESEARCH-REPORT.md`) --
+this phase produced no real backtest performance evidence, only a
+pipeline proven correct against a clearly-labeled synthetic fixture.
+**No change to any Toss/Live row; Live activation still Blocked for the
+same, unchanged reason.**

@@ -65,9 +65,43 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20/21은 Master Plan의 정식 Phase가 아니라, Live 전환
-전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커 기반을
-놓는 사후 검증/기반 작업**이다.
+**Phase 17/18/19/20/21/22/23은 Master Plan의 정식 Phase가 아니라, Live
+전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
+기반을 놓는 사후 검증/기반 작업**이다.
+
+**Phase 23 — Strategy Research & Real Market Data Validation** (Live
+Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이 그대로
+유일한 차단 사유다). 이번 phase는 두 가지를 목표로 했다: (1) 실 시장
+데이터 접근성을 이 세션에서 다시 직접 확인하고, (2) 미국 주식 장기 투자에
+적합한 전략 후보를 체계적으로 연구하는 파이프라인의 기반을 만드는 것 —
+"수익률 숫자가 좋은 전략을 만드는 것"이 아니다. 실 데이터 접근성을
+egress proxy 상태를 직접 조회해 재확인한 결과 `api.tiingo.com`/
+`stooq.com`/`openapi.tossinvest.com` 전부 여전히 403 CONNECT 거부 —
+Phase 20 이후 변화 없이 **BLOCKED**. 외부의 네트워크 접근 가능한 환경에서
+재실행할 수 있도록 `scripts/ingest_real_market_data.py` CLI를 신규
+작성(이 저장소의 자동화 테스트는 절대 실행하지 않음). `src/strategy_research/`
+신규 패키지에 기존 `backtest.strategy.Strategy`/`BacktestEngine`(Phase 2,
+무수정)을 그대로 재사용하는 장기 전략 후보 3종을 구현: Long-Term
+Momentum(cross-sectional 모멘텀, 월 단위 rebalance), Trend+Volatility
+(장기 이동평균 추세 필터 + 변동성 필터), Risk-Controlled Momentum(모멘텀
+랭킹 + inverse-volatility 사이징 + 전략 내부 전용 max position weight —
+`risk.config.RiskConfig`와 무관). Train/Validation/Test 분할과
+Walk-Forward rolling window 생성기를 순수 날짜 함수로 구현(실 데이터
+없이도 전부 테스트 가능). 실 데이터가 없으므로 이번 phase가 산출한 모든
+전략 성과 지표는 명확히 라벨링된 SYNTHETIC fixture 기반 pipeline-검증
+결과일 뿐이며, 4개 전략(Buy & Hold 포함) 전부 **INCONCLUSIVE**로 분류
+(`docs/research/STRATEGY-RESEARCH-REPORT.md`) — "검증된 알파"라는 표현은
+어디에도 쓰지 않았고, `CandidateClassification`에는 애초에 `PROVEN_ALPHA`
+값 자체가 존재하지 않는다. Walk-Forward 실제 평가와 PBO/Deflated Sharpe
+채택은 여전히 DEFER(실 데이터 부재가 유일한 사유). 신규 문서: ADR-0029.
+`PRODUCTION-READINESS-MATRIX.md`/`MARKET-DATA-PROVIDER.md` Phase 23
+갱신. 신규 테스트 40개(leakage 없음, 결정론, 비용 통합, 벤치마크 비교,
+train/val/test 경계, walk-forward 윈도우, 분류/multiple-testing 로그,
+DuckDB 기반 backtest + 재시작, 보안 경계) — 기존 1547개 테스트는 전부
+그대로 유지, 약화 없음. Toss/Live 활성화 코드는 전혀 건드리지 않음.
+Git integrity: Phase 22 검증 HEAD를 origin/main에 fast-forward-only로
+병합(merge commit 0개) 후 새 브랜치 생성. 상세는
+`docs/PROJECT_STATUS.md` 참조.
 
 **Phase 22 — Real-Data Paper Trading / US Long-Term System Hardening**
 (Live Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이
@@ -519,10 +553,24 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   수정하지 않음 — Live Trading은 동일한 이유(Toss capability UNKNOWN)로
   여전히 구조적 차단 상태.
 
+- Phase 23 — Strategy Research & Real Market Data Validation: 완료
+  (`src/strategy_research/` 신규 패키지, `scripts/ingest_real_market_data.py`
+  신규, 신규 테스트 40개) — 실 데이터 접근성 재확인(여전히 BLOCKED),
+  장기 전략 후보 3종(Long-Term Momentum/Trend+Volatility/Risk-Controlled
+  Momentum, 전부 기존 `Strategy` Protocol/`BacktestEngine`/비용모델/
+  benchmark engine 재사용), Train/Validation/Test 분할 + Walk-Forward
+  윈도우 생성기(순수 날짜 함수), 분류 체계(REJECTED/INCONCLUSIVE/
+  PROMISING_CANDIDATE — PROVEN_ALPHA 값 자체가 구조적으로 존재하지
+  않음) + multiple-testing ResearchLog. 실 데이터 부재로 4개 전략
+  전부 INCONCLUSIVE 분류(`docs/research/STRATEGY-RESEARCH-REPORT.md`).
+  신규 문서: ADR-0029. `PRODUCTION-READINESS-MATRIX.md`/
+  `MARKET-DATA-PROVIDER.md` 갱신. Toss/Live 활성화 코드는 전혀 수정하지
+  않음 — Live Trading은 동일한 이유로 여전히 구조적 차단 상태.
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
-63 = 1511 + Phase 22 신규 36 = 1547; 정확한 최종 숫자는 이 Phase의
-최종 전체 테스트 실행 결과를 따른다).
+63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587; 정확한
+최종 숫자는 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행
 

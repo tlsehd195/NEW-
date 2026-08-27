@@ -5,23 +5,182 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-27
-**Updated By:** Claude Code (Session 23 — Phase 22 Real-Data Paper Trading / US Long-Term System Hardening)
+**Updated By:** Claude Code (Session 24 — Phase 23 Strategy Research & Real Market Data Validation)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19/20/21/22는 Master Plan의 정식
+마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23은 Master Plan의 정식
 Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된 안전성·검증
 문제를 보완하고 실 시장 데이터/브로커 기반을 놓기 위한 사후 검증/기반
-구축 작업**이며, 이 문서의 "Phase 22" 표기는 세션 추적 편의를 위한
+구축 작업**이며, 이 문서의 "Phase 23" 표기는 세션 추적 편의를 위한
 라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이 아니다. 이 번호들은
 전부 사용자 본인이 직접 "PHASE N — ..." 형식으로 명시적으로 지시한
 작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase 번호를 발명하지
 말라"는 원칙에 대한 예외(사람의 명시적 지시)에 정확히 해당한다. 이후
-Phase 23 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
+Phase 24 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
 않는다.
+
+**Phase 23 — Strategy Research & Real Market Data Validation** (Live
+Trading은 여전히 구조적으로 비활성 — Toss capability가
+`CapabilityStatus.UNKNOWN`인 한 활성화 불가, 이번 Phase도 Toss 코드를
+전혀 건드리지 않았으므로 Phase 21의 사유가 그대로 유지된다). 목표는
+"수익률 숫자가 좋은 전략 하나를 만드는 것"이 아니라 (1) 실 시장 데이터
+접근성을 이 세션에서 직접 재확인하고 (2) 장기 미국 주식 전략을 체계적으로
+연구하는 파이프라인의 기반을 만드는 것 — 두 가지였다.
+
+### Completed (Session 24 — Phase 23)
+
+- **Git/Branch Integrity 선행 확인 + main 통합**: `git rev-parse`/
+  `git merge-base --is-ancestor`로 Phase 22 검증 HEAD
+  (`ef24e0099f1eadd642550e6e89f56ec89a6465a3`)가 실제 ancestor임을
+  직접 확인. `origin/main`이 여전히 Phase 19 HEAD(`1d0003f...`)에
+  머물러 있음을 발견하고, 지침 section 4에 따라
+  `git merge --ff-only`로 Phase 22 HEAD를 `origin/main`에 병합
+  (merge commit 0개, fast-forward만) 후 `git push origin main`으로
+  원격에 반영. 그 새 `origin/main` HEAD에서
+  `claude/phase-23-strategy-research-real-data` 브랜치를 새로 생성.
+  Baseline **1547/1547 테스트 통과** 확인 후 구현 시작.
+- **실 시장 데이터 접근성 재확인(추측 아님, 직접 확인)**: 환경의
+  egress proxy 상태(`curl "$HTTPS_PROXY/__agentproxy/status"`)를 직접
+  조회 — `api.tiingo.com`/`stooq.com`/`openapi.tossinvest.com` 전부
+  403 CONNECT 거부, Phase 20 이후 변화 없이 **BLOCKED**. 이번 세션
+  실 ingestion 수행 **없음**.
+- **`scripts/ingest_real_market_data.py` 신규 작성**: 기존
+  `FallbackDataProvider`/`IngestionRunner`/`DuckDBDataRepository`/
+  `DataQualityFramework`를 그대로 재사용해 실 네트워크 접근이 가능한
+  외부 환경에서 실행할 수 있는 CLI. API 키는 `MARKET_DATA_API_KEY`
+  환경변수로만 읽음(커맨드라인 인자/파일 저장 금지), `end` 날짜는
+  필수 CLI 인자로만 받아 wall-clock에 의존하지 않음. 이 저장소의
+  자동화 테스트는 이 스크립트를 전혀 import/실행하지 않음(정적 소스
+  스캔으로 확인).
+- **`src/strategy_research/` 신규 패키지 — 장기 전략 후보 3종**: 전부
+  기존 `backtest.strategy.Strategy` Protocol(Phase 2, 무수정)을
+  구현해 기존 `BacktestEngine`에 그대로 연결(신규 portfolio
+  accounting/cost model/benchmark engine 없음).
+  - `LongTermMomentumStrategy`: cross-sectional 모멘텀, lookback
+    6/9/12/18개월 · rebalance 월/분기 범위 문서화(grid search 없음),
+    decision-step 카운트가 아니라 실제 경과 캘린더 개월 수로 rebalance.
+  - `TrendVolatilityStrategy`: 장기 이동평균 추세 필터 + 실현
+    변동성 필터, 둘 다 통과하는 종목만 균등비중 보유, 아무것도
+    통과 못하면 빈 포지션(가짜 fallback holding 없음).
+  - `RiskControlledMomentumStrategy`: 모멘텀 랭킹 + inverse-volatility
+    사이징 + 전략 내부 전용 `max_position_weight` 캡 — **`risk.config.
+    RiskConfig`와 완전히 무관**함을 모듈 docstring과 ADR-0029에 명시
+    (지침 section 17의 "연구 전략 내부 allocation과 production risk
+    limit을 혼동하지 않는다" 요구사항).
+- **Train/Validation/Test 분할 + Walk-Forward 윈도우 생성기**
+  (`strategy_research/splits.py`): 순수 날짜 함수, 실 데이터 없이도
+  전부 테스트 가능. `build_chronological_split`(시간순 분할, random
+  shuffle 없음), `generate_walk_forward_windows`(rolling window,
+  데이터 부족 시 빈 리스트를 정직하게 반환 — 억지 구현 없음).
+- **분류 체계 + multiple-testing 로그**
+  (`strategy_research/classification.py`, `research_log.py`):
+  `CandidateClassification`은 `REJECTED`/`INCONCLUSIVE`/
+  `PROMISING_CANDIDATE` 3개 값만 존재 — `PROVEN_ALPHA`/`VERIFIED_ALPHA`
+  값 자체가 구조적으로 없음. `classify_candidate`는
+  `has_real_evaluation_data=False`이면 무조건 `INCONCLUSIVE`를
+  반환(이번 phase의 모든 평가가 이 경우). `ResearchLog`는 거부된
+  후보를 포함해 평가된 모든 후보를 보존(승자만 남기고 삭제하지 않음).
+- **연구 러너**(`strategy_research/runner.py`): 동일 전략을 gross
+  (zero-cost)와 net(Phase 2의 실제 기본 `TransactionCostModel`/
+  `SlippageModel`, 무수정)로 각각 1회씩 실행해 비교, 설정된 SPY
+  벤치마크와 비교. 신규 비용/벤치마크 계산 로직 없음.
+- **결정론적 다년치 SYNTHETIC fixture**
+  (`tests/strategy_research/research_helpers.py`): closed-form 수식
+  기반(랜덤 없음), ~3년(783 거래일) 5종목 시계열 — 어디서나 SYNTHETIC/
+  TEST FIXTURE로 명시, 실 데이터인 것처럼 표현한 곳 없음.
+- **신규 테스트 40개**: no-future-leakage(미래 데이터 유무와 무관하게
+  과거 시점 신호 동일), 전략별 결정론/가설 sanity(추세 종목 선택,
+  추세+변동성 필터 정확성, inverse-vol 가중치 순서, 포지션 캡 준수),
+  train/val/test 경계 강제, walk-forward 윈도우 정확성(빈 리스트 케이스
+  포함), 분류/research log 동작, gross vs net 비용 통합, 벤치마크 비교,
+  재현성, DuckDB 기반(InMemory 아님) backtest 실행 + 엔진 재시작,
+  정적 소스 스캔 기반 보안 경계(`os.environ`/wall-clock/`random`/
+  네트워크/broker import 전무 확인) — 자체 docstring의 "os.environ"
+  텍스트 언급이 스캐너 오탐을 유발한 것을 발견하고, 스캐너를 약화시키지
+  않고 docstring 표현만 수정해 해결(Phase 21의 동일 패턴 재사용).
+- **신규 문서**: ADR-0029(전략 연구 프레임워크 8개 결정),
+  `STRATEGY-RESEARCH-REPORT.md`(DATA/STRATEGIES/VALIDATION/
+  CLASSIFICATION — 4개 전략 전부 INCONCLUSIVE, "검증된 알파" 표현
+  없음), `PRODUCTION-READINESS-MATRIX.md`/`MARKET-DATA-PROVIDER.md`
+  Phase 23 섹션 추가. README.md/PROJECT_STATUS.md 갱신(이 항목).
+- **Toss/Live 활성화 코드는 전혀 건드리지 않음** — `src/broker/toss/*`,
+  `LiveTradingSession`, Decision/Risk 로직, 모델 승인/배포, 실제
+  broker 주문 제출 전부 이번 Phase 범위 밖.
+- 기존 1547개 테스트 전부 삭제/약화 없이 유지 + 신규 40개 추가.
+  최종 **1587 passed**.
+
+### In Progress (Session 24 — Phase 23)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 24 — Phase 23)
+
+- Live Trading 활성화 — 변경 없음, Toss capability 4종이 여전히
+  `CapabilityStatus.UNKNOWN`인 한 구조적으로 불가.
+- 실 시장 데이터 ingestion — 재확인 결과 여전히 `BLOCKED`(egress
+  차단). `scripts/ingest_real_market_data.py`가 외부 환경에서의
+  재실행 경로.
+- 실 데이터 기반 전략 평가/Walk-Forward 실제 적용/PBO·Deflated Sharpe
+  채택 — 전부 위 ingestion BLOCKED 상태에 종속.
+
+### Decision Required (Session 24 — Phase 23)
+
+1. (Phase 17-22에서 이어짐) `RiskConfig.max_turnover`의 None-semantics
+   — 변경 없음, 여전히 미결.
+2. (Phase 20/22에서 이어짐) risk 기본값 3개 최종 승인 — 변경 없음,
+   여전히 사용자 승인 대기.
+3. (Phase 16에서 이어짐) cancel-on-shutdown 자동화 — 변경 없음.
+4. (Phase 18-22에서 이어짐) Walk-Forward/PBO/Deflated Sharpe 채택 —
+   변경 없음, DEFER 유지(모델-진화 레벨 trigger 미발생 + 이번 phase가
+   확인한 전략-레벨 실 데이터 부재가 이유 추가).
+5. (Phase 21에서 이어짐) 실제 Toss 계좌 credential 확보 + 사람의
+   운영 검증 — 여전히 유일하게 자동화 세션이 완료할 수 없는 항목.
+
+### Known Issues (Session 24 — Phase 23)
+
+- 이번 phase가 산출한 모든 전략 성과 지표는 SYNTHETIC fixture
+  기반이며, 실 시장 데이터에서의 성과를 전혀 나타내지 않는다 —
+  `STRATEGY-RESEARCH-REPORT.md`에 반복적으로 명시했으나, 이 문서를
+  읽지 않고 코드의 테스트 결과만 보는 미래 세션/사람이 착각할 위험은
+  구조적으로 남아있다(문서화 외의 기술적 방지 장치는 없음).
+- 그 외 Phase 22까지의 Known Issues 전부 유지.
+
+### Architecture Changes (Session 24 — Phase 23)
+
+`src/strategy_research/`(신규 패키지, 8개 모듈),
+`scripts/ingest_real_market_data.py`(신규) — 전부 기존 코드에 대한
+순수 추가. 기존 `src/backtest/*`, `src/broker/*`, `src/risk/*` 등
+어떤 기존 모듈도 수정하지 않음(strategy_research는 이들을 import해서
+재사용할 뿐).
+
+### Toss API Status (Session 24 — Phase 23)
+
+변경 없음(Phase 21 상태 그대로): `CapabilityStatus` 전부 `UNKNOWN`
+유지 — 이번 Phase는 Toss 코드를 전혀 건드리지 않았음.
+
+### Last Validation (Session 24 — Phase 23)
+
+`python -m pytest tests/ -q` — baseline **1547 passed** → 최종
+**1587 passed, 0 failed, 0 skipped**. 기존 1547개 테스트 전부
+삭제/약화 없이 유지, 신규 40개 추가.
+
+### Next Task (Session 24 — Phase 23)
+
+1. `scripts/ingest_real_market_data.py`를 실 네트워크 접근이 가능한
+   환경에서 실행 — 실 시세 데이터 확보의 유일한 남은 단계.
+2. 실 데이터 확보 후: `strategy_research.runner.run_gross_and_net`을
+   실제 16종목 유니버스에 대해 실행, `ResearchLog`에 실제
+   `CandidateEvaluation` 기록, `classify_candidate`를
+   `has_real_evaluation_data=True`로 처음 호출.
+3. 실제 Toss 계좌 credential 확보 + 사람의 운영 검증(위 Decision
+   Required #5) — 여전히 유일하게 남은 Toss 관련 항목.
+4. 위 Decision Required 5건에 대한 사람의 판단.
+
+## Previous Subtask (Session 23 — Phase 22)
 
 **Phase 22 — Real-Data Paper Trading / US Long-Term System Hardening**
 (Live Trading은 여전히 구조적으로 비활성 — Toss capability가

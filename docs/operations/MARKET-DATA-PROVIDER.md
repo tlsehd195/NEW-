@@ -133,3 +133,18 @@ against these criteria (not popularity):
 - No `MARKET_DATA_API_KEY` value exists anywhere in this repository or
   environment; none was requested from the user.
 - No real data has been ingested for any of the 16 pilot symbols.
+
+## Phase 23 reachability re-verification
+
+Re-checked this session, directly rather than assumed unchanged: the
+environment's egress proxy status (`curl "$HTTPS_PROXY/__agentproxy/status"`)
+recorded a 403 CONNECT rejection for `api.tiingo.com`, `stooq.com`, and
+`openapi.tossinvest.com` -- all three still **BLOCKED**, identical to
+Phase 20's finding. No real ingestion was performed this phase either.
+
+`scripts/ingest_real_market_data.py` was added this phase specifically
+so this reachability question (and the actual ingestion it blocks) can
+be answered from a different environment without needing another
+Claude Code session to rebuild the wiring -- it reuses
+`FallbackDataProvider`/`IngestionRunner`/`DuckDBDataRepository`/
+`DataQualityFramework` exactly as they exist in `src/`, unmodified.
