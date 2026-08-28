@@ -4,29 +4,196 @@
 > 진행되었는지 파악할 수 있어야 한다. 이 파일은 각 세션 종료 시 반드시
 > 최신 상태로 갱신한다.
 
-**Last Updated:** 2026-08-27
-**Updated By:** Claude Code (Session 25 — Phase 24 Real Market Data + Expandable US Equity Universe)
+**Last Updated:** 2026-08-28
+**Updated By:** Claude Code (Session 26 — Phase 25 Long-Horizon Real-Data Strategy Validation)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24는 Master Plan의
+마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24/25는 Master Plan의
 정식 Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된
 안전성·검증 문제를 보완하고 실 시장 데이터/브로커 기반을 놓기 위한 사후
-검증/기반 구축 작업**이며, 이 문서의 "Phase 24" 표기는 세션 추적 편의를
+검증/기반 구축 작업**이며, 이 문서의 "Phase 25" 표기는 세션 추적 편의를
 위한 라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이 아니다. 이
 번호들은 전부 사용자 본인이 직접 "PHASE N — ..." 형식으로 명시적으로
 지시한 작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase 번호를 발명하지
 말라"는 원칙에 대한 예외(사람의 명시적 지시)에 정확히 해당한다. 이후
-Phase 25 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
+Phase 26 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
 않는다.
 
-**REAL MARKET DATA: BLOCKED BY EXECUTION ENVIRONMENT** — Phase 20부터
-매 phase 재확인해 온 상태가 이번 phase도 변화 없음. 실제 ingestion은
-수행되지 않았고, 이번 phase가 산출한 전략/universe 관련 코드는 전부
-SYNTHETIC fixture 또는 구조 검증용이다.
+**REAL MARKET DATA: 이 sandboxed 세션 자체는 여전히 BLOCKED BY EXECUTION
+ENVIRONMENT** — Phase 20부터 매 phase 재확인해 온 상태가 이번 phase도
+`curl`로 재확인 결과 변화 없음(`api.tiingo.com`/`stooq.com`/
+`openapi.tossinvest.com` 전부 CONNECT 403). **단, Phase 24 이후 사용자가
+자신의 별도 네트워크 접근 가능 환경(Codespaces)에서 실제 Tiingo
+ingestion을 수행해 이 프로젝트 최초의 실 시장 데이터(15종목+SPY,
+2023-01-02~2024-12-31)를 확보한 사실은 변하지 않는다** — 그 데이터는
+사용자의 환경에만 존재하며 이 세션에는 없다(`data/`는 비어 있고
+gitignore 대상). 이번 phase가 이 세션에서 산출한 walk-forward/evidence
+관련 코드 검증은 전부 SYNTHETIC fixture 또는 구조 검증용이다.
+
+**Phase 25 — Long-Horizon Real-Data Strategy Validation** (Live
+Trading은 여전히 구조적으로 비활성 — Toss capability가
+`CapabilityStatus.UNKNOWN`인 한 활성화 불가, 이번 Phase도 Toss 코드를
+전혀 건드리지 않았으므로 Phase 21의 사유가 그대로 유지된다). 목표는
+"그럴듯해 보이는 전략 하나 고르기"가 아니라, 기존 4개 전략 후보의 일반화
+가능성을 chronological Train/Validation/Test + Walk-Forward로 평가하는
+인프라를 구축하는 것 — 최종 결론은 반드시 실 데이터 기준.
+
+### Completed (Session 26 — Phase 25)
+
+- **Git/Branch Integrity 선행 확인**: 로컬 HEAD가
+  `origin/claude/phase-24-real-data-expandable-universe`와 정확히
+  일치함을 확인 후 `origin/main`이 Phase 22 HEAD에 정체되어 있던 것을
+  fast-forward-only로 병합(merge commit 0개, 35 files) → push →
+  `claude/phase-25-long-horizon-validation` 브랜치 신규 생성. Baseline
+  **1608/1608 테스트 통과** 실제 실행으로 확인.
+- **아키텍처 감사**: `src/regime/`(Phase 5)가 이미 BULL/BEAR/NEUTRAL
+  regime 분류를 제공함을 확인해 새 regime 모델을 만들지 않고 재사용하기로
+  결정. `AsOfDataView.get_bars`가 `BacktestConfig.start_date`와 무관하게
+  자체 clock에 바인딩됨을 코드로 직접 확인 — 이 통찰이 `backtest.engine`을
+  전혀 수정하지 않고 walk-forward out-of-sample 평가를 구현할 수 있게 한
+  핵심 설계 근거(ADR-0031 Decision 1).
+- **`src/strategy_research/walk_forward_evaluation.py` 신규**:
+  `run_walk_forward_evaluation` — 기존 `generate_walk_forward_windows`/
+  `run_gross_and_net`(Phase 23, 무수정)을 그대로 재사용해 각 fold의
+  TEST 구간만 `start_date`/`end_date`로 설정, TRAIN 구간은 strategy의
+  자체 lookback이 point-in-time 아키텍처를 통해 자연스럽게 조회.
+  `WalkForwardFoldResult`/`WalkForwardAggregate`(median/stdev/worst/best
+  fold 통계, regime breakdown 포함).
+- **`src/strategy_research/evidence.py` 신규**: `EvidenceLevel`
+  5단계(INSUFFICIENT_EVIDENCE/PRELIMINARY/ROBUSTNESS_PENDING/CANDIDATE/
+  VALIDATED) — `classify_evidence_level`은 구조적으로 `VALIDATED`를
+  절대 반환하지 않음(도달 가능한 최고 등급은 CANDIDATE; 이 함수가 수행할
+  수 없는 사람의 검토를 위한 목표 상태로만 enum에 존재 — `CandidateClassification`에
+  `PROVEN_ALPHA` 값 자체가 없는 기존 패턴과 동일한 구조적 장치).
+  `assess_pbo_dsr_applicability` — Phase 18이 이미 정의한 PBO/Deflated
+  Sharpe 채택 조건(후보 2개 이상, 각 6-fold 이상 실 out-of-sample fold)이
+  충족됐는지만 확인, 실제 계산은 여전히 미구현(사람의 채택 결정 대기).
+  두 모듈 전부 광범위한 시나리오로 smoke-test 및 pytest 검증 완료.
+- **`scripts/run_long_horizon_validation.py` 신규**: `build_chronological_split`
+  (Phase 23, 무수정)로 실 ingestion 윈도우를 TRAIN/VALIDATION/TEST로 분할,
+  walk-forward는 TRAIN+VALIDATION 구간에서만 반복 실행, TEST 구간은
+  `held_out_test`로 단 한 번만 평가(instruction section 24의 "TEST 구간은
+  마지막에 딱 한 번만 사용한다" 구조적으로 준수). 모든 전략은 기존 기본
+  파라미터만 사용(grid search 없음, RULE 0.8 — 결과를 본 뒤 재조정 금지).
+  실 DuckDB 카탈로그가 있는 환경에서만 실행 가능, 자동화 테스트는 이
+  스크립트를 절대 import/실행하지 않음. **PILOT_UNIVERSE의 실제 15개
+  종목 티커에 synthetic deterministic 가격을 채운 대규모 dry-run**으로
+  CLI 자체의 정합성을 이 세션에서 직접 검증(4개 전략 x 7개 윈도우(6
+  fold + held-out) x gross/net 전부 정상 완료, 실 SPY TOTAL_RETURN
+  벤치마크 구성 성공, PBO/DSR 적용가능성 판정도 정상 동작 확인) — 이
+  결과는 **synthetic pipeline 검증용일 뿐 실 성과 주장이 아님**, 실 데이터
+  실행 결과는 사람이 별도 환경에서 직접 실행해야 한다.
+- **신규 테스트 30개** (`tests/strategy_research/test_walk_forward_evaluation.py`
+  14개, `tests/strategy_research/test_evidence.py` 16개) — instruction
+  section 24가 요구한 카테고리 A~R 전부 커버: chronological split
+  재검증(A/B), no-future-leakage(C), walk-forward 순서/미겹침(D/E),
+  결정론적 재현(F), 거래비용 반영(G), gross/net 일관성(H), benchmark
+  정렬(I), as_of_time 무결성(J, 각 fold가 자기 자신의 test_end를
+  사용함을 monkeypatch로 직접 검증), corporate action 가용성(K), research
+  log 완전성(L), 전략 파라미터 불변성(M), random/wall-clock/network 미사용
+  (N/O/P — 기존 `test_security_boundary.py`가 패키지 전체를 재귀 스캔하므로
+  자동 커버), universe-benchmark 배제(Q). 카테고리 R(재시작 영속성)은
+  명시적으로 N/A(이번 phase는 새 `DataRepository` 영속화를 추가하지 않음)
+  — 두 신규 테스트 파일 docstring에 이유 명시.
+- **신규 문서**: ADR-0031(Long-Horizon Walk-Forward Validation, 5개
+  결정), `docs/research/STRATEGY-VALIDATION-REPORT.md`(19개 절 — 데이터
+  소스부터 필요한 추가 검증까지, 실 데이터 실행이 이 세션에서 BLOCKED임을
+  명시하고 정확한 외부 실행 커맨드 제공). README.md/PROJECT_STATUS.md
+  갱신(이 항목) — Phase 24 이후 사용자가 실제로 실 Tiingo 데이터를
+  확보했던 사실(당시 문서 갱신 누락)도 이번에 함께 반영.
+- **Toss/Live 활성화 코드는 전혀 건드리지 않음** — `src/broker/toss/*`,
+  `LiveTradingSession`, Decision/Risk 로직, 모델 승인/배포, `RiskConfig`
+  숫자 전부 이번 Phase 범위 밖.
+- 기존 1608개 테스트 전부 삭제/약화 없이 유지 + 신규 30개 추가.
+  최종 **1638 passed**.
+
+### In Progress (Session 26 — Phase 25)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 26 — Phase 25)
+
+- Live Trading 활성화 — 변경 없음, Toss capability 4종이 여전히
+  `CapabilityStatus.UNKNOWN`인 한 구조적으로 불가.
+- 이 sandboxed 세션 자체의 실 시장 데이터 접근/ingestion — 재확인 결과도
+  여전히 `BLOCKED`(egress 차단, `curl`로 세 도메인 전부 CONNECT 403).
+- `scripts/run_long_horizon_validation.py`를 실 데이터로 이 세션에서
+  직접 실행하는 것 — 위 항목에 종속, 사람이 실 데이터가 이미 있는
+  환경(Codespaces)에서 직접 실행해야 함.
+- PBO/Deflated Sharpe 실제 계산 구현 — 사람의 채택 결정 대기, 이번 phase도
+  DEFER 유지(`assess_pbo_dsr_applicability`는 적용가능성만 확인, 계산
+  자체는 미구현).
+
+### Decision Required (Session 26 — Phase 25)
+
+1. (Phase 17-24에서 이어짐) `RiskConfig.max_turnover`의 None-semantics
+   — 변경 없음, 여전히 미결.
+2. (Phase 20/22에서 이어짐) risk 기본값 3개 최종 승인 — 변경 없음,
+   여전히 PROPOSED / AWAITING USER RATIFICATION.
+3. (Phase 16에서 이어짐) cancel-on-shutdown 자동화 — 변경 없음.
+4. (Phase 18-24에서 이어짐) Walk-Forward/PBO/Deflated Sharpe 실제 계산
+   채택 — 이번 phase가 적용가능성 확인 인프라(`assess_pbo_dsr_applicability`)는
+   추가했으나, 계산 자체를 구현할지는 여전히 사람의 결정 대기.
+5. (Phase 21에서 이어짐) 실제 Toss 계좌 credential 확보 + 사람의
+   운영 검증 — 여전히 유일하게 자동화 세션이 완료할 수 없는 항목.
+6. (Phase 24에서 이어짐) `RESEARCH_UNIVERSE` Stage 2 확장 시점/방법 —
+   변경 없음.
+7. **(신규)** `scripts/run_long_horizon_validation.py`를 실 데이터로
+   실행할 시점/방법 — 사용자가 이미 확보한 2023-2024 실 데이터로 지금
+   바로 실행 가능(`STRATEGY-VALIDATION-REPORT.md` 12절 커맨드), 더 긴
+   실 역사를 먼저 추가로 ingest할지는 사람의 판단.
+
+### Known Issues (Session 26 — Phase 25)
+
+- 실 데이터가 2023-2024 약 2년뿐이라 TRAIN/VALIDATION/TEST 분할과
+  multi-fold walk-forward를 동시에 만족시키기엔 짧음 — 실행 시 실 fold
+  수가 적을 것으로 예상됨(구조적 한계, 이번 phase가 만든 문제가 아님).
+  2023-2024는 단일 방향 강세장(AI/반도체 랭크업)이라 실 evidence가 BULL
+  regime에 편중될 것으로 예상.
+- 그 외 Phase 24까지의 Known Issues 전부 유지.
+
+### Architecture Changes (Session 26 — Phase 25)
+
+`src/strategy_research/walk_forward_evaluation.py`(신규),
+`src/strategy_research/evidence.py`(신규),
+`scripts/run_long_horizon_validation.py`(신규) — 전부 기존 코드에 대한
+순수 추가. `backtest.engine`, `backtest.strategy`, `strategy_research.splits`/
+`runner`/`classification`/`research_log`, `regime.*` 전부 무수정.
+
+### Toss API Status (Session 26 — Phase 25)
+
+변경 없음(Phase 21 상태 그대로): `CapabilityStatus` 전부 `UNKNOWN`
+유지 — 이번 Phase는 Toss 코드를 전혀 건드리지 않았음.
+
+### Last Validation (Session 26 — Phase 25)
+
+`python -m pytest tests/ -q` — baseline **1608 passed** → 최종
+**1638 passed, 0 failed, 0 skipped**. 기존 1608개 테스트 전부
+삭제/약화 없이 유지, 신규 30개 추가.
+
+### Next Task (Session 26 — Phase 25)
+
+1. 사람이 실 데이터가 이미 있는 환경(Codespaces)에서
+   `scripts/run_long_horizon_validation.py --universe PILOT_UNIVERSE
+   --start 2023-01-02 --end 2024-12-31 --db-path ./data/real_market_data`
+   실행 — 처음으로 실 walk-forward/evidence 결과 확보의 유일한 남은 단계.
+2. 실 결과 확보 후: `docs/research/STRATEGY-VALIDATION-REPORT.md`
+   섹션 12-14에 fold-by-fold/aggregate/regime 결과를 addendum으로 기록
+   (Phase 24 Addendum과 동일한 패턴).
+3. 실 fold 수가 2개 후보 이상에서 각 6개 이상 확보되면: PBO/Deflated
+   Sharpe 실제 계산 구현 여부에 대한 사람의 결정(Decision Required #4).
+4. 더 긴 실 역사 ingestion — `scripts/ingest_real_market_data.py`는
+   이미 임의의 `--start`를 지원하므로 새 스크립트/플래그 불필요, 네트워크
+   접근 가능한 환경에서 재실행만 하면 됨.
+5. 실제 Toss 계좌 credential 확보 + 사람의 운영 검증(위 Decision
+   Required #5) — 여전히 유일하게 남은 Toss 관련 항목.
+6. 위 Decision Required 항목들에 대한 사람의 판단.
+
+## Previous Subtask (Session 25 — Phase 24)
 
 **Phase 24 — Real Market Data + Expandable US Equity Universe** (Live
 Trading은 여전히 구조적으로 비활성 — Toss capability가

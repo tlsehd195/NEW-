@@ -65,17 +65,72 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20/21/22/23/24는 Master Plan의 정식 Phase가 아니라, Live
+**Phase 17/18/19/20/21/22/23/24/25는 Master Plan의 정식 Phase가 아니라, Live
 전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
 기반을 놓는 사후 검증/기반 작업**이다.
 
 **REAL MARKET DATA: BLOCKED BY EXECUTION ENVIRONMENT** — 이 저장소가
 실행되는 현재 환경에서 `api.tiingo.com`/`stooq.com`/
 `openapi.tossinvest.com` 전부 egress proxy에서 403 CONNECT 거부. Phase
-20부터 Phase 24까지 매 phase 재확인했으며 변화 없음(이번 phase는 `curl`과
-`WebFetch` 두 개의 독립 경로로 재확인). "실 데이터 검증 완료"라는 표현은
-실제 ingestion이 성공했을 때만 사용하며, 이 문서 어디에도 그런 주장은
-없다.
+20부터 Phase 25까지 매 phase 재확인했으며 변화 없음(Phase 25는 `curl`로
+`api.tiingo.com`/`stooq.com`/`openapi.tossinvest.com` 세 도메인 모두
+CONNECT 403 재확인). "실 데이터 검증 완료"라는 표현은 실제 ingestion이
+성공했을 때만 사용한다.
+
+**단, 이 서술은 이 세션(sandboxed 환경) 자체의 접근성에 대한 것이다.**
+Phase 24 이후 사용자가 자신의 별도 네트워크 접근 가능 환경(GitHub
+Codespaces)에서 실제 Tiingo API 키로 `scripts/ingest_real_market_data.py`를
+직접 실행해 **이 프로젝트 최초의 실 시장 데이터**(15개 거래대상 종목 +
+SPY, 2023-01-02~2024-12-31, 8,032 bars, 107 corporate actions)를
+확보했고, `scripts/run_first_real_strategy_evaluation.py`로 4개 전략
+전부에 대한 실 성과 수치도 얻었다(전부 여전히 **INCONCLUSIVE** — 단일
+윈도우, train/validation/test 분할 없음). 이 과정에서 실 데이터로만
+드러난 버그 2건을 발견·수정: (1) ingestion 스크립트가 corporate action을
+전혀 저장하지 않던 문제, (2) `data_infra.calendar.US_EQUITY`의 불완전한
+2023년 공휴일 목록 때문에 `BuyAndHoldStrategy`가 첫 체크포인트에 데이터가
+없으면 영구적으로 투자를 포기하던 버그. 상세 결과·해석은
+`docs/research/STRATEGY-RESEARCH-REPORT.md`의 "Addendum" 절 참조. 이
+데이터는 사용자의 Codespaces 환경에만 존재하며 이 저장소/이 sandboxed
+세션에는 없다(`data/`는 비어 있고 gitignore 대상).
+
+**Phase 25 — Long-Horizon Real-Data Strategy Validation** (Live Trading
+활성화는 여전히 구조적으로 불가능 — Toss capability gap이 그대로 유일한
+차단 사유다). 목표는 "그럴듯해 보이는 전략 하나 고르기"가 아니라, 기존 4개
+전략 후보의 일반화 가능성을 chronological Train/Validation/Test +
+Walk-Forward로 평가하는 인프라를 구축하는 것 — 최종 결론은 반드시 실
+데이터 기준(synthetic은 pipeline 정합성 테스트에만 사용). 신규
+`src/strategy_research/walk_forward_evaluation.py`: `backtest.engine`을
+전혀 수정하지 않고 각 fold의 TEST 구간만 `BacktestConfig.start_date`/
+`end_date`로 설정하는 방식으로 out-of-sample 평가를 구현(`AsOfDataView.get_bars`가
+이미 백테스트 시작일과 무관하게 자체 lookback을 조회하기 때문에 가능 —
+`docs/decisions/ADR-0031-...md` Decision 1 참조); regime 분류는 Phase 5의
+`RegimeDetector`/`make_single_point_view`를 무수정 재사용. 신규
+`src/strategy_research/evidence.py`: `EvidenceLevel`(INSUFFICIENT_EVIDENCE/
+PRELIMINARY/ROBUSTNESS_PENDING/CANDIDATE/VALIDATED) 5단계 vocabulary —
+`classify_evidence_level`은 구조적으로 `VALIDATED`를 절대 반환할 수 없음
+(도달 가능한 최고 등급은 `CANDIDATE`이며, `VALIDATED`는 이 함수가 수행할
+수 없는 사람의 검토를 위한 목표 상태로만 enum에 존재). PBO/Deflated
+Sharpe는 이번 phase도 실제 계산은 구현하지 않음 — `assess_pbo_dsr_applicability`는
+Phase 18이 이미 정의한 채택 조건(후보 2개 이상, 각 6-fold 이상 실 fold)이
+충족됐는지만 확인. 신규 CLI `scripts/run_long_horizon_validation.py`:
+chronological split으로 TEST 구간을 예약해 두고 TRAIN+VALIDATION
+구간에서만 walk-forward를 반복 실행, TEST 구간은 held-out으로 단
+한 번만 평가 — RULE 0.8(파라미터는 평가 전 고정, 결과를 본 뒤 재조정
+금지) 그대로 적용. **이 세션은 실 데이터가 로컬에 없어(위 참조)
+`scripts/run_long_horizon_validation.py`를 실 데이터로 직접 실행하지
+못했다** — PILOT_UNIVERSE의 실제 15개 종목 티커에 synthetic deterministic
+가격을 채운 대규모 dry-run으로 CLI 자체의 정합성만 검증(4개 전략 x
+7개 윈도우 x gross/net 전부 정상 완료, PBO/DSR 적용가능성 판정도 정상
+동작). 실 데이터로 실행하기 위한 정확한 커맨드는
+`docs/research/STRATEGY-VALIDATION-REPORT.md` 12절에 있음. 신규 문서:
+ADR-0031, `docs/research/STRATEGY-VALIDATION-REPORT.md`(19개 절 — 데이터
+소스부터 필요한 추가 검증까지). 신규 테스트 30개(chronological split
+재검증, walk-forward 순서/미겹침/결정론/leakage/비용/벤치마크/as_of_time/
+corporate action/파라미터 불변성/PBO 적용가능성/research log 완전성/
+universe-benchmark 배제) — 기존 1608개 테스트는 전부 그대로 유지, 약화
+없음. Toss/Live 활성화 코드는 전혀 건드리지 않음. FINAL STATUS:
+**VALIDATION BLOCKED**(이 세션 기준 — 인프라는 완성·테스트 완료, 실
+데이터 실행만 환경 제약으로 차단). 상세는 `docs/PROJECT_STATUS.md` 참조.
 
 **Phase 24 — Real Market Data + Expandable US Equity Universe** (Live
 Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이 그대로
@@ -625,11 +680,27 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   Toss/Live 활성화 코드는 전혀 수정하지 않음 — Live Trading은 동일한
   이유로 여전히 구조적 차단 상태.
 
+- Phase 25 — Long-Horizon Real-Data Strategy Validation: 완료
+  (`src/strategy_research/walk_forward_evaluation.py`,
+  `src/strategy_research/evidence.py`, `scripts/run_long_horizon_validation.py`
+  신규, 신규 테스트 30개) — chronological Train/Validation/Test(TEST는
+  단 한 번만 평가) + Walk-Forward 인프라 구축, `backtest.engine` 무수정.
+  `EvidenceLevel` 5단계 vocabulary(`classify_evidence_level`은 구조적으로
+  `VALIDATED`를 절대 반환하지 않음), PBO/Deflated Sharpe 채택 조건 확인
+  함수(실제 계산은 여전히 미구현/DEFER). 이 세션은 실 데이터가 로컬에
+  없어 실 데이터 실행은 하지 못함(PILOT_UNIVERSE 실 티커 + synthetic
+  가격의 대규모 dry-run으로 CLI 정합성만 검증) — FINAL STATUS:
+  **VALIDATION BLOCKED**(환경 제약). 실 데이터 실행 커맨드는
+  `docs/research/STRATEGY-VALIDATION-REPORT.md` 12절. 신규 문서:
+  ADR-0031, `STRATEGY-VALIDATION-REPORT.md`. Toss/Live 활성화 코드는
+  전혀 수정하지 않음 — Live Trading은 동일한 이유로 여전히 구조적 차단
+  상태.
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
 63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587 +
-Phase 24 신규 18 = 1605; 정확한 최종 숫자는 이 Phase의 최종 전체 테스트
-실행 결과를 따른다).
+Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638; 정확한 최종 숫자는
+이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행
 

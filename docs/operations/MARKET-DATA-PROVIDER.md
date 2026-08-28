@@ -132,7 +132,14 @@ against these criteria (not popularity):
   against a live response).
 - No `MARKET_DATA_API_KEY` value exists anywhere in this repository or
   environment; none was requested from the user.
-- No real data has been ingested for any of the 16 pilot symbols.
+- No real data has been ingested for any of the 16 pilot symbols **from
+  this sandboxed session**. A user has separately ingested real Tiingo
+  data (15 tradeable symbols + SPY, 2023-01-02 to 2024-12-31) from their
+  own network-enabled environment (Phase 24 follow-up) -- that data
+  exists only in the user's own environment, not in this repository or
+  session (`data/` is empty and gitignored). See
+  `docs/research/STRATEGY-RESEARCH-REPORT.md`'s Addendum for the actual
+  results obtained from it.
 
 ## Phase 23 reachability re-verification
 
@@ -180,3 +187,20 @@ does not add any ticker beyond the existing 15-symbol
 `RESEARCH_UNIVERSE` Stage 2 (~30-50 symbols) remains a documented,
 ready extension point, not populated -- populating it would mean
 guessing a limit this project's own discipline forbids guessing.
+
+## Phase 25 reachability re-verification
+
+Re-checked this session via `curl` through the egress proxy directly
+against each domain (rather than only the proxy status endpoint):
+`api.tiingo.com`, `stooq.com`, and `openapi.tossinvest.com` all still
+return a CONNECT 403 rejection. **BLOCKED**, unchanged since Phase 20
+-- this is the fourth consecutive phase to re-confirm rather than
+assume this. No new real ingestion was performed by this session; see
+the note above this session's own status is separate from the real
+2023-2024 data a user has already obtained externally.
+
+Free-tier limits (request/symbol/rate) remain UNKNOWN for both
+providers, unchanged from Phase 24's table above -- this phase gathered
+no new evidence on that question (nothing in Phase 25's own scope
+touches ingestion or provider limits; see
+`docs/decisions/ADR-0031-long-horizon-walk-forward-validation.md`).

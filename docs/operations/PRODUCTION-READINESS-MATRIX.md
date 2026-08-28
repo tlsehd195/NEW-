@@ -4,8 +4,9 @@ Phase 17 Production Safety Review, updated in Phase 18 (Paper
 Trading Performance Report), Phase 20 (Real Market Data Foundation
 & Documentation Sync), Phase 21 (Toss Broker Adapter Completion),
 Phase 22 (Real-Data Paper Trading / US Long-Term System Hardening),
-Phase 23 (Strategy Research & Real Market Data Validation), and
-Phase 24 (Real Market Data + Expandable US Equity Universe).
+Phase 23 (Strategy Research & Real Market Data Validation),
+Phase 24 (Real Market Data + Expandable US Equity Universe), and
+Phase 25 (Long-Horizon Real-Data Strategy Validation).
 One row per area the review instruction names. "Status" is one of
 PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
 this alone prevent Live activation today" independent of every other
@@ -52,7 +53,7 @@ never operationally verified" (Phase 21, current).
 | Transaction Cost | Modeled and attributed | Implemented in Backtest (`backtest.metrics`) and Paper (`Fill.commission`/`spread_cost`), per-fill and now aggregated into a Paper-level report (`total_transaction_cost`, summed from `TradeRecord.transaction_cost`) | `src/broker/paper/journal.py`; `src/broker/paper/performance.py`; `tests/integration/test_paper_performance_scenarios.py::TestScenarioG_TransactionCostAndSlippageFlowIntoTheReport` | **PASS** | No | No | None |
 | Slippage | Modeled and attributed | Implemented per-fill in both Backtest and Paper (`Fill.slippage_cost`); **not computed at all for Live** (`broker.live.journal.build_fill_from_broker_response` sets `slippage_cost=0.0`, documented as an honest limitation, no independent quote to compare against) | `src/broker/live/journal.py`; `docs/decisions/ADR-0022` decision 9 | **PASS** (Backtest/Paper); **KNOWN LIMITATION** (Live) | No | No | Unchanged from Phase 16 -- would require an independently-sourced quote feed |
 | OOS (Out-of-Sample) | Validation split distinct from training | `learning.config.SplitConfig` (train/validation/test), chronological | `src/learning/config.py`; `src/learning/dataset.py` | **PASS** (split exists) | No | No | None -- statistical robustness (PBO/overfitting) remains explicitly deferred, see next row |
-| Walk Forward | Rolling-window re-validation / PBO / Deflated Sharpe | **Explicitly deferred since Phase 9**; Phase 18 researched all three techniques with primary-source citations; Phase 20 added concrete trigger conditions for ending DEFER (a skill-claiming trainer is introduced; multiple candidates compared for one promotion; a human is about to approve a candidate for Live capital) and confirmed none has fired yet. Phase 23 added a strategy-level (not model-evolution-level) walk-forward window *generation mechanism* (`strategy_research.splits.generate_walk_forward_windows`, tested against synthetic dates only) and confirmed no real walk-forward *evaluation* was possible this session (no real historical data obtained) | `docs/research/walk-forward-pbo-deflated-sharpe.md` section 9; `docs/decisions/ADR-0017-model-evolution.md` decision 3; `docs/decisions/ADR-0029-strategy-research-framework.md` decision 5 | **RESEARCHED, MECHANISM IMPLEMENTED, NO REAL EVALUATION RUN** | No (not independently blocking Live, since it gates model *quality* confidence, not a hard safety boundary) | **Yes** -- whether Live activation should ever require this before deploying a non-trivial model | Re-evaluate the instant any Phase 20 §9.1 trigger condition becomes true, or the instant real market data becomes obtainable (whichever the strategy-research track needs first); until then, no action needed |
+| Walk Forward | Rolling-window re-validation / PBO / Deflated Sharpe | **Explicitly deferred since Phase 9**; Phase 18 researched all three techniques with primary-source citations; Phase 20 added concrete trigger conditions for ending DEFER (a skill-claiming trainer is introduced; multiple candidates compared for one promotion; a human is about to approve a candidate for Live capital) and confirmed none has fired yet. Phase 23 added a strategy-level (not model-evolution-level) walk-forward window *generation mechanism* (`strategy_research.splits.generate_walk_forward_windows`, tested against synthetic dates only) and confirmed no real walk-forward *evaluation* was possible this session (no real historical data obtained). Phase 25 added an actual walk-forward *evaluation runner* (`strategy_research.walk_forward_evaluation.run_walk_forward_evaluation`) and an `EvidenceLevel` grading system plus a `assess_pbo_dsr_applicability` check for Phase 20's own trigger conditions -- but PBO/Deflated Sharpe computation itself remains unimplemented, and no real walk-forward evaluation has been run against real data yet (network still BLOCKED from this session) | `docs/research/walk-forward-pbo-deflated-sharpe.md` section 9; `docs/decisions/ADR-0017-model-evolution.md` decision 3; `docs/decisions/ADR-0029-strategy-research-framework.md` decision 5; `docs/decisions/ADR-0031-long-horizon-walk-forward-validation.md` decisions 1, 3, 4 | **RESEARCHED, EVALUATION RUNNER IMPLEMENTED, PBO/DSR COMPUTATION STILL NOT IMPLEMENTED, NO REAL EVALUATION RUN** | No (not independently blocking Live, since it gates model *quality* confidence, not a hard safety boundary) | **Yes** -- whether Live activation should ever require this before deploying a non-trivial model, and whether/when to implement actual PBO/Deflated Sharpe computation now that its adoption trigger can be checked (`assess_pbo_dsr_applicability`) | Run `scripts/run_long_horizon_validation.py` against real data (external command in `docs/research/STRATEGY-VALIDATION-REPORT.md` section 12); once 2+ candidates each have >= 6 real out-of-sample folds, revisit whether to implement PBO/Deflated Sharpe |
 
 ## Overall
 
@@ -142,3 +143,35 @@ limits remain UNKNOWN (unverifiable from this environment), and this
 project's own discipline forbids assuming a limit. **No change to any
 Toss/Live row; Live activation still Blocked for the same, unchanged
 reason.**
+
+**Phase 25 update**: re-verified real market-data provider access a
+fourth time via `curl` through the egress proxy -- still CONNECT 403
+for `api.tiingo.com`/`stooq.com`/`openapi.tossinvest.com`. This session
+has no real data locally (`data/` empty, gitignored); note the real
+2023-2024 Tiingo data a user obtained externally after Phase 24
+(`STRATEGY-RESEARCH-REPORT.md` Addendum) still exists only in that
+user's own environment, not here. Built chronological Train/Validation/
+Test + Walk-Forward evaluation infrastructure
+(`src/strategy_research/walk_forward_evaluation.py`,
+`src/strategy_research/evidence.py`,
+`scripts/run_long_horizon_validation.py`, `ADR-0031`) without any change
+to `backtest.engine` -- each walk-forward fold's own TEST window is run
+as the backtest's `start_date`/`end_date`, relying on the existing
+point-in-time `AsOfDataView.get_bars` to supply prior history for a
+strategy's own lookback. Added a 5-level `EvidenceLevel` vocabulary
+(`INSUFFICIENT_EVIDENCE`/`PRELIMINARY`/`ROBUSTNESS_PENDING`/`CANDIDATE`/
+`VALIDATED`) where `classify_evidence_level` is structurally incapable
+of ever returning `VALIDATED` -- the highest level reachable by this
+project's own code is `CANDIDATE`, gated on real data, minimum fold
+counts, PBO/DSR having actually been applied (still deferred -- see the
+Walk Forward row below), a positive-fold-ratio threshold, and evidence
+spanning >= 2 distinct market regimes. **No real walk-forward evaluation
+was run against real data this session** (network still BLOCKED); a
+synthetic, realistic-scale dry run (PILOT_UNIVERSE's real 15 tickers
+with synthetic deterministic prices, explicitly a pipeline check) did
+confirm the full CLI end-to-end (benchmark construction, 4 strategies x
+7 windows each, PBO/DSR applicability check) runs correctly.
+`docs/research/STRATEGY-VALIDATION-REPORT.md` records the exact external
+command needed to run this against the real 2023-2024 catalog and what
+each of its 19 sections currently says. **No change to any Toss/Live
+row; Live activation still Blocked for the same, unchanged reason.**

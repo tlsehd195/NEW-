@@ -421,3 +421,19 @@ Confirmed, unchanged:
   `strategy_research`) never reads or writes any field in this
   document's scope — Universe/strategy-research expansion has no
   interaction with Live risk policy at all.
+
+## Phase 25 confirmation — no change to numbers or architecture
+
+Instruction explicitly forbids touching `RiskConfig` numbers, the Toss
+adapter, or any Live activation code this phase. Confirmed, unchanged:
+
+- `max_daily_loss=0.02`, `max_turnover=2.0`,
+  `max_order_frequency_per_hour=6` remain **PROPOSED / AWAITING USER
+  RATIFICATION** — no different value was substituted this phase.
+- `evaluate_safety_gate` (`src/broker/live/safety_gate.py`) was not
+  modified this phase.
+- This phase's own work (`src/strategy_research/walk_forward_evaluation.py`,
+  `src/strategy_research/evidence.py`,
+  `scripts/run_long_horizon_validation.py`) never reads or writes any
+  field in this document's scope — walk-forward/evidence-classification
+  infrastructure has no interaction with Live risk policy at all.
