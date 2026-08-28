@@ -27,6 +27,16 @@ MIN_FOLDS_FOR_ROBUSTNESS = 6
 MIN_DISTINCT_KNOWN_REGIMES_FOR_CANDIDATE = 2  # e.g. BULL and BEAR/NEUTRAL both observed
 MIN_POSITIVE_FOLD_RATIO_FOR_CANDIDATE = 0.6
 
+# strategy_research.pbo_dsr thresholds, fixed here before this function was
+# ever called with real PBO/DSR numbers (never tuned against an observed
+# result). PBO is a probability that the in-sample-best candidate does NOT
+# hold up out-of-sample -- must be BELOW half (better than a coin flip) to
+# treat the apparent winner as more than noise. DSR (itself a probability --
+# see strategy_research.pbo_dsr.DsrResult) must clear the conventional 95%
+# bar for "probably not just the best of N noisy trials."
+MAX_PBO_FOR_CANDIDATE = 0.5
+MIN_DSR_FOR_CANDIDATE = 0.95
+
 
 class EvidenceLevel(str, Enum):
     """No `VALIDATED_ALPHA`/`PROVEN_ALPHA` member is needed here because
@@ -54,7 +64,12 @@ class EvidenceAssessment:
 
 
 def classify_evidence_level(
-    aggregate: WalkForwardAggregate, *, is_real_data: bool, pbo_dsr_applied: bool
+    aggregate: WalkForwardAggregate,
+    *,
+    is_real_data: bool,
+    pbo_dsr_applied: bool,
+    pbo_probability: Optional[float] = None,
+    deflated_sharpe_ratio: Optional[float] = None,
 ) -> EvidenceAssessment:
     """Grades walk-forward evidence strength against fixed, named
     thresholds. **Never returns `EvidenceLevel.VALIDATED`** -- reaching
@@ -68,7 +83,21 @@ def classify_evidence_level(
     `INSUFFICIENT_EVIDENCE` regardless of how many folds ran or how
     good they look -- a synthetic result is a pipeline-correctness
     check, never evidence about real-world strategy performance
-    (instruction rule 0.4)."""
+    (instruction rule 0.4).
+
+    `pbo_probability`/`deflated_sharpe_ratio` (from
+    `strategy_research.pbo_dsr`, both optional) are an ADDITIVE
+    stricter check: when `pbo_dsr_applied=True` and both are supplied,
+    CANDIDATE additionally requires `pbo_probability <
+    MAX_PBO_FOR_CANDIDATE` and `deflated_sharpe_ratio >=
+    MIN_DSR_FOR_CANDIDATE` -- a fold-consistent-looking candidate that
+    PBO flags as indistinguishable from the best of several noisy
+    trials does NOT reach CANDIDATE, however good its raw fold ratio
+    looks. Omitting them (`None`, the default) preserves this
+    function's pre-existing behavior exactly -- a caller asserting
+    `pbo_dsr_applied=True` without supplying the actual numbers is
+    trusted at face value, unchanged from before this parameter
+    existed."""
     if not is_real_data:
         return EvidenceAssessment(
             level=EvidenceLevel.INSUFFICIENT_EVIDENCE,
@@ -105,14 +134,37 @@ def classify_evidence_level(
         )
 
     if positive_ratio >= MIN_POSITIVE_FOLD_RATIO_FOR_CANDIDATE and len(known_regimes) >= MIN_DISTINCT_KNOWN_REGIMES_FOR_CANDIDATE:
+        pbo_dsr_values_supplied = pbo_probability is not None and deflated_sharpe_ratio is not None
+        if pbo_dsr_values_supplied and not (
+            pbo_probability < MAX_PBO_FOR_CANDIDATE and deflated_sharpe_ratio >= MIN_DSR_FOR_CANDIDATE
+        ):
+            return EvidenceAssessment(
+                level=EvidenceLevel.ROBUSTNESS_PENDING,
+                reason=(
+                    f"{positive_ratio:.0%} of {aggregate.fold_count} real folds had a positive net "
+                    f"return across {len(known_regimes)} distinct known market regimes -- clears the "
+                    "fold-consistency bar, but PBO/DSR does not support treating this as more than "
+                    f"one of several noisy trials: PBO={pbo_probability:.2f} (must be < "
+                    f"{MAX_PBO_FOR_CANDIDATE}), Deflated Sharpe={deflated_sharpe_ratio:.2f} (must be "
+                    f">= {MIN_DSR_FOR_CANDIDATE})."
+                ),
+                fold_count=aggregate.fold_count, positive_fold_ratio=positive_ratio,
+                distinct_known_regimes=len(known_regimes), is_real_data=True, pbo_dsr_applied=True,
+            )
         return EvidenceAssessment(
             level=EvidenceLevel.CANDIDATE,
             reason=(
                 f"{positive_ratio:.0%} of {aggregate.fold_count} real folds had a positive net "
                 f"return (>= {MIN_POSITIVE_FOLD_RATIO_FOR_CANDIDATE:.0%} threshold), across "
                 f"{len(known_regimes)} distinct known market regimes (>= {MIN_DISTINCT_KNOWN_REGIMES_FOR_CANDIDATE} "
-                "required) -- meets this project's CANDIDATE bar. Still not VALIDATED: that requires "
-                "explicit human review this function does not perform."
+                "required) -- meets this project's CANDIDATE bar"
+                + (
+                    f", confirmed by PBO={pbo_probability:.2f} < {MAX_PBO_FOR_CANDIDATE} and "
+                    f"Deflated Sharpe={deflated_sharpe_ratio:.2f} >= {MIN_DSR_FOR_CANDIDATE}"
+                    if pbo_dsr_values_supplied
+                    else ""
+                )
+                + ". Still not VALIDATED: that requires explicit human review this function does not perform."
             ),
             fold_count=aggregate.fold_count, positive_fold_ratio=positive_ratio,
             distinct_known_regimes=len(known_regimes), is_real_data=True, pbo_dsr_applied=True,

@@ -115,6 +115,62 @@ class TestEvidenceLevelThresholds:
         assert assessment.level == EvidenceLevel.ROBUSTNESS_PENDING
 
 
+class TestEvidenceLevelWithActualPboDsrValues:
+    """strategy_research.pbo_dsr integration: when the caller supplies
+    real computed PBO/DSR numbers (not just the pbo_dsr_applied=True
+    flag), CANDIDATE must additionally require PBO < MAX_PBO_FOR_CANDIDATE
+    and DSR >= MIN_DSR_FOR_CANDIDATE -- a fold-consistent-looking result
+    that PBO flags as noise must NOT reach CANDIDATE."""
+
+    def _fold_consistent_agg(self) -> WalkForwardAggregate:
+        half = MIN_FOLDS_FOR_ROBUSTNESS // 2
+        return _agg(
+            fold_count=MIN_FOLDS_FOR_ROBUSTNESS, positive=MIN_FOLDS_FOR_ROBUSTNESS,
+            regimes={"BULL": half, "BEAR": MIN_FOLDS_FOR_ROBUSTNESS - half},
+        )
+
+    def test_good_pbo_and_dsr_confirm_candidate(self) -> None:
+        assessment = classify_evidence_level(
+            self._fold_consistent_agg(), is_real_data=True, pbo_dsr_applied=True,
+            pbo_probability=0.1, deflated_sharpe_ratio=0.99,
+        )
+        assert assessment.level == EvidenceLevel.CANDIDATE
+        assert "PBO=0.10" in assessment.reason
+
+    def test_high_pbo_blocks_candidate_despite_good_fold_ratio(self) -> None:
+        assessment = classify_evidence_level(
+            self._fold_consistent_agg(), is_real_data=True, pbo_dsr_applied=True,
+            pbo_probability=0.7, deflated_sharpe_ratio=0.99,
+        )
+        assert assessment.level == EvidenceLevel.ROBUSTNESS_PENDING
+        assert "noisy trials" in assessment.reason
+
+    def test_low_dsr_blocks_candidate_despite_good_fold_ratio_and_low_pbo(self) -> None:
+        assessment = classify_evidence_level(
+            self._fold_consistent_agg(), is_real_data=True, pbo_dsr_applied=True,
+            pbo_probability=0.1, deflated_sharpe_ratio=0.3,
+        )
+        assert assessment.level == EvidenceLevel.ROBUSTNESS_PENDING
+
+    def test_pbo_exactly_at_threshold_is_not_below_it(self) -> None:
+        assessment = classify_evidence_level(
+            self._fold_consistent_agg(), is_real_data=True, pbo_dsr_applied=True,
+            pbo_probability=0.5, deflated_sharpe_ratio=0.99,
+        )
+        assert assessment.level == EvidenceLevel.ROBUSTNESS_PENDING
+
+    def test_omitting_pbo_dsr_values_preserves_old_trust_the_flag_behavior(self) -> None:
+        """Backward compatibility: a caller that only sets
+        pbo_dsr_applied=True (never supplying the actual numbers) gets
+        exactly the pre-existing behavior -- this is what every
+        pre-existing caller in this test file and
+        scripts/run_long_horizon_validation.py's prior behavior does."""
+        assessment = classify_evidence_level(
+            self._fold_consistent_agg(), is_real_data=True, pbo_dsr_applied=True,
+        )
+        assert assessment.level == EvidenceLevel.CANDIDATE
+
+
 class TestPboDsrApplicability:
     """Category L (research log completeness) exercised through the
     applicability check's own dependence on a fully-populated
