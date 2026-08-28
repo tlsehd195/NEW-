@@ -46,6 +46,24 @@ ad-hoc runs. The script now also populates `SecurityMaster`/
 only wrote price bars), and records a content checksum
 (`data_infra.versioning.compute_data_version`, unmodified) in the
 manifest for reproducibility tracking.
+
+**Phase 24 follow-up (found via a real ingestion run)**: this script
+now also fetches and persists `CorporateAction` records (splits/
+dividends) via `TiingoDataProvider.fetch_corporate_actions`/
+`normalize_corporate_actions` -- both already existed and were already
+covered by this repository's own fixture-based tests (Phase 20), they
+were simply never called from this script. Without them, a real
+position held across a real split date (e.g. NVDA's June 2024 10-for-1,
+AVGO's July 2024 10-for-1, WMT's February 2024 3-for-1 -- all three
+observed as `impossible_price_movement` WARNINGs on a real run of this
+script) would mark-to-market against raw `close` with no offsetting
+share-count adjustment, producing a spurious large paper loss at the
+split date even though `adjusted_close` (used for signal generation)
+was never wrong. Corporate actions are Tiingo-only (Stooq has no
+corporate-action feed, `StooqDataProvider.metadata()["supports_corporate_actions"]
+== False`, ADR-0028) -- fetched directly from the `tiingo` provider
+instance below, not through `FallbackDataProvider` (which only exposes
+the shared `DataProvider` Protocol, deliberately not extended for this).
 """
 
 from __future__ import annotations
@@ -58,7 +76,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from data_infra.provider import IngestionRunner  # noqa: E402
+from data_infra.provider import IngestionRunner, PermanentProviderError, TransientProviderError  # noqa: E402
 from data_infra.providers.fallback import FallbackDataProvider  # noqa: E402
 from data_infra.providers.stooq import StooqDataProvider  # noqa: E402
 from data_infra.providers.stooq_config import DEFAULT_STOOQ_CONFIG  # noqa: E402
@@ -122,13 +140,28 @@ def main() -> int:
         runner = IngestionRunner(provider, repository)
         result = runner.run(symbols, args.start, args.end)
 
+        corporate_action_results = []
+        all_actions = []
+        for symbol in symbols:
+            try:
+                raw_actions = tiingo.fetch_corporate_actions(symbol, args.start, args.end)
+                actions = tiingo.normalize_corporate_actions(
+                    symbol, raw_actions, retrieved_at=args.end, ingestion_time=args.end
+                )
+                for action in actions:
+                    repository.add_corporate_action(action)
+                all_actions.extend(actions)
+                corporate_action_results.append({"security_id": symbol, "count": len(actions), "error": None})
+            except (TransientProviderError, PermanentProviderError) as exc:
+                corporate_action_results.append({"security_id": symbol, "count": 0, "error": str(exc)})
+
         quality = DataQualityFramework()
         all_bars = []
         for symbol in symbols:
             all_bars.extend(repository.get_bars(symbol, args.start, args.end, as_of_time=args.end))
         quality_run = quality.run(
             all_bars, dataset="phase24_real_ingestion", data_version="real-run",
-            known_security_ids=set(symbols), as_of_now=args.end,
+            known_security_ids=set(symbols), as_of_now=args.end, corporate_actions=all_actions,
         )
 
         checksum = compute_data_version(
@@ -138,6 +171,9 @@ def main() -> int:
                 "end": args.end.isoformat(),
                 "per_symbol_bar_counts": {
                     symbol: sum(1 for b in all_bars if b.security_id == symbol) for symbol in sorted(symbols)
+                },
+                "per_symbol_corporate_action_counts": {
+                    symbol: sum(1 for a in all_actions if a.security_id == symbol) for symbol in sorted(symbols)
                 },
             }
         )
@@ -169,12 +205,15 @@ def main() -> int:
                 {"check": i.check, "severity": i.severity.value, "security_id": i.security_id, "message": i.message}
                 for i in quality_run.issues
             ],
+            "corporate_actions_persisted": len(all_actions),
+            "corporate_actions_per_symbol": corporate_action_results,
             "content_checksum": checksum,
         }
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(manifest, indent=2))
         print(f"Ingestion status: {result.status.value}")
         print(f"Total bars persisted: {len(all_bars)}")
+        print(f"Corporate actions persisted: {len(all_actions)}")
         print(f"Data quality status: {quality_run.status.value} ({len(quality_run.issues)} issue(s))")
         print(f"Content checksum: {checksum}")
         print(f"Manifest written to: {manifest_path}")
