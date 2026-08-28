@@ -128,6 +128,11 @@ from strategy_research.walk_forward_evaluation import run_walk_forward_evaluatio
 from data_infra.versioning import compute_data_version  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE1}
+# Every real provider this project has ever integrated
+# (src/data_infra/providers/tiingo.py, stooq.py) stamps exactly this
+# source name onto Provenance.source -- used by the Phase 28
+# REAL-provenance-plausibility check below.
+_KNOWN_REAL_PROVIDER_SOURCES = {"tiingo", "stooq"}
 _BENCHMARK_ID = "SPY_TOTAL_RETURN_REAL"
 
 
@@ -253,17 +258,48 @@ def main() -> int:
         # as scripts/ingest_real_market_data.py's own content_checksum --
         # a real re-ingestion that adds new content changes this value;
         # an unchanged catalog re-run produces the identical value.
+        bars_by_symbol = {
+            sid: repository.get_bars(sid, args.start, args.end, as_of_time=args.end)
+            for sid in sorted(security_ids)
+        }
         data_version = compute_data_version(
             {
                 "security_ids": sorted(security_ids) + [BENCHMARK_SYMBOL],
                 "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
-                "per_symbol_bar_counts": {
-                    sid: len(repository.get_bars(sid, args.start, args.end, as_of_time=args.end))
-                    for sid in sorted(security_ids)
-                },
+                "per_symbol_bar_counts": {sid: len(bars) for sid, bars in bars_by_symbol.items()},
                 "benchmark_bar_count": len(spy_bars),
             }
         )
+
+        # Phase 28 (instruction section 5, items B/C): --data-status REAL
+        # is the caller's own claim -- this project's fail-closed
+        # discipline (never trust an unverified claim about what data
+        # actually is) means that claim must be cross-checked against
+        # the data's own recorded provenance, not simply trusted. Every
+        # real provider this project has ever integrated stamps a known
+        # source name (Tiingo/Stooq); synthetic/test fixtures use a
+        # different one (e.g. backtest_helpers' "test_source",
+        # MockDataProvider's caller-supplied name). A REAL run whose
+        # bars carry an unrecognized source is refused outright rather
+        # than silently producing a report that says REAL underneath
+        # data that was never actually real.
+        if is_real_data:
+            all_sources = {
+                bar.provenance.source
+                for bars in bars_by_symbol.values() for bar in bars
+            } | {bar.provenance.source for bar in spy_bars}
+            unexpected_sources = all_sources - _KNOWN_REAL_PROVIDER_SOURCES
+            if unexpected_sources:
+                print(
+                    "ERROR: --data-status REAL was passed, but the catalog's bars carry "
+                    f"provenance.source value(s) {sorted(unexpected_sources)!r} outside the "
+                    f"known real-provider allowlist {sorted(_KNOWN_REAL_PROVIDER_SOURCES)!r}. "
+                    "Refusing to proceed rather than silently label non-real data as REAL. "
+                    "If this is genuinely real data from a new provider, add its source name "
+                    "to _KNOWN_REAL_PROVIDER_SOURCES in this script.",
+                    file=sys.stderr,
+                )
+                return 1
 
         log = ResearchLog(
             selection_procedure=(
