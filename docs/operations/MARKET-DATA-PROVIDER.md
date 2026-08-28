@@ -286,3 +286,23 @@ caller's `--data-status REAL` claim at face value. Verified at runtime
 this phase: the same synthetic-fixture catalog pattern Phase 25-27 used
 for dry runs is now correctly refused under `--data-status REAL` and
 still runs correctly under `--data-status SYNTHETIC`.
+
+## Phase 29 re-verification + fetch_symbol_metadata
+
+Re-checked network (identical `x-deny-reason: host_not_allowed` for
+`api.tiingo.com`, DNS resolves, TCP connects, only HTTP denied) and
+`MARKET_DATA_API_KEY` (still unset) -- unchanged from Phase 26-28. An
+exhaustive filesystem search again found no real data anywhere in this
+session. **REAL WALK-FORWARD EXECUTION: NOT COMPLETED**, unchanged root
+cause.
+
+Added `TiingoDataProvider.fetch_symbol_metadata`/`normalize_symbol_metadata`
+(broad-universe discovery groundwork, instruction section 15 Stage 1)
+against Tier 2 documentation of Tiingo's `GET /tiingo/daily/<ticker>`
+metadata endpoint (`ticker`/`name`/`exchangeCode`/`startDate`/`endDate`)
+-- never exercised against a live response, same unverified-until-real-access
+status as every other Tiingo method in this module (see this file's own
+module docstring). `sector`/`market_cap_bucket` are never populated
+from this endpoint's documented shape and stay `None`. See
+`docs/decisions/ADR-0032-security-identity-and-survivorship-aware-universe.md`
+for the full Phase 29 architecture decision this groundwork supports.

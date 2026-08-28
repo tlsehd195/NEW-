@@ -595,3 +595,105 @@ failed, 0 skipped** -- 3 new tests, existing 1649 unmodified.
    the existing evidence policy, not a judgment call made this phase.
    `VALIDATED` remains structurally unreachable by any code in this
    project regardless of what future real data might show.
+
+## Phase 29 Addendum
+
+**REAL WALK-FORWARD EXECUTION: NOT COMPLETED.** Phase 29's goal was a
+2010 -> latest-available, broad, survivorship-aware US equity
+Walk-Forward run. Re-verified this session (not assumed unchanged):
+network egress remains `BLOCKED_BY_ENVIRONMENT` (identical `x-deny-reason:
+host_not_allowed` diagnosis for `api.tiingo.com`, DNS resolves, TCP
+connects, only the HTTP request is denied), no `MARKET_DATA_API_KEY` is
+set, and an exhaustive filesystem search found no real data anywhere in
+this session. No real ingestion, of any size, was possible.
+
+### What this phase actually built
+
+Audited `src/data_infra/models.py`/`repository.py` directly (not
+assumed) and found the point-in-time-safe, survivorship-aware
+architecture the instruction asks for -- `SecurityMaster.security_id`
+as a permanent identifier independent of `ticker`, `valid_from`/
+`valid_to` on both `SecurityMaster` and `UniverseMembership`,
+`SecurityStatus.DELISTED`, and `get_universe(as_of_time=...)`'s correct
+point-in-time filtering -- already existed, unmodified, since Phase 1.
+The real gap: `build_security_masters`/`build_universe_memberships`
+(Phase 24) never used `SymbolMetadata.listed_from`/`listed_to`, applying
+one uniform `valid_from`/`status=ACTIVE`/`valid_to=None` to every
+symbol regardless of what was actually known about it. Fixed
+additively (byte-for-byte unchanged output for every existing
+`SymbolMetadata` entry, since none has `listed_from`/`listed_to` set
+yet); full rationale in
+`docs/decisions/ADR-0032-security-identity-and-survivorship-aware-universe.md`.
+
+Also added: `detect_ticker_collisions` (distinguishes legitimate ticker
+reuse across non-overlapping historical windows from a genuine
+same-time collision across two different `security_id`s), and
+`TiingoDataProvider.fetch_symbol_metadata`/`normalize_symbol_metadata`
+(Tier 2 documentation, never exercised against a live response --
+broad-universe discovery groundwork for once network access exists).
+
+Proved, against both `InMemoryDataRepository` and a real on-disk
+`DuckDBDataRepository` restart (synthetic fixtures only): a security
+listed in 2018 is correctly absent from a 2015 `get_universe` query and
+present in a 2020 one; a security delisted in 2017 is correctly present
+before and absent after that date; and -- the instruction's central
+technical question -- a "current survivors only" query and a real
+historical-point-in-time query genuinely differ (one dedicated test
+constructs a universe where they return the exact opposite membership
+sets, matching the instruction's own stated concern about survivorship
+bias). 19 new tests total this phase (12 survivorship-aware universe,
+6 Tiingo metadata, 1 DuckDB delisted-security persistence). Full suite:
+baseline **1652 passed** -> final **1671 passed, 0 failed, 0 skipped**.
+
+### Data (instruction section 63 fields)
+
+| Field | Value |
+|---|---|
+| Provider | N/A -- no real ingestion this session |
+| Requested start | 2010-01-01 (per instruction) |
+| Actual start | N/A |
+| Actual end | N/A |
+| Security count | N/A |
+| Active count | N/A |
+| Delisted count | N/A |
+| Unknown count | N/A |
+| Bar count | N/A |
+| Corporate action count | N/A |
+| Data version | N/A |
+| Checksum | N/A |
+
+### Universe (instruction section 63 fields)
+
+| Field | Value |
+|---|---|
+| Pilot universe | `PILOT_UNIVERSE_V1`, unchanged, 15 symbols |
+| Broad universe | Not populated -- would require real provider metadata (blocked) |
+| Historical universe | Mechanism ready and tested (this phase); no real historical dates populated |
+| Survivorship-aware | Mechanism ready and tested (this phase, synthetic fixtures); not populated with real data |
+| Delisted included | Structurally supported (this phase); no real delisted security ever populated |
+| Permanent identifiers available | Yes -- `SecurityMaster.security_id`, has been since Phase 1 |
+
+### Answers to the instruction's 10 required final questions
+
+1. **2010년부터 최신 실제 데이터까지 확보했는가?** NO.
+2. **실제 broad US equity universe를 사용했는가?** NO.
+3. **historical security identity를 사용했는가?** PARTIAL -- the
+   mechanism (`security_id`, `valid_from`/`valid_to`, `SecurityStatus`)
+   exists and is tested; no real historical identity data was ever
+   populated.
+4. **delisted securities가 포함되었는가?** NO (real); YES (synthetic
+   fixture, proving the mechanism).
+5. **survivorship bias가 이전보다 실질적으로 줄었는가?** N/A -- no real
+   universe was ever built to compare against; the underlying query
+   mechanism now correctly distinguishes current-survivor from
+   historical membership when given real dates, which it was not.
+6. **실제 Walk-Forward TEST fold가 몇 개인가?** **0.**
+7. **NET 기준으로 여러 fold에서 가장 일관된 전략은?** N/A --
+   INSUFFICIENT_EVIDENCE, 0 real folds.
+8. **SPY Total Return을 여러 독립 TEST fold에서 이겼는가?** N/A.
+9. **특정 소수 종목에 의존한 성과인가?** N/A -- no real performance
+   exists to attribute.
+10. **이 전략을 "검증된 알파"라고 부를 수 있는가?** NO --
+    INSUFFICIENT_EVIDENCE for all 4 candidates, unchanged from every
+    prior phase; `VALIDATED` remains structurally unreachable by this
+    project's own code.

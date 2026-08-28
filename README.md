@@ -65,15 +65,15 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20/21/22/23/24/25/26/27/28은 Master Plan의 정식 Phase가 아니라, Live
+**Phase 17/18/19/20/21/22/23/24/25/26/27/28/29는 Master Plan의 정식 Phase가 아니라, Live
 전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
 기반을 놓는 사후 검증/기반 작업**이다.
 
-**REAL MARKET DATA: BLOCKED BY EXECUTION ENVIRONMENT + BLOCKED BY
-DATA(로컬 부재)** — 이 저장소가 실행되는 현재 환경에서
+**REAL MARKET DATA / REAL WALK-FORWARD EXECUTION: NOT COMPLETED** — 이
+저장소가 실행되는 현재 환경에서
 `api.tiingo.com`/`stooq.com`/`openapi.tossinvest.com` 전부 egress
-proxy에서 403 거부. Phase 20부터 Phase 28까지 매 phase 재확인했으며
-변화 없음. Phase 28에서는 `data/` 외에 전체 파일시스템(ingestion
+proxy에서 403 거부. Phase 20부터 Phase 29까지 매 phase 재확인했으며
+변화 없음. Phase 28/29에서는 `data/` 외에 전체 파일시스템(ingestion
 manifest, DuckDB/Parquet 파일, 환경변수, 기존 스크립트)을 철저히
 탐색했으나 실 데이터를 어디에서도 찾지 못함 — 로컬에 실 데이터가
 존재할 유일한 경로가 network ingestion인데 그것이 차단되어 있으므로
@@ -103,6 +103,36 @@ SPY, 2023-01-02~2024-12-31, 8,032 bars, 107 corporate actions)를
 `docs/research/STRATEGY-RESEARCH-REPORT.md`의 "Addendum" 절 참조. 이
 데이터는 사용자의 Codespaces 환경에만 존재하며 이 저장소/이 sandboxed
 세션에는 없다(`data/`는 비어 있고 gitignore 대상).
+
+**Phase 29 — Long-Horizon / Broad-US-Universe / Survivorship-Aware Real
+Walk-Forward Validation** (Live Trading은 여전히 구조적으로 불가능). 목표는
+2010-01-01부터 최신까지, 상장폐지/합병/티커 재사용을 포함한 넓은 실
+US 종목 universe로 4개 기존 전략(신규 전략/파라미터 튜닝 없음)을
+survivorship-bias를 최소화한 상태로 재검증하는 것 — "오늘의 승자를
+과거로 투영한 결과인가, 실제 당시 universe에서도 반복적으로 통했는가"를
+가리는 것이 목적이었으나, 실 데이터 접근이 여전히
+`BLOCKED_BY_ENVIRONMENT`(Phase 26 진단과 동일, 변화 없음)이므로 실
+Walk-Forward는 이번에도 실행되지 못함(**REAL WALK-FORWARD EXECUTION: NOT
+COMPLETED**). 대신 코드 감사를 통해 permanent-identity/survivorship-aware
+universe 아키텍처(`SecurityMaster.security_id`/`valid_from`/`valid_to`/
+`SecurityStatus`, `UniverseMembership.valid_from`/`valid_to`,
+`DataRepository.get_universe(as_of_time=...)`)가 이미 Phase 1부터
+존재·정상 동작함을 직접 확인(신규로 만들지 않음). 실제 gap은
+`build_security_masters`/`build_universe_memberships`
+(`src/data_infra/universe.py`)가 `SymbolMetadata.listed_from`/`listed_to`를
+전혀 사용하지 않던 점 — additive하게 배선해 수정(기존
+`PILOT_UNIVERSE_V1`은 byte-for-byte 동일 출력, 전용 회귀 테스트로 확인).
+티커 재사용과 실제 데이터 충돌(같은 시점 겹치는 두 `security_id`)을
+구분하는 `detect_ticker_collisions` 신규 추가. Tiingo 종목 메타데이터
+조회용 `fetch_symbol_metadata`/`normalize_symbol_metadata` 추가(Tier 2
+문서 기반, 실 네트워크로 검증된 적 없음 — `fetch_corporate_actions` 패턴과
+동일). 이 phase는 실 ingestion을 수행하지 않았음 — 넓은 실 universe
+population은 여전히 network 차단으로 막혀 있음. 신규 테스트 19개
+(survivorship-aware universe 12개, Tiingo 메타데이터 6개, DuckDB delisted
+security 영속성 1개) — 기존 1652개 테스트 전부 유지, 약화 없음. 최종
+테스트 카운트는 이 phase의 최종 pytest 실행 결과를 따른다. Toss/Live/RiskConfig/
+Broker/Risk 코드는 전혀 건드리지 않음. 신규 문서: ADR-0032. 상세는
+`docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 29 Addendum".
 
 **Phase 28 — Real-Data Walk-Forward Execution & Strategy Evidence**
 (Live Trading은 여전히 구조적으로 불가능). 목표는 처음으로 실 데이터
@@ -815,12 +845,29 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 28
   Addendum".
 
+- Phase 29 — Long-Horizon / Broad-US-Universe / Survivorship-Aware Real
+  Walk-Forward Validation: 완료 (`src/data_infra/universe.py`,
+  `src/data_infra/providers/tiingo.py` 갱신, 신규 테스트 19개) — 실
+  Walk-Forward 실행은 이번에도 environment BLOCKED, 재확인, 변화 없음
+  (**REAL WALK-FORWARD EXECUTION: NOT COMPLETED**). 코드 감사로
+  permanent-identity/survivorship-aware universe 아키텍처(`SecurityMaster`/
+  `UniverseMembership`/`get_universe(as_of_time=...)`)가 Phase 1부터 이미
+  존재함을 확인 — 새로 만들지 않음. 실제 gap이었던
+  `SymbolMetadata.listed_from`/`listed_to` 미배선 문제를 additive하게
+  수정, `detect_ticker_collisions` 및 `fetch_symbol_metadata`/
+  `normalize_symbol_metadata` 신규 추가. 실 ingestion은 수행하지 않음(여전히
+  network 차단). 기존 1652개 테스트 전부 유지 — 최종 테스트 카운트는 이
+  phase의 최종 pytest 실행 결과를 따른다. Toss/Live/RiskConfig/Broker/Risk
+  코드는 전혀 건드리지 않음. FINAL STATUS: **VALIDATION BLOCKED**(환경+
+  데이터 부재, 변화 없음). 신규 문서: ADR-0032. 상세는
+  `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 29 Addendum".
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
 63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587 +
 Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638 + Phase 26 신규 2 = 1640 +
-Phase 27 신규 9 = 1649 + Phase 28 신규 3 = 1652; 정확한 최종 숫자는
-이 Phase의 최종 전체 테스트 실행 결과를 따른다).
+Phase 27 신규 9 = 1649 + Phase 28 신규 3 = 1652 + Phase 29 신규 19 = 1671;
+정확한 최종 숫자는 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행
 

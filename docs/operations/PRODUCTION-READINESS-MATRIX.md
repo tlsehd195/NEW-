@@ -8,8 +8,10 @@ Phase 23 (Strategy Research & Real Market Data Validation),
 Phase 24 (Real Market Data + Expandable US Equity Universe),
 Phase 25 (Long-Horizon Real-Data Strategy Validation), Phase 26
 (Long-Horizon Real-Data Validation, re-verification), Phase 27
-(Real-Data Walk-Forward Validation & Strategy Evidence), and Phase 28
-(Real-Data Walk-Forward Execution & Strategy Evidence).
+(Real-Data Walk-Forward Validation & Strategy Evidence), Phase 28
+(Real-Data Walk-Forward Execution & Strategy Evidence), and Phase 29
+(Long-Horizon / Broad-US-Universe / Survivorship-Aware Real Walk-Forward
+Validation).
 One row per area the review instruction names. "Status" is one of
 PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
 this alone prevent Live activation today" independent of every other
@@ -258,3 +260,33 @@ under `--data-status REAL` and still runs correctly under
 `--data-status SYNTHETIC` against the identical catalog. Added 3 static
 AST-based regression tests. **No change to any Toss/Live row; Live
 activation still Blocked for the same, unchanged reason.**
+
+**Phase 29 update**: goal was a 2010 -> latest, broad,
+survivorship-aware US equity Walk-Forward run -- **REAL WALK-FORWARD
+EXECUTION: NOT COMPLETED**, network/data status unchanged (re-verified,
+identical `x-deny-reason: host_not_allowed`, exhaustive filesystem
+search again found nothing). Audited `src/data_infra/models.py`/
+`repository.py` directly and found the survivorship-aware,
+point-in-time-safe architecture the instruction asks for
+(`SecurityMaster.security_id` as a permanent identifier independent of
+ticker, `valid_from`/`valid_to` on both `SecurityMaster` and
+`UniverseMembership`, `SecurityStatus.DELISTED`, and
+`get_universe(as_of_time=...)`'s correct point-in-time filtering)
+already existed, unmodified, since Phase 1 -- the real gap was that
+`build_security_masters`/`build_universe_memberships` (Phase 24) never
+used `SymbolMetadata.listed_from`/`listed_to`, so this mechanism had no
+path to ever receive real per-symbol historical dates. Fixed
+additively (byte-for-byte unchanged output for every existing
+`SymbolMetadata` entry). Added `detect_ticker_collisions`
+(distinguishes legitimate ticker reuse from a genuine same-time
+collision) and `TiingoDataProvider.fetch_symbol_metadata`/
+`normalize_symbol_metadata` (Tier 2 documentation, never exercised
+against a live response -- broad-universe discovery groundwork).
+Proved, against both `InMemoryDataRepository` and a real on-disk
+`DuckDBDataRepository` restart (synthetic fixtures only): a delisted
+security is correctly excluded from a post-delisting query and
+included before it; a "current survivors only" query and a real
+historical-point-in-time query genuinely differ. 19 new tests.
+Full rationale: `docs/decisions/ADR-0032-security-identity-and-survivorship-aware-universe.md`.
+**No change to any Toss/Live row; Live activation still Blocked for the
+same, unchanged reason.**

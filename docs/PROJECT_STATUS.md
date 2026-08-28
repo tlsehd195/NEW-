@@ -5,32 +5,164 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-28
-**Updated By:** Claude Code (Session 29 — Phase 28 Real-Data Walk-Forward Execution & Strategy Evidence)
+**Updated By:** Claude Code (Session 30 — Phase 29 Long-Horizon / Broad-US-Universe / Survivorship-Aware Real Walk-Forward Validation)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24/25/26/27/28은
+마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24/25/26/27/28/29는
 Master Plan의 정식 Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에
 발견된 안전성·검증 문제를 보완하고 실 시장 데이터/브로커 기반을 놓기
-위한 사후 검증/기반 구축 작업**이며, 이 문서의 "Phase 28" 표기는 세션
+위한 사후 검증/기반 구축 작업**이며, 이 문서의 "Phase 29" 표기는 세션
 추적 편의를 위한 라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이
 아니다. 이 번호들은 전부 사용자 본인이 직접 "PHASE N — ..." 형식으로
 명시적으로 지시한 작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase
 번호를 발명하지 말라"는 원칙에 대한 예외(사람의 명시적 지시)에 정확히
 해당한다.
 
-**REAL MARKET DATA: 이 sandboxed 세션 자체는 여전히 `BLOCKED_BY_ENVIRONMENT`
-+ `BLOCKED_BY_DATA` — 변화 없음, 이번엔 전체 파일시스템을 철저히
-탐색해 재확인함.** `data/` 뿐 아니라 ingestion manifest, DuckDB/Parquet
-파일(전체 파일시스템), 환경변수, 기존 스크립트까지 탐색했으나 실
-데이터를 어디에서도 찾지 못함 — 로컬에 실 데이터가 존재할 유일한
-경로가 network ingestion인데 여전히 `x-deny-reason: host_not_allowed`로
-차단됨(DNS 정상, TCP 성공, HTTP만 거부 — Phase 26 진단과 동일).
-`MARKET_DATA_API_KEY` 미설정 확인. 사용자의 Codespaces 환경에 있는
-2023-2024 실 데이터는 변함없이 존재하나 이 세션에는 없다.
+**REAL MARKET DATA / REAL WALK-FORWARD EXECUTION: NOT COMPLETED —
+이 sandboxed 세션 자체는 여전히 `BLOCKED_BY_ENVIRONMENT` +
+`BLOCKED_BY_DATA`, 변화 없음(재확인함).** `data/` 뿐 아니라 전체
+파일시스템(ingestion manifest, DuckDB/Parquet, 환경변수, 기존
+스크립트)을 다시 탐색했으나 실 데이터를 어디에서도 찾지 못함 — network
+egress는 여전히 `x-deny-reason: host_not_allowed`로 차단됨(DNS 정상,
+TCP 성공, HTTP만 거부 — Phase 26 진단과 동일). `MARKET_DATA_API_KEY`
+미설정 확인. 사용자의 Codespaces 환경에 있는 2023-2024 실 데이터는
+변함없이 존재하나 이 세션에는 없으며, 2010년부터의 broad universe
+실 데이터는 애초에 어느 환경에도 존재한 적이 없다.
+
+**Phase 29 — Long-Horizon / Broad-US-Universe / Survivorship-Aware Real
+Walk-Forward Validation** (Live Trading은 여전히 구조적으로 비활성 —
+Toss capability가 `CapabilityStatus.UNKNOWN`인 한 활성화 불가). 목표는
+2010~최신 실 데이터로 broad survivorship-aware universe Walk-Forward를
+실행하는 것이었으나 환경 제약으로 이번에도 불가능 — 대신 이번 phase는
+architecture audit을 통해 중요한 사실을 발견함: point-in-time-safe
+survivorship-aware 아키텍처(`SecurityMaster.security_id`가 이미
+ticker와 독립적인 permanent identifier, `valid_from`/`valid_to`,
+`SecurityStatus.DELISTED`, `get_universe(as_of_time=...)`의 정확한
+point-in-time 필터링)가 **Phase 1부터 이미 존재**했다는 것 — 실제
+공백은 `build_security_masters`/`build_universe_memberships`(Phase
+24)가 `SymbolMetadata.listed_from`/`listed_to`를 무시하던 것뿐이었음
+(수정함, 기존 데이터에 대해서는 완전히 동일하게 동작 — additive).
+
+### Completed (Session 30 — Phase 29)
+
+- **Git/Branch Integrity 선행 확인**: 로컬 HEAD가 Phase 28 HEAD
+  (`61c9507`)와 정확히 일치함을 확인 후 `origin/main`을
+  fast-forward-only로 병합(merge commit 0개) → push →
+  `claude/phase-29-broad-universe-survivorship-aware-validation` 브랜치
+  신규 생성. Baseline **1652/1652 테스트 통과** 실제 실행으로 확인
+  (지침이 예상한 1649는 stale — 실제 실행 결과를 신뢰).
+- **Architecture audit(핵심 발견)**: `src/data_infra/models.py`/
+  `repository.py`를 직접 읽어 확인 — `SecurityMaster.security_id`가
+  이미 ticker와 분리된 permanent identifier, `valid_from`/`valid_to`
+  + `SecurityStatus`(ACTIVE/DELISTED/RENAMED/MERGED)가 이미
+  delisted/inactive 추적, `UniverseMembership.valid_from`/`valid_to`
+  + `get_universe(as_of_time=...)`가 이미 정확한 point-in-time
+  survivorship-aware 쿼리를 수행(InMemory와 DuckDB 양쪽 구현 모두 직접
+  코드 확인) — 전부 Phase 1부터 무수정으로 존재. 새 아키텍처를
+  만들지 않고 이 사실을 문서화하는 것 자체가 이번 phase의 핵심
+  결정(ADR-0032 Decision 1).
+- **실제 공백 수정 — listed_from/listed_to 미배선**:
+  `build_security_masters`/`build_universe_memberships`가
+  `SymbolMetadata.listed_from`/`listed_to`를 무시하고 모든 심볼에
+  동일한 `valid_from`/`status=ACTIVE`/`valid_to=None`을 적용하던 문제.
+  심볼별 실제 날짜를 사용하도록 수정(`status`는 `listed_to` 존재 여부로
+  DELISTED/ACTIVE 판정 — RENAMED/MERGED는 더 세밀한 근거 없이 추측하지
+  않음). 기존 `SymbolMetadata`(전부 listed_from/listed_to가 None)는
+  완전히 동일하게 동작 — 순수 additive, 회귀 테스트로 확인.
+- **`detect_ticker_collisions` 신규**: 서로 다른 security_id가 같은
+  ticker를 겹치는 기간에 주장하면 collision(데이터 버그)으로 감지,
+  겹치지 않는 기간의 정당한 ticker 재사용은 감지하지 않음.
+- **`TiingoDataProvider.fetch_symbol_metadata`/`normalize_symbol_metadata`
+  신규**: broad-universe discovery 준비 작업(Tier 2 문서 기반, 실
+  응답으로 검증된 적 없음 — 기존 `fetch_corporate_actions`와 동일한
+  정직성 원칙). `sector`/`market_cap_bucket`은 이 endpoint가 제공하지
+  않으므로 채우지 않음.
+- **신규 테스트 19개**: survivorship-aware point-in-time 쿼리(delisted
+  종목이 valid_to 이후 사라짐/이전엔 존재, 미래 상장 종목이 과거
+  쿼리에 안 나타남, current-survivor-only vs historical universe가
+  실제로 다른 결과를 냄 — 지침의 핵심 질문을 직접 증명), ticker
+  reuse/collision 구분, DuckDB 실제 재시작 후 delisted 종목 처리,
+  Tiingo metadata fetch/normalize. 전부 SYNTHETIC fixture — 실 데이터
+  주장 아님.
+- **실 데이터/네트워크 재확인**: 전체 파일시스템 재탐색, network egress
+  동일 진단(`host_not_allowed`), 변화 없음. **REAL WALK-FORWARD
+  EXECUTION: NOT COMPLETED.**
+- **기존 1652개 테스트 전부 유지** — 최종 **1671 passed**.
+- **신규 문서**: ADR-0032, `docs/research/STRATEGY-VALIDATION-REPORT.md`
+  Phase 29 Addendum(지침 section 86의 10개 질문 전부 답변). README.md/
+  PROJECT_STATUS.md/PRODUCTION-READINESS-MATRIX.md/MARKET-DATA-PROVIDER.md
+  갱신(이 항목).
+- **Toss/Live 활성화 코드, RiskConfig 숫자, 새 전략 추가, parameter
+  tuning 전부 없음.**
+
+### In Progress (Session 30 — Phase 29)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 30 — Phase 29)
+
+- 이 sandboxed 세션 자체의 실 시장데이터 접근 — Phase 26-28과 동일한
+  원인(network egress allowlist), 변화 없음.
+- 2010~최신 broad survivorship-aware universe 실 ingestion 및 실
+  Walk-Forward 실행 — 위 항목에 종속. 이 데이터는 어느 환경에도 존재한
+  적 없음(사용자의 Codespaces 환경도 2023-2024만 보유).
+
+### Decision Required (Session 30 — Phase 29)
+
+1. (Phase 17-28에서 이어짐) 전부 변경 없음.
+2. **(신규, 실질적으로는 이어짐)** 2010~최신 broad universe 실
+   ingestion을 언제/어떻게 수행할지 — network egress allowlist 해결이
+   선행 조건. provider(Tiingo) 무료 tier의 실제 500 symbols/month 등
+   한도가 이번 phase에서도 실제 계정으로 확인되지 않음(여전히 UNKNOWN).
+
+### Known Issues (Session 30 — Phase 29)
+
+- Phase 28까지의 Known Issues 전부 유지. 이번 phase가 발견한 유일한
+  gap(`listed_from`/`listed_to` 미배선)은 이미 수정·회귀 테스트
+  추가됨.
+
+### Architecture Changes (Session 30 — Phase 29)
+
+`src/data_infra/universe.py`(`build_security_masters`/
+`build_universe_memberships` 배선 수정 + `detect_ticker_collisions`
+신규, additive),
+`src/data_infra/providers/tiingo.py`(`fetch_symbol_metadata`/
+`normalize_symbol_metadata` 신규, additive) — 전부 기존 코드에 대한
+순수 추가/버그 수정. `backtest.engine`, `strategy_research.*`,
+`data_infra.repository`/`storage.data_repository`의 쿼리 로직 전부
+무수정(이미 올바르게 동작함을 확인만 함).
+
+### Toss API Status (Session 30 — Phase 29)
+
+변경 없음: `CapabilityStatus` 전부 `UNKNOWN` 유지.
+
+### Last Validation (Session 30 — Phase 29)
+
+`python -m pytest tests/ -q` — baseline **1652 passed** → 최종
+**1671 passed, 0 failed, 0 skipped**. 기존 1652개 테스트 전부
+삭제/약화 없이 유지, 신규 19개 추가.
+
+### Next Task (Session 30 — Phase 29)
+
+1. workspace/environment 관리자가 network egress allowlist에
+   `api.tiingo.com`을 추가 — 이 세션 자체에서 실 데이터 확보의 유일한
+   경로.
+2. Tiingo 실제 계정으로 무료 tier 한도(unique symbols/month,
+   requests/day 등)를 실제로 확인 — broad universe 규모 결정의 선행
+   조건.
+3. 위 두 조건이 충족되면: `fetch_symbol_metadata`로 broad universe
+   discovery Stage 1 시작, `SymbolMetadata.listed_from`/`listed_to`에
+   실제 값 채우기 → 이번 phase가 수정한 배선이 자동으로
+   survivorship-aware universe를 만들어냄(추가 아키텍처 작업 불필요).
+4. 그 전까지는 사용자가 이미 보유한 2023-2024 실 데이터로
+   `scripts/run_long_horizon_validation.py --data-status REAL`을 외부
+   환경에서 실행하는 것이 가장 빠른 실 evidence 확보 경로(변경 없음).
+
+## Previous Subtask (Session 29 — Phase 28)
 
 **Phase 28 — Real-Data Walk-Forward Execution & Strategy Evidence**
 (Live Trading은 여전히 구조적으로 비활성 — Toss capability가
