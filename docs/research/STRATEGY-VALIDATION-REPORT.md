@@ -946,3 +946,49 @@ objective, per ADR-0034 Decision 4 -- both hold simultaneously).
     INSUFFICIENT_EVIDENCE for all 4 candidates, unchanged;
     `VALIDATED` remains structurally unreachable by this project's own
     `classify_evidence_level`.
+
+## PBO / Deflated Sharpe Ratio Addendum
+
+After Phase 31, the user obtained real 2010-2026 Tiingo data in their
+own network-enabled environment (outside this sandboxed session) and
+ran `scripts/run_long_horizon_validation.py --data-status REAL`
+against all 4 existing strategies over the full PILOT_UNIVERSE (16
+symbols). This produced this project's first-ever real walk-forward
+result: 76 real folds per strategy.
+
+**Raw fold-consistency result** (before PBO/DSR): only
+`trend_volatility` cleared the fold win-rate bar (53/76 = 69.7% >=
+60% required); `buy_and_hold` (55.3%), `long_term_momentum` (51.3%),
+and `risk_controlled_momentum` (51.3%) did not. Whether
+`trend_volatility`'s apparent edge is genuine or simply "the best of 4
+compared candidates" was, until this addendum, unanswerable --
+`assess_pbo_dsr_applicability` correctly reported `applicable=True`
+(4 candidates, each with 76 >= the 6-fold minimum), the exact trigger
+condition `docs/research/walk-forward-pbo-deflated-sharpe.md` section
+9.1 named for ending this track's DEFER classification.
+
+**What was built in response** (see
+`docs/decisions/ADR-0035-pbo-deflated-sharpe-implementation.md` for
+full detail): `strategy_research.pbo_dsr` (CSCV-based PBO, Deflated
+Sharpe Ratio, validated against known-labeled synthetic cases before
+ever being applied to anything real), wired into
+`classify_evidence_level` (CANDIDATE now additionally requires PBO <
+50% and DSR >= 95% when those real numbers are supplied) and into
+`run_long_horizon_validation.py` (a real bug was found and fixed while
+wiring this in: `assess_pbo_dsr_applicability`'s result was computed
+but never fed back into evidence classification, so `pbo_dsr_applied`
+was silently always `False` -- every real run's evidence was capped at
+`ROBUSTNESS_PENDING` regardless of what applicability actually found).
+A standalone `scripts/compute_pbo_dsr_from_report.py` applies this to
+an already-completed real report without re-running the (roughly
+hour-long) walk-forward.
+
+**Actual PBO/DSR result against the real 4-strategy run**: not yet
+computed in this session -- the real report JSON exists only in the
+user's own environment (Codespaces), not in this sandboxed session's
+filesystem. `scripts/compute_pbo_dsr_from_report.py
+--report <path-to-long_horizon_validation.json>` needs to be run there
+(fast -- no backtest re-run) to get the real answer to "does
+`trend_volatility`'s apparent edge survive PBO/DSR scrutiny, or is it
+indistinguishable from the best of 4 noisy trials." This report will be
+updated with that result once it is available.
