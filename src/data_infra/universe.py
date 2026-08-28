@@ -266,3 +266,134 @@ def detect_ticker_collisions(security_masters: Sequence[SecurityMaster]) -> list
                         "during an overlapping window"
                     )
     return findings
+
+
+_SurvivorshipClassification = str  # one of the four literal values below, kept as str (not an Enum) since this is a diagnostic report field, not a domain model concept Phase 1 ever defined.
+
+
+@dataclass(frozen=True)
+class SurvivorshipAudit:
+    """Phase 31 (instruction section 28): answers the ten survivorship
+    diagnostic questions the instruction requires, and produces one of
+    four classifications -- never the bare, unqualified claim
+    "survivorship bias solved" the instruction explicitly forbids."""
+
+    as_of_time: datetime
+    total_securities: int
+    active_count: int
+    delisted_count: int
+    renamed_or_merged_count: int
+    ticker_collision_count: int
+    ticker_reuse_count: int
+    universe_membership_interval_count: int
+    permanent_id_percentage: float
+    securities_relying_only_on_ticker_percentage: float
+    classification: _SurvivorshipClassification
+    classification_reason: str
+
+
+def audit_survivorship(
+    universe: UniverseDefinition,
+    security_masters: Sequence[SecurityMaster],
+    universe_memberships: Sequence,
+    *,
+    as_of_time: datetime,
+) -> SurvivorshipAudit:
+    """Answers instruction section 28's ten questions against one
+    ingested universe. Takes the ORIGINAL `UniverseDefinition` (not just
+    the converted `SecurityMaster` records) because only `SymbolMetadata`
+    can honestly distinguish "this security's dates were provider-
+    confirmed" from "this security's dates are the uniform caller-
+    supplied fallback" -- `SecurityMaster.valid_from`/`valid_to` alone
+    cannot tell the two apart once `build_security_masters` has already
+    filled the fallback in (Phase 29's `s.listed_from or valid_from`).
+
+    Never fabricates `ticker_changes` -- this project's own
+    `build_security_masters` (Phase 29 Decision 2) has no data source
+    finer than two dates, so it can never distinguish a genuine
+    RENAMED/MERGED event from a plain DELISTED one; `renamed_or_merged_count`
+    therefore reports exactly what `SecurityStatus.RENAMED`/`MERGED`
+    records exist (currently always 0 for anything this module itself
+    builds), documented as a known limitation rather than left silently
+    implied to be "no renames happened."""
+    total = len(security_masters)
+    active = sum(1 for s in security_masters if s.status == SecurityStatus.ACTIVE)
+    delisted = sum(1 for s in security_masters if s.status == SecurityStatus.DELISTED)
+    renamed_or_merged = sum(
+        1 for s in security_masters if s.status in (SecurityStatus.RENAMED, SecurityStatus.MERGED)
+    )
+    collisions = detect_ticker_collisions(security_masters)
+
+    reuse_count = 0
+    by_ticker: dict[str, list[SecurityMaster]] = {}
+    for sm in security_masters:
+        by_ticker.setdefault(sm.ticker, []).append(sm)
+    for records in by_ticker.values():
+        distinct_ids = {r.security_id for r in records}
+        if len(distinct_ids) > 1:
+            reuse_count += len(distinct_ids) - 1  # N distinct identities sharing one ticker => N-1 reuse events
+
+    membership_count = len(universe_memberships)
+
+    # security_id is a permanent identifier by construction in this
+    # project's own domain model (Phase 1) -- every SecurityMaster has
+    # one, structurally, so this is always 100%. The honest caveat
+    # (documented, not hidden) is that build_security_masters currently
+    # sets security_id == ticker (Phase 24/29 have not yet wired a
+    # provider-confirmed permanent ID distinct from the ticker string),
+    # so today's populated data cannot actually survive a ticker reuse
+    # by a different company without a human/provider supplying a
+    # genuinely distinct security_id.
+    permanent_id_percentage = 100.0 if total else 0.0
+
+    confirmed_dates = sum(1 for s in universe.symbols if s.listed_from is not None or s.listed_to is not None)
+    relying_only_on_ticker_percentage = (
+        100.0 * (len(universe.symbols) - confirmed_dates) / len(universe.symbols) if universe.symbols else 0.0
+    )
+
+    if confirmed_dates == 0:
+        classification: _SurvivorshipClassification = "CURRENT-UNIVERSE-ONLY"
+        reason = (
+            "No symbol in this universe carries a provider-confirmed listed_from/listed_to "
+            "-- every valid_from/valid_to is the uniform caller-supplied fallback, so this "
+            "universe is, in practice, today's constituent list projected across the whole "
+            "requested date range, regardless of how many symbols it contains."
+        )
+    elif confirmed_dates < len(universe.symbols):
+        classification = "PARTIALLY_MITIGATED"
+        reason = (
+            f"{confirmed_dates}/{len(universe.symbols)} symbols carry provider-confirmed "
+            "historical dates; the rest still use the uniform fallback and are effectively "
+            "current-universe-only within this same dataset."
+        )
+    elif collisions:
+        classification = "PARTIALLY_MITIGATED"
+        reason = (
+            f"All symbols carry confirmed historical dates, but {len(collisions)} genuine "
+            "ticker collision(s) were detected -- unresolved collisions undermine identity "
+            "correctness even where dates are confirmed."
+        )
+    else:
+        classification = "PARTIALLY_MITIGATED"
+        reason = (
+            "All symbols carry provider-confirmed historical dates and no ticker collision "
+            "was detected, but permanent identity is not yet distinct from ticker in this "
+            "project's own population (security_id == ticker) and delisting-reason "
+            "granularity (RENAMED/MERGED vs. plain DELISTED) is not available -- this is not "
+            "yet a FULLY_SUPPORTED, CRSP-grade survivorship-bias-free reconstruction."
+        )
+
+    return SurvivorshipAudit(
+        as_of_time=as_of_time,
+        total_securities=total,
+        active_count=active,
+        delisted_count=delisted,
+        renamed_or_merged_count=renamed_or_merged,
+        ticker_collision_count=len(collisions),
+        ticker_reuse_count=reuse_count,
+        universe_membership_interval_count=membership_count,
+        permanent_id_percentage=permanent_id_percentage,
+        securities_relying_only_on_ticker_percentage=relying_only_on_ticker_percentage,
+        classification=classification,
+        classification_reason=reason,
+    )
