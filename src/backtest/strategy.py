@@ -35,7 +35,15 @@ class Strategy(Protocol):
 
 class BuyAndHoldStrategy:
     """Equal-weight buy of `security_ids` on the first decision
-    checkpoint; holds thereafter (Phase 2 spec section 10.1)."""
+    checkpoint THAT ACTUALLY HAS DATA for at least one symbol; holds
+    thereafter (Phase 2 spec section 10.1). Not necessarily the
+    backtest's very first checkpoint -- a real trading calendar can
+    include a date `AsOfDataView` has no bar for yet (e.g. a market
+    holiday the calendar's own hand-picked holiday set doesn't know
+    about, `data_infra.calendar`'s own documented limitation), and this
+    strategy must keep waiting rather than permanently giving up on an
+    empty first attempt (found via a real Phase 24 ingestion run,
+    `tests/backtest/test_buy_and_hold_late_data_availability.py`)."""
 
     version = "buy_and_hold_v1"
 
@@ -60,7 +68,6 @@ class BuyAndHoldStrategy:
     ) -> list[OrderIntent]:
         if self._invested or not self._security_ids:
             return []
-        self._invested = True
 
         investable_cash = portfolio.cash * (1.0 - self._cash_buffer) * (1.0 - self.COST_SAFETY_MARGIN)
         per_symbol_cash = investable_cash / len(self._security_ids)
@@ -76,6 +83,12 @@ class BuyAndHoldStrategy:
             quantity = math.floor(per_symbol_cash / price)
             if quantity > 0:
                 intents.append(OrderIntent(security_id, OrderSide.BUY, float(quantity)))
+        # Only commit to "already invested" once a real attempt actually
+        # produced at least one order -- a checkpoint where no symbol
+        # has data yet must not permanently disable every later,
+        # genuinely investable checkpoint.
+        if intents:
+            self._invested = True
         return intents
 
 
