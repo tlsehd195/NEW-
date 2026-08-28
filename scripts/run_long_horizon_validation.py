@@ -1,9 +1,24 @@
 #!/usr/bin/env python3
 """Long-horizon real-data strategy validation CLI (Phase 25, extended
-Phase 26 with `experiment_id`/`data_version` reproducibility fields).
+Phase 26 with `experiment_id`/`data_version` reproducibility fields,
+Phase 27 with a required `--data-status` flag).
 
 See docs/decisions/ADR-0031-long-horizon-walk-forward-validation.md and
 docs/research/STRATEGY-VALIDATION-REPORT.md.
+
+Phase 27 fix: `--data-status {REAL,SYNTHETIC}` is now a REQUIRED
+argument. Before this, `classify_evidence_level`'s `is_real_data`
+argument was hardcoded `True` regardless of what the `--db-path`
+catalog actually held -- a synthetic dry run (the only kind this
+sandboxed session could ever run against, network access has been
+BLOCKED since Phase 20) would have silently produced an
+`EvidenceAssessment` that looked structurally identical to a real one,
+violating this project's own "never let synthetic look like real"
+discipline at exactly the layer meant to enforce it. `--data-status`
+now gates `is_real_data` directly, is folded into `experiment_id` (so a
+REAL and a SYNTHETIC run of an otherwise-identical configuration can
+never collide into the same id), and is written into the JSON report's
+top-level `data_status` field and its `note`/`benchmark_status` text.
 
 Phase 26 addition: the JSON report now carries `experiment_id` (a
 deterministic hash of the run's own configuration -- universe, date
@@ -65,7 +80,8 @@ populated by scripts/ingest_real_market_data.py):
     python3 scripts/run_long_horizon_validation.py \\
         --universe PILOT_UNIVERSE \\
         --start 2023-01-02 --end 2024-12-31 \\
-        --db-path ./data/real_market_data
+        --db-path ./data/real_market_data \\
+        --data-status REAL
 
 Never executed by this repository's own automated test suite (it reads
 real, already-ingested data from a path the test suite never has, and
@@ -170,7 +186,21 @@ def main() -> int:
     parser.add_argument("--test-window-months", type=int, default=2, help="Walk-forward fold TEST length")
     parser.add_argument("--step-months", type=int, default=2, help="Walk-forward rolling step")
     parser.add_argument("--report-out", type=Path, default=None)
+    parser.add_argument(
+        "--data-status", choices=("REAL", "SYNTHETIC"), required=True,
+        help=(
+            "REAL only if --db-path holds real, provider-ingested data "
+            "(scripts/ingest_real_market_data.py). SYNTHETIC for a "
+            "pipeline-correctness dry run against fixture data -- caps "
+            "every strategy's EvidenceLevel at INSUFFICIENT_EVIDENCE "
+            "regardless of how the numbers look (Phase 27 fix: this used "
+            "to be hardcoded to REAL-equivalent behavior regardless of "
+            "what data the catalog actually held -- see "
+            "tests/strategy_research/test_run_long_horizon_validation_wiring.py)."
+        ),
+    )
     args = parser.parse_args()
+    is_real_data = args.data_status == "REAL"
 
     universe = _UNIVERSES[args.universe]
     security_ids = list(universe.symbol_ids)
@@ -206,6 +236,9 @@ def main() -> int:
         # different one.
         experiment_id = compute_data_version(
             {
+                "data_status": args.data_status,  # REAL and SYNTHETIC runs of an
+                # otherwise-identical configuration must never collide into the
+                # same experiment_id (section 27's namespace-separation requirement).
                 "universe_name": universe.name, "universe_version": universe.version,
                 "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
                 "train_fraction": args.train_fraction, "validation_fraction": args.validation_fraction,
@@ -254,14 +287,24 @@ def main() -> int:
 
         report = {
             "note": (
-                "REAL market data (Tiingo primary/Stooq fallback, as actually "
-                "ingested by scripts/ingest_real_market_data.py). This is NOT "
-                "synthetic. Walk-forward folds run across the TRAIN+VALIDATION "
-                "region only; 'held_out_test' is the TEST region, evaluated "
-                "exactly once. No candidate below is classified "
-                "PROMISING_CANDIDATE/REJECTED, and no EvidenceLevel here is or "
-                "can be VALIDATED -- see 'evidence_assessment' per strategy."
+                (
+                    "REAL market data (Tiingo primary/Stooq fallback, as actually "
+                    "ingested by scripts/ingest_real_market_data.py). This is NOT "
+                    "synthetic."
+                    if is_real_data else
+                    "SYNTHETIC data (--data-status SYNTHETIC was passed explicitly). "
+                    "This is a pipeline-correctness dry run, NOT a real-market-data "
+                    "validation -- every EvidenceLevel below is capped at "
+                    "INSUFFICIENT_EVIDENCE regardless of how the numbers look."
+                ) + (
+                    " Walk-forward folds run across the TRAIN+VALIDATION "
+                    "region only; 'held_out_test' is the TEST region, evaluated "
+                    "exactly once. No candidate below is classified "
+                    "PROMISING_CANDIDATE/REJECTED, and no EvidenceLevel here is or "
+                    "can be VALIDATED -- see 'evidence_assessment' per strategy."
+                )
             ),
+            "data_status": args.data_status,
             "experiment_id": experiment_id,
             "data_version": data_version,
             "universe": universe.name,
@@ -282,10 +325,14 @@ def main() -> int:
             },
             "initial_capital": args.initial_capital,
             "benchmark_id": benchmark_id,
-            "benchmark_status": "REAL_TOTAL_RETURN" if benchmark_id else "BENCHMARK_UNAVAILABLE",
+            "benchmark_status": (
+                ("REAL" if is_real_data else "SYNTHETIC") + "_TOTAL_RETURN"
+                if benchmark_id else "BENCHMARK_UNAVAILABLE"
+            ),
             "results": {},
         }
 
+        print(f"Data status: {args.data_status}")
         print(f"Experiment ID: {experiment_id}")
         print(f"Data version: {data_version}")
         print(f"Benchmark: {report['benchmark_status']} ({benchmark_id})")
@@ -319,7 +366,7 @@ def main() -> int:
                     "num_trades_net": len(held_out_result.net.fills),
                 }
 
-            evidence = classify_evidence_level(aggregate, is_real_data=True, pbo_dsr_applied=False)
+            evidence = classify_evidence_level(aggregate, is_real_data=is_real_data, pbo_dsr_applied=False)
 
             report["results"][name] = {
                 "hypothesis": hypothesis,
