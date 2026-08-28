@@ -140,3 +140,64 @@ full instruction section 28 criteria (survives costs, out-of-sample
 result exists, consistent across periods, not single-symbol dependent,
 not overly parameter-sensitive, reasonable turnover, acceptable
 drawdown) to all hold before `PROMISING_CANDIDATE` is even reachable.
+
+## Addendum -- first REAL-data run (Phase 24 follow-up, user-executed)
+
+The user ran `scripts/ingest_real_market_data.py` against real Tiingo
+data (`--universe PILOT_UNIVERSE`, 2023-01-02 to 2024-12-31, 8,032 bars,
+107 corporate actions, real SPY dividend history) in their own
+network-enabled environment (this session cannot reach real providers
+-- see `MARKET-DATA-PROVIDER.md`), then ran
+`scripts/run_first_real_strategy_evaluation.py` against it and shared
+the console output back into this session. **This is REAL market data,
+not synthetic** -- the first real performance numbers this project has
+ever produced.
+
+That first run also surfaced and led to fixing two real bugs
+(`git log`, commits `954d32e`/`951473d` on
+`claude/phase-24-real-data-expandable-universe`):
+1. `scripts/ingest_real_market_data.py` never fetched corporate actions
+   (splits/dividends), only price bars -- fixed by wiring
+   `TiingoDataProvider.fetch_corporate_actions`/
+   `normalize_corporate_actions` (Phase 20, previously unused by this
+   script) into the ingestion flow.
+2. `BuyAndHoldStrategy` (`src/backtest/strategy.py`, Phase 2) permanently
+   gave up if its very first checkpoint had no data for any symbol --
+   real 2023-01-02 is a market holiday (observed New Year's) that
+   `data_infra.calendar.US_EQUITY`'s admittedly non-production-accurate
+   holiday set doesn't know about, so the strategy's first real attempt
+   found nothing and never tried again, producing a spurious 0%/0-trade
+   result. Fixed with a regression test
+   (`tests/backtest/test_buy_and_hold_late_data_availability.py`).
+
+### Results (real data, 2023-01-02 to 2024-12-31, 15 tradeable symbols + real SPY TOTAL_RETURN benchmark)
+
+| Strategy | Net cumulative return | Net Sharpe | Max drawdown | Trades | Excess return vs SPY |
+|---|---|---|---|---|---|
+| Buy & Hold | +151.95% | 1.06 | -49.38% | 15 | +93.75% |
+| Long-Term Momentum | +143.37% | 0.93 | -49.86% | 18 | +85.17% |
+| Trend + Volatility | +57.06% | 0.66 | -24.87% | 50 | -1.14% |
+| Risk-Controlled Momentum | +127.56% | 0.87 | -46.70% | 19 | +69.36% |
+
+**Honest interpretation, not a verdict**: 2023-2024 was an exceptional
+concentrated bull market (this pilot universe includes NVDA, whose real
+2024 stock performance was extraordinary). Simply holding everything
+(Buy & Hold) outperformed every "smarter" candidate over this specific
+window -- a real, useful finding in its own right (per instruction
+section 30: "나쁜 전략을 정직하게 제거하는 것이 우선," and here it is the
+more complex candidates, not Buy & Hold, that failed to add value this
+window). Trend + Volatility's realized-volatility filter did cut max
+drawdown roughly in half (-24.87% vs -49%+ for the others) at the cost
+of giving up most of the upside -- a real risk/return tradeoff, not
+noise.
+
+**This single window does not change any classification.** All four
+remain `INCONCLUSIVE` in the actual `ResearchLog` this run produced
+(`strategy_research.run_first_real_strategy_evaluation`'s own explicit
+design -- see that script's module docstring) -- one window, no
+train/validation/test split, no walk-forward re-test, no
+multi-period consistency check. A strategy beating (or losing to) Buy &
+Hold in one specific 2-year bull market is not evidence it would do so
+in a different regime. The natural next step, not yet done, is a
+chronological train/validation/test split or walk-forward re-test over
+a longer real history once more data is ingested.
