@@ -983,12 +983,49 @@ A standalone `scripts/compute_pbo_dsr_from_report.py` applies this to
 an already-completed real report without re-running the (roughly
 hour-long) walk-forward.
 
-**Actual PBO/DSR result against the real 4-strategy run**: not yet
-computed in this session -- the real report JSON exists only in the
-user's own environment (Codespaces), not in this sandboxed session's
-filesystem. `scripts/compute_pbo_dsr_from_report.py
---report <path-to-long_horizon_validation.json>` needs to be run there
-(fast -- no backtest re-run) to get the real answer to "does
-`trend_volatility`'s apparent edge survive PBO/DSR scrutiny, or is it
-indistinguishable from the best of 4 noisy trials." This report will be
-updated with that result once it is available.
+**Actual PBO/DSR result against the real 4-strategy run** (computed by
+the user in their own environment via
+`scripts/compute_pbo_dsr_from_report.py`, relayed into this session
+and recorded here rather than fabricated):
+
+```
+PBO (Probability of Backtest Overfitting): 62.86% across 70 CSCV splits (4 candidates, 8 groups)
+CANDIDATE requires PBO < 50% and Deflated Sharpe Ratio >= 95%
+
+buy_and_hold: evidence=ROBUSTNESS_PENDING (55% positive folds, below the 60% fold-consistency bar)
+long_term_momentum: evidence=ROBUSTNESS_PENDING (51% positive folds, below the 60% fold-consistency bar)
+risk_controlled_momentum: evidence=ROBUSTNESS_PENDING (51% positive folds, below the 60% fold-consistency bar)
+trend_volatility: evidence=ROBUSTNESS_PENDING -- 70% of 76 real folds positive (clears the
+  fold-consistency bar), but PBO=0.63 (must be < 0.50, FAILED) and Deflated
+  Sharpe=0.99 (must be >= 0.95, passed) -- PBO alone blocks CANDIDATE.
+```
+
+**Final answer, honestly stated: none of the 4 strategies reach
+CANDIDATE against this dataset.** `trend_volatility` was the only one
+to clear the raw fold-consistency bar (69.7% positive folds), but the
+CSCV-based PBO estimate says there is a 62.86% probability that its
+in-sample selection as "the best of 4" would NOT have held up
+out-of-sample had the CSCV resampling gone the other way -- i.e., more
+likely than not that this is exactly the "picked the best of several
+noisy trials" failure mode PBO exists to catch, not a persistent edge.
+DSR alone (0.99) would have suggested otherwise; PBO -- the more
+direct, resampling-based test of reproducibility, rather than a
+distributional estimate -- is treated as authoritative when the two
+disagree, per `docs/decisions/ADR-0035-pbo-deflated-sharpe-implementation.md`.
+
+This is not a failure of this project's infrastructure -- it is the
+evidence-classification system correctly refusing to let a
+fold-consistency-only signal be mistaken for real, reproducible skill.
+The correct conclusion at this point is `REAL_VALIDATION_NOT_COMPLETED`
+for all 4 strategies against the current 16-symbol, survivorship-biased
+PILOT_UNIVERSE -- not that no signal exists anywhere, only that none of
+the 4 existing strategies clears this project's own evidentiary bar on
+this specific dataset. Per this project's RULE 0.8/no-post-hoc-tuning
+discipline, this result must NOT be used to retune any strategy's
+parameters, add a new strategy, or select a different universe
+specifically to make this result look better -- any future attempt
+requires a genuinely different, independently-justified dataset or
+hypothesis (e.g. the broader/less survivorship-biased universe
+`docs/decisions/ADR-0034-real-data-acquisition-strategy.md` already
+identified as the actual next requirement), decided before seeing its
+own result, not after.
