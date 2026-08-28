@@ -114,6 +114,7 @@ from strategy_research.classification import (  # noqa: E402
     PromisingCriteria,
 )
 from strategy_research.evidence import assess_pbo_dsr_applicability, classify_evidence_level  # noqa: E402
+from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy  # noqa: E402
 from strategy_research.research_log import ResearchLog  # noqa: E402
 from strategy_research.risk_controlled_momentum import (  # noqa: E402
@@ -378,7 +379,19 @@ def main() -> int:
         print()
 
         fold_counts_by_strategy: dict[str, int] = {}
+        aggregates_by_name = {}
+        held_out_by_name = {}
 
+        # Pass 1: run every strategy's walk-forward + held-out TEST and
+        # record it in the ResearchLog. Evidence classification is
+        # deliberately deferred to pass 2 -- it needs to know whether
+        # PBO/DSR is applicable ACROSS all candidates first (a bug this
+        # fix corrects: `assess_pbo_dsr_applicability` was previously
+        # computed only after this loop and its result was never fed
+        # back into `classify_evidence_level`, so `pbo_dsr_applied` was
+        # always False here regardless of what applicability actually
+        # found -- every real run's evidence was silently capped at
+        # ROBUSTNESS_PENDING even when the trigger condition had fired).
         for name, hypothesis, factory in strategy_specs:
             aggregate = run_walk_forward_evaluation(
                 repository, factory, security_ids,
@@ -388,6 +401,7 @@ def main() -> int:
                 regime_subject_id=BENCHMARK_SYMBOL,
             )
             fold_counts_by_strategy[name] = aggregate.fold_count
+            aggregates_by_name[name] = aggregate
 
             held_out_test = None
             if split.test_end > split.test_start:
@@ -401,8 +415,74 @@ def main() -> int:
                     "net": _perf_dict(held_out_result.net.performance),
                     "num_trades_net": len(held_out_result.net.fills),
                 }
+            held_out_by_name[name] = held_out_test
 
-            evidence = classify_evidence_level(aggregate, is_real_data=is_real_data, pbo_dsr_applied=False)
+            log.record(
+                CandidateEvaluation(
+                    strategy_name=name, strategy_version=getattr(factory(), "version", name),
+                    hypothesis=hypothesis, parameters={},
+                    train_period=(split.train_start.isoformat(), split.validation_end.isoformat()),
+                    validation_period=(), test_period=(split.test_start.isoformat(), split.test_end.isoformat()),
+                    criteria=PromisingCriteria(), classification=CandidateClassification.INCONCLUSIVE,
+                    notes=(f"walk-forward folds={aggregate.fold_count}",),
+                )
+            )
+
+        applicability = assess_pbo_dsr_applicability(log, real_fold_counts_by_candidate=fold_counts_by_strategy)
+        report["pbo_dsr_applicability"] = {
+            "applicable": applicability.applicable, "reason": applicability.reason,
+            "candidate_count": applicability.candidate_count,
+            "parameter_combination_count": applicability.parameter_combination_count,
+            "min_real_out_of_sample_folds_across_candidates": applicability.min_real_out_of_sample_folds_across_candidates,
+        }
+        print(f"PBO/DSR applicability: {applicability.applicable} -- {applicability.reason}")
+
+        # Actual PBO/DSR computation (strategy_research.pbo_dsr), only
+        # once the applicability trigger has genuinely fired against
+        # REAL data -- never computed against synthetic fixtures (a
+        # synthetic PBO/DSR number would answer a question about noise
+        # this project never asks; is_real_data already gates every
+        # other evidence claim the same way).
+        pbo_result = None
+        dsr_by_name: dict = {}
+        if applicability.applicable and is_real_data:
+            fold_returns_by_candidate = {
+                name: [fold.result.net.performance.cumulative_return for fold in agg.folds]
+                for name, agg in aggregates_by_name.items()
+            }
+            try:
+                pbo_result = compute_pbo(fold_returns_by_candidate)
+                dsr_by_name = compute_dsr_for_all_candidates(fold_returns_by_candidate)
+                report["pbo_dsr_result"] = {
+                    "pbo_probability": pbo_result.probability,
+                    "num_combinations": pbo_result.num_combinations,
+                    "num_groups": pbo_result.num_groups,
+                    "deflated_sharpe_by_candidate": {n: r.deflated_sharpe_ratio for n, r in dsr_by_name.items()},
+                }
+                print(
+                    f"PBO (Probability of Backtest Overfitting): {pbo_result.probability:.2%} "
+                    f"across {pbo_result.num_combinations} CSCV splits"
+                )
+                for n in sorted(dsr_by_name):
+                    r = dsr_by_name[n]
+                    print(f"  {n}: Deflated Sharpe Ratio={r.deflated_sharpe_ratio:.4f} (observed fold Sharpe={r.observed_sharpe:.3f})")
+            except ValueError as exc:
+                print(f"PBO/DSR computation skipped: {exc}", file=sys.stderr)
+        print()
+
+        # Pass 2: classify evidence (now informed by real PBO/DSR values
+        # when they were actually computed above) and print per-strategy
+        # results.
+        for name, hypothesis, _factory in strategy_specs:
+            aggregate = aggregates_by_name[name]
+            held_out_test = held_out_by_name[name]
+            pbo_probability = pbo_result.probability if pbo_result is not None else None
+            deflated_sharpe_ratio = dsr_by_name[name].deflated_sharpe_ratio if name in dsr_by_name else None
+
+            evidence = classify_evidence_level(
+                aggregate, is_real_data=is_real_data, pbo_dsr_applied=pbo_result is not None,
+                pbo_probability=pbo_probability, deflated_sharpe_ratio=deflated_sharpe_ratio,
+            )
 
             report["results"][name] = {
                 "hypothesis": hypothesis,
@@ -412,19 +492,10 @@ def main() -> int:
                     "level": evidence.level.value, "reason": evidence.reason,
                     "fold_count": evidence.fold_count, "positive_fold_ratio": evidence.positive_fold_ratio,
                     "distinct_known_regimes": evidence.distinct_known_regimes,
+                    "pbo_probability": pbo_probability, "deflated_sharpe_ratio": deflated_sharpe_ratio,
                 },
                 "classification": CandidateClassification.INCONCLUSIVE.value,
             }
-            log.record(
-                CandidateEvaluation(
-                    strategy_name=name, strategy_version=getattr(factory(), "version", name),
-                    hypothesis=hypothesis, parameters={},
-                    train_period=(split.train_start.isoformat(), split.validation_end.isoformat()),
-                    validation_period=(), test_period=(split.test_start.isoformat(), split.test_end.isoformat()),
-                    criteria=PromisingCriteria(), classification=CandidateClassification.INCONCLUSIVE,
-                    notes=(f"walk-forward folds={aggregate.fold_count}, evidence_level={evidence.level.value}",),
-                )
-            )
 
             print(f"{name}: evidence={evidence.level.value} folds={aggregate.fold_count}")
             print(f"  {evidence.reason}")
@@ -436,15 +507,6 @@ def main() -> int:
                 hnet = held_out_test["net"]
                 print(f"  held-out TEST net cumret={hnet['cumulative_return']:+.2%} sharpe={hnet['sharpe_ratio']:.2f} trades={held_out_test['num_trades_net']}")
             print()
-
-        applicability = assess_pbo_dsr_applicability(log, real_fold_counts_by_candidate=fold_counts_by_strategy)
-        report["pbo_dsr_applicability"] = {
-            "applicable": applicability.applicable, "reason": applicability.reason,
-            "candidate_count": applicability.candidate_count,
-            "parameter_combination_count": applicability.parameter_combination_count,
-            "min_real_out_of_sample_folds_across_candidates": applicability.min_real_out_of_sample_folds_across_candidates,
-        }
-        print(f"PBO/DSR applicability: {applicability.applicable} -- {applicability.reason}")
 
         report["research_log_summary"] = log.summary()
         report_path.parent.mkdir(parents=True, exist_ok=True)

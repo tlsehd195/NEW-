@@ -256,3 +256,79 @@ class TestNoWallClockOrRandomInStrategyDeterminism:
             if isinstance(node, ast.ImportFrom) and node.module == "random":
                 violations.append("from random import ...")
         assert violations == [], violations
+
+
+class TestPboDsrActuallyAppliedNotJustPrinted:
+    """The bug this class regression-tests: `assess_pbo_dsr_applicability`
+    was previously computed AFTER the per-strategy loop that calls
+    `classify_evidence_level`, so its result was never fed back in --
+    every real run's evidence was hardcoded `pbo_dsr_applied=False`
+    regardless of what applicability found. Fixed by restructuring into
+    two passes: collect all strategies' walk-forward results first,
+    THEN check applicability and (if real data + applicable) actually
+    compute PBO/DSR, THEN classify evidence using those real numbers."""
+
+    def test_classify_evidence_level_is_never_called_with_a_hardcoded_false(self) -> None:
+        tree = _tree()
+        calls = _find_calls(tree, "classify_evidence_level")
+        assert len(calls) == 1
+        call = calls[0]
+        kwargs = {kw.arg: kw.value for kw in call.keywords}
+        assert "pbo_dsr_applied" in kwargs
+        # Must not be the literal constant False -- must be computed
+        # (an expression referencing whether pbo_result was actually produced).
+        assert not (isinstance(kwargs["pbo_dsr_applied"], ast.Constant) and kwargs["pbo_dsr_applied"].value is False)
+
+    def test_classify_evidence_level_call_passes_pbo_probability_and_dsr(self) -> None:
+        tree = _tree()
+        [call] = _find_calls(tree, "classify_evidence_level")
+        kwargs = {kw.arg: kw.value for kw in call.keywords}
+        assert "pbo_probability" in kwargs
+        assert "deflated_sharpe_ratio" in kwargs
+
+    def test_applicability_check_happens_before_pbo_computation(self) -> None:
+        source = _source()
+        applicability_idx = source.index("assess_pbo_dsr_applicability(")
+        compute_pbo_idx = source.index("compute_pbo(")
+        assert applicability_idx < compute_pbo_idx
+
+    def test_pbo_computation_happens_before_evidence_classification(self) -> None:
+        source = _source()
+        compute_pbo_idx = source.index("compute_pbo(")
+        classify_idx = source.index("classify_evidence_level(")
+        assert compute_pbo_idx < classify_idx
+
+    def test_pbo_dsr_computation_gated_on_is_real_data(self) -> None:
+        """PBO/DSR must never be computed against synthetic fixture
+        data -- that would answer "is this noise" about a result this
+        project already knows is not real evidence (is_real_data=False
+        already forces INSUFFICIENT_EVIDENCE regardless)."""
+        tree = _tree()
+        compute_pbo_calls = _find_calls(tree, "compute_pbo")
+        assert len(compute_pbo_calls) == 1
+        call_lineno = compute_pbo_calls[0].lineno
+
+        # Find the nearest enclosing `if` whose test references
+        # is_real_data, walking up from the call.
+        found_gate = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If):
+                test_names = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
+                if "is_real_data" in test_names:
+                    body_linenos = [n.lineno for n in ast.walk(node) if hasattr(n, "lineno")]
+                    if call_lineno in body_linenos:
+                        found_gate = True
+                        break
+        assert found_gate, "compute_pbo call must be inside an `if ... is_real_data ...:` block"
+
+    def test_pbo_dsr_result_written_to_report(self) -> None:
+        source = _source()
+        assert '"pbo_dsr_result"' in source
+
+    def test_ast_bug_comment_documents_the_fix(self) -> None:
+        """Not load-bearing on its own, but a cheap guard that the
+        explanatory comment describing the fix (so a future edit does
+        not silently reintroduce it) has not been deleted."""
+        source = _source()
+        assert "was never fed" in source
+        assert "back into `classify_evidence_level`" in source
