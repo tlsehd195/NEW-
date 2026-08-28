@@ -64,6 +64,22 @@ corporate-action feed, `StooqDataProvider.metadata()["supports_corporate_actions
 == False`, ADR-0028) -- fetched directly from the `tiingo` provider
 instance below, not through `FallbackDataProvider` (which only exposes
 the shared `DataProvider` Protocol, deliberately not extended for this).
+
+**Phase 30 fix**: the manifest previously reported only the *requested*
+`start`/`end` -- it never recorded what the provider actually returned.
+A provider that lacks data back to the requested start, or lags behind
+the requested end, would previously be indistinguishable in the
+manifest from a run that got exactly what was asked for, silently
+inviting a false "covers 2010-latest" claim (instruction section 16:
+"Do NOT claim 'through today' unless data actually reaches today's
+date... Do not fabricate 2010 coverage"). The manifest now also reports
+`actual_data_start`/`actual_data_end` (computed from the real persisted
+bars' own timestamps, `None` when no bars were persisted), an explicit
+`delisted_count` (from the persisted `SecurityMaster` records' actual
+`status`, not assumed), and an explicit `data_status: "REAL"` field
+(this script only ever performs a real, network-backed ingestion --
+unlike `run_long_horizon_validation.py`, which accepts synthetic
+fixtures too and therefore needs a caller-supplied flag).
 """
 
 from __future__ import annotations
@@ -85,6 +101,7 @@ from data_infra.providers.tiingo import TiingoDataProvider  # noqa: E402
 from data_infra.providers.tiingo_config import DEFAULT_TIINGO_CONFIG  # noqa: E402
 from data_infra.providers.tiingo_transport import TiingoHttpTransport  # noqa: E402
 from data_infra.quality import DataQualityFramework  # noqa: E402
+from data_infra.enums import SecurityStatus  # noqa: E402
 from data_infra.universe import (  # noqa: E402
     BENCHMARK_SYMBOL,
     PILOT_UNIVERSE_V1,
@@ -131,8 +148,10 @@ def main() -> int:
     repository = DuckDBDataRepository(engine)
 
     try:
+        security_masters = []
         if universe is not None:
-            for record in build_security_masters(universe, valid_from=args.start):
+            security_masters = build_security_masters(universe, valid_from=args.start)
+            for record in security_masters:
                 repository.add_security(record)
             for record in build_universe_memberships(universe, valid_from=args.start):
                 repository.add_universe_membership(record)
@@ -178,6 +197,18 @@ def main() -> int:
             }
         )
 
+        # Phase 30 (instruction section 16): the requested --start/--end is
+        # not necessarily what the provider actually returned (a provider
+        # may not have data reaching back to the requested start, or may
+        # lag behind the requested end) -- report what was ACTUALLY
+        # observed, computed from the real persisted bars, never assumed
+        # equal to the request. `None` (not the requested date) when no
+        # bars were persisted at all, so a caller cannot mistake "no data"
+        # for "data exactly matching the request".
+        actual_data_start = min((b.timestamp for b in all_bars), default=None)
+        actual_data_end = max((b.timestamp for b in all_bars), default=None)
+        delisted_count = sum(1 for s in security_masters if s.status == SecurityStatus.DELISTED)
+
         manifest = {
             "note": (
                 "This manifest describes a real ingestion run against live "
@@ -186,11 +217,16 @@ def main() -> int:
                 "they are NOT reproduced or asserted by this repository's "
                 "own test suite, which never makes real network calls."
             ),
+            "data_status": "REAL",
             "universe_name": universe.name if universe is not None else None,
             "universe_version": universe.version if universe is not None else None,
             "symbols": list(symbols),
-            "start": args.start.isoformat(),
-            "end": args.end.isoformat(),
+            "symbol_count": len(symbols),
+            "delisted_count": delisted_count,
+            "requested_start": args.start.isoformat(),
+            "requested_end": args.end.isoformat(),
+            "actual_data_start": actual_data_start.isoformat() if actual_data_start is not None else None,
+            "actual_data_end": actual_data_end.isoformat() if actual_data_end is not None else None,
             "db_path": str(args.db_path),
             "ingestion_run_id": result.run_id,
             "ingestion_status": result.status.value,
@@ -208,11 +244,15 @@ def main() -> int:
             "corporate_actions_persisted": len(all_actions),
             "corporate_actions_per_symbol": corporate_action_results,
             "content_checksum": checksum,
+            "data_version": checksum,
         }
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(manifest, indent=2))
         print(f"Ingestion status: {result.status.value}")
         print(f"Total bars persisted: {len(all_bars)}")
+        print(f"ACTUAL_DATA_START: {manifest['actual_data_start']}")
+        print(f"ACTUAL_DATA_END: {manifest['actual_data_end']}")
+        print(f"Delisted securities in universe: {delisted_count}")
         print(f"Corporate actions persisted: {len(all_actions)}")
         print(f"Data quality status: {quality_run.status.value} ({len(quality_run.issues)} issue(s))")
         print(f"Content checksum: {checksum}")
