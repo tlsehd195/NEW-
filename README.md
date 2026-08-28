@@ -65,28 +65,32 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20/21/22/23/24/25/26/27/28/29는 Master Plan의 정식 Phase가 아니라, Live
+**Phase 17/18/19/20/21/22/23/24/25/26/27/28/29/30은 Master Plan의 정식 Phase가 아니라, Live
 전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
 기반을 놓는 사후 검증/기반 작업**이다.
 
 **REAL MARKET DATA / REAL WALK-FORWARD EXECUTION: NOT COMPLETED** — 이
 저장소가 실행되는 현재 환경에서
 `api.tiingo.com`/`stooq.com`/`openapi.tossinvest.com` 전부 egress
-proxy에서 403 거부. Phase 20부터 Phase 29까지 매 phase 재확인했으며
-변화 없음. Phase 28/29에서는 `data/` 외에 전체 파일시스템(ingestion
-manifest, DuckDB/Parquet 파일, 환경변수, 기존 스크립트)을 철저히
-탐색했으나 실 데이터를 어디에서도 찾지 못함 — 로컬에 실 데이터가
-존재할 유일한 경로가 network ingestion인데 그것이 차단되어 있으므로
-두 상태가 동시에 성립. Phase 26에서 정확한 원인을 처음 진단: DNS는
-정상 resolve, 설정된 proxy를 우회한 직접 TCP connect도 성공 — 오직
-실제 HTTP 요청만 거부되며, 응답 헤더에 `x-deny-reason: host_not_allowed`와
-"Host not in allowlist... Add this host to your network egress settings
-to allow access." 본문이 그대로 포함됨(세 도메인 전부 동일). 즉
-provider 측 거부/DNS 실패/인증 실패가 아니라 **이 환경 자체의 network
-egress allowlist 설정**이 원인이며, 정확한 해결 방법(해당 host를
-allowlist에 추가)까지 확인됨 — 단, 이 설정은 이 세션의 권한 밖
-(workspace/environment 설정). "실 데이터 검증 완료"라는 표현은 실제
-ingestion이 성공했을 때만 사용한다.
+proxy에서 403 거부. Phase 20부터 Phase 30까지 매 phase 재확인했으며
+변화 없음 — Phase 30에서는 추가로 Nasdaq Data Link/Polygon/Alpha
+Vantage/Financial Modeling Prep/CRSP까지 5개 후보 provider host도
+테스트했으나 전부 동일하게 차단됨(github.com/pypi.org는 동일 세션에서
+정상 응답 — 시장 데이터 provider에 국한된 allowlist임을 확인). Phase
+28/29/30에서는 `data/` 외에 전체 파일시스템(ingestion manifest,
+DuckDB/Parquet 파일, 환경변수, 기존 스크립트)을 철저히 탐색했으나 실
+데이터를 어디에서도 찾지 못함 — 로컬에 실 데이터가 존재할 유일한
+경로가 network ingestion인데 그것이 차단되어 있으므로 두 상태가 동시에
+성립. Phase 26에서 정확한 원인을 처음 진단: DNS는 정상 resolve, 설정된
+proxy를 우회한 직접 TCP connect도 성공 — 오직 실제 HTTP 요청만
+거부되며, 응답 헤더에 `x-deny-reason: host_not_allowed`와 "Host not in
+allowlist... Add this host to your network egress settings to allow
+access." 본문이 그대로 포함됨(테스트한 모든 도메인 동일). 즉 provider
+측 거부/DNS 실패/인증 실패가 아니라 **이 환경 자체의 network egress
+allowlist 설정**이 원인이며, 정확한 해결 방법(해당 host를 allowlist에
+추가)까지 확인됨 — 단, 이 설정은 이 세션의 권한 밖(workspace/environment
+설정). "실 데이터 검증 완료"라는 표현은 실제 ingestion이 성공했을 때만
+사용한다.
 
 **단, 이 서술은 이 세션(sandboxed 환경) 자체의 접근성에 대한 것이다.**
 Phase 24 이후 사용자가 자신의 별도 네트워크 접근 가능 환경(GitHub
@@ -103,6 +107,32 @@ SPY, 2023-01-02~2024-12-31, 8,032 bars, 107 corporate actions)를
 `docs/research/STRATEGY-RESEARCH-REPORT.md`의 "Addendum" 절 참조. 이
 데이터는 사용자의 Codespaces 환경에만 존재하며 이 저장소/이 sandboxed
 세션에는 없다(`data/`는 비어 있고 gitignore 대상).
+
+**Phase 30 — Real Historical US Equity Dataset Acquisition,
+Survivorship-Aware Dataset Validation, and Full Walk-Forward
+Execution** (Live Trading은 여전히 구조적으로 불가능). 목표는
+"survivorship-aware 아키텍처는 있지만 실 broad 검증은 막혀있다"에서
+"실 데이터가 확보·검증되어 기존 walk-forward 파이프라인을 실제로
+실행할 수 있다"로 넘어가는 것이었으나, 환경 네트워크 차단이 근본적으로
+동일해 실 ingestion/universe/walk-forward는 이번에도 수행되지 못함
+(**FINAL STATUS: VALIDATION BLOCKED — ENVIRONMENT**). 네트워크
+재확인을 이전 phase보다 넓혀 Tiingo/Stooq/Toss 외 5개 후보 provider
+host(Nasdaq Data Link/Polygon/Alpha Vantage/Financial Modeling
+Prep/CRSP)도 테스트 — 전부 동일하게 차단, github.com/pypi.org는 정상
+응답. `scripts/ingest_real_market_data.py`의 manifest가 요청한 날짜
+범위만 기록하고 실제로 provider가 반환한 날짜 범위는 기록하지 않던
+실제 gap을 발견·수정(`actual_data_start`/`actual_data_end`/
+`delisted_count`/`data_status` 필드 추가, 지침의 "2010 coverage를
+날조하지 말라" 요구사항에 직접 대응). 지침의 CASE A-G 각각에 이름으로
+직접 대응하는 회귀 테스트 8개 추가(새 메커니즘 아님, Phase 1/29 재사용
+— traceability 목적). ADR-0033으로 7개 후보 provider(Tiingo/Stooq/
+Nasdaq Data Link/Polygon/Alpha Vantage/Financial Modeling Prep/CRSP)를
+지침이 요구한 6개 역량 차원에서 분류(공개 문서 기반, 실 API 응답으로
+검증된 적 없음) — 3가지 universe 개념(price/tradable/index
+constituent) 구분도 문서화. 신규 테스트 16개(ingestion manifest wiring
+8 + CASE A-G 8). Toss/Live/RiskConfig/Broker/Risk 코드는 전혀
+건드리지 않음. 상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의
+"Phase 30 Addendum".
 
 **Phase 29 — Long-Horizon / Broad-US-Universe / Survivorship-Aware Real
 Walk-Forward Validation** (Live Trading은 여전히 구조적으로 불가능). 목표는
@@ -862,11 +892,29 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   데이터 부재, 변화 없음). 신규 문서: ADR-0032. 상세는
   `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 29 Addendum".
 
+- Phase 30 — Real Historical US Equity Dataset Acquisition,
+  Survivorship-Aware Dataset Validation, and Full Walk-Forward
+  Execution: 완료 (`scripts/ingest_real_market_data.py` 갱신, 신규
+  테스트 16개) — 실 ingestion/universe/walk-forward는 이번에도
+  environment BLOCKED, 이전 phase보다 넓은 provider host 집합(Tiingo/
+  Stooq/Toss + Nasdaq Data Link/Polygon/Alpha Vantage/Financial
+  Modeling Prep/CRSP)으로 재확인, 변화 없음(**FINAL STATUS: VALIDATION
+  BLOCKED — ENVIRONMENT**). Ingestion manifest가 요청한 날짜 범위만
+  기록하고 실제 관측된 범위는 기록하지 않던 실제 gap 발견·수정
+  (`actual_data_start`/`actual_data_end`/`delisted_count`/
+  `data_status` 필드 추가). CASE A-G 회귀 테스트 8개(지침 traceability
+  목적, 새 메커니즘 아님) + ingestion manifest wiring 테스트 8개. 기존
+  1671개 테스트 전부 유지 — 최종 테스트 카운트는 이 phase의 최종
+  pytest 실행 결과를 따른다. Toss/Live/RiskConfig/Broker/Risk 코드는
+  전혀 건드리지 않음. 신규 문서: ADR-0033. 상세는
+  `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 30 Addendum".
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
 63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587 +
 Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638 + Phase 26 신규 2 = 1640 +
-Phase 27 신규 9 = 1649 + Phase 28 신규 3 = 1652 + Phase 29 신규 19 = 1671;
+Phase 27 신규 9 = 1649 + Phase 28 신규 3 = 1652 + Phase 29 신규 19 = 1671 +
+Phase 30 신규 16 = 1687;
 정확한 최종 숫자는 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행

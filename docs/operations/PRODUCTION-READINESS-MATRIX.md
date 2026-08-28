@@ -9,9 +9,11 @@ Phase 24 (Real Market Data + Expandable US Equity Universe),
 Phase 25 (Long-Horizon Real-Data Strategy Validation), Phase 26
 (Long-Horizon Real-Data Validation, re-verification), Phase 27
 (Real-Data Walk-Forward Validation & Strategy Evidence), Phase 28
-(Real-Data Walk-Forward Execution & Strategy Evidence), and Phase 29
+(Real-Data Walk-Forward Execution & Strategy Evidence), Phase 29
 (Long-Horizon / Broad-US-Universe / Survivorship-Aware Real Walk-Forward
-Validation).
+Validation), and Phase 30 (Real Historical US Equity Dataset
+Acquisition, Survivorship-Aware Dataset Validation, and Full
+Walk-Forward Execution -- attempted, environment-blocked).
 One row per area the review instruction names. "Status" is one of
 PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
 this alone prevent Live activation today" independent of every other
@@ -288,5 +290,29 @@ security is correctly excluded from a post-delisting query and
 included before it; a "current survivors only" query and a real
 historical-point-in-time query genuinely differ. 19 new tests.
 Full rationale: `docs/decisions/ADR-0032-security-identity-and-survivorship-aware-universe.md`.
+**No change to any Toss/Live row; Live activation still Blocked for the
+same, unchanged reason.**
+
+**Phase 30 update**: goal was to move from "survivorship-aware
+architecture exists" to "a real dataset has been acquired and
+validated" -- **VALIDATION BLOCKED -- ENVIRONMENT**, root cause
+unchanged. Re-verified network against a broader host set than any
+prior phase: Tiingo/Stooq/Toss plus four additional candidate provider
+hosts (Nasdaq Data Link, Polygon, Alpha Vantage, Financial Modeling
+Prep, CRSP) all return the identical `403`/`host_not_allowed`, while
+two control hosts (github.com, pypi.org) succeed in the same run --
+confirms a scoped market-data-provider allowlist, not a general
+outage. Found and fixed a genuine gap in
+`scripts/ingest_real_market_data.py`'s manifest (instruction section
+16): it previously reported only the *requested* start/end, never the
+*actual* observed data range, risking a false "covers 2010-latest"
+claim on a future real run. Now reports `actual_data_start`/
+`actual_data_end` (computed from real persisted bars),
+`delisted_count`, and `data_status`. Added 8 CASE-A-G survivorship
+regression tests literally traceable to the instruction's own case
+labels (no new mechanism -- Phase 1/29's machinery, reused). Added
+ADR-0033: a data-source decision tree classifying 7 candidate
+providers across the instruction's 6 required capability dimensions,
+sourced from public documentation (never live-verified). 16 new tests.
 **No change to any Toss/Live row; Live activation still Blocked for the
 same, unchanged reason.**

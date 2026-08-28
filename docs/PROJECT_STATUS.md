@@ -5,17 +5,17 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-28
-**Updated By:** Claude Code (Session 30 — Phase 29 Long-Horizon / Broad-US-Universe / Survivorship-Aware Real Walk-Forward Validation)
+**Updated By:** Claude Code (Session 31 — Phase 30 Real Historical US Equity Dataset Acquisition, Survivorship-Aware Dataset Validation, and Full Walk-Forward Execution)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24/25/26/27/28/29는
+마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24/25/26/27/28/29/30은
 Master Plan의 정식 Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에
 발견된 안전성·검증 문제를 보완하고 실 시장 데이터/브로커 기반을 놓기
-위한 사후 검증/기반 구축 작업**이며, 이 문서의 "Phase 29" 표기는 세션
+위한 사후 검증/기반 구축 작업**이며, 이 문서의 "Phase 30" 표기는 세션
 추적 편의를 위한 라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이
 아니다. 이 번호들은 전부 사용자 본인이 직접 "PHASE N — ..." 형식으로
 명시적으로 지시한 작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase
@@ -24,14 +24,169 @@ Master Plan의 정식 Phase가 아니라, Phase 16 완료 후 실제 Live 전환
 
 **REAL MARKET DATA / REAL WALK-FORWARD EXECUTION: NOT COMPLETED —
 이 sandboxed 세션 자체는 여전히 `BLOCKED_BY_ENVIRONMENT` +
-`BLOCKED_BY_DATA`, 변화 없음(재확인함).** `data/` 뿐 아니라 전체
-파일시스템(ingestion manifest, DuckDB/Parquet, 환경변수, 기존
-스크립트)을 다시 탐색했으나 실 데이터를 어디에서도 찾지 못함 — network
-egress는 여전히 `x-deny-reason: host_not_allowed`로 차단됨(DNS 정상,
-TCP 성공, HTTP만 거부 — Phase 26 진단과 동일). `MARKET_DATA_API_KEY`
-미설정 확인. 사용자의 Codespaces 환경에 있는 2023-2024 실 데이터는
-변함없이 존재하나 이 세션에는 없으며, 2010년부터의 broad universe
-실 데이터는 애초에 어느 환경에도 존재한 적이 없다.
+`BLOCKED_BY_DATA`, 변화 없음(재확인함, 이번엔 더 넓은 provider host
+집합으로).** Tiingo/Stooq/Toss 외에 Nasdaq Data Link, Polygon, Alpha
+Vantage, Financial Modeling Prep, CRSP까지 총 5개 추가 후보 provider
+host를 테스트했으나 전부 동일한 `x-deny-reason: host_not_allowed`로
+차단됨 — 반면 github.com/pypi.org는 동일 세션에서 정상 응답, 이는 이
+환경의 차단이 시장 데이터 provider에 국한된 allowlist이지 전체 네트워크
+장애가 아님을 확인해준다. `MARKET_DATA_API_KEY` 미설정 확인. 전체
+파일시스템 재탐색 — 실 데이터 없음, 변화 없음.
+
+**Phase 30 — Real Historical US Equity Dataset Acquisition,
+Survivorship-Aware Dataset Validation, and Full Walk-Forward
+Execution** (Live Trading은 여전히 구조적으로 비활성). 목표는
+"survivorship-aware 아키텍처는 있지만 실 broad 검증은 막혀있다"에서
+"실 데이터가 확보·검증되어 기존 walk-forward 파이프라인을 실제로
+실행할 수 있다"로 넘어가는 것이었으나, 환경 네트워크 차단이 근본적으로
+동일해 실 ingestion/universe/walk-forward는 이번에도 수행되지 못함
+(**FINAL STATUS: VALIDATION BLOCKED — ENVIRONMENT**). 대신 (1)
+`scripts/ingest_real_market_data.py`의 manifest가 요청한 날짜 범위만
+기록하고 실제로 관측된 날짜 범위(`actual_data_start`/`actual_data_end`)는
+전혀 기록하지 않던 실제 gap을 발견·수정(지침 section 16의 "2010 coverage를
+날조하지 말라" 요구사항에 직접 대응), (2) 지침 section 8의 CASE A-G를
+그대로 이름 붙인 회귀 테스트 8개 추가(새 메커니즘 아님, Phase 1/29
+메커니즘의 직접 traceability용), (3) ADR-0033으로 7개 후보 provider의
+역량을 지침이 요구한 6개 차원에서 분류(공개 문서 기반, 실 API 응답으로
+검증된 적 없음).
+
+### Completed (Session 31 — Phase 30)
+
+- **Git/Branch Integrity 선행 확인**: 로컬 HEAD가 Phase 29 HEAD
+  (`2d56283`)와 정확히 일치함(현재 브랜치의 직접 부모)을 확인 →
+  `claude/phase-30-real-dataset-acquisition-and-walk-forward` 브랜치
+  신규 생성. 전체 히스토리에 merge commit 0개 확인. Baseline
+  **1671/1671 테스트 통과** 실제 실행으로 확인(어떤 코드도 변경하기
+  전에 먼저 실행).
+- **인프라 감사(새로 만들기 전에 먼저 확인)**: `DataQualityFramework`가
+  지침 section 15가 요구하는 체크(duplicate records, OHLC consistency,
+  negative/zero price, negative volume, impossible price movement,
+  missing timestamp gaps, split/dividend consistency,
+  ingestion-precedes-availability, insufficient coverage)를 이미
+  전부 구현함을 직접 코드로 확인. `valid_from < valid_to`는 이미
+  `SecurityMaster`/`UniverseMembership` 생성 시점에 구조적으로
+  강제됨(`ValueError`). `IngestionRunner`가 이미 checkpointing,
+  retry/backoff, idempotent 재실행, 심볼별
+  SUCCESS/PARTIAL_SUCCESS/FAILED 리포팅(지침 section 14)을 전부
+  구현함을 확인 — 전부 Phase 1/20-22부터 무수정. 새 quality check나
+  ingestion retry 코드는 필요하지 않았음.
+- **네트워크 재확인(이전 phase보다 더 넓은 provider 집합)**:
+  Tiingo/Stooq/Toss 외에 Nasdaq Data Link, Polygon, Alpha Vantage,
+  Financial Modeling Prep, CRSP까지 5개 추가 host 테스트 — 전부 동일한
+  `403`/`host_not_allowed`. github.com/pypi.org는 동일 세션에서 정상
+  응답(`200`) — 시장 데이터 provider에 국한된 allowlist임을 확인.
+  `MARKET_DATA_API_KEY` 미설정. 전체 파일시스템 재탐색 — 실 데이터
+  없음.
+- **Ingestion manifest 실제 공백 발견·수정(지침 section 16)**:
+  `scripts/ingest_real_market_data.py`의 manifest가 요청한
+  `start`/`end`만 기록하고 실제로 provider가 반환한 날짜 범위는 전혀
+  기록하지 않던 문제 — provider가 요청보다 짧은 기간만 보유한 경우
+  이를 구분할 방법이 없어 "2010부터 커버함" 같은 거짓 주장을 초래할 수
+  있었음. `actual_data_start`/`actual_data_end`(실제 저장된 bar의
+  timestamp에서 계산, bar가 없으면 `None`), `delisted_count`(실제
+  저장된 `SecurityMaster.status`에서 계산), `data_status: "REAL"`
+  필드 추가. 기존 모호했던 `start`/`end` key는
+  `requested_start`/`requested_end`로 이름 변경(구 key 유지하며 추가
+  아님). ACTUAL_DATA_START/END는 stdout에도 출력. 신규 AST 기반 회귀
+  테스트 8개(`tests/data_infra/test_ingest_real_market_data_wiring.py`
+  — 이 스크립트는 실 네트워크를 호출하므로 자동화 테스트가 절대
+  실행/import하지 않음, `run_long_horizon_validation.py` wiring
+  테스트와 동일한 방식).
+- **CASE A-G 회귀 테스트 신규 8개(지침 section 8)**:
+  `tests/data_infra/test_phase30_survivorship_cases.py` — 새 메커니즘
+  아님(Phase 1/29의 `SecurityMaster`/`UniverseMembership`/
+  `get_universe(as_of_time=...)` 그대로 재사용), 지침이 명시한 7개
+  CASE 각각에 이름으로 직접 대응하는 테스트를 만들어 향후 감사자가
+  CASE→테스트를 1:1로 추적할 수 있게 함(Phase 26의 CASE 5 패턴과 동일
+  원칙).
+- **ADR-0033 신규**: Tiingo/Stooq/Nasdaq Data Link/Polygon/Alpha
+  Vantage/Financial Modeling Prep/CRSP 7개 provider를 지침이 요구한 6개
+  차원(historical prices, delisted, ticker changes, corporate actions,
+  historical universe membership, point-in-time metadata,
+  licensing/access)에서 REALISTIC/PARTIAL/INSUFFICIENT/UNKNOWN으로
+  분류 — 이번 세션의 web search로 얻은 공개 문서 기반(출처 인라인
+  명시), 실 API 응답으로 검증된 적 없음. 지침 section 5의 "3가지
+  universe 개념" 구분(price universe/tradable universe/index
+  constituent universe)도 문서화 — 기존 코드가 이미 이 구분을
+  지키고 있음을 확인만 함(코드 변경 없음).
+- **기존 1671개 테스트 전부 유지** — 최종 테스트 카운트는 이 phase의
+  최종 pytest 실행 결과를 따른다(아래 Last Validation 참조).
+- **신규 문서**: ADR-0033,
+  `docs/research/STRATEGY-VALIDATION-REPORT.md` Phase 30
+  Addendum(지침 section 33의 15개 질문 전부 답변). README.md/
+  PROJECT_STATUS.md/PRODUCTION-READINESS-MATRIX.md/MARKET-DATA-PROVIDER.md
+  갱신(이 항목).
+- **Toss/Live 활성화 코드, RiskConfig 숫자, 새 전략 추가, parameter
+  tuning, `src/broker/`/`src/risk/`/`src/learning/`/`src/evolution/`/
+  `src/ai_gateway/` 전부 무수정.**
+
+### In Progress (Session 31 — Phase 30)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 31 — Phase 30)
+
+- 이 sandboxed 세션 자체의 실 시장데이터 접근 — Phase 26-29와 동일한
+  원인(network egress allowlist), 이번엔 5개 추가 provider host로도
+  재확인. 변화 없음.
+- 2010~최신 broad survivorship-aware universe 실 ingestion 및 실
+  Walk-Forward 실행 — 위 항목에 종속. 이 데이터는 어느 환경에도 존재한
+  적 없음(사용자의 Codespaces 환경도 2023-2024만 보유).
+
+### Decision Required (Session 31 — Phase 30)
+
+1. (Phase 17-29에서 이어짐) 전부 변경 없음.
+2. **(이어짐)** 2010~최신 broad universe 실 ingestion을 언제/어떻게
+   수행할지 — network egress allowlist 해결이 선행 조건. ADR-0033이
+   후보 provider들을 정리했으나 어느 것도 이 세션이 스스로 선택할 수
+   있는 문제가 아님(라이선스/비용 결정, 사용자 몫).
+
+### Known Issues (Session 31 — Phase 30)
+
+- Phase 29까지의 Known Issues 전부 유지. 이번 phase가 발견한 유일한
+  gap(ingestion manifest의 actual_data_start/end 누락)은 이미
+  수정·회귀 테스트 추가됨.
+
+### Architecture Changes (Session 31 — Phase 30)
+
+`scripts/ingest_real_market_data.py`(manifest에
+`actual_data_start`/`actual_data_end`/`delisted_count`/`data_status`
+필드 추가, `start`/`end` key를 `requested_start`/`requested_end`로
+이름 변경 — 순수 additive/명확화, 실제 ingestion 로직 무변경). 그
+외 `src/data_infra/*`, `backtest.engine`, `strategy_research.*`,
+`storage.data_repository`는 전부 무수정(감사만 수행, 이미 올바르게
+동작함을 확인).
+
+### Toss API Status (Session 31 — Phase 30)
+
+변경 없음: `CapabilityStatus` 전부 `UNKNOWN` 유지.
+
+### Last Validation (Session 31 — Phase 30)
+
+`python -m pytest tests/ -q` — baseline **1671 passed**(코드 변경 전
+직접 실행 확인) → 신규 테스트 16개(ingestion manifest wiring 8 + CASE
+A-G 8) 추가 후 최종 실행 결과는 이 문서 갱신 시점의 실제 pytest 실행을
+따른다(아래 "최종 검증" 절차 참조). 기존 1671개 테스트 전부
+삭제/약화 없이 유지.
+
+### Next Task (Session 31 — Phase 30)
+
+1. workspace/environment 관리자가 network egress allowlist에 실
+   provider host(ADR-0033 기준 Tiingo 유지 또는 대안 선택)를 추가 —
+   이 세션 자체에서 실 데이터 확보의 유일한 경로.
+2. 선택한 provider의 실제 계정으로 무료/유료 tier 한도를 실제로 확인
+   — broad universe 규모 결정의 선행 조건.
+3. 위 두 조건이 충족되면: `fetch_symbol_metadata`로 broad universe
+   discovery Stage 1 시작, `SymbolMetadata.listed_from`/`listed_to`에
+   실제 값 채우기 → Phase 29가 수정한 배선이 자동으로
+   survivorship-aware universe를 만들어냄(추가 아키텍처 작업 불필요).
+   `ingest_real_market_data.py`의 새 manifest 필드가 실 provider의
+   실제 커버리지(2010 vs 실제 시작일)를 즉시 정직하게 보고함.
+4. 그 전까지는 사용자가 이미 보유한 2023-2024 실 데이터로
+   `scripts/run_long_horizon_validation.py --data-status REAL`을 외부
+   환경에서 실행하는 것이 가장 빠른 실 evidence 확보 경로(변경 없음).
+
+## Previous Subtask (Session 30 — Phase 29)
 
 **Phase 29 — Long-Horizon / Broad-US-Universe / Survivorship-Aware Real
 Walk-Forward Validation** (Live Trading은 여전히 구조적으로 비활성 —

@@ -697,3 +697,147 @@ baseline **1652 passed** -> final **1671 passed, 0 failed, 0 skipped**.
     INSUFFICIENT_EVIDENCE for all 4 candidates, unchanged from every
     prior phase; `VALIDATED` remains structurally unreachable by this
     project's own code.
+
+## Phase 30 Addendum
+
+**FINAL STATUS: VALIDATION BLOCKED -- ENVIRONMENT.** Phase 30's goal
+was to move from "survivorship-aware architecture exists" to "a real,
+provenance-documented, broad historical US equity dataset has been
+acquired and validated." This did not happen -- network egress from
+this environment remains blocked to every market-data provider host
+tried.
+
+### Network re-verification (broader than any prior phase)
+
+Re-tested this session (not assumed unchanged from Phase 26-29):
+`api.tiingo.com`, `stooq.com`, `openapi.tossinvest.com` all still
+return `HTTP/2 403`, header `x-deny-reason: host_not_allowed`, body
+"Host not in allowlist... Add this host to your network egress
+settings to allow access." -- identical to every prior phase's
+diagnosis. New this phase: four additional candidate provider hosts
+were also tested (`data.nasdaq.com`, `api.polygon.io`,
+`www.alphavantage.co`, `financialmodelingprep.com`, `crsp.org`) -- all
+five return the same `403`/`host_not_allowed`. Two control hosts
+(`github.com`, `pypi.org`) return `200` in the same run, confirming
+this is a scoped allowlist blocking market-data providers
+specifically, not a total network outage. `env | grep -i
+"MARKET_DATA\|TIINGO\|TOSS"` returns nothing -- no API key is
+configured in this environment. An exhaustive filesystem search
+(`data/`, `/tmp`, environment variables) again found no real market
+data anywhere in this session, unchanged since Phase 28.
+
+### What this phase actually built
+
+1. **Ingestion manifest gap (instruction section 16), found and
+   fixed**: `scripts/ingest_real_market_data.py`'s manifest previously
+   reported only the *requested* `start`/`end` -- never what a
+   provider actually returned. A provider lacking data back to the
+   requested start (or lagging behind the requested end) would have
+   been silently indistinguishable from a run that got exactly what
+   was asked for, inviting a false "covers 2010-latest" claim. Fixed:
+   the manifest now reports `actual_data_start`/`actual_data_end`
+   (computed from the real persisted bars' own timestamps, `None` when
+   no bars were persisted -- never equal to the request by
+   construction), an explicit `delisted_count` (from the persisted
+   `SecurityMaster` records' actual `status`), and an explicit
+   `data_status: "REAL"` field. The ambiguous old `start`/`end` keys
+   were renamed to `requested_start`/`requested_end` rather than
+   leaving both the old and new keys side by side. 8 new AST-based
+   regression tests (`tests/data_infra/test_ingest_real_market_data_wiring.py`
+   -- this script is never executed by the automated suite, same
+   discipline as `run_long_horizon_validation.py`'s wiring tests).
+2. **CASE A-G survivorship regression tests (instruction section 8)**:
+   `tests/data_infra/test_phase30_survivorship_cases.py`, 8 tests,
+   literally traceable by name to each of the instruction's seven
+   named cases, using the instruction's own 2010 framing. No new
+   mechanism -- the underlying `SecurityMaster`/`UniverseMembership`/
+   `get_universe(as_of_time=...)` machinery is unchanged from
+   Phase 1/29; this file exists purely for direct auditability.
+3. **ADR-0033**: a data-source decision tree (instruction section 4)
+   classifying Tiingo/Stooq/Nasdaq Data Link/Polygon/Alpha
+   Vantage/Financial Modeling Prep/CRSP across historical prices,
+   delisted coverage, ticker changes, corporate actions, historical
+   universe membership, point-in-time metadata, and
+   licensing/access -- sourced from public documentation via web
+   search this session (cited inline), never live-verified against an
+   actual API response (network blocked). Also documents the
+   instruction's three-universe-concept distinction (price universe vs.
+   tradable universe vs. index-constituent universe, section 5) and
+   confirms this project's existing `UniverseDefinition` already avoids
+   the conflation the instruction warns against (`role` is `"PILOT"`/
+   `"RESEARCH"`, never `"INDEX"`; `PILOT_UNIVERSE_V1`'s own description
+   already disclaims index representativeness).
+4. **Infrastructure audit (instruction section 2C)**: confirmed, by
+   direct code reading rather than assumption, that
+   `DataQualityFramework` already implements essentially every check
+   instruction section 15 asks for (duplicate records, OHLC
+   consistency, negative/zero price, negative volume, impossible
+   price movement, missing timestamp gaps, split/dividend
+   consistency, ingestion-precedes-availability, insufficient
+   coverage); that `valid_from < valid_to` is already enforced
+   structurally at `SecurityMaster`/`UniverseMembership` construction
+   (a `ValueError`, not a soft warning); and that `IngestionRunner`
+   already implements checkpointing, retry/backoff, idempotent re-run,
+   and per-symbol `SUCCESS`/`PARTIAL_SUCCESS`/`FAILED` reporting
+   (instruction section 14) -- all from Phase 1/20-22, unmodified. No
+   new quality-check or ingestion-retry code was needed.
+
+### No real ingestion, no real universe, no real walk-forward
+
+Consistent with instruction section 30 ("do NOT spend the entire phase
+making synthetic data look realistic"): no synthetic data was dressed
+up as real, no broad universe was fabricated, and no walk-forward was
+executed against anything but the same pre-existing synthetic fixtures
+used for pipeline-correctness testing since Phase 25. The research
+conclusion remains `REAL_VALIDATION_NOT_COMPLETED`.
+
+### Answers to the instruction's 15 required final questions (section 33)
+
+1. **Was real data from 2010 or earlier actually obtained?** NO.
+2. **What is the actual first date?** N/A -- no real data exists in
+   this environment.
+3. **What is the actual latest date?** N/A.
+4. **How many unique historical securities are represented?** 0 real;
+   the synthetic CASE A-G/Phase 29 fixtures use up to 3 per test,
+   proving the mechanism only.
+5. **How many delisted securities are represented?** 0 real (the new
+   `delisted_count` manifest field has never run against a real
+   dataset in this environment to produce a number).
+6. **Is the universe genuinely historical or merely today's
+   survivors?** N/A -- no real universe was built. The underlying
+   mechanism (proven this phase via CASE A-G) is capable of genuinely
+   historical, point-in-time-correct membership once given real dates;
+   it has never been given any.
+7. **How many REAL walk-forward TEST folds executed?** **0.**
+8. **Which strategy was most consistent across REAL TEST folds?** N/A
+   -- INSUFFICIENT_EVIDENCE, 0 real folds.
+9. **Did that advantage survive NET transaction costs?** N/A.
+10. **Did it outperform SPY Total Return?** N/A.
+11. **Was the advantage dependent on a handful of securities?** N/A --
+    no real performance exists to attribute.
+12. **Did the result survive different market regimes?** N/A.
+13. **Did survivorship-aware universe construction materially change
+    conclusions?** N/A -- no real conclusions exist yet to change; the
+    synthetic proof (Phase 29's `test_current_survivor_only_query_and_historical_query_genuinely_differ`,
+    reaffirmed this phase by CASE F/G) shows the mechanism *would*
+    change results once given real historical dates (current-survivor
+    query and historical query produce disjoint sets in the test
+    fixture), which is the necessary precondition for this question to
+    ever be answerable with real data.
+14. **Can any strategy legitimately be called "validated alpha"?** NO
+    -- INSUFFICIENT_EVIDENCE for all 4 candidates; `VALIDATED` remains
+    structurally unreachable by this project's own
+    `classify_evidence_level`, unchanged.
+15. **What evidence is still missing?** Everything downstream of real
+    data acquisition: a real 2010-latest ingestion (blocked by this
+    environment's network egress allowlist, root cause diagnosed since
+    Phase 26, unchanged, now confirmed to block every provider host
+    tested, not only Tiingo/Stooq/Toss), real `SymbolMetadata.listed_from`/
+    `listed_to` population (the plumbing is ready since Phase 29,
+    unpopulated), a real broad-universe symbol count, real corporate
+    actions, real delisted-security coverage, and therefore every real
+    Walk-Forward TEST fold this report's other questions depend on. The
+    exact remedy remains unchanged and unactioned: add
+    `api.tiingo.com`/`stooq.com` (or a chosen alternative provider's
+    host, per ADR-0033) to this environment's network egress allowlist,
+    outside this session's own permissions.

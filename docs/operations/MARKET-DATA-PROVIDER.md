@@ -306,3 +306,37 @@ module docstring). `sector`/`market_cap_bucket` are never populated
 from this endpoint's documented shape and stay `None`. See
 `docs/decisions/ADR-0032-security-identity-and-survivorship-aware-universe.md`
 for the full Phase 29 architecture decision this groundwork supports.
+
+## Phase 30 re-verification + data source decision tree
+
+Re-checked network -- identical block, `api.tiingo.com`/`stooq.com`/
+`openapi.tossinvest.com` all still `x-deny-reason: host_not_allowed`.
+**New this phase**: also tested four additional candidate provider
+hosts (`data.nasdaq.com`, `api.polygon.io`, `www.alphavantage.co`,
+`financialmodelingprep.com`, `crsp.org`) -- all five return the
+identical `403`/`host_not_allowed`, while two control hosts
+(`github.com`, `pypi.org`) return `200` in the same run. This confirms
+the block is a scoped market-data-provider allowlist, not a total
+network outage, and that switching providers within this environment
+would not itself unblock anything. `MARKET_DATA_API_KEY` remains
+unset. Exhaustive filesystem search again found no real data anywhere.
+**REAL WALK-FORWARD EXECUTION: NOT COMPLETED**, unchanged root cause,
+now more broadly confirmed.
+
+Also fixed a genuine gap in `scripts/ingest_real_market_data.py`'s
+manifest (instruction section 16): it previously reported only the
+*requested* start/end, never what a provider actually returned. Now
+reports `actual_data_start`/`actual_data_end` (computed from the real
+persisted bars, `None` when no bars were persisted), `delisted_count`,
+and an explicit `data_status: "REAL"` field; the old ambiguous
+`start`/`end` keys were renamed to `requested_start`/`requested_end`.
+8 new AST-based wiring tests
+(`tests/data_infra/test_ingest_real_market_data_wiring.py`).
+
+See `docs/decisions/ADR-0033-real-data-source-decision-tree.md` for
+the full provider capability classification (Tiingo/Stooq/Nasdaq Data
+Link/Polygon/Alpha Vantage/Financial Modeling Prep/CRSP across
+historical prices, delisted coverage, ticker changes, corporate
+actions, historical universe membership, point-in-time metadata, and
+licensing/access) -- desk research from public documentation only,
+never live-verified, since network access remains blocked.
