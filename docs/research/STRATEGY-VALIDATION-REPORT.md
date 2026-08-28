@@ -280,3 +280,163 @@ tooling does not perform, by design (ADR-0031 Decision 3).
   become reachable for the first time.
 - A real, point-in-time-correct historical constituent list for the
   universe (section 6), to remove the survivorship-bias limitation.
+
+## Phase 26 Addendum
+
+Phase 26's stated goal was extending real data range and running actual
+long-horizon Walk-Forward -- **neither was possible from this session**;
+this addendum records what was verified instead, and answers the
+instruction's required questions honestly rather than fabricating
+results.
+
+### Precise environment diagnosis (new this phase)
+
+Prior phases recorded "CONNECT 403" without further diagnosis. Phase 26
+ran DNS resolution, a raw TCP connect (bypassing the configured proxy),
+and a direct HTTPS request (also bypassing the proxy) as three
+independent layers. DNS resolves correctly and the TCP handshake to
+`api.tiingo.com:443` succeeds; only the HTTP request itself is denied,
+with response header `x-deny-reason: host_not_allowed` and body "Host
+not in allowlist: \<host\>. Add this host to your network egress
+settings to allow access." -- identical for all three domains
+(`api.tiingo.com`, `stooq.com`, `openapi.tossinvest.com`). This is
+conclusively an **environment-level network egress allowlist** block
+(status: `BLOCKED_BY_ENVIRONMENT`), not a provider-side rejection, not
+DNS failure, not an auth failure, not a rate limit. Full detail:
+`docs/operations/MARKET-DATA-PROVIDER.md`'s "Phase 26 precise block
+diagnosis" section. No `MARKET_DATA_API_KEY` is set in this session's
+environment either (checked, not assumed).
+
+### Point-in-time CASE 1-5 audit (instruction section 9)
+
+CASE 1-4 were already covered by existing Phase 1/2/20 tests (audited
+and confirmed, not re-implemented). CASE 5 (re-running real ingestion
+must not retroactively change an already-established as-of query
+result at an earlier time) had no existing direct test -- added
+`tests/data/test_phase26_point_in_time_cases.py` (2 new tests, against
+the real `IngestionRunner`/`DuckDBDataRepository` path): extending an
+already-ingested real range with new, later data leaves every earlier
+as-of query byte-identical, and re-running ingestion over the exact
+same range twice (a retry/resume scenario) is fully idempotent and
+equally non-retroactive.
+
+### Corporate action 8-question audit (instruction section 8)
+
+All 8 questions were checked against existing code and tests (not
+assumed): raw `close` is never replaced by Tiingo's `adjClose`
+(`src/data_infra/providers/tiingo.py` -- `adjusted_close` stays a
+separate, optional field); splits and dividends are stored as distinct
+`CorporateAction` records with different `CorporateActionType` values;
+`CorporateAction.effective_time` is a field structurally distinct from
+`available_time`/`ingestion_time`; a late-discovered corporate action or
+dividend cannot change an earlier as-of query or backtest result
+(CASE 1/2 above); `CorporateActionApplier` (wired into `BacktestEngine.run()`)
+adjusts held position quantities on a SPLIT event
+(`tests/backtest/test_corporate_actions.py::test_split_adjusts_held_position`);
+dividends are correctly reflected in the TOTAL_RETURN benchmark
+(`tests/backtest/test_total_return.py::test_dividend_is_added_back_into_the_days_return`).
+**No gap found** -- every question was already correctly implemented
+before this phase; this phase's contribution is verifying and recording
+that fact explicitly rather than assuming it.
+
+### Reproducibility fields added to the CLI (instruction section 22)
+
+`scripts/run_long_horizon_validation.py`'s JSON report previously had
+no `experiment_id`/`data_version` fields section 22 asks for. Added
+both, additively: `experiment_id` is a deterministic hash of the run's
+own configuration (universe, date range, split fractions, walk-forward
+window sizes, initial capital -- never a wall-clock value, so an
+identical configuration always produces an identical id);
+`data_version` is a hash of what the repository actually contains for
+this universe+window at run time (per-symbol/benchmark bar counts),
+using the same `data_infra.versioning.compute_data_version` function
+`scripts/ingest_real_market_data.py` already uses for its own content
+checksum. Verified end-to-end against a small synthetic-scale dry run
+(both fields present and correctly populated in the resulting JSON).
+
+### Answers to the instruction's required questions (section 32)
+
+Most data-dependent questions remain unanswerable from this session for
+the same reason as Phase 25 -- no real data exists locally
+(`data/` empty, gitignored) and the environment is `BLOCKED_BY_ENVIRONMENT`
+(see above), not because of any code defect.
+
+- **Q1 (actual date range obtained)**: None, this session. The only real
+  data this project has ever obtained (2023-01-02 to 2024-12-31) exists
+  solely in a user's separate Codespaces environment, unchanged since
+  Phase 24.
+- **Q2 (actual symbol count obtained)**: None, this session; 15
+  tradeable + SPY in the user's separate environment (unchanged).
+- **Q3 (provider)**: Tiingo (primary), Stooq (fallback) -- unchanged.
+- **Q4 (data_version/checksum of real data)**: Not computable from this
+  session (no local real data). `scripts/ingest_real_market_data.py`
+  already records a `content_checksum` for whatever it actually
+  ingests; `scripts/run_long_horizon_validation.py` now also records one
+  (this phase's addition, see above) -- both are ready to produce a real
+  value the moment real ingestion runs somewhere with access.
+- **Q5 (corporate actions actually obtained)**: Not this session; 107
+  real corporate actions were obtained in the user's Codespaces session
+  after Phase 24 (unchanged fact, re-cited not re-verified).
+- **Q6 (SPY Total Return benchmark computed from real data)**: Not this
+  session (`BENCHMARK_UNAVAILABLE`, no local SPY data); it WAS computed
+  from real data in the user's Phase 24 follow-up run.
+- **Q7 (per-strategy full-period real performance)**: Unchanged from
+  Phase 24's Addendum table in this same document's earlier section --
+  not re-run this session.
+- **Q8 (per-strategy real Walk-Forward performance)**: Still none --
+  this remains the single biggest gap this project has, blocked
+  strictly on real data access, not on missing infrastructure (the
+  infrastructure has been ready and tested since Phase 25).
+- **Q9 (regime-dependent strengths/weaknesses)**: Not answerable without
+  Q8's data.
+- **Q10 (risk-adjusted improvement over Buy & Hold)**: Not answerable
+  without Q8's data; the single-window Phase 24 result showed Buy & Hold
+  outperforming every other candidate over 2023-2024's bull market --
+  not evidence either way about risk-adjusted behavior across regimes.
+- **Q11 (results survive transaction costs)**: Not answerable without
+  Q8's data; the gross/net machinery to answer it is tested and ready
+  (`tests/strategy_research/test_walk_forward_evaluation.py::TestTransactionCostAndGrossNetConsistency`).
+- **Q12 (results depend on a specific period/symbol)**: Cannot be ruled
+  out or confirmed -- only one real window (2023-2024, a strong,
+  largely single-direction bull market including NVDA/AVGO) has ever
+  been observed. This dependency risk is the central reason Walk-Forward
+  across a longer, more varied real history is this project's most
+  valuable remaining next step.
+- **Q13 (current evidence classification)**: No strategy has ever been
+  assigned an `EvidenceLevel` from real data (`classify_evidence_level`
+  has never been called against a real `WalkForwardAggregate`) --
+  effectively `INSUFFICIENT_EVIDENCE` for all four candidates, by the
+  same rule that forces that result for any non-real-data input.
+- **Q14 (PBO/DSR adoption conditions met)**: Not evaluated against real
+  data this session (`assess_pbo_dsr_applicability` has never been
+  called with real fold counts); a synthetic-scale dry run in Phase 25
+  did confirm the check itself returns `applicable=True` once fold
+  counts clear the threshold, proving the check works, not that real
+  data has cleared it.
+- **Q15 (most promising research target)**: Unchanged from Phase 25 --
+  running `scripts/run_long_horizon_validation.py` against the real
+  2023-2024 catalog the user already has (external command in section
+  12 above) is the single highest-value next action; it requires no new
+  code.
+- **Q16 (can any strategy be called "validated alpha")**: **No.**
+  Applying `classify_evidence_level`'s own rules strictly: with zero
+  real folds evaluated, every candidate is `INSUFFICIENT_EVIDENCE`, the
+  lowest tier. Even in the most favorable hypothetical case, the highest
+  tier the project's own code can ever assign is `CANDIDATE` --
+  `VALIDATED` requires human review no automated function in this
+  codebase performs.
+- **Q17 (what currently blocks Live Trading)**: Unchanged and
+  independent of this phase's work entirely -- Toss `CapabilityStatus`
+  remains `UNKNOWN` for all four capabilities (operational verification
+  never performed), real Toss credentials have never been obtained, and
+  the three risk-default values remain PROPOSED / AWAITING USER
+  RATIFICATION. None of Phase 25/26's strategy-research work is a
+  precondition for or against Live activation; they are unrelated
+  gates.
+- **Q18 (highest-value next Phase 27 work)**: Run
+  `scripts/run_long_horizon_validation.py` against the real data the
+  user already has (zero new code needed), OR resolve the environment
+  egress allowlist restriction (section above) so this session itself
+  can ingest more real history directly -- either would unblock the
+  actual long-horizon evidence this and the prior phase's infrastructure
+  was built to produce.

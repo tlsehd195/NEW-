@@ -65,17 +65,23 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20/21/22/23/24/25는 Master Plan의 정식 Phase가 아니라, Live
+**Phase 17/18/19/20/21/22/23/24/25/26은 Master Plan의 정식 Phase가 아니라, Live
 전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
 기반을 놓는 사후 검증/기반 작업**이다.
 
 **REAL MARKET DATA: BLOCKED BY EXECUTION ENVIRONMENT** — 이 저장소가
 실행되는 현재 환경에서 `api.tiingo.com`/`stooq.com`/
-`openapi.tossinvest.com` 전부 egress proxy에서 403 CONNECT 거부. Phase
-20부터 Phase 25까지 매 phase 재확인했으며 변화 없음(Phase 25는 `curl`로
-`api.tiingo.com`/`stooq.com`/`openapi.tossinvest.com` 세 도메인 모두
-CONNECT 403 재확인). "실 데이터 검증 완료"라는 표현은 실제 ingestion이
-성공했을 때만 사용한다.
+`openapi.tossinvest.com` 전부 egress proxy에서 403 거부. Phase 20부터
+Phase 26까지 매 phase 재확인했으며 변화 없음. **Phase 26에서 정확한
+원인을 처음으로 진단**: DNS는 정상 resolve, 설정된 proxy를 우회한 직접
+TCP connect도 성공 — 오직 실제 HTTP 요청만 거부되며, 응답 헤더에
+`x-deny-reason: host_not_allowed`와 "Host not in allowlist... Add this
+host to your network egress settings to allow access." 본문이 그대로
+포함됨(세 도메인 전부 동일). 즉 provider 측 거부/DNS 실패/인증 실패가
+아니라 **이 환경 자체의 network egress allowlist 설정**이 원인이며,
+정확한 해결 방법(해당 host를 allowlist에 추가)까지 확인됨 — 단, 이
+설정은 이 세션의 권한 밖(workspace/environment 설정). "실 데이터 검증
+완료"라는 표현은 실제 ingestion이 성공했을 때만 사용한다.
 
 **단, 이 서술은 이 세션(sandboxed 환경) 자체의 접근성에 대한 것이다.**
 Phase 24 이후 사용자가 자신의 별도 네트워크 접근 가능 환경(GitHub
@@ -92,6 +98,29 @@ SPY, 2023-01-02~2024-12-31, 8,032 bars, 107 corporate actions)를
 `docs/research/STRATEGY-RESEARCH-REPORT.md`의 "Addendum" 절 참조. 이
 데이터는 사용자의 Codespaces 환경에만 존재하며 이 저장소/이 sandboxed
 세션에는 없다(`data/`는 비어 있고 gitignore 대상).
+
+**Phase 26 — Long-Horizon Real-Data Validation (재확인)** (Live Trading
+활성화는 여전히 구조적으로 불가능 — Toss capability gap 그대로). 목표는
+Phase 25 인프라를 실제로 더 긴 실 데이터에 적용하는 것이었으나, 이
+세션은 여전히 network egress BLOCKED(위 참조, 이번엔 원인을 정확히
+진단 — `x-deny-reason: host_not_allowed`, environment allowlist 문제)
+및 `MARKET_DATA_API_KEY` 미설정 상태라 실제 데이터 확장/Walk-Forward
+실행은 하지 못함. 대신 이번 phase에서 실제로 완료한 것: (1) Point-in-Time
+CASE 1-5 감사 — CASE 1-4는 이미 기존 테스트로 커버됨을 확인, CASE 5(재-
+ingestion이 과거 as_of 결과를 소급 변경하지 않음)는 커버리지 공백을
+발견해 `tests/data/test_phase26_point_in_time_cases.py` 신규 2개 테스트로
+채움(실제 `IngestionRunner`/`DuckDBDataRepository` 경로 사용). (2)
+Corporate action 8개 질문 감사 — raw/adjusted 분리, split/dividend 별도
+레코드, effective_time vs available/ingestion_time 분리, split 시
+position 조정, dividend의 total-return 반영까지 전부 기존 코드/테스트로
+이미 올바르게 구현되어 있음을 확인(공백 없음). (3)
+`scripts/run_long_horizon_validation.py`에 `experiment_id`(설정값
+기반 결정론적 해시)/`data_version`(실제 repository 내용 기반 해시) 필드
+추가(section 22 요구사항, `data_infra.versioning.compute_data_version`
+재사용). 신규 테스트 2개 — 기존 1638개 테스트는 전부 그대로 유지, 약화
+없음(최종 1640 passed). Toss/Live/RiskConfig 코드는 전혀 건드리지 않음.
+FINAL STATUS: **VALIDATION BLOCKED (환경, 원인 정확히 진단됨)** — 상세는
+`docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 26 Addendum".
 
 **Phase 25 — Long-Horizon Real-Data Strategy Validation** (Live Trading
 활성화는 여전히 구조적으로 불가능 — Toss capability gap이 그대로 유일한
@@ -696,10 +725,26 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   전혀 수정하지 않음 — Live Trading은 동일한 이유로 여전히 구조적 차단
   상태.
 
+- Phase 26 — Long-Horizon Real-Data Validation (재확인): 완료
+  (`tests/data/test_phase26_point_in_time_cases.py` 신규,
+  `scripts/run_long_horizon_validation.py` 갱신, 신규 테스트 2개) — 실
+  데이터 확장/실 Walk-Forward 실행은 이번에도 environment BLOCKED(단,
+  DNS/TCP/HTTP 3단계 독립 진단으로 정확한 원인 `x-deny-reason:
+  host_not_allowed` = network egress allowlist 문제임을 최초로 확인,
+  provider/DNS/인증 문제가 아님). Point-in-Time CASE 1-5 감사(CASE 1-4
+  기존 커버 확인, CASE 5 신규 테스트로 공백 해소) + corporate action
+  8개 질문 감사(전부 이미 올바르게 구현됨, 공백 없음) + CLI에
+  `experiment_id`/`data_version` 재현성 필드 추가. 기존 1638개 테스트
+  전부 그대로 유지 — 최종 **1640 passed**. Toss/Live/RiskConfig 코드는
+  전혀 수정하지 않음. FINAL STATUS: **VALIDATION BLOCKED**(환경, 원인
+  정확히 진단됨). 상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의
+  "Phase 26 Addendum".
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
 63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587 +
-Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638; 정확한 최종 숫자는
+Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638 + Phase 26 신규 2 = 1640;
+정확한 최종 숫자는
 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행

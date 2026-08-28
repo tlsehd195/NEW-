@@ -5,34 +5,160 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-28
-**Updated By:** Claude Code (Session 26 — Phase 25 Long-Horizon Real-Data Strategy Validation)
+**Updated By:** Claude Code (Session 27 — Phase 26 Long-Horizon Real-Data Validation, re-verification)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24/25는 Master Plan의
+마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24/25/26은 Master Plan의
 정식 Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된
 안전성·검증 문제를 보완하고 실 시장 데이터/브로커 기반을 놓기 위한 사후
-검증/기반 구축 작업**이며, 이 문서의 "Phase 25" 표기는 세션 추적 편의를
+검증/기반 구축 작업**이며, 이 문서의 "Phase 26" 표기는 세션 추적 편의를
 위한 라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이 아니다. 이
 번호들은 전부 사용자 본인이 직접 "PHASE N — ..." 형식으로 명시적으로
 지시한 작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase 번호를 발명하지
 말라"는 원칙에 대한 예외(사람의 명시적 지시)에 정확히 해당한다. 이후
-Phase 26 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
+Phase 27 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
 않는다.
 
 **REAL MARKET DATA: 이 sandboxed 세션 자체는 여전히 BLOCKED BY EXECUTION
-ENVIRONMENT** — Phase 20부터 매 phase 재확인해 온 상태가 이번 phase도
-`curl`로 재확인 결과 변화 없음(`api.tiingo.com`/`stooq.com`/
-`openapi.tossinvest.com` 전부 CONNECT 403). **단, Phase 24 이후 사용자가
-자신의 별도 네트워크 접근 가능 환경(Codespaces)에서 실제 Tiingo
-ingestion을 수행해 이 프로젝트 최초의 실 시장 데이터(15종목+SPY,
+ENVIRONMENT — 단, 이번 phase에서 정확한 원인을 처음으로 진단함.**
+DNS resolve 정상, 설정된 proxy를 우회한 직접 TCP connect도 성공 — 오직
+실제 HTTP 요청만 거부되며 응답 헤더 `x-deny-reason: host_not_allowed`,
+본문 "Host not in allowlist... Add this host to your network egress
+settings to allow access."가 세 도메인(`api.tiingo.com`/`stooq.com`/
+`openapi.tossinvest.com`) 전부 동일하게 확인됨. 즉 provider 거부도
+DNS/인증 실패도 아닌 **이 환경 자체의 network egress allowlist
+설정**이 원인 — 이 세션의 권한 밖(workspace/environment 설정),
+`MARKET_DATA_API_KEY`도 미설정(확인, 가정 아님). **Phase 24 이후
+사용자가 자신의 별도 네트워크 접근 가능 환경(Codespaces)에서 실제
+Tiingo ingestion을 수행해 이 프로젝트 최초의 실 시장 데이터(15종목+SPY,
 2023-01-02~2024-12-31)를 확보한 사실은 변하지 않는다** — 그 데이터는
 사용자의 환경에만 존재하며 이 세션에는 없다(`data/`는 비어 있고
-gitignore 대상). 이번 phase가 이 세션에서 산출한 walk-forward/evidence
-관련 코드 검증은 전부 SYNTHETIC fixture 또는 구조 검증용이다.
+gitignore 대상).
+
+**Phase 26 — Long-Horizon Real-Data Validation (재확인)** (Live
+Trading은 여전히 구조적으로 비활성 — Toss capability가
+`CapabilityStatus.UNKNOWN`인 한 활성화 불가, 이번 Phase도 Toss 코드를
+전혀 건드리지 않았으므로 Phase 21의 사유가 그대로 유지된다). 목표는
+Phase 25 인프라를 실제 장기 실 데이터에 적용하는 것이었으나 위 환경
+제약으로 실행하지 못함 — 대신 실제로 완료한 작업은 아래 참조.
+
+### Completed (Session 27 — Phase 26)
+
+- **Git/Branch Integrity 선행 확인**: 로컬 HEAD가 origin의 Phase 25
+  브랜치 HEAD(`8dff011`)와 정확히 일치함을 확인 후 `origin/main`을
+  fast-forward-only로 병합(merge commit 0개) → push →
+  `claude/phase-26-long-horizon-real-validation` 브랜치 신규 생성.
+  Baseline **1638/1638 테스트 통과** 실제 실행으로 확인(추측 아님).
+- **정확한 network block 원인 진단(3단계 독립 검증)**: DNS resolve
+  (`socket.gethostbyname`) 성공 → TCP connect(설정된 proxy 우회) 성공
+  → 실제 HTTPS 요청(proxy 우회 포함)만 403, 응답 헤더/본문에서
+  `x-deny-reason: host_not_allowed`를 직접 확인 — 이전 phase들이
+  기록하지 못한 정밀도. `docs/operations/MARKET-DATA-PROVIDER.md`
+  "Phase 26 precise block diagnosis" 절에 상세 기록.
+- **Point-in-Time CASE 1-5 감사** (지침 section 9): CASE 1-4는 기존
+  `tests/data/test_lookahead_guard.py`/`tests/backtest/test_total_return.py`가
+  이미 커버함을 코드로 직접 확인(중복 작성 안 함). CASE 5(재-ingestion이
+  이미 확립된 과거 as_of 결과를 소급 변경하지 않음)는 기존 테스트가
+  없음을 확인 — 실제 `IngestionRunner`/`DuckDBDataRepository` 경로를
+  사용하는 신규 테스트 2개(`tests/data/test_phase26_point_in_time_cases.py`)
+  추가: 실 데이터 확장 시나리오(새 기간 추가)와 동일 기간 재실행
+  (retry/resume) 시나리오 둘 다 과거 as_of 쿼리 결과가 불변임을 확인.
+- **Corporate action 8개 질문 감사** (지침 section 8): raw
+  close/adjusted_close 분리(`tiingo.py`), split/dividend 별도
+  `CorporateAction` 레코드, `effective_time` vs
+  `available_time`/`ingestion_time` 구조적 분리, split 발생 시
+  `CorporateActionApplier`가 보유 포지션 수량을 조정
+  (`test_split_adjusts_held_position`), dividend가 total-return
+  benchmark에 반영(`test_dividend_is_added_back_into_the_days_return`)
+  — 전부 기존 코드/테스트로 이미 올바르게 구현되어 있음을 확인. **공백
+  없음.**
+- **`scripts/run_long_horizon_validation.py`에 재현성 필드 추가**
+  (지침 section 22): `experiment_id`(universe/기간/split 비율/walk-forward
+  윈도우/initial_capital 등 호출자 제공 설정값만의 결정론적 해시 —
+  wall-clock 미사용) + `data_version`(실행 시점 repository의 실제
+  종목별 bar 개수 기반 해시, `scripts/ingest_real_market_data.py`와
+  동일한 `compute_data_version` 재사용). 소규모 synthetic dry-run으로
+  두 필드가 JSON report에 정상 기록됨을 확인.
+- **신규 테스트 2개** — 기존 1638개 테스트는 전부 그대로 유지, 약화
+  없음. 최종 **1640 passed**.
+- **신규 문서**: `docs/operations/MARKET-DATA-PROVIDER.md`의 "Phase 26
+  precise block diagnosis" 절, `docs/research/STRATEGY-VALIDATION-REPORT.md`의
+  "Phase 26 Addendum"(지침 section 32의 18개 질문 전부 답변). README.md/
+  PROJECT_STATUS.md 갱신(이 항목).
+- **Toss/Live 활성화 코드, RiskConfig 숫자는 전혀 건드리지 않음.**
+
+### In Progress (Session 27 — Phase 26)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 27 — Phase 26)
+
+- 이 sandboxed 세션 자체의 실 시장 데이터 확장/ingestion — 원인은 이번
+  phase에서 정확히 진단됨(network egress allowlist, `x-deny-reason:
+  host_not_allowed`)이나 해결 자체는 이 세션 권한 밖(workspace/environment
+  설정 변경 필요).
+- `scripts/run_long_horizon_validation.py`를 실 데이터로 이 세션에서
+  직접 실행하는 것 — 위 항목에 종속. 사용자가 이미 보유한 2023-2024 실
+  데이터로는 지금 바로 실행 가능(외부 환경에서).
+- Live Trading 활성화 — 변경 없음, Toss capability 4종이 여전히
+  `CapabilityStatus.UNKNOWN`.
+
+### Decision Required (Session 27 — Phase 26)
+
+1. (Phase 17-25에서 이어짐) `RiskConfig.max_turnover` None-semantics,
+   risk 기본값 3개 최종 승인, cancel-on-shutdown 자동화, PBO/Deflated
+   Sharpe 실제 계산 채택, 실제 Toss credential 확보, `RESEARCH_UNIVERSE`
+   Stage 2 확장 — 전부 변경 없음.
+2. (Phase 25에서 이어짐) `scripts/run_long_horizon_validation.py`를
+   실 데이터로 실행할 시점/방법 — 변경 없음, 사용자가 지금 바로 외부
+   환경에서 실행 가능.
+3. **(신규)** 이 환경의 network egress allowlist에 `api.tiingo.com`
+   (및 필요 시 `stooq.com`)을 추가할지 — workspace/environment 설정
+   권한을 가진 사람의 결정 필요. 추가되면 이 세션 자체에서도 실 데이터
+   ingestion이 가능해짐.
+
+### Known Issues (Session 27 — Phase 26)
+
+- Phase 24까지의 Known Issues 전부 유지. 신규 이슈 없음(이번 phase의
+  감사에서 corporate action/point-in-time 관련 실제 공백은 CASE 5
+  하나였고, 이미 해소함).
+
+### Architecture Changes (Session 27 — Phase 26)
+
+`scripts/run_long_horizon_validation.py`(experiment_id/data_version
+필드 추가, additive), `tests/data/test_phase26_point_in_time_cases.py`
+(신규) — 전부 기존 코드에 대한 순수 추가. `backtest.engine`,
+`backtest.strategy`, `strategy_research.*` 전부 무수정.
+
+### Toss API Status (Session 27 — Phase 26)
+
+변경 없음(Phase 21 상태 그대로): `CapabilityStatus` 전부 `UNKNOWN`
+유지 — 이번 Phase는 Toss 코드를 전혀 건드리지 않았음.
+
+### Last Validation (Session 27 — Phase 26)
+
+`python -m pytest tests/ -q` — baseline **1638 passed** → 최종
+**1640 passed, 0 failed, 0 skipped**. 기존 1638개 테스트 전부
+삭제/약화 없이 유지, 신규 2개 추가.
+
+### Next Task (Session 27 — Phase 26)
+
+1. workspace/environment 관리자가 network egress allowlist에
+   `api.tiingo.com`을 추가하면, 이 세션 자체에서도
+   `scripts/ingest_real_market_data.py --start <더 이른 날짜>`로 장기
+   실 데이터 ingestion을 직접 시도할 수 있음.
+2. 그 전까지는 사용자가 이미 보유한 2023-2024 실 데이터로
+   `scripts/run_long_horizon_validation.py`를 외부 환경에서 실행 —
+   처음으로 실 walk-forward/evidence 결과 확보의 가장 빠른 경로.
+3. 실 결과 확보 후: `STRATEGY-VALIDATION-REPORT.md`에 fold-by-fold
+   결과를 addendum으로 기록.
+4. 위 Decision Required 항목들에 대한 사람의 판단.
+
+## Previous Subtask (Session 26 — Phase 25)
 
 **Phase 25 — Long-Horizon Real-Data Strategy Validation** (Live
 Trading은 여전히 구조적으로 비활성 — Toss capability가

@@ -5,8 +5,9 @@ Trading Performance Report), Phase 20 (Real Market Data Foundation
 & Documentation Sync), Phase 21 (Toss Broker Adapter Completion),
 Phase 22 (Real-Data Paper Trading / US Long-Term System Hardening),
 Phase 23 (Strategy Research & Real Market Data Validation),
-Phase 24 (Real Market Data + Expandable US Equity Universe), and
-Phase 25 (Long-Horizon Real-Data Strategy Validation).
+Phase 24 (Real Market Data + Expandable US Equity Universe),
+Phase 25 (Long-Horizon Real-Data Strategy Validation), and Phase 26
+(Long-Horizon Real-Data Validation, re-verification).
 One row per area the review instruction names. "Status" is one of
 PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
 this alone prevent Live activation today" independent of every other
@@ -175,3 +176,36 @@ confirm the full CLI end-to-end (benchmark construction, 4 strategies x
 command needed to run this against the real 2023-2024 catalog and what
 each of its 19 sections currently says. **No change to any Toss/Live
 row; Live activation still Blocked for the same, unchanged reason.**
+
+**Phase 26 update**: attempted to extend real data range and run actual
+Walk-Forward against real data (this phase's stated goal) -- still
+BLOCKED, but this session ran a three-layer independent diagnosis (DNS
+resolution, a raw TCP connect bypassing the configured proxy, and a
+direct HTTPS request also bypassing the proxy) instead of re-citing the
+prior CONNECT-403 finding. DNS resolves correctly and the TCP handshake
+succeeds; only the HTTP request itself is denied, with response header
+`x-deny-reason: host_not_allowed` and a body naming the exact host and
+remedy ("Add this host to your network egress settings to allow
+access"), identical for `api.tiingo.com`/`stooq.com`/
+`openapi.tossinvest.com`. This conclusively identifies the block as this
+environment's own network egress allowlist -- not a provider-side
+rejection, not DNS failure, not an authentication failure -- and names
+the exact fix (add the host to the environment's egress allowlist),
+though making that change is outside this session's own permissions.
+No `MARKET_DATA_API_KEY` is set in this session either (checked).
+Audited (not assumed) the point-in-time CASE 1-5 checklist and the
+8-question corporate-action checklist from this phase's instruction:
+CASE 1-4 and all 8 corporate-action questions were already correctly
+covered by existing Phase 1/2/20 code and tests; CASE 5 (re-running real
+ingestion must not retroactively change an already-established
+point-in-time query result) had no direct existing test and was added
+(`tests/data/test_phase26_point_in_time_cases.py`, 2 new tests, against
+the real `IngestionRunner`/`DuckDBDataRepository` path). Added
+`experiment_id`/`data_version` reproducibility fields to
+`scripts/run_long_horizon_validation.py`'s JSON report, reusing
+`data_infra.versioning.compute_data_version` exactly as
+`scripts/ingest_real_market_data.py` already does. **No real
+Walk-Forward evaluation was run against real data this session** (same
+root cause as Phase 25, now precisely diagnosed rather than merely
+re-confirmed). **No change to any Toss/Live row; Live activation still
+Blocked for the same, unchanged reason.**
