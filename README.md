@@ -65,17 +65,21 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20/21/22/23/24/25/26/27은 Master Plan의 정식 Phase가 아니라, Live
+**Phase 17/18/19/20/21/22/23/24/25/26/27/28은 Master Plan의 정식 Phase가 아니라, Live
 전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
 기반을 놓는 사후 검증/기반 작업**이다.
 
-**REAL MARKET DATA: BLOCKED BY EXECUTION ENVIRONMENT** — 이 저장소가
-실행되는 현재 환경에서 `api.tiingo.com`/`stooq.com`/
-`openapi.tossinvest.com` 전부 egress proxy에서 403 거부. Phase 20부터
-Phase 27까지 매 phase 재확인했으며 변화 없음(Phase 27도 재확인, Phase
-26과 동일한 진단). Phase 26에서 정확한 원인을 처음 진단: DNS는 정상
-resolve, 설정된 proxy를 우회한 직접 TCP connect도 성공 — 오직 실제
-HTTP 요청만 거부되며, 응답 헤더에 `x-deny-reason: host_not_allowed`와
+**REAL MARKET DATA: BLOCKED BY EXECUTION ENVIRONMENT + BLOCKED BY
+DATA(로컬 부재)** — 이 저장소가 실행되는 현재 환경에서
+`api.tiingo.com`/`stooq.com`/`openapi.tossinvest.com` 전부 egress
+proxy에서 403 거부. Phase 20부터 Phase 28까지 매 phase 재확인했으며
+변화 없음. Phase 28에서는 `data/` 외에 전체 파일시스템(ingestion
+manifest, DuckDB/Parquet 파일, 환경변수, 기존 스크립트)을 철저히
+탐색했으나 실 데이터를 어디에서도 찾지 못함 — 로컬에 실 데이터가
+존재할 유일한 경로가 network ingestion인데 그것이 차단되어 있으므로
+두 상태가 동시에 성립. Phase 26에서 정확한 원인을 처음 진단: DNS는
+정상 resolve, 설정된 proxy를 우회한 직접 TCP connect도 성공 — 오직
+실제 HTTP 요청만 거부되며, 응답 헤더에 `x-deny-reason: host_not_allowed`와
 "Host not in allowlist... Add this host to your network egress settings
 to allow access." 본문이 그대로 포함됨(세 도메인 전부 동일). 즉
 provider 측 거부/DNS 실패/인증 실패가 아니라 **이 환경 자체의 network
@@ -99,6 +103,26 @@ SPY, 2023-01-02~2024-12-31, 8,032 bars, 107 corporate actions)를
 `docs/research/STRATEGY-RESEARCH-REPORT.md`의 "Addendum" 절 참조. 이
 데이터는 사용자의 Codespaces 환경에만 존재하며 이 저장소/이 sandboxed
 세션에는 없다(`data/`는 비어 있고 gitignore 대상).
+
+**Phase 28 — Real-Data Walk-Forward Execution & Strategy Evidence**
+(Live Trading은 여전히 구조적으로 불가능). 목표는 처음으로 실 데이터
+Walk-Forward TEST를 실제 실행하는 것이었으나 이번에도 environment
+BLOCKED(재확인, 변화 없음) — 이번엔 `data/`뿐 아니라 전체 파일시스템을
+철저히 탐색(ingestion manifest, DuckDB/Parquet 파일, 환경변수, 기존
+스크립트)했으나 실 데이터를 어디에서도 찾지 못함 —
+`BLOCKED_BY_ENVIRONMENT`(근본 원인: network)와 `BLOCKED_BY_DATA`(직접
+발견: 로컬에 파일 없음) 둘 다 성립. 대신 자체 검증 중 실제 gap을 발견해
+보강: `scripts/run_long_horizon_validation.py`의 `--data-status REAL`이
+호출자의 주장만 믿고 있던 문제 — 이제 실제 bar들의
+`Provenance.source`가 실 provider(`tiingo`/`stooq`) 문자열과 정확히
+일치하는지 교차검증하고, 일치하지 않으면 어떤 전략 평가도 시작하기 전에
+거부(exit 1)함. 동일한 synthetic fixture 카탈로그로 `--data-status
+REAL`은 정확히 거부(exit 1)되고 `--data-status SYNTHETIC`은 정상
+실행됨을 실제로 확인. 신규 테스트 3개(AST 기반). 기존 1649개 테스트
+전부 유지 — 최종 **1652 passed**. Toss/Live/RiskConfig 코드는 전혀
+건드리지 않음. FINAL STATUS: **VALIDATION BLOCKED**(환경+데이터 부재,
+변화 없음). 상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의
+"Phase 28 Addendum".
 
 **Phase 27 — Real-Data Walk-Forward Validation & Strategy Evidence**
 (Live Trading은 여전히 구조적으로 불가능 — Toss capability gap 그대로).
@@ -777,11 +801,25 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   변화 없음). 상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의
   "Phase 27 Addendum".
 
+- Phase 28 — Real-Data Walk-Forward Execution & Strategy Evidence: 완료
+  (`scripts/run_long_horizon_validation.py` 갱신, 신규 테스트 3개) —
+  실 Walk-Forward 실행은 이번에도 environment BLOCKED, 이번엔 전체
+  파일시스템 철저 탐색으로 재확인(`BLOCKED_BY_ENVIRONMENT` +
+  `BLOCKED_BY_DATA` 둘 다 성립). 자체 검증 중 실제 gap 발견·보강:
+  `--data-status REAL`이 호출자 주장만 믿던 문제를 실제 bar
+  provenance(`tiingo`/`stooq`)와 교차검증하도록 수정, 불일치 시 어떤
+  전략 평가도 시작 전에 거부(exit 1) — synthetic fixture로 실제 거부
+  동작과 정상 SYNTHETIC 실행 둘 다 확인. 기존 1649개 테스트 전부 유지 —
+  최종 **1652 passed**. Toss/Live/RiskConfig 코드는 전혀 수정하지 않음.
+  FINAL STATUS: **VALIDATION BLOCKED**(환경+데이터 부재, 변화 없음).
+  상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 28
+  Addendum".
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
 63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587 +
 Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638 + Phase 26 신규 2 = 1640 +
-Phase 27 신규 9 = 1649; 정확한 최종 숫자는
+Phase 27 신규 9 = 1649 + Phase 28 신규 3 = 1652; 정확한 최종 숫자는
 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행

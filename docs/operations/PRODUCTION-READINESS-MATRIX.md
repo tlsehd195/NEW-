@@ -7,8 +7,9 @@ Phase 22 (Real-Data Paper Trading / US Long-Term System Hardening),
 Phase 23 (Strategy Research & Real Market Data Validation),
 Phase 24 (Real Market Data + Expandable US Equity Universe),
 Phase 25 (Long-Horizon Real-Data Strategy Validation), Phase 26
-(Long-Horizon Real-Data Validation, re-verification), and Phase 27
-(Real-Data Walk-Forward Validation & Strategy Evidence).
+(Long-Horizon Real-Data Validation, re-verification), Phase 27
+(Real-Data Walk-Forward Validation & Strategy Evidence), and Phase 28
+(Real-Data Walk-Forward Execution & Strategy Evidence).
 One row per area the review instruction names. "Status" is one of
 PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
 this alone prevent Live activation today" independent of every other
@@ -236,4 +237,24 @@ several other structural properties this phase's instruction required
 (no TEST-region leakage into the walk-forward call's own boundaries, all
 strategies sharing one benchmark_id, no fabricated benchmark fallback,
 no wall-clock/random usage). **No change to any Toss/Live row; Live
+activation still Blocked for the same, unchanged reason.**
+
+**Phase 28 update**: re-verified the environment egress block (identical
+`x-deny-reason: host_not_allowed`, unchanged) and, going further than
+prior phases, ran an exhaustive filesystem search for a real data
+location -- project docs, ingestion manifests, DuckDB/Parquet files
+anywhere, environment variables, existing scripts -- finding nothing.
+`BLOCKED_BY_ENVIRONMENT` and `BLOCKED_BY_DATA` both apply. This phase's
+own verification effort found a real gap: `--data-status REAL` was
+previously accepted purely on the caller's word, with nothing checking
+it against the data's own recorded provenance. Fixed by adding a
+plausibility check -- every bar's `Provenance.source` must be `"tiingo"`
+or `"stooq"` (verified directly against those providers' own source
+code) whenever `--data-status REAL` is passed, or the script refuses to
+proceed (exit code 1, before any strategy evaluation starts). Verified
+at runtime, not just statically: the same synthetic-fixture catalog
+construction Phase 25-27 used for dry runs is now correctly refused
+under `--data-status REAL` and still runs correctly under
+`--data-status SYNTHETIC` against the identical catalog. Added 3 static
+AST-based regression tests. **No change to any Toss/Live row; Live
 activation still Blocked for the same, unchanged reason.**

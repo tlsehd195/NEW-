@@ -252,3 +252,37 @@ identical to Phase 26's diagnosis -- no change in this environment's
 network egress policy between Phase 26 and Phase 27. No
 `MARKET_DATA_API_KEY` set (checked). `data/` remains empty and
 gitignored -- no real data exists locally in this session.
+
+## Phase 28 re-verification + exhaustive real-data location search
+
+Re-checked network (identical `x-deny-reason: host_not_allowed` for
+`api.tiingo.com`, DNS resolves, TCP connects, only the HTTP request is
+denied) and `MARKET_DATA_API_KEY` (still unset) -- unchanged from
+Phase 26/27. This phase went further than prior phases' checks and
+searched exhaustively (not just `data/`) for a real data location
+anywhere in the environment, per instruction section 4's required
+order: project docs (this file and `STRATEGY-VALIDATION-REPORT.md`
+name the location the user's Codespaces session used, `./data/real_market_data`
+-- not present here), ingestion manifests (none found outside `/tmp`
+pytest/scratch artifacts), data_version/checksum records (none),
+DuckDB files (`find / -iname "*.duckdb"` outside test/scratch
+directories -- none), Parquet files (none), environment
+variables/config (`env | grep -i "market_data\|tiingo\|db_path"` --
+empty), existing execution scripts (`scripts/ingest_real_market_data.py`
+exists and is ready, but has never been run in this session). **No
+real data exists anywhere in this session's filesystem.**
+`BLOCKED_BY_ENVIRONMENT` (root cause: network egress) and
+`BLOCKED_BY_DATA` (immediate finding: no data file present) both apply
+and are not in tension -- the only way real data could exist locally is
+via network ingestion, which is blocked.
+
+Also added this phase: a REAL-provenance plausibility check in
+`scripts/run_long_horizon_validation.py` -- `--data-status REAL` is now
+cross-checked against the actual `Provenance.source` values recorded on
+the catalog's own bars (must be `"tiingo"` or `"stooq"`, the exact
+strings the real provider implementations stamp) and the script refuses
+to proceed (exit code 1) if they don't match, rather than trusting the
+caller's `--data-status REAL` claim at face value. Verified at runtime
+this phase: the same synthetic-fixture catalog pattern Phase 25-27 used
+for dry runs is now correctly refused under `--data-status REAL` and
+still runs correctly under `--data-status SYNTHETIC`.

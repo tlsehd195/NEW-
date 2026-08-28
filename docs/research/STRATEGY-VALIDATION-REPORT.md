@@ -522,3 +522,76 @@ unmodified.
    (now a required flag) against the real 2023-2024 catalog the user
    already has, in an environment with that data -- no further code
    changes are needed for that specific run.
+
+## Phase 28 Addendum
+
+Phase 28's stated goal was to actually execute real-data Walk-Forward
+TEST for the first time. **Still not possible from this session**:
+re-verified network egress (identical `x-deny-reason: host_not_allowed`)
+and `MARKET_DATA_API_KEY` (unset) -- both unchanged from Phase 26/27.
+This phase additionally ran an exhaustive filesystem search (project
+docs, ingestion manifests, DuckDB/Parquet files anywhere, environment
+variables, existing scripts) rather than checking only `data/` -- no
+real data location was found anywhere in this session's environment.
+Status: `BLOCKED_BY_ENVIRONMENT` (root cause) and `BLOCKED_BY_DATA`
+(immediate finding) both apply -- the only path to real data locally is
+network ingestion, which remains blocked. No fabricated real result is
+recorded here.
+
+### Real-provenance plausibility check added
+
+Instruction section 5 (items B/C) asked that `--data-status REAL` not
+be taken purely on faith -- the data's own provenance should be
+cross-checked. `scripts/run_long_horizon_validation.py` now verifies
+that every bar's `Provenance.source` is `"tiingo"` or `"stooq"` (the
+exact strings the real provider implementations stamp -- verified
+directly against `src/data_infra/providers/tiingo.py`/`stooq.py`'s own
+source) whenever `--data-status REAL` is passed, and refuses to
+proceed (exit code 1, before any strategy is evaluated) if an
+unrecognized source is found. This closes a real gap: previously
+nothing stopped `--data-status REAL` from being passed against data
+that was never actually real, beyond the caller's own honesty.
+
+Verified end-to-end this phase, not just statically: the identical
+synthetic-fixture catalog construction Phase 25-27 used for their own
+dry runs (bars carrying `provenance.source="test_source"`) is now
+correctly **refused** under `--data-status REAL` (exit code 1, with a
+clear error naming the exact unexpected source and the allowlist), and
+still runs correctly to completion under `--data-status SYNTHETIC`
+against the same catalog (producing `INSUFFICIENT_EVIDENCE` for every
+strategy, `SYNTHETIC_TOTAL_RETURN` benchmark status, and real non-zero
+trade counts/returns from the synthetic price series -- confirming the
+underlying pipeline itself works correctly end to end once genuine bars
+exist in the catalog, which was not separately re-confirmed since
+Phase 25's original build).
+
+3 new regression tests (`tests/strategy_research/test_run_long_horizon_validation_wiring.py`,
+static AST-based, same discipline as Phase 27's): `_KNOWN_REAL_PROVIDER_SOURCES`
+matches the real providers' actual source strings, the unexpected-source
+guard actually returns non-zero (not just a warning), and the guard
+runs before any strategy's walk-forward evaluation begins.
+
+### Full test suite
+
+Baseline (this session): **1649 passed**. Final: **1652 passed, 0
+failed, 0 skipped** -- 3 new tests, existing 1649 unmodified.
+
+### Answers to the 6 required final questions (instruction section 38)
+
+1. **실제 시장 데이터로 Walk-Forward TEST가 실행되었는가?** No. This
+   session remains `BLOCKED_BY_ENVIRONMENT`/`BLOCKED_BY_DATA`
+   (exhaustively re-verified this phase, unchanged root cause).
+2. **REAL TEST fold는 몇 개인가?** **0.**
+3. **어떤 전략이 가장 일관된 성과를 보였는가?** Not answerable -- zero
+   real TEST folds exist.
+4. **그 우위가 NET 기준에서도 유지되는가?** Not answerable for the same
+   reason.
+5. **SPY Total Return benchmark를 여러 TEST fold에서 지속적으로
+   이겼는가?** Not answerable -- zero real TEST folds exist.
+6. **현재 증거 수준에서 "검증된 알파"라고 부를 수 있는 전략이
+   있는가?** No. With `REAL_TEST_FOLDS == 0`, `classify_evidence_level`
+   places every one of the 4 candidates at `INSUFFICIENT_EVIDENCE`, its
+   most conservative tier -- this is a direct, unmodified consequence of
+   the existing evidence policy, not a judgment call made this phase.
+   `VALIDATED` remains structurally unreachable by any code in this
+   project regardless of what future real data might show.
