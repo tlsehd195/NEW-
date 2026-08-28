@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Sequence
 
 from data_infra.enums import InstrumentType, SecurityStatus
 from data_infra.models import SecurityMaster, UniverseMembership
@@ -169,10 +169,27 @@ def build_universe_memberships(universe: UniverseDefinition, *, valid_from: date
     """Converts a `UniverseDefinition` into the `UniverseMembership`
     records `DataRepository.add_universe_membership`/`get_universe`
     (Phase 1, unmodified) actually store and query. `valid_from` is the
-    caller-supplied point-in-time this membership becomes effective --
-    never `datetime.now()`."""
+    caller-supplied fallback point-in-time a membership becomes
+    effective when a symbol's own `listed_from` is unconfirmed (`None`)
+    -- never `datetime.now()`.
+
+    Phase 29: a symbol whose `SymbolMetadata.listed_from`/`listed_to`
+    ARE confirmed uses those real dates instead of the caller's
+    uniform `valid_from`/an open-ended `valid_to=None` -- this is what
+    makes `DataRepository.get_universe(..., as_of_time=...)` (already
+    point-in-time-safe since Phase 1, unmodified here) actually
+    survivorship-aware once real historical listing/delisting dates are
+    populated: a security delisted before `as_of_time` is correctly
+    excluded, one not yet listed is correctly excluded, matching
+    `docs/decisions/ADR-0032-security-identity-and-survivorship-aware-universe.md`.
+    Every `SymbolMetadata` in this project with `listed_from`/`listed_to`
+    still `None` today (e.g. `PILOT_UNIVERSE_V1`) behaves byte-for-byte
+    identically to before this change -- this is purely additive."""
     return [
-        UniverseMembership(security_id=s.symbol, universe=universe.name, valid_from=valid_from)
+        UniverseMembership(
+            security_id=s.symbol, universe=universe.name,
+            valid_from=s.listed_from or valid_from, valid_to=s.listed_to,
+        )
         for s in universe.symbols
     ]
 
@@ -185,7 +202,18 @@ def build_security_masters(universe: UniverseDefinition, *, valid_from: datetime
     sentinel, never a guessed exchange name. `company_id` is a synthetic
     internal key (`f"COMPANY-{symbol}"`, the same convention this
     project's own test helpers already use), not a real external
-    company identifier."""
+    company identifier.
+
+    Phase 29: `valid_from`/`valid_to`/`status` now come from the
+    symbol's own `listed_from`/`listed_to` when confirmed (see
+    `build_universe_memberships` above for the identical rationale) --
+    `status` is derived as `DELISTED` when `listed_to` is set, `ACTIVE`
+    otherwise. This cannot distinguish `RENAMED`/`MERGED` from a plain
+    `DELISTED` from just two dates -- that finer distinction requires an
+    explicit provider-confirmed reason this module does not have
+    (`SymbolMetadata` carries no such field), so `DELISTED` is used as
+    the honest, least-specific-that-is-still-correct default rather
+    than guessing a more specific reason."""
     return [
         SecurityMaster(
             security_id=s.symbol,
@@ -194,8 +222,47 @@ def build_security_masters(universe: UniverseDefinition, *, valid_from: datetime
             currency="USD",
             company_id=f"COMPANY-{s.symbol}",
             instrument_type=InstrumentType.EQUITY,
-            valid_from=valid_from,
-            status=SecurityStatus.ACTIVE,
+            valid_from=s.listed_from or valid_from,
+            valid_to=s.listed_to,
+            status=SecurityStatus.DELISTED if s.listed_to is not None else SecurityStatus.ACTIVE,
         )
         for s in universe.symbols
     ]
+
+
+def detect_ticker_collisions(security_masters: Sequence[SecurityMaster]) -> list[str]:
+    """Phase 29 (instruction sections 8, 20, 57-B): a *legitimate*
+    ticker reuse (e.g. ticker "ABC" delisted by company A in 2015, then
+    reassigned to unrelated company B in 2019) is two `SecurityMaster`
+    records sharing a `ticker` string with NON-overlapping
+    `[valid_from, valid_to)` windows -- this is normal and not flagged.
+    A genuine *collision* (a data bug: two different `security_id`
+    values claiming the same ticker at the same real point in time) is
+    two records sharing a `ticker` with OVERLAPPING windows. This
+    function returns one human-readable message per overlapping pair
+    found; an empty list means no collision was detected. It does not
+    itself raise -- callers (ingestion scripts, tests) decide whether a
+    finding is fatal."""
+    findings: list[str] = []
+    by_ticker: dict[str, list[SecurityMaster]] = {}
+    for sm in security_masters:
+        by_ticker.setdefault(sm.ticker, []).append(sm)
+
+    for ticker, records in by_ticker.items():
+        for i in range(len(records)):
+            for j in range(i + 1, len(records)):
+                a, b = records[i], records[j]
+                if a.security_id == b.security_id:
+                    continue  # same identity re-listed under an unchanged ticker -- not a collision
+                a_end = a.valid_to or datetime.max.replace(tzinfo=a.valid_from.tzinfo)
+                b_end = b.valid_to or datetime.max.replace(tzinfo=b.valid_from.tzinfo)
+                overlaps = a.valid_from < b_end and b.valid_from < a_end
+                if overlaps:
+                    findings.append(
+                        f"ticker {ticker!r} claimed by both security_id={a.security_id!r} "
+                        f"(valid {a.valid_from.isoformat()}..{a.valid_to.isoformat() if a.valid_to else 'open'}) "
+                        f"and security_id={b.security_id!r} "
+                        f"(valid {b.valid_from.isoformat()}..{b.valid_to.isoformat() if b.valid_to else 'open'}) "
+                        "during an overlapping window"
+                    )
+    return findings
