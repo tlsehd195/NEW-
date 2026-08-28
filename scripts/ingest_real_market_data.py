@@ -80,6 +80,24 @@ bars' own timestamps, `None` when no bars were persisted), an explicit
 (this script only ever performs a real, network-backed ingestion --
 unlike `run_long_horizon_validation.py`, which accepts synthetic
 fixtures too and therefore needs a caller-supplied flag).
+
+**Phase 31 fix**: the manifest still couldn't answer several of the
+questions a reproducibility manifest must answer (instruction section
+18) -- which provider(s) actually supplied data (`FallbackDataProvider`
+can satisfy different symbols from different underlying providers, and
+the manifest never said which), which requested symbols came back with
+zero bars, how many of the universe's securities are still active vs.
+delisted, and whether this run's universe carried real,
+provider-confirmed listing/delisting dates or only ever used the
+uniform fallback `valid_from` (i.e. whether any actual survivorship
+mitigation happened, as opposed to `delisted_count` merely reading `0`
+because no real dates were ever supplied). Added `providers_used`
+(read back from each persisted bar's own `provenance.source`, never
+assumed), `missing_symbols`, `active_count`, and
+`historical_universe_membership_available`/
+`survivorship_mitigation_applied` (both derived from whether any
+`SymbolMetadata` in the run's universe actually had a confirmed
+`listed_from`/`listed_to`).
 """
 
 from __future__ import annotations
@@ -208,6 +226,29 @@ def main() -> int:
         actual_data_start = min((b.timestamp for b in all_bars), default=None)
         actual_data_end = max((b.timestamp for b in all_bars), default=None)
         delisted_count = sum(1 for s in security_masters if s.status == SecurityStatus.DELISTED)
+        active_count = len(security_masters) - delisted_count if security_masters else None
+
+        # Phase 31 (instruction section 18, questions 1/2/6/16/17): which
+        # provider(s) actually supplied a bar (never assumed -- read back
+        # from each persisted bar's own `provenance.source`, since
+        # FallbackDataProvider may satisfy different symbols from
+        # different underlying providers); which requested symbols got
+        # zero bars; and whether this run's universe carried real,
+        # provider-confirmed listing/delisting dates (Phase 29's
+        # `SymbolMetadata.listed_from`/`listed_to`) or only the uniform
+        # caller-supplied `valid_from` fallback -- the latter means no
+        # actual survivorship mitigation happened this run, even if
+        # `delisted_count` is 0.
+        providers_used = sorted({b.provenance.source for b in all_bars})
+        bar_counts_by_symbol = {symbol: 0 for symbol in symbols}
+        for b in all_bars:
+            bar_counts_by_symbol[b.security_id] = bar_counts_by_symbol.get(b.security_id, 0) + 1
+        missing_symbols = sorted(symbol for symbol, count in bar_counts_by_symbol.items() if count == 0)
+        historical_universe_membership_available = (
+            any(s.listed_from is not None or s.listed_to is not None for s in universe.symbols)
+            if universe is not None
+            else None
+        )
 
         manifest = {
             "note": (
@@ -222,7 +263,12 @@ def main() -> int:
             "universe_version": universe.version if universe is not None else None,
             "symbols": list(symbols),
             "symbol_count": len(symbols),
+            "active_count": active_count,
             "delisted_count": delisted_count,
+            "missing_symbols": missing_symbols,
+            "providers_used": providers_used,
+            "historical_universe_membership_available": historical_universe_membership_available,
+            "survivorship_mitigation_applied": historical_universe_membership_available,
             "requested_start": args.start.isoformat(),
             "requested_end": args.end.isoformat(),
             "actual_data_start": actual_data_start.isoformat() if actual_data_start is not None else None,
@@ -252,7 +298,11 @@ def main() -> int:
         print(f"Total bars persisted: {len(all_bars)}")
         print(f"ACTUAL_DATA_START: {manifest['actual_data_start']}")
         print(f"ACTUAL_DATA_END: {manifest['actual_data_end']}")
+        print(f"Active securities: {active_count}")
         print(f"Delisted securities in universe: {delisted_count}")
+        print(f"Missing symbols (zero bars): {missing_symbols}")
+        print(f"Providers used: {providers_used}")
+        print(f"Historical universe membership available: {historical_universe_membership_available}")
         print(f"Corporate actions persisted: {len(all_actions)}")
         print(f"Data quality status: {quality_run.status.value} ({len(quality_run.issues)} issue(s))")
         print(f"Content checksum: {checksum}")
