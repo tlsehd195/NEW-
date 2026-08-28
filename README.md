@@ -65,23 +65,24 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20/21/22/23/24/25/26은 Master Plan의 정식 Phase가 아니라, Live
+**Phase 17/18/19/20/21/22/23/24/25/26/27은 Master Plan의 정식 Phase가 아니라, Live
 전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
 기반을 놓는 사후 검증/기반 작업**이다.
 
 **REAL MARKET DATA: BLOCKED BY EXECUTION ENVIRONMENT** — 이 저장소가
 실행되는 현재 환경에서 `api.tiingo.com`/`stooq.com`/
 `openapi.tossinvest.com` 전부 egress proxy에서 403 거부. Phase 20부터
-Phase 26까지 매 phase 재확인했으며 변화 없음. **Phase 26에서 정확한
-원인을 처음으로 진단**: DNS는 정상 resolve, 설정된 proxy를 우회한 직접
-TCP connect도 성공 — 오직 실제 HTTP 요청만 거부되며, 응답 헤더에
-`x-deny-reason: host_not_allowed`와 "Host not in allowlist... Add this
-host to your network egress settings to allow access." 본문이 그대로
-포함됨(세 도메인 전부 동일). 즉 provider 측 거부/DNS 실패/인증 실패가
-아니라 **이 환경 자체의 network egress allowlist 설정**이 원인이며,
-정확한 해결 방법(해당 host를 allowlist에 추가)까지 확인됨 — 단, 이
-설정은 이 세션의 권한 밖(workspace/environment 설정). "실 데이터 검증
-완료"라는 표현은 실제 ingestion이 성공했을 때만 사용한다.
+Phase 27까지 매 phase 재확인했으며 변화 없음(Phase 27도 재확인, Phase
+26과 동일한 진단). Phase 26에서 정확한 원인을 처음 진단: DNS는 정상
+resolve, 설정된 proxy를 우회한 직접 TCP connect도 성공 — 오직 실제
+HTTP 요청만 거부되며, 응답 헤더에 `x-deny-reason: host_not_allowed`와
+"Host not in allowlist... Add this host to your network egress settings
+to allow access." 본문이 그대로 포함됨(세 도메인 전부 동일). 즉
+provider 측 거부/DNS 실패/인증 실패가 아니라 **이 환경 자체의 network
+egress allowlist 설정**이 원인이며, 정확한 해결 방법(해당 host를
+allowlist에 추가)까지 확인됨 — 단, 이 설정은 이 세션의 권한 밖
+(workspace/environment 설정). "실 데이터 검증 완료"라는 표현은 실제
+ingestion이 성공했을 때만 사용한다.
 
 **단, 이 서술은 이 세션(sandboxed 환경) 자체의 접근성에 대한 것이다.**
 Phase 24 이후 사용자가 자신의 별도 네트워크 접근 가능 환경(GitHub
@@ -98,6 +99,27 @@ SPY, 2023-01-02~2024-12-31, 8,032 bars, 107 corporate actions)를
 `docs/research/STRATEGY-RESEARCH-REPORT.md`의 "Addendum" 절 참조. 이
 데이터는 사용자의 Codespaces 환경에만 존재하며 이 저장소/이 sandboxed
 세션에는 없다(`data/`는 비어 있고 gitignore 대상).
+
+**Phase 27 — Real-Data Walk-Forward Validation & Strategy Evidence**
+(Live Trading은 여전히 구조적으로 불가능 — Toss capability gap 그대로).
+목표는 실 데이터로 실제 Walk-Forward TEST를 실행하는 것이었으나 이번에도
+environment BLOCKED(Phase 26과 동일 진단, 변화 없음). 대신 이번 phase의
+자체 감사 과정에서 실제 버그를 발견·수정: `scripts/run_long_horizon_validation.py`의
+`classify_evidence_level(..., is_real_data=True, ...)`가 `--db-path`
+내용과 무관하게 **하드코딩**되어 있었음을 발견 — 즉 이 스크립트로
+실행한 모든 synthetic dry-run(Phase 25/26의 자체 smoke test 포함)이
+report 자체에는 구분 필드도 없이 real-data 기준 evidence threshold로
+분류되고 있었음. 수정: 필수 CLI 인자 `--data-status {REAL,SYNTHETIC}`
+추가, `is_real_data`를 이 값으로 직접 게이팅, `experiment_id` 해시에도
+포함(REAL/SYNTHETIC 실행이 같은 id로 충돌 방지), report에 `data_status`
+필드 신규 추가 — 동일 dry-run 카탈로그로 재실행해 수정 전(잘못된
+ROBUSTNESS_PENDING)/후(올바른 INSUFFICIENT_EVIDENCE) 차이를 직접 확인.
+신규 회귀 테스트 9개(`tests/strategy_research/test_run_long_horizon_validation_wiring.py`,
+AST/소스 텍스트 기반 — 스크립트는 여전히 자동화 테스트가 import/실행
+하지 않음). 기존 1640개 테스트 전부 유지 — 최종 **1649 passed**.
+Toss/Live/RiskConfig 코드는 전혀 건드리지 않음. FINAL STATUS:
+**VALIDATION BLOCKED**(환경, 변화 없음) — 실 데이터 실행 커맨드는
+`docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 27 Addendum".
 
 **Phase 26 — Long-Horizon Real-Data Validation (재확인)** (Live Trading
 활성화는 여전히 구조적으로 불가능 — Toss capability gap 그대로). 목표는
@@ -740,11 +762,26 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   정확히 진단됨). 상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의
   "Phase 26 Addendum".
 
+- Phase 27 — Real-Data Walk-Forward Validation & Strategy Evidence: 완료
+  (`scripts/run_long_horizon_validation.py` 갱신,
+  `tests/strategy_research/test_run_long_horizon_validation_wiring.py`
+  신규, 신규 테스트 9개) — 실 Walk-Forward 실행은 이번에도 environment
+  BLOCKED(Phase 26과 동일 진단, 변화 없음). 자체 감사 중 실제 버그 발견:
+  `classify_evidence_level`의 `is_real_data`가 `--db-path` 내용과 무관하게
+  하드코딩되어 있어 모든 synthetic dry-run이 real-data 기준으로 분류되고
+  있었음. 수정: 필수 `--data-status {REAL,SYNTHETIC}` 인자 추가,
+  `is_real_data` 게이팅, `experiment_id` 해시 포함, report에 `data_status`
+  필드 추가 — 수정 전/후 차이를 동일 카탈로그 재실행으로 직접 확인. 기존
+  1640개 테스트 전부 유지 — 최종 **1649 passed**. Toss/Live/RiskConfig
+  코드는 전혀 수정하지 않음. FINAL STATUS: **VALIDATION BLOCKED**(환경,
+  변화 없음). 상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의
+  "Phase 27 Addendum".
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
 63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587 +
-Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638 + Phase 26 신규 2 = 1640;
-정확한 최종 숫자는
+Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638 + Phase 26 신규 2 = 1640 +
+Phase 27 신규 9 = 1649; 정확한 최종 숫자는
 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행

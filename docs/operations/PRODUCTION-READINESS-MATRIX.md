@@ -6,8 +6,9 @@ Trading Performance Report), Phase 20 (Real Market Data Foundation
 Phase 22 (Real-Data Paper Trading / US Long-Term System Hardening),
 Phase 23 (Strategy Research & Real Market Data Validation),
 Phase 24 (Real Market Data + Expandable US Equity Universe),
-Phase 25 (Long-Horizon Real-Data Strategy Validation), and Phase 26
-(Long-Horizon Real-Data Validation, re-verification).
+Phase 25 (Long-Horizon Real-Data Strategy Validation), Phase 26
+(Long-Horizon Real-Data Validation, re-verification), and Phase 27
+(Real-Data Walk-Forward Validation & Strategy Evidence).
 One row per area the review instruction names. "Status" is one of
 PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
 this alone prevent Live activation today" independent of every other
@@ -209,3 +210,30 @@ Walk-Forward evaluation was run against real data this session** (same
 root cause as Phase 25, now precisely diagnosed rather than merely
 re-confirmed). **No change to any Toss/Live row; Live activation still
 Blocked for the same, unchanged reason.**
+
+**Phase 27 update**: re-verified the same environment egress block
+(identical `x-deny-reason: host_not_allowed`, no change) and attempted
+to actually run real-data Walk-Forward -- still not possible from this
+session. This phase's own audit (checking that real/synthetic status is
+never confused in a report, per its own instruction) found a real bug:
+`scripts/run_long_horizon_validation.py` had `classify_evidence_level(...,
+is_real_data=True, ...)` hardcoded regardless of what `--db-path`
+actually contained -- every synthetic dry run this script had ever been
+used for (Phase 25's and Phase 26's own smoke tests included) was
+therefore classified using real-data evidence thresholds, with no field
+in the report even distinguishing the two. Fixed by adding a required
+`--data-status {REAL,SYNTHETIC}` argument that gates `is_real_data`
+directly, is folded into `experiment_id` (so REAL and SYNTHETIC runs of
+an identical configuration can never collide into the same id), and is
+written into the report's new `data_status` field. Verified end-to-end
+against the same synthetic-scale dry-run catalog Phase 25/26 used: with
+`--data-status SYNTHETIC` the evidence level now correctly reads
+`INSUFFICIENT_EVIDENCE` (previously it would have read
+`ROBUSTNESS_PENDING`, the real-data-only tier). Added 9 static AST/
+source-based regression tests (the script itself is still never
+imported or executed by the automated suite) covering this fix plus
+several other structural properties this phase's instruction required
+(no TEST-region leakage into the walk-forward call's own boundaries, all
+strategies sharing one benchmark_id, no fabricated benchmark fallback,
+no wall-clock/random usage). **No change to any Toss/Live row; Live
+activation still Blocked for the same, unchanged reason.**

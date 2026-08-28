@@ -242,3 +242,13 @@ permissions to change -- see
 for where an environment's network policy is configured. This does not
 change the fact that the user's own separate environment (Codespaces)
 already has real 2023-2024 data ingested and unaffected by this.
+
+## Phase 27 re-verification
+
+Re-checked this session (not assumed unchanged): direct HTTPS request
+bypassing the configured proxy still returns `x-deny-reason:
+host_not_allowed` for `api.tiingo.com`. **BLOCKED_BY_ENVIRONMENT**,
+identical to Phase 26's diagnosis -- no change in this environment's
+network egress policy between Phase 26 and Phase 27. No
+`MARKET_DATA_API_KEY` set (checked). `data/` remains empty and
+gitignored -- no real data exists locally in this session.

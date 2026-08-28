@@ -158,8 +158,12 @@ Addendum):
 python3 scripts/run_long_horizon_validation.py \
     --universe PILOT_UNIVERSE \
     --start 2023-01-02 --end 2024-12-31 \
-    --db-path ./data/real_market_data
+    --db-path ./data/real_market_data \
+    --data-status REAL
 ```
+
+(`--data-status REAL` is required as of Phase 27 -- see the Phase 27
+Addendum below for why.)
 
 This produces a `long_horizon_validation.json` report plus console
 output with per-fold results, an aggregate per strategy, and each
@@ -440,3 +444,81 @@ the same reason as Phase 25 -- no real data exists locally
   can ingest more real history directly -- either would unblock the
   actual long-horizon evidence this and the prior phase's infrastructure
   was built to produce.
+
+## Phase 27 Addendum
+
+Phase 27's stated goal was to actually execute real-data Walk-Forward
+against the strategies -- **still not possible from this session**: the
+environment egress block is unchanged (re-verified, identical
+`x-deny-reason: host_not_allowed` diagnosis, no new evidence of a
+policy change), no `MARKET_DATA_API_KEY` is set, and `data/` remains
+empty. No fabricated real result is recorded here.
+
+### Bug found and fixed: `is_real_data` was hardcoded in the CLI
+
+Auditing `scripts/run_long_horizon_validation.py` against this phase's
+own instruction (sections 27/28-I: real and synthetic status must never
+be confused in a report) found that `classify_evidence_level(...,
+is_real_data=True, ...)` was hardcoded regardless of what `--db-path`
+actually contained. Every synthetic dry run this project has ever run
+through this script (Phase 25's and Phase 26's own smoke tests
+included) therefore produced an `EvidenceAssessment` structurally
+indistinguishable from a real one -- those runs were always correctly
+described as synthetic in prose by whoever ran them, but the JSON
+report itself carried no field saying so, and the evidence
+classification logic used the real-data thresholds regardless.
+
+**Fix** (`scripts/run_long_horizon_validation.py`): added a required
+`--data-status {REAL,SYNTHETIC}` argument. It now gates `is_real_data`
+directly, is folded into `experiment_id` (a REAL and a SYNTHETIC run of
+an otherwise-identical configuration can never collide into the same
+id), and is written into the report's new top-level `data_status`
+field plus its `note`/`benchmark_status` text. Verified end-to-end: the
+exact same synthetic-scale dry-run catalog used in Phase 25/26, re-run
+with `--data-status SYNTHETIC`, now correctly produces
+`INSUFFICIENT_EVIDENCE` for every strategy (previously it would have
+shown `ROBUSTNESS_PENDING`, the real-data-only tier).
+
+Regression tests (`tests/strategy_research/test_run_long_horizon_validation_wiring.py`,
+9 new, static AST/source-based -- the script itself is still never
+imported or executed by the automated suite): `is_real_data` is never a
+hardcoded boolean literal, `--data-status` is required with exactly
+`{REAL, SYNTHETIC}` choices, `experiment_id`'s hash input includes
+`data_status`, the report dict carries `data_status`/`experiment_id`/
+`data_version`, the walk-forward call uses only
+`train_start`..`validation_end` and the held-out test call uses only
+`test_start`..`test_end` (no TEST-region leakage into the walk-forward
+region at the CLI's own call site), both evaluation calls per strategy
+reference the same `benchmark_id` variable (no per-strategy benchmark
+drift), `benchmark_id` is only ever assigned `None` or the
+`spy_bars`-gated conditional (no fabricated fallback), and the script
+calls neither `datetime.now()`/`utcnow()` nor uses `random`.
+
+### Full test suite
+
+Baseline (this session, before any change): **1640 passed**. Final:
+**1649 passed, 0 failed, 0 skipped** -- 9 new tests, existing 1640
+unmodified.
+
+### Answers to the 5 required final questions (instruction section 41)
+
+1. **실제 시장데이터로 Walk-Forward TEST가 실행되었는가?** No. This
+   session's environment remains `BLOCKED_BY_ENVIRONMENT` (re-verified,
+   unchanged diagnosis). No real Walk-Forward has been executed by any
+   session to date.
+2. **4개 전략 중 어떤 전략이 여러 TEST fold에서 SPY 및 Buy & Hold 대비
+   일관된 우위를 보였는가?** Not answerable -- zero real TEST folds
+   exist.
+3. **그 우위가 NET 기준에서도 유지되는가?** Not answerable for the same
+   reason.
+4. **현재 증거만으로 해당 전략을 검증된 알파라고 부를 수 있는가?** No.
+   With zero real folds, `classify_evidence_level` places every
+   candidate at `INSUFFICIENT_EVIDENCE`, its most conservative tier --
+   confirmed empirically this phase by the fixed CLI's own
+   `--data-status SYNTHETIC` output. `VALIDATED` remains structurally
+   unreachable by this project's own code regardless.
+5. **다음으로 필요한 검증은 무엇인가?** Unchanged from Phase 25/26:
+   run `scripts/run_long_horizon_validation.py --data-status REAL`
+   (now a required flag) against the real 2023-2024 catalog the user
+   already has, in an environment with that data -- no further code
+   changes are needed for that specific run.

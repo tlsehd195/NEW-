@@ -5,39 +5,139 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-28
-**Updated By:** Claude Code (Session 27 — Phase 26 Long-Horizon Real-Data Validation, re-verification)
+**Updated By:** Claude Code (Session 28 — Phase 27 Real-Data Walk-Forward Validation & Strategy Evidence)
 
 ---
 
 ## Current Phase
 
 **Phase 16 — Live Trading**는 `PROJECT_MASTER_PLAN.md`에 정의된 원래
-마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24/25/26은 Master Plan의
-정식 Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된
+마지막 공식 Phase다. **Phase 17/18/19/20/21/22/23/24/25/26/27은 Master
+Plan의 정식 Phase가 아니라, Phase 16 완료 후 실제 Live 전환 전에 발견된
 안전성·검증 문제를 보완하고 실 시장 데이터/브로커 기반을 놓기 위한 사후
-검증/기반 구축 작업**이며, 이 문서의 "Phase 26" 표기는 세션 추적 편의를
+검증/기반 구축 작업**이며, 이 문서의 "Phase 27" 표기는 세션 추적 편의를
 위한 라벨일 뿐 Master Plan의 Phase 목록을 확장하는 것이 아니다. 이
 번호들은 전부 사용자 본인이 직접 "PHASE N — ..." 형식으로 명시적으로
 지시한 작업이며, Phase 19가 남긴 "AI가 스스로 새 Phase 번호를 발명하지
-말라"는 원칙에 대한 예외(사람의 명시적 지시)에 정확히 해당한다. 이후
-Phase 27 이상도 동일하게 사용자의 명시적 지시 없이는 스스로 만들지
-않는다.
+말라"는 원칙에 대한 예외(사람의 명시적 지시)에 정확히 해당한다.
 
 **REAL MARKET DATA: 이 sandboxed 세션 자체는 여전히 BLOCKED BY EXECUTION
-ENVIRONMENT — 단, 이번 phase에서 정확한 원인을 처음으로 진단함.**
-DNS resolve 정상, 설정된 proxy를 우회한 직접 TCP connect도 성공 — 오직
-실제 HTTP 요청만 거부되며 응답 헤더 `x-deny-reason: host_not_allowed`,
-본문 "Host not in allowlist... Add this host to your network egress
-settings to allow access."가 세 도메인(`api.tiingo.com`/`stooq.com`/
-`openapi.tossinvest.com`) 전부 동일하게 확인됨. 즉 provider 거부도
-DNS/인증 실패도 아닌 **이 환경 자체의 network egress allowlist
-설정**이 원인 — 이 세션의 권한 밖(workspace/environment 설정),
-`MARKET_DATA_API_KEY`도 미설정(확인, 가정 아님). **Phase 24 이후
-사용자가 자신의 별도 네트워크 접근 가능 환경(Codespaces)에서 실제
-Tiingo ingestion을 수행해 이 프로젝트 최초의 실 시장 데이터(15종목+SPY,
-2023-01-02~2024-12-31)를 확보한 사실은 변하지 않는다** — 그 데이터는
-사용자의 환경에만 존재하며 이 세션에는 없다(`data/`는 비어 있고
-gitignore 대상).
+ENVIRONMENT — Phase 26의 진단과 동일, 변화 없음(재확인함).** DNS 정상,
+proxy 우회 TCP connect 성공, 실제 HTTP 요청만 `x-deny-reason:
+host_not_allowed`로 거부 — 여전히 이 환경 자체의 network egress
+allowlist 설정이 원인. `MARKET_DATA_API_KEY` 미설정 확인. `data/`는
+여전히 비어 있음. 사용자의 Codespaces 환경에 있는 2023-2024 실 데이터는
+변함없이 존재하나 이 세션에는 없다.
+
+**Phase 27 — Real-Data Walk-Forward Validation & Strategy Evidence**
+(Live Trading은 여전히 구조적으로 비활성 — Toss capability가
+`CapabilityStatus.UNKNOWN`인 한 활성화 불가). 목표는 실 데이터로 실제
+Walk-Forward를 실행하는 것이었으나 환경 제약으로 이번에도 불가능 —
+대신 이번 phase의 자체 검증 과정에서 실제 버그를 발견·수정함(아래
+참조).
+
+### Completed (Session 28 — Phase 27)
+
+- **Git/Branch Integrity 선행 확인**: 로컬 HEAD가 Phase 26 HEAD
+  (`ee17e26`)와 정확히 일치함을 확인 후 `origin/main`을
+  fast-forward-only로 병합(merge commit 0개) → push →
+  `claude/phase-27-real-data-walk-forward-validation` 브랜치 신규
+  생성. Baseline **1640/1640 테스트 통과** 실제 실행으로 확인.
+- **실 데이터 재확인**: `data/` 여전히 비어 있음, `MARKET_DATA_API_KEY`
+  미설정, network egress 여전히 `host_not_allowed` — Phase 26과 동일한
+  진단, 변화 없음.
+- **버그 발견 및 수정 — `is_real_data` 하드코딩**: 이번 phase의 지침이
+  명시적으로 요구한 "real/synthetic status를 report에서 혼동하지
+  않는다" 조건을 감사하던 중, `scripts/run_long_horizon_validation.py`의
+  `classify_evidence_level(..., is_real_data=True, ...)`가 `--db-path`가
+  실제로 무엇을 담고 있는지와 무관하게 하드코딩되어 있었음을 발견 —
+  즉 이 스크립트로 실행한 모든 synthetic dry-run(Phase 25/26의 자체
+  smoke test 포함)이 실제로는 real-data 기준 evidence threshold로
+  분류되고 있었음(report 자체에는 이를 구분할 필드도 없었음). **수정**:
+  필수 CLI 인자 `--data-status {REAL,SYNTHETIC}` 추가, `is_real_data`를
+  이 값으로 직접 게이팅, `experiment_id` 해시에도 포함(REAL/SYNTHETIC
+  실행이 같은 experiment_id로 충돌하지 않도록), report에 `data_status`
+  필드 신규 추가. 동일한 synthetic dry-run 카탈로그로
+  `--data-status SYNTHETIC`을 붙여 재실행해 수정 전/후 차이를 직접
+  확인(수정 전 동작이면 ROBUSTNESS_PENDING이 나왔을 것, 수정 후
+  올바르게 INSUFFICIENT_EVIDENCE로 나옴).
+- **신규 회귀 테스트 9개** (`tests/strategy_research/test_run_long_horizon_validation_wiring.py`,
+  스크립트를 import/실행하지 않는 순수 AST/소스 텍스트 기반 — 기존
+  `test_security_boundary.py`와 동일한 원칙): `is_real_data` 하드코딩
+  literal 금지, `--data-status` 필수/정확한 choices, `experiment_id`
+  해시에 `data_status` 포함, report dict에
+  `data_status`/`experiment_id`/`data_version` 존재, walk-forward
+  호출은 `train_start`..`validation_end`만 사용(TEST 구간 미침범),
+  held-out test 호출은 `test_start`..`test_end`만 사용, 두 평가
+  호출이 동일한 `benchmark_id` 변수 참조(전략 간 조건 불일치 방지),
+  `benchmark_id`는 `None` 또는 `spy_bars` 게이팅된 조건식으로만
+  할당(fabricated fallback 없음), 스크립트가 `datetime.now()`/`random`을
+  사용하지 않음.
+- **기존 1640개 테스트 전부 유지** — 최종 **1649 passed**.
+- **신규 문서**: `docs/operations/MARKET-DATA-PROVIDER.md`/
+  `docs/research/STRATEGY-VALIDATION-REPORT.md`에 Phase 27 절 추가.
+  README.md/PROJECT_STATUS.md/PRODUCTION-READINESS-MATRIX.md 갱신(이
+  항목).
+- **Toss/Live 활성화 코드, RiskConfig 숫자는 전혀 건드리지 않음.**
+
+### In Progress (Session 28 — Phase 27)
+
+없음 — 이번 세션 작업 완료.
+
+### Blocked (Session 28 — Phase 27)
+
+- 이 sandboxed 세션 자체의 실 시장데이터 접근 — Phase 26과 동일한
+  원인(network egress allowlist), 변화 없음.
+- 실제 Walk-Forward TEST 실행 — 위 항목에 종속. 사용자가 이미 보유한
+  2023-2024 실 데이터로는 지금 바로 외부 환경에서 실행 가능
+  (`scripts/run_long_horizon_validation.py --data-status REAL ...`).
+
+### Decision Required (Session 28 — Phase 27)
+
+1. (Phase 17-26에서 이어짐) 전부 변경 없음 — risk 기본값 3개,
+   `RiskConfig.max_turnover` None-semantics, PBO/Deflated Sharpe 실제
+   계산 채택, 실제 Toss credential 확보, `RESEARCH_UNIVERSE` Stage 2
+   확장, network egress allowlist 추가 여부.
+2. `scripts/run_long_horizon_validation.py --data-status REAL`을 사용자가
+   이미 보유한 실 데이터로 실행할 시점 — 변경 없음, 지금 바로 외부
+   환경에서 실행 가능.
+
+### Known Issues (Session 28 — Phase 27)
+
+- Phase 26까지의 Known Issues 전부 유지. 이번 phase가 발견한 유일한
+  이슈(`is_real_data` 하드코딩)는 이미 수정·회귀 테스트 추가됨.
+
+### Architecture Changes (Session 28 — Phase 27)
+
+`scripts/run_long_horizon_validation.py`(`--data-status` 필수 인자
+추가, additive bug fix),
+`tests/strategy_research/test_run_long_horizon_validation_wiring.py`
+(신규) — 전부 기존 코드에 대한 순수 추가/버그 수정.
+`src/strategy_research/*`, `backtest.engine` 전부 무수정.
+
+### Toss API Status (Session 28 — Phase 27)
+
+변경 없음: `CapabilityStatus` 전부 `UNKNOWN` 유지 — 이번 Phase는 Toss
+코드를 전혀 건드리지 않았음.
+
+### Last Validation (Session 28 — Phase 27)
+
+`python -m pytest tests/ -q` — baseline **1640 passed** → 최종
+**1649 passed, 0 failed, 0 skipped**. 기존 1640개 테스트 전부
+삭제/약화 없이 유지, 신규 9개 추가.
+
+### Next Task (Session 28 — Phase 27)
+
+1. 사용자가 이미 보유한 2023-2024 실 데이터로
+   `scripts/run_long_horizon_validation.py --universe PILOT_UNIVERSE
+   --start 2023-01-02 --end 2024-12-31 --db-path ./data/real_market_data
+   --data-status REAL` 실행(외부 환경) — 처음으로 실 walk-forward/evidence
+   결과 확보의 가장 빠른 경로.
+2. workspace/environment 관리자가 network egress allowlist에
+   `api.tiingo.com`을 추가하면 이 세션 자체에서도 직접 시도 가능.
+3. 위 Decision Required 항목들에 대한 사람의 판단.
+
+## Previous Subtask (Session 27 — Phase 26)
 
 **Phase 26 — Long-Horizon Real-Data Validation (재확인)** (Live
 Trading은 여전히 구조적으로 비활성 — Toss capability가
