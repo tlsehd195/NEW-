@@ -60,7 +60,7 @@ from data_infra.quality import DataQualityFramework  # noqa: E402
 from data_infra.universe import (  # noqa: E402
     BENCHMARK_SYMBOL,
     PILOT_UNIVERSE_V1,
-    RESEARCH_UNIVERSE_STAGE1,
+    RESEARCH_UNIVERSE_STAGE2,
     build_security_masters,
     build_universe_memberships,
 )
@@ -69,7 +69,7 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 
-_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE1}
+_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE2}
 
 
 def _parse_date(value: str) -> datetime:

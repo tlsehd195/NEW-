@@ -15,6 +15,7 @@ from data_infra.universe import (
     BENCHMARK_SYMBOL,
     PILOT_UNIVERSE_V1,
     RESEARCH_UNIVERSE_STAGE1,
+    RESEARCH_UNIVERSE_STAGE2,
     SymbolMetadata,
     UniverseDefinition,
     build_security_masters,
@@ -45,6 +46,46 @@ class TestPilotUniversePreserved:
     def test_research_universe_is_a_distinct_named_universe(self) -> None:
         assert RESEARCH_UNIVERSE_STAGE1.name != PILOT_UNIVERSE_V1.name
         assert RESEARCH_UNIVERSE_STAGE1.role == "RESEARCH"
+
+
+class TestResearchUniverseStage2:
+    """Stage 2 (confirmed Tiingo free-tier limits: 50 req/hour,
+    1,000 req/day, 2.00 GB/month) -- addresses mega-cap-tech
+    concentration risk, deliberately NOT survivorship bias."""
+
+    def test_stage2_contains_all_of_pilot_universe(self) -> None:
+        assert set(PILOT_UNIVERSE_V1.symbol_ids) <= set(RESEARCH_UNIVERSE_STAGE2.symbol_ids)
+
+    def test_stage2_adds_exactly_24_new_symbols(self) -> None:
+        new_symbols = set(RESEARCH_UNIVERSE_STAGE2.symbol_ids) - set(PILOT_UNIVERSE_V1.symbol_ids)
+        assert len(new_symbols) == 24
+
+    def test_stage2_has_no_duplicate_symbols(self) -> None:
+        ids = RESEARCH_UNIVERSE_STAGE2.symbol_ids
+        assert len(ids) == len(set(ids))
+
+    def test_stage2_benchmark_symbol_never_a_member(self) -> None:
+        assert BENCHMARK_SYMBOL not in RESEARCH_UNIVERSE_STAGE2.symbol_ids
+
+    def test_stage2_is_distinct_version_from_stage1(self) -> None:
+        assert RESEARCH_UNIVERSE_STAGE2.version != RESEARCH_UNIVERSE_STAGE1.version
+        assert RESEARCH_UNIVERSE_STAGE2.name == RESEARCH_UNIVERSE_STAGE1.name  # same named universe, later stage
+
+    def test_stage2_symbols_carry_no_provider_confirmed_dates(self) -> None:
+        """Stage 2 is a wider hand-curated list, not survivorship-bias
+        mitigation -- every entry must still leave listed_from/
+        listed_to unconfirmed, same honesty discipline as PILOT_UNIVERSE_V1."""
+        for entry in RESEARCH_UNIVERSE_STAGE2.symbols:
+            assert entry.listed_from is None
+            assert entry.listed_to is None
+            assert entry.source == "manual_curation"
+
+    def test_stage2_request_budget_fits_one_hourly_window(self) -> None:
+        """24 new symbols x 2 requests/symbol (price + corporate
+        actions, `scripts/ingest_real_market_data.py`) must fit under
+        the confirmed 50-requests/hour Tiingo free-tier cap."""
+        new_symbol_count = len(set(RESEARCH_UNIVERSE_STAGE2.symbol_ids) - set(PILOT_UNIVERSE_V1.symbol_ids))
+        assert new_symbol_count * 2 <= 50
 
 
 class TestUniverseDefinitionValidation:

@@ -123,7 +123,7 @@ from data_infra.enums import SecurityStatus  # noqa: E402
 from data_infra.universe import (  # noqa: E402
     BENCHMARK_SYMBOL,
     PILOT_UNIVERSE_V1,
-    RESEARCH_UNIVERSE_STAGE1,
+    RESEARCH_UNIVERSE_STAGE2,
     build_security_masters,
     build_universe_memberships,
 )
@@ -132,7 +132,13 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 
-_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE1}
+# "RESEARCH_UNIVERSE" always resolves to the LATEST populated stage
+# (Stage 2 as of this change) -- same convention "PILOT_UNIVERSE"
+# already uses for PILOT_UNIVERSE_V1. Stage 1 remains importable from
+# `data_infra.universe` for historical reference (it is what the
+# user's first real 76-fold walk-forward run above was NOT run
+# against -- that run used PILOT_UNIVERSE only).
+_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE2}
 
 
 def _parse_date(value: str) -> datetime:

@@ -164,6 +164,89 @@ RESEARCH_UNIVERSE_STAGE1 = UniverseDefinition(
     symbols=PILOT_UNIVERSE_V1.symbols,
 )
 
+# -- RESEARCH_UNIVERSE Stage 2 -- populated once Stage 1's own stated
+# precondition was met: the user's actual Tiingo account dashboard
+# confirmed real free-tier limits this session (50 requests/hour,
+# 1,000 requests/day, 2.00 GB/month bandwidth) -- the first time in
+# this project's history these numbers came from a real confirmed
+# source rather than being left UNKNOWN (ADR-0030 discipline).
+#
+# Purpose, stated precisely: this stage addresses CONCENTRATION RISK
+# (PILOT_UNIVERSE_V1 is 15/16 mega-cap tech/growth names, so a walk-
+# forward result can be dominated by a handful of outsized movers) --
+# it does NOT address survivorship bias. Every symbol below still has
+# `listed_from=listed_to=None`, so `audit_survivorship` still correctly
+# classifies this universe as `CURRENT-UNIVERSE-ONLY`
+# (today's constituents projected across the whole backtest range) --
+# no delisted/failed company is included, by construction, same as
+# Stage 1. Fixing that is a separate, deliberately deferred decision
+# (paid historical-constituent data), not something a wider symbol list
+# alone can fix.
+#
+# Selection criterion, fixed BEFORE any Stage 2 backtest is ever run
+# (RULE 0.8 -- never choose or adjust a universe after seeing a
+# result): 24 additional, long-established large-cap US companies,
+# hand-picked (`source="manual_curation"`, same convention as
+# PILOT_UNIVERSE_V1) to cover GICS sectors PILOT_UNIVERSE_V1 under-
+# represents or omits (Industrials, Health Care, Utilities, plus more
+# breadth in Financials/Staples/Discretionary/Communication Services/
+# Energy/Info Tech). This is deliberately NOT presented as "the current
+# S&P 500" or "the current Dow" -- this session cannot verify live
+# index membership (no network access), and doing so from training-
+# data recall would risk stating a stale fact as if it were confirmed,
+# which this module's own honesty discipline (see module docstring)
+# forbids. It is exactly what PILOT_UNIVERSE_V1 already is: a
+# deliberate, disclosed, hand-curated list -- just wider and more
+# sector-balanced.
+#
+# Request-budget arithmetic (decided from the confirmed limits above,
+# not guessed): ingestion costs 2 Tiingo requests per symbol (one price
+# history fetch, one corporate-actions fetch --
+# `scripts/ingest_real_market_data.py`, unmodified). The 16
+# PILOT_UNIVERSE_V1 symbols are already ingested in the user's existing
+# `--db-path`; only these 24 NEW symbols need fetching. 24 x 2 = 48
+# requests, which fits inside the confirmed 50-requests/hour cap in a
+# SINGLE hourly window (2-request margin), and is trivial against the
+# 1,000/day and 2.00 GB/month caps. No batching/multi-hour split is
+# required for this stage.
+RESEARCH_UNIVERSE_STAGE2 = UniverseDefinition(
+    name="RESEARCH_UNIVERSE",
+    version="stage2",
+    role="RESEARCH",
+    description=(
+        "Stage 2 of the research universe (instruction section 31): PILOT_UNIVERSE_V1's "
+        "16 symbols plus 24 additional hand-curated large-cap US companies chosen to "
+        "reduce mega-cap-tech concentration and broaden GICS sector coverage. Selection "
+        "was fixed before any Stage 2 backtest was run (RULE 0.8). Addresses "
+        "concentration risk only -- NOT survivorship bias (every symbol still has "
+        "listed_from=listed_to=None; see this definition's own module-level comment)."
+    ),
+    symbols=PILOT_UNIVERSE_V1.symbols
+    + tuple(
+        SymbolMetadata(symbol=s)
+        for s in (
+            # Industrials
+            "CAT", "HON", "UPS", "BA",
+            # Health Care
+            "UNH", "PFE", "ABBV", "MRK",
+            # Financials
+            "BAC", "GS",
+            # Consumer Staples
+            "PG", "KO", "PEP",
+            # Consumer Discretionary
+            "HD", "MCD", "NKE",
+            # Energy
+            "CVX",
+            # Communication Services
+            "VZ", "T", "DIS",
+            # Information Technology
+            "ORCL", "IBM", "CSCO",
+            # Utilities
+            "NEE",
+        )
+    ),
+)
+
 
 def build_universe_memberships(universe: UniverseDefinition, *, valid_from: datetime) -> list[UniverseMembership]:
     """Converts a `UniverseDefinition` into the `UniverseMembership`
