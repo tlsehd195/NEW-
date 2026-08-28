@@ -1,8 +1,22 @@
 #!/usr/bin/env python3
-"""Long-horizon real-data strategy validation CLI (Phase 25).
+"""Long-horizon real-data strategy validation CLI (Phase 25, extended
+Phase 26 with `experiment_id`/`data_version` reproducibility fields).
 
 See docs/decisions/ADR-0031-long-horizon-walk-forward-validation.md and
 docs/research/STRATEGY-VALIDATION-REPORT.md.
+
+Phase 26 addition: the JSON report now carries `experiment_id` (a
+deterministic hash of the run's own configuration -- universe, date
+range, split fractions, walk-forward window sizes, initial capital;
+never a wall-clock value, so the identical configuration always
+produces the identical id) and `data_version` (a hash of what the
+repository actually contains for this universe+window at run time --
+per-symbol/benchmark bar counts). Both use
+`data_infra.versioning.compute_data_version`, the same function
+`scripts/ingest_real_market_data.py` already uses for its own content
+checksum -- re-running this script against an unchanged catalog
+reproduces the identical `data_version`; a real re-ingestion that adds
+new content changes it.
 
 This script is the Phase 25 successor to
 `scripts/run_first_real_strategy_evaluation.py` (Phase 24's
@@ -95,6 +109,8 @@ from strategy_research.splits import build_chronological_split  # noqa: E402
 from strategy_research.trend_volatility import TrendVolatilityParameters, TrendVolatilityStrategy  # noqa: E402
 from strategy_research.walk_forward_evaluation import run_walk_forward_evaluation  # noqa: E402
 
+from data_infra.versioning import compute_data_version  # noqa: E402
+
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE1}
 _BENCHMARK_ID = "SPY_TOTAL_RETURN_REAL"
 
@@ -182,6 +198,40 @@ def main() -> int:
                 repository.add_benchmark_point(point)
             benchmark_id = _BENCHMARK_ID if benchmark_points else None
 
+        # experiment_id: deterministic from caller-supplied run
+        # configuration only (never datetime.now()/utcnow() -- rule
+        # 0-11) -- the SAME configuration run twice always yields the
+        # SAME experiment_id (Phase 26 section 22/21 -- reproducibility
+        # tracking), a different configuration always yields a
+        # different one.
+        experiment_id = compute_data_version(
+            {
+                "universe_name": universe.name, "universe_version": universe.version,
+                "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
+                "train_fraction": args.train_fraction, "validation_fraction": args.validation_fraction,
+                "train_window_months": args.train_window_months, "test_window_months": args.test_window_months,
+                "step_months": args.step_months, "initial_capital": args.initial_capital,
+            }
+        )[:16]
+
+        # data_version: reflects only what the repository actually
+        # contains for this universe+window at run time (per-symbol bar
+        # and corporate-action counts, plus SPY's own), same construction
+        # as scripts/ingest_real_market_data.py's own content_checksum --
+        # a real re-ingestion that adds new content changes this value;
+        # an unchanged catalog re-run produces the identical value.
+        data_version = compute_data_version(
+            {
+                "security_ids": sorted(security_ids) + [BENCHMARK_SYMBOL],
+                "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
+                "per_symbol_bar_counts": {
+                    sid: len(repository.get_bars(sid, args.start, args.end, as_of_time=args.end))
+                    for sid in sorted(security_ids)
+                },
+                "benchmark_bar_count": len(spy_bars),
+            }
+        )
+
         log = ResearchLog(
             selection_procedure=(
                 "Phase 25 long-horizon pass: one default parameter set per "
@@ -212,6 +262,8 @@ def main() -> int:
                 "PROMISING_CANDIDATE/REJECTED, and no EvidenceLevel here is or "
                 "can be VALIDATED -- see 'evidence_assessment' per strategy."
             ),
+            "experiment_id": experiment_id,
+            "data_version": data_version,
             "universe": universe.name,
             "universe_version": universe.version,
             "security_ids": security_ids,
@@ -234,6 +286,8 @@ def main() -> int:
             "results": {},
         }
 
+        print(f"Experiment ID: {experiment_id}")
+        print(f"Data version: {data_version}")
         print(f"Benchmark: {report['benchmark_status']} ({benchmark_id})")
         print(f"Chronological split: TRAIN [{split.train_start.date()} .. {split.train_end.date()}) "
               f"VALIDATION [{split.validation_start.date()} .. {split.validation_end.date()}) "
