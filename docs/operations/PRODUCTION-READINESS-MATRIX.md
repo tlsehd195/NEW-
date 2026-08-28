@@ -11,9 +11,10 @@ Phase 25 (Long-Horizon Real-Data Strategy Validation), Phase 26
 (Real-Data Walk-Forward Validation & Strategy Evidence), Phase 28
 (Real-Data Walk-Forward Execution & Strategy Evidence), Phase 29
 (Long-Horizon / Broad-US-Universe / Survivorship-Aware Real Walk-Forward
-Validation), and Phase 30 (Real Historical US Equity Dataset
+Validation), Phase 30 (Real Historical US Equity Dataset
 Acquisition, Survivorship-Aware Dataset Validation, and Full
-Walk-Forward Execution -- attempted, environment-blocked).
+Walk-Forward Execution -- attempted, environment-blocked), and Phase 31
+(Real Data Acquisition / Historical Universe Data Source Audit).
 One row per area the review instruction names. "Status" is one of
 PASS / FAIL / BLOCKED / UNKNOWN / PARTIAL. "Blocking?" answers "does
 this alone prevent Live activation today" independent of every other
@@ -316,3 +317,30 @@ providers across the instruction's 6 required capability dimensions,
 sourced from public documentation (never live-verified). 16 new tests.
 **No change to any Toss/Live row; Live activation still Blocked for the
 same, unchanged reason.**
+
+**Phase 31 update**: primary objective was to determine how this
+project can obtain real, survivorship-aware US equity data, and build
+the infrastructure to ingest it -- not to invent/tune a strategy, not
+to declare success. Network re-verified with a distinct-layer
+diagnosis (DNS/TCP/HTTP separated, confirming `ENVIRONMENT_BLOCKED`
+specifically, not auth/provider/dataset-absence) against 8 total
+provider hosts, unchanged result. Built an actually-runnable external
+data-acquisition pathway (instruction section 21): a new
+`LocalFileDataProvider` (`src/data_infra/providers/file_import.py`)
+reading pre-downloaded, normalized CSV files -- no network call, ever
+-- wired through the same validated `IngestionRunner`/
+`DataQualityFramework`/`DuckDBDataRepository` pipeline via
+`scripts/import_external_market_data.py`; because this path makes no
+network call it is directly exercised end-to-end by the automated
+suite (unlike `ingest_real_market_data.py`). Extended the ingestion
+manifest further (`providers_used`/`missing_symbols`/`active_count`/
+`historical_universe_membership_available`). Added `audit_survivorship`
+(`src/data_infra/universe.py`) -- an honest
+FULLY_SUPPORTED/PARTIALLY_MITIGATED/CURRENT-UNIVERSE-ONLY/UNKNOWN
+classifier, never overclaiming "survivorship bias solved." Added
+ADR-0034: re-labels the provider matrix under this phase's required
+VERIFIED_BY_DOCUMENTATION/VERIFIED_BY_ACTUAL_ACCESS/UNKNOWN/
+NOT_AVAILABLE/ENVIRONMENT_BLOCKED vocabulary and commits to a decision
+(both EXTERNAL_DATASET_REQUIRED and ENVIRONMENT_BLOCKED apply
+simultaneously). 30 new tests. **No change to any Toss/Live row; Live
+activation still Blocked for the same, unchanged reason.**

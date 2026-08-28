@@ -340,3 +340,51 @@ historical prices, delisted coverage, ticker changes, corporate
 actions, historical universe membership, point-in-time metadata, and
 licensing/access) -- desk research from public documentation only,
 never live-verified, since network access remains blocked.
+
+## Phase 31 re-verification + external import pathway
+
+Re-checked network with a distinct-layer diagnosis (instruction
+section 20): DNS resolves and a raw TCP connect to port 443 succeeds
+for all three primary hosts (`api.tiingo.com`/`stooq.com`/
+`openapi.tossinvest.com`); only the HTTP request itself is denied
+(`403`/`x-deny-reason: host_not_allowed`), confirmed
+`ENVIRONMENT_BLOCKED` specifically -- not `AUTHENTICATION_FAILED`
+(no request ever reaches a provider), not
+`PROVIDER_DOES_NOT_SUPPORT_FEATURE`/`DATASET_DOES_NOT_EXIST` (neither
+determinable), not `USER_ACCOUNT_LIMITATION` (no account/key exists in
+this session). Also tested 5 additional candidate provider hosts
+(Nasdaq Data Link, Polygon, Alpha Vantage, Financial Modeling Prep,
+CRSP) -- identical `403`; github.com/pypi.org return `200` in the same
+run. `MARKET_DATA_API_KEY` remains unset.
+
+Built the external-acquisition pathway instruction section 21 asks
+for, as actual runnable code rather than only a documented intention:
+`src/data_infra/providers/file_import.py` (`LocalFileDataProvider`, a
+`DataProvider` Protocol implementation reading pre-downloaded,
+normalized CSV files from local disk -- no network call, ever) and
+`scripts/import_external_market_data.py` (wires it through the same
+`IngestionRunner`/`DataQualityFramework`/`DuckDBDataRepository`
+pipeline `ingest_real_market_data.py` uses). Because this path makes no
+network call, it is directly exercised end-to-end by the automated
+test suite (`tests/data_infra/test_import_external_market_data_cli.py`,
+`tests/data_infra/test_file_import_provider.py`) against real
+temporary CSV fixtures and a real on-disk DuckDB catalog -- unlike
+`ingest_real_market_data.py`, which remains untestable in this way.
+
+Extended `ingest_real_market_data.py`'s manifest further
+(`providers_used`, `missing_symbols`, `active_count`,
+`historical_universe_membership_available`/
+`survivorship_mitigation_applied`) to answer the remaining unanswered
+questions from instruction section 18's 17-question list.
+
+Added `audit_survivorship` (`src/data_infra/universe.py`) -- an honest
+FULLY_SUPPORTED/PARTIALLY_MITIGATED/CURRENT-UNIVERSE-ONLY/UNKNOWN
+classifier answering instruction section 28's ten survivorship
+questions, tested only against synthetic fixtures this phase.
+
+See `docs/decisions/ADR-0034-real-data-acquisition-strategy.md` for
+the full provider matrix re-labeled under this phase's required
+VERIFIED_BY_DOCUMENTATION/VERIFIED_BY_ACTUAL_ACCESS/UNKNOWN/
+NOT_AVAILABLE/ENVIRONMENT_BLOCKED vocabulary, and the decision
+framework conclusion (both EXTERNAL_DATASET_REQUIRED and
+ENVIRONMENT_BLOCKED apply simultaneously).

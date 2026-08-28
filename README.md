@@ -65,25 +65,30 @@
 ## 현재 상태
 
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
-**Phase 17/18/19/20/21/22/23/24/25/26/27/28/29/30은 Master Plan의 정식 Phase가 아니라, Live
+**Phase 17/18/19/20/21/22/23/24/25/26/27/28/29/30/31은 Master Plan의 정식 Phase가 아니라, Live
 전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
 기반을 놓는 사후 검증/기반 작업**이다.
 
 **REAL MARKET DATA / REAL WALK-FORWARD EXECUTION: NOT COMPLETED** — 이
 저장소가 실행되는 현재 환경에서
 `api.tiingo.com`/`stooq.com`/`openapi.tossinvest.com` 전부 egress
-proxy에서 403 거부. Phase 20부터 Phase 30까지 매 phase 재확인했으며
-변화 없음 — Phase 30에서는 추가로 Nasdaq Data Link/Polygon/Alpha
-Vantage/Financial Modeling Prep/CRSP까지 5개 후보 provider host도
-테스트했으나 전부 동일하게 차단됨(github.com/pypi.org는 동일 세션에서
-정상 응답 — 시장 데이터 provider에 국한된 allowlist임을 확인). Phase
-28/29/30에서는 `data/` 외에 전체 파일시스템(ingestion manifest,
-DuckDB/Parquet 파일, 환경변수, 기존 스크립트)을 철저히 탐색했으나 실
-데이터를 어디에서도 찾지 못함 — 로컬에 실 데이터가 존재할 유일한
-경로가 network ingestion인데 그것이 차단되어 있으므로 두 상태가 동시에
-성립. Phase 26에서 정확한 원인을 처음 진단: DNS는 정상 resolve, 설정된
-proxy를 우회한 직접 TCP connect도 성공 — 오직 실제 HTTP 요청만
-거부되며, 응답 헤더에 `x-deny-reason: host_not_allowed`와 "Host not in
+proxy에서 403 거부. Phase 20부터 Phase 31까지 매 phase 재확인했으며
+변화 없음. Phase 31에서는 DNS/TCP/HTTP 레이어를 분리해 재확인 —
+DNS는 정상 resolve, 직접 TCP connect(port 443)도 성공, 오직 HTTP
+요청만 거부됨을 확인해 `ENVIRONMENT_BLOCKED`임을
+`AUTHENTICATION_FAILED`/`PROVIDER_DOES_NOT_SUPPORT_FEATURE`/
+`DATASET_DOES_NOT_EXIST`/`USER_ACCOUNT_LIMITATION`과 명확히 구분했다.
+Phase 30에서는 추가로 Nasdaq Data Link/Polygon/Alpha Vantage/Financial
+Modeling Prep/CRSP까지 5개 후보 provider host도 테스트했으나 전부
+동일하게 차단됨(github.com/pypi.org는 동일 세션에서 정상 응답 — 시장
+데이터 provider에 국한된 allowlist임을 확인). Phase 28/29/30/31에서는
+`data/` 외에 전체 파일시스템(ingestion manifest, DuckDB/Parquet 파일,
+환경변수, 기존 스크립트)을 철저히 탐색했으나 실 데이터를 어디에서도
+찾지 못함 — 로컬에 실 데이터가 존재할 유일한 경로가 network
+ingestion인데 그것이 차단되어 있으므로 두 상태가 동시에 성립. Phase
+26에서 정확한 원인을 처음 진단: DNS는 정상 resolve, 설정된 proxy를
+우회한 직접 TCP connect도 성공 — 오직 실제 HTTP 요청만 거부되며,
+응답 헤더에 `x-deny-reason: host_not_allowed`와 "Host not in
 allowlist... Add this host to your network egress settings to allow
 access." 본문이 그대로 포함됨(테스트한 모든 도메인 동일). 즉 provider
 측 거부/DNS 실패/인증 실패가 아니라 **이 환경 자체의 network egress
@@ -107,6 +112,39 @@ SPY, 2023-01-02~2024-12-31, 8,032 bars, 107 corporate actions)를
 `docs/research/STRATEGY-RESEARCH-REPORT.md`의 "Addendum" 절 참조. 이
 데이터는 사용자의 Codespaces 환경에만 존재하며 이 저장소/이 sandboxed
 세션에는 없다(`data/`는 비어 있고 gitignore 대상).
+
+**Phase 31 — Real Data Acquisition / Historical Universe Data Source
+Audit** (Live Trading은 여전히 구조적으로 불가능). 목표는 새 전략을
+만들거나 튜닝하는 것이 아니라, 이 프로젝트가 실제로 어떻게 broad
+survivorship-aware 2010~최신 US 주식 데이터를 확보할 수 있는지
+엄밀하게 규명하고 그 확보를 가능케 하는 인프라를 짓는 것이었다. 실
+ingestion/universe/walk-forward는 이번에도 환경 차단으로 수행되지
+못함(**FINAL STATUS: VALIDATION BLOCKED — ENVIRONMENT**, 동시에
+**EXTERNAL_DATASET_REQUIRED** — ADR-0034 Decision 4). 지침이 요구한
+외부 데이터 획득 워크플로우를 문서로만이 아니라 실제 동작하는 코드로
+구현: `LocalFileDataProvider`(신규,
+`src/data_infra/providers/file_import.py`, 네트워크 호출 전혀 없이
+로컬 CSV 파일을 읽는 `DataProvider` Protocol 구현체)와
+`scripts/import_external_market_data.py`(기존
+`IngestionRunner`/`DataQualityFramework`/`DuckDBDataRepository`
+파이프라인 재사용) — 네트워크를 쓰지 않으므로 자동화 테스트가 실제로
+`main()`을 직접 호출해 end-to-end 실행(이 프로젝트 최초로 실행 가능한
+ingestion CLI 테스트). `audit_survivorship`(신규,
+`src/data_infra/universe.py`) — 지침의 10개 survivorship 진단
+질문에 답하는 FULLY_SUPPORTED/PARTIALLY_MITIGATED/
+CURRENT-UNIVERSE-ONLY/UNKNOWN 분류기, "survivorship bias 해결됨"이라는
+막연한 주장을 절대 하지 않음(예: permanent ID 100%는 구조적 보장일
+뿐 실제 provider-confirmed 값이 아님을 명시). Ingestion manifest에
+`providers_used`/`missing_symbols`/`active_count`/
+`historical_universe_membership_available` 추가. ADR-0034로 provider
+매트릭스를 VERIFIED_BY_DOCUMENTATION/VERIFIED_BY_ACTUAL_ACCESS/UNKNOWN/
+NOT_AVAILABLE/ENVIRONMENT_BLOCKED 어휘로 재작성하고 decision
+framework 5개 상태 중 실제로 적용되는 것을 근거와 함께 명시적으로
+선택. 신규 테스트 27개(ingestion manifest wiring 추가 7 + file import
+provider 11 + import CLI end-to-end 3 + survivorship audit 6).
+Toss/Live/RiskConfig/Broker/Risk 코드는
+전혀 건드리지 않음. 상세는
+`docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 31 Addendum".
 
 **Phase 30 — Real Historical US Equity Dataset Acquisition,
 Survivorship-Aware Dataset Validation, and Full Walk-Forward
@@ -909,12 +947,27 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
   전혀 건드리지 않음. 신규 문서: ADR-0033. 상세는
   `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 30 Addendum".
 
+- Phase 31 — Real Data Acquisition / Historical Universe Data Source
+  Audit: 완료 (`src/data_infra/providers/file_import.py`,
+  `scripts/import_external_market_data.py` 신규, `src/data_infra/universe.py`
+  `audit_survivorship` 신규 추가, `scripts/ingest_real_market_data.py`
+  갱신, 신규 테스트 27개) — 실 ingestion/universe/walk-forward는
+  이번에도 environment BLOCKED, DNS/TCP/HTTP 레이어를 분리해
+  `ENVIRONMENT_BLOCKED`를 명확히 재확인(**FINAL STATUS: VALIDATION
+  BLOCKED — ENVIRONMENT**, 동시에 **EXTERNAL_DATASET_REQUIRED**).
+  지침이 요구한 외부 데이터 획득 워크플로우를 실제 동작하는
+  코드로 구현 — 네트워크를 쓰지 않으므로 자동화 테스트가 실제로
+  end-to-end 실행 가능. 기존 1687개 테스트 전부 유지 — 최종 **1714
+  passed**. Toss/Live/RiskConfig/Broker/Risk 코드는 전혀 건드리지
+  않음. 신규 문서: ADR-0034. 상세는
+  `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 31 Addendum".
+
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
 63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587 +
 Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638 + Phase 26 신규 2 = 1640 +
 Phase 27 신규 9 = 1649 + Phase 28 신규 3 = 1652 + Phase 29 신규 19 = 1671 +
-Phase 30 신규 16 = 1687;
+Phase 30 신규 16 = 1687 + Phase 31 신규 27 = 1714;
 정확한 최종 숫자는 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행

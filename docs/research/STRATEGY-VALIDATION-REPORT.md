@@ -841,3 +841,108 @@ conclusion remains `REAL_VALIDATION_NOT_COMPLETED`.
     `api.tiingo.com`/`stooq.com` (or a chosen alternative provider's
     host, per ADR-0033) to this environment's network egress allowlist,
     outside this session's own permissions.
+
+## Phase 31 Addendum
+
+**Primary objective**: determine, rigorously, how this project can
+obtain a broad, survivorship-aware 2010-latest US equity dataset, and
+build the infrastructure to ingest it -- not to invent or tune a
+strategy, not to declare success, not to touch Live Trading. Full
+provider audit and decision framework: `docs/decisions/ADR-0034-real-data-acquisition-strategy.md`.
+
+**Network re-verification**: re-confirmed this phase against a broader
+host set than any prior phase -- Tiingo/Stooq/Toss plus 5 additional
+candidate provider hosts (Nasdaq Data Link, Polygon, Alpha Vantage,
+Financial Modeling Prep, CRSP), all identically `403`/
+`x-deny-reason: host_not_allowed`; two control hosts (github.com,
+pypi.org) succeed in the same run. DNS resolves and raw TCP connects
+succeed for all three primary hosts -- confirmed `ENVIRONMENT_BLOCKED`
+at the egress-allowlist layer specifically, never
+`AUTHENTICATION_FAILED`/`PROVIDER_DOES_NOT_SUPPORT_FEATURE`/
+`DATASET_DOES_NOT_EXIST`/`USER_ACCOUNT_LIMITATION` (none of those is
+determinable -- no request ever reaches a provider). `MARKET_DATA_API_KEY`
+remains unset.
+
+**What this phase built**: (1) extended `ingest_real_market_data.py`'s
+manifest with `providers_used`/`missing_symbols`/`active_count`/
+`historical_universe_membership_available`/`survivorship_mitigation_applied`
+(instruction section 18's remaining unanswered questions); (2) a new
+`LocalFileDataProvider` (`src/data_infra/providers/file_import.py`)
+implementing the `DataProvider` Protocol against local, pre-downloaded
+CSV files instead of a live network call, plus
+`scripts/import_external_market_data.py` wiring it through the
+identical validated pipeline (`IngestionRunner`/`DataQualityFramework`/
+`DuckDBDataRepository`) `ingest_real_market_data.py` uses -- this makes
+the external-acquisition workflow (instruction section 21) an actually
+runnable path, not only a documented intention, and (being
+network-free) is directly exercised end-to-end by the automated test
+suite; (3) `audit_survivorship` (`src/data_infra/universe.py`), a
+diagnostic answering the instruction's ten survivorship questions
+(section 28) with an honest FULLY_SUPPORTED/PARTIALLY_MITIGATED/
+CURRENT-UNIVERSE-ONLY/UNKNOWN classification, tested against the same
+kind of synthetic fixtures this project has always used to prove a
+mechanism (never to claim a real result); (4) ADR-0034's provider
+sufficiency matrix, re-labeled under this phase's required
+VERIFIED_BY_DOCUMENTATION/VERIFIED_BY_ACTUAL_ACCESS/UNKNOWN/
+NOT_AVAILABLE/ENVIRONMENT_BLOCKED vocabulary, and an explicit decision
+(both C. EXTERNAL_DATASET_REQUIRED and D. ENVIRONMENT_BLOCKED apply
+simultaneously, at different layers -- see ADR-0034 Decision 4).
+
+**No real ingestion, no real universe, no real Walk-Forward** this
+phase either -- consistent with instruction section 30/37, no synthetic
+result is reported as if real. 30 new tests (15 ingestion-manifest
+wiring + 11 file-import provider + 3 import-CLI end-to-end + 6
+survivorship-audit -- some classes overlap, see the final report's
+exact count).
+
+**FINAL STATUS: VALIDATION BLOCKED -- ENVIRONMENT** (also
+EXTERNAL_DATASET_REQUIRED for the full survivorship-bias-aware
+objective, per ADR-0034 Decision 4 -- both hold simultaneously).
+
+### Answers to the instruction's 15 required final questions (section 40)
+
+1. **Can this project currently obtain 2010->latest real US equity
+   data?** NO -- BLOCKED (network egress allowlist, this session).
+2. **Can it obtain a broad historical universe rather than today's
+   surviving stocks only?** NO -- BLOCKED, and even where network
+   access exists, no already-integrated or free-tier provider supplies
+   historical universe membership (ADR-0034 Decision 2).
+3. **Can it obtain delisted securities?** NO -- BLOCKED; free-tier
+   Tiingo/Stooq/Alpha Vantage do not supply a dedicated delisted-
+   securities feed regardless (NOT_AVAILABLE, ADR-0034).
+4. **Can it identify securities independently of ticker?** PARTIAL --
+   the `security_id` mechanism supports it structurally (Phase 1/29),
+   but this project's own population currently sets `security_id ==
+   ticker` (never yet wired to a provider-confirmed permanent ID
+   distinct from ticker); `audit_survivorship`'s
+   `permanent_id_percentage` makes this caveat explicit rather than
+   overclaiming 100%.
+5. **Can it correctly handle ticker changes and ticker reuse?**
+   PARTIAL -- `detect_ticker_collisions` (Phase 29) correctly
+   distinguishes legitimate reuse from a genuine data-bug collision
+   when given real dates; plain ticker-change (RENAMED) events are not
+   distinguishable from DELISTED without a finer data source this
+   project does not have (`renamed_or_merged_count` stays honestly 0
+   rather than guessed).
+6. **Can it reconstruct historical universe membership?** PARTIAL --
+   the mechanism (`get_universe(as_of_time=...)`) is proven correct
+   against synthetic fixtures (Phase 29 CASE tests, Phase 30 CASE A-G);
+   no real historical membership data has ever been supplied to it.
+7. **Is the resulting dataset actually survivorship-aware?**
+   UNKNOWN for any real dataset (none exists); `audit_survivorship`
+   would classify a real ingestion as CURRENT-UNIVERSE-ONLY unless real
+   `listed_from`/`listed_to` are supplied, and never higher than
+   PARTIALLY_MITIGATED given this project's current `security_id ==
+   ticker` limitation (see ADR-0034).
+8. **Was real 2010->latest data actually ingested?** NO.
+9. **How many real securities were ingested?** 0.
+10. **How many real delisted securities were ingested?** 0.
+11. **How many real Walk-Forward TEST folds were executed?** **0.**
+12. **Which strategy is most consistent across real TEST folds?**
+    UNKNOWN -- 0 real folds, INSUFFICIENT_EVIDENCE.
+13. **Does that advantage survive transaction costs?** N/A.
+14. **Does it beat SPY Total Return consistently?** N/A.
+15. **Can any strategy legitimately be called validated alpha?** NO --
+    INSUFFICIENT_EVIDENCE for all 4 candidates, unchanged;
+    `VALIDATED` remains structurally unreachable by this project's own
+    `classify_evidence_level`.
