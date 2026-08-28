@@ -45,6 +45,7 @@ from data_infra.versioning import compute_data_version
 
 _DAILY_PRICES_PATH_TEMPLATE = "/tiingo/daily/{ticker}/prices"
 _ACTIONS_PATH_TEMPLATE = "/tiingo/daily/{ticker}/prices"  # Tiingo's EOD endpoint carries split/dividend fields inline per row (Tier 2 documentation); see normalize_corporate_actions
+_METADATA_PATH_TEMPLATE = "/tiingo/daily/{ticker}"  # the symbol-metadata endpoint (no /prices suffix, no date range) -- see fetch_symbol_metadata
 
 _REQUIRED_RAW_FIELDS = ("date", "open", "high", "low", "close", "volume")
 
@@ -249,6 +250,56 @@ class TiingoDataProvider:
                     )
                 )
         return actions
+
+
+    # -- Symbol metadata (extra, Phase 29, not part of the DataProvider
+    # Protocol) -- groundwork for broad-universe discovery (instruction
+    # section 15 Stage 1: "provider가 실제로 제공하는 metadata 전체에서
+    # 미국 equity 후보 목록을 확보"). Never exercised against a live
+    # Tiingo response in this environment (see this module's own
+    # "Honesty about evidence tier" docstring) -- every field name below
+    # is a Tier 2 documentation assumption, isolated in these two
+    # methods alone so it can be corrected in one place once real
+    # verification is possible, exactly mirroring how
+    # fetch_corporate_actions/normalize_corporate_actions isolate their
+    # own Tier 2 assumptions.
+
+    def fetch_symbol_metadata(self, security_id: str) -> dict:
+        """Tier 2 documentation: `GET /tiingo/daily/<ticker>` (no date
+        range params, unlike the EOD/corporate-action endpoints above)
+        returns a single JSON object describing the symbol itself --
+        `ticker`, `name`, `exchangeCode`, `startDate`, `endDate`,
+        `description` -- rather than a list of daily rows."""
+        response = self._transport.get(
+            _METADATA_PATH_TEMPLATE.format(ticker=security_id),
+            params=dict(self._auth_params()),
+            timeout=self._config.timeout_seconds,
+        )
+        if not isinstance(response.body, dict):
+            raise PermanentProviderError(
+                f"unexpected Tiingo response shape for {security_id} metadata: expected a JSON object"
+            )
+        return dict(response.body, security_id=security_id)
+
+    def normalize_symbol_metadata(self, security_id: str, raw: dict) -> "SymbolMetadata":
+        """Maps only the fields Tier 2 documentation actually names --
+        `sector`/`market_cap_bucket` are never populated from this
+        endpoint (not part of its documented shape), left `None` per
+        this project's honesty discipline (never guess a value a
+        provider does not actually supply). `listed_to` stays `None`
+        (still active) unless Tiingo's own `endDate` is present and
+        non-null -- never inferred from anything else."""
+        from data_infra.universe import SymbolMetadata  # local import: avoids a module-level
+
+        # providers -> universe dependency for every other use of this file.
+        end_date = raw.get("endDate")
+        return SymbolMetadata(
+            symbol=security_id,
+            exchange=raw.get("exchangeCode") or None,
+            listed_from=_parse_tiingo_date(raw["startDate"]) if raw.get("startDate") else None,
+            listed_to=_parse_tiingo_date(end_date) if end_date else None,
+            source="tiingo",
+        )
 
 
 def _parse_tiingo_date(raw: str) -> datetime:

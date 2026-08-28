@@ -155,3 +155,60 @@ class TestCorporateActions:
         raw = [{"date": "2024-06-10T00:00:00.000Z", "splitFactor": "2.0", "divCash": "0.10"}]
         actions = provider.normalize_corporate_actions("XYZ", raw, retrieved_at=utc(2024, 6, 11), ingestion_time=utc(2024, 6, 11))
         assert {a.action_type for a in actions} == {CorporateActionType.SPLIT, CorporateActionType.DIVIDEND}
+
+
+class TestSymbolMetadata:
+    """Phase 29: fetch_symbol_metadata/normalize_symbol_metadata --
+    broad-universe discovery groundwork. Uses a single-object stub
+    response (the metadata endpoint's documented shape), unlike every
+    other test above's list-of-rows stub."""
+
+    def test_fetch_stamps_security_id_onto_the_response_object(self, monkeypatch) -> None:
+        provider, transport = _provider(
+            {"ticker": "AAPL", "name": "Apple Inc", "exchangeCode": "NASDAQ", "startDate": "1980-12-12", "endDate": None},
+            monkeypatch,
+        )
+        raw = provider.fetch_symbol_metadata("AAPL")
+        assert raw["security_id"] == "AAPL"
+        assert transport.calls[0][0] == "/tiingo/daily/AAPL"
+
+    def test_fetch_rejects_a_list_response_as_wrong_shape(self, monkeypatch) -> None:
+        # The metadata endpoint returns one object, not the list-of-rows
+        # shape the EOD/corporate-action endpoints use.
+        provider, _ = _provider([{"date": "2024-01-02T00:00:00.000Z"}], monkeypatch)
+        with pytest.raises(PermanentProviderError):
+            provider.fetch_symbol_metadata("AAPL")
+
+    def test_normalize_active_symbol_has_no_listed_to(self, monkeypatch) -> None:
+        provider, _ = _provider({}, monkeypatch)
+        raw = {"security_id": "AAPL", "ticker": "AAPL", "exchangeCode": "NASDAQ", "startDate": "1980-12-12T00:00:00.000Z", "endDate": None}
+        metadata = provider.normalize_symbol_metadata("AAPL", raw)
+        assert metadata.symbol == "AAPL"
+        assert metadata.exchange == "NASDAQ"
+        assert metadata.listed_from == utc(1980, 12, 12)
+        assert metadata.listed_to is None
+        assert metadata.source == "tiingo"
+
+    def test_normalize_delisted_symbol_has_listed_to(self, monkeypatch) -> None:
+        provider, _ = _provider({}, monkeypatch)
+        raw = {"security_id": "OLDCO", "ticker": "OLDCO", "exchangeCode": "NYSE", "startDate": "1995-03-01T00:00:00.000Z", "endDate": "2018-07-15T00:00:00.000Z"}
+        metadata = provider.normalize_symbol_metadata("OLDCO", raw)
+        assert metadata.listed_from == utc(1995, 3, 1)
+        assert metadata.listed_to == utc(2018, 7, 15)
+
+    def test_normalize_never_guesses_sector_or_market_cap(self, monkeypatch) -> None:
+        """Tiingo's documented metadata shape has no sector/market-cap
+        field -- this project's honesty discipline forbids filling
+        those in from anywhere else."""
+        provider, _ = _provider({}, monkeypatch)
+        raw = {"security_id": "AAPL", "ticker": "AAPL", "exchangeCode": "NASDAQ", "startDate": "1980-12-12T00:00:00.000Z", "endDate": None}
+        metadata = provider.normalize_symbol_metadata("AAPL", raw)
+        assert metadata.sector is None
+        assert metadata.market_cap_bucket is None
+
+    def test_normalize_missing_exchange_code_stays_none_not_guessed(self, monkeypatch) -> None:
+        provider, _ = _provider({}, monkeypatch)
+        raw = {"security_id": "AAPL", "ticker": "AAPL", "startDate": None, "endDate": None}
+        metadata = provider.normalize_symbol_metadata("AAPL", raw)
+        assert metadata.exchange is None
+        assert metadata.listed_from is None
