@@ -171,6 +171,68 @@ class TestNoFabricatedBenchmarkFallback:
         assert isinstance(other.value, ast.IfExp), "the second benchmark_id assignment must be a conditional, not an unconditional literal"
 
 
+class TestRealProvenancePlausibilityCheck:
+    """Phase 28 addition (instruction section 5, items B/C): --data-status
+    REAL is the caller's own claim and must be cross-checked against the
+    data's own recorded provenance, not simply trusted. Manually
+    verified at runtime this phase (not just statically): the same
+    synthetic-fixture catalog Phase 25/26/27 used for dry runs (bars
+    carrying provenance.source="test_source") is now correctly REFUSED
+    (exit code 1) when --data-status REAL is passed, and still runs
+    correctly to completion when --data-status SYNTHETIC is passed
+    against the identical catalog."""
+
+    def test_known_real_provider_sources_matches_actual_provider_implementations(self) -> None:
+        tree = _tree()
+        assignments = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "_KNOWN_REAL_PROVIDER_SOURCES" for t in node.targets)
+        ]
+        assert len(assignments) == 1
+        value = assignments[0].value
+        assert isinstance(value, ast.Set)
+        sources = {elt.value for elt in value.elts if isinstance(elt, ast.Constant)}
+        # Must match the exact Provenance.source strings the real
+        # provider implementations actually stamp -- verified directly
+        # against their source rather than assumed.
+        tiingo_source = (Path(__file__).resolve().parents[2] / "src" / "data_infra" / "providers" / "tiingo.py").read_text()
+        stooq_source = (Path(__file__).resolve().parents[2] / "src" / "data_infra" / "providers" / "stooq.py").read_text()
+        assert 'source="tiingo"' in tiingo_source
+        assert 'source="stooq"' in stooq_source
+        assert sources == {"tiingo", "stooq"}
+
+    def test_unexpected_provenance_source_under_real_status_refuses_not_warns(self) -> None:
+        """The check must actually stop execution (return a non-zero
+        exit code), not just print a warning and continue -- a warning
+        alone would still let a mislabeled report reach `results`."""
+        tree = _tree()
+        main_func = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+        # Find the `if unexpected_sources:` block inside main() and
+        # confirm its body actually returns non-zero.
+        if_blocks = [
+            n for n in ast.walk(main_func)
+            if isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == "unexpected_sources"
+        ]
+        assert len(if_blocks) == 1, "expected exactly one `if unexpected_sources:` guard"
+        return_stmts = [n for n in ast.walk(if_blocks[0]) if isinstance(n, ast.Return)]
+        assert len(return_stmts) == 1
+        assert isinstance(return_stmts[0].value, ast.Constant) and return_stmts[0].value.value != 0
+
+    def test_provenance_check_runs_before_any_strategy_is_evaluated(self) -> None:
+        """The refusal must happen before `run_walk_forward_evaluation`
+        is ever called -- never let a single strategy's evaluation
+        start against data that fails the REAL provenance check."""
+        tree = _tree()
+        main_func = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+        if_blocks = [
+            n for n in ast.walk(main_func)
+            if isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == "unexpected_sources"
+        ]
+        wf_calls = _find_calls(main_func, "run_walk_forward_evaluation")
+        assert if_blocks[0].lineno < wf_calls[0].lineno
+
+
 class TestNoWallClockOrRandomInStrategyDeterminism:
     """Category C (partial): the reproducibility fields themselves must
     not depend on wall-clock time or randomness -- the full determinism
