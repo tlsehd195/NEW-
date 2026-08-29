@@ -112,6 +112,48 @@ class TestUnresolvedSymbolsNeverSilentlyDropped:
         assert "resolve_cik(symbol, ticker_map)" in source
 
 
+class TestCikOverrides:
+    """Real, observed motivation (Phase 33, ADR-0042): SEC's *current*
+    ticker->CIK map resolved 'XOM' to a newly-registered holding-company
+    CIK with only 4 filings (a holdco reorganization) instead of the
+    operating company's own CIK, which carries 127 real Revenues
+    entries. There is no general automatic fix for this -- only a
+    manual per-symbol override, checked before falling back to
+    resolve_cik."""
+
+    def test_cik_overrides_argument_exists(self) -> None:
+        tree = _tree()
+        found = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_argument"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "--cik-overrides"
+            for node in ast.walk(tree)
+        )
+        assert found, "expected a --cik-overrides argparse argument"
+
+    def test_override_is_checked_before_resolve_cik_in_the_per_symbol_loop(self) -> None:
+        source = _source()
+        assert "if symbol in cik_overrides:" in source
+        assert "cik = cik_overrides[symbol]" in source
+        # Both branches must exist in the same conditional -- resolve_cik
+        # is still the fallback, never removed.
+        assert "cik = resolve_cik(symbol, ticker_map)" in source
+
+    def test_manifest_records_which_ciks_were_overridden(self) -> None:
+        assert "cik_overrides" in _manifest_keys(_tree())
+
+    def test_per_symbol_result_records_cik_source(self) -> None:
+        # Auditability: a caller reading the manifest must be able to
+        # tell "ticker_map" resolution from a manual "override" without
+        # re-deriving it -- not just that an override dict existed
+        # somewhere in the run.
+        source = _source()
+        assert '"cik_source": cik_source' in source
+
+
 class TestScriptIsSyntacticallyValid:
     def test_parses_without_error(self) -> None:
         _tree()  # raises SyntaxError on failure

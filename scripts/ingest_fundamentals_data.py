@@ -98,6 +98,24 @@ def main(argv=None) -> int:
     parser.add_argument("--as-of", required=True, type=_parse_date, help="YYYY-MM-DD, stands in for this run's real-world timestamp (retrieved_at/ingestion_time) -- never derived from wall-clock time")
     parser.add_argument("--db-path", required=True, type=Path, help="Directory for the DuckDB catalog (created if it does not exist)")
     parser.add_argument("--manifest-out", type=Path, default=None, help="Where to write the JSON reproducibility manifest (default: <db-path>/fundamentals_ingestion_manifest.json)")
+    parser.add_argument(
+        "--cik-overrides", nargs="+", default=[], metavar="SYMBOL:CIK",
+        help=(
+            "Manual SYMBOL:CIK pairs (e.g. XOM:0000034088) that skip SEC's "
+            "current company_tickers.json lookup entirely for that symbol. "
+            "Needed when a company's real filing history lives under a CIK "
+            "its CURRENT ticker no longer maps to -- observed for real with "
+            "XOM (Phase 33, ADR-0042): SEC's live ticker map resolves 'XOM' "
+            "to a newly-registered holding-company CIK with only a handful "
+            "of filings (a holdco reorganization), while the operating "
+            "company's actual multi-decade filing history sits under its "
+            "own, separate, ticker-orphaned CIK. This is a real limitation "
+            "of ticker-based resolution, structurally the same problem "
+            "ADR-0032 already documented for price-data ticker reuse -- "
+            "there is no general automatic fix here, only this manual "
+            "escape hatch plus honest per-symbol verification."
+        ),
+    )
     args = parser.parse_args(argv)
 
     manifest_path = args.manifest_out or (args.db_path / "fundamentals_ingestion_manifest.json")
@@ -106,6 +124,14 @@ def main(argv=None) -> int:
         symbols = list(args.symbols)
     else:
         symbols = list(_UNIVERSES[args.universe].symbol_ids)
+
+    cik_overrides: dict[str, str] = {}
+    for pair in args.cik_overrides:
+        symbol, _, cik = pair.partition(":")
+        if not symbol or not cik:
+            print(f"FATAL: --cik-overrides entry {pair!r} is not in SYMBOL:CIK form", file=sys.stderr)
+            return 1
+        cik_overrides[symbol.upper()] = cik.zfill(10)
 
     config = SecEdgarConfig(user_agent=args.user_agent)
     facts_transport = SecEdgarHttpTransport(config.base_url, user_agent=config.user_agent)
@@ -136,14 +162,20 @@ def main(argv=None) -> int:
         total_records_persisted = 0
 
         for i, symbol in enumerate(symbols, start=1):
-            cik = resolve_cik(symbol, ticker_map)
+            if symbol in cik_overrides:
+                cik = cik_overrides[symbol]
+                cik_source = "override"
+            else:
+                cik = resolve_cik(symbol, ticker_map)
+                cik_source = "ticker_map"
+
             if cik is None:
                 print(f"  [{i}/{len(symbols)}] {symbol}: no CIK found, skipping", flush=True)
                 unresolved_symbols.append(symbol)
-                per_symbol_results.append({"security_id": symbol, "cik": None, "records_persisted": 0, "error": "ticker not found in SEC EDGAR company_tickers.json"})
+                per_symbol_results.append({"security_id": symbol, "cik": None, "cik_source": None, "records_persisted": 0, "error": "ticker not found in SEC EDGAR company_tickers.json"})
                 continue
 
-            print(f"  [{i}/{len(symbols)}] {symbol} (CIK {cik}): fetching company facts...", flush=True)
+            print(f"  [{i}/{len(symbols)}] {symbol} (CIK {cik}, source={cik_source}): fetching company facts...", flush=True)
             try:
                 raw_facts = provider.fetch_company_facts(cik)
                 records = provider.normalize_company_facts(
@@ -151,10 +183,10 @@ def main(argv=None) -> int:
                 )
                 repository.add_fundamentals(records)
                 total_records_persisted += len(records)
-                per_symbol_results.append({"security_id": symbol, "cik": cik, "records_persisted": len(records), "error": None})
+                per_symbol_results.append({"security_id": symbol, "cik": cik, "cik_source": cik_source, "records_persisted": len(records), "error": None})
                 print(f"      -> {len(records)} record(s) persisted", flush=True)
             except (TransientProviderError, PermanentProviderError) as exc:
-                per_symbol_results.append({"security_id": symbol, "cik": cik, "records_persisted": 0, "error": str(exc)})
+                per_symbol_results.append({"security_id": symbol, "cik": cik, "cik_source": cik_source, "records_persisted": 0, "error": str(exc)})
                 print(f"      -> FAILED: {exc}", flush=True)
 
             time.sleep(_REQUEST_DELAY_SECONDS)
@@ -182,6 +214,7 @@ def main(argv=None) -> int:
             "symbol_count": len(symbols),
             "concepts": list(args.concepts),
             "as_of": args.as_of.isoformat(),
+            "cik_overrides": dict(cik_overrides),
             "unresolved_symbols": unresolved_symbols,
             "total_records_persisted": total_records_persisted,
             "per_symbol_results": per_symbol_results,

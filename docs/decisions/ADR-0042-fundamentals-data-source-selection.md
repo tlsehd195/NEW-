@@ -252,15 +252,95 @@ With the provider verified, the user asked to proceed. Built:
   round-tripping; 7 structural tests for the ingestion script). Full
   suite: 1944 passed.
 
-## What's still not built (unchanged from before Decision 5)
+## Decision 6 -- Real ingestion run against the 39-symbol universe, and a real ticker->CIK resolution failure it surfaced
+
+The user ran `ingest_fundamentals_data.py --universe RESEARCH_UNIVERSE`
+from their own environment. Result: 39/39 symbols resolved a CIK, 0
+`TransientProviderError`/`PermanentProviderError` failures,
+**28,672 total `FundamentalRecord`s persisted** -- the first real
+fundamentals data this project has ever stored. (`RESEARCH_UNIVERSE`
+is 39 tradeable symbols, not 40 -- prior phases' "40-symbol universe"
+phrasing included `SPY`, the benchmark, tracked separately and
+deliberately excluded from fundamentals ingestion since an ETF has no
+`us-gaap` financial-statement concepts to speak of.)
+
+Per-symbol record counts ranged ~200-1100, except **XOM: 14 records**,
+a stark outlier. Investigated live (not assumed):
+
+1. `resolve_cik("XOM", ticker_map)` returned CIK `2115436`, whose
+   `entityName` is **"ExxonMobil Holdings Corp"**, not "Exxon Mobil
+   Corporation" -- and that CIK's `company_tickers.json` entry is the
+   *only* one for ticker `XOM` (no simple duplicate-ticker collision).
+2. Fetching that CIK's company facts directly confirmed the low count
+   is real: only 4 `Revenues` entries exist under it.
+3. Checking CIK `0000034088` (Exxon Mobil's long-standing, widely
+   known CIK -- flagged explicitly as an *unverified* recollection
+   before checking, per this project's evidence-tier discipline)
+   confirmed the hypothesis: `entityName: "Exxon Mobil Corporation"`,
+   **127 `Revenues` entries** -- the real multi-decade history.
+
+**Root cause, OBSERVED not merely inferred**: at some point Exxon
+Mobil underwent a holding-company reorganization -- a new legal entity
+was created, given a newly-issued CIK, and SEC's *current*
+`company_tickers.json` now maps ticker `XOM` to that new entity, which
+has only filed a handful of times since its creation. The operating
+company's real, decades-deep filing history sits under its own
+CIK, permanently orphaned from the ticker as far as the *current*
+ticker map is concerned. `resolve_cik` did exactly what it was built
+to do (resolve a ticker via SEC's current map) -- the map itself no
+longer points to the CIK with the history a naive "ticker -> current
+CIK -> fetch" pipeline needs.
+
+**This is not a new category of problem for this project.** It is
+structurally the same failure mode ADR-0032 (Phase 29) already
+documented for *price* data: a ticker's *current* identity mapping can
+silently discontinue from the entity that actually carries the
+historical record, and any pipeline that resolves identity from only
+the current mapping will silently miss (or misattribute) history
+across that discontinuity. ADR-0032 built survivorship-aware
+membership tracking for price data; fundamentals data now has the
+same class of gap, unaddressed by anything built so far.
+
+**What was fixed this phase (narrow, not general)**: `--cik-overrides
+SYMBOL:CIK` (e.g. `--cik-overrides XOM:0000034088`), checked before
+`resolve_cik` for that symbol. The per-symbol manifest entry now also
+records `cik_source` (`"ticker_map"` vs `"override"`) so a future
+reader can tell which symbols needed manual correction without
+re-deriving it. This is a manual escape hatch, not an automatic fix --
+there is no general, reliable way to detect "this ticker's current CIK
+has anomalously little history relative to how long this company has
+plausibly existed" without either a hardcoded rule (fragile, and this
+project's own discipline against unjustified speculative machinery
+argues against building one on a sample of one) or a genuinely
+different data source for entity-identity history (e.g. SEC's own
+former-name/CIK-history endpoints, not yet investigated).
+
+**Honest scope of what was and wasn't checked**: only XOM's anomaly
+was investigated, because it was the one dramatic enough (14 vs.
+~200-1100) to be visible by eye in a simple record-count comparison. A
+less extreme version of the same problem -- a company whose holdco
+reorg happened, say, 5 years into the data window instead of last year
+-- would produce a record count still "in range" and would NOT have
+been caught by this check. **The other 38 symbols have NOT been
+individually verified to be free of this issue** -- their more
+plausible-looking counts are evidence of absence only in the weak
+sense that nothing this crude a check can catch was visible, not a
+confirmation that no subtler version of the same problem exists among
+them. This is recorded as an explicit, unresolved caveat, not
+smoothed over.
+
+## What's still not built
 
 Concept selection (which `us-gaap` tags to fetch) is a starting
 default, not fixed for all time -- `--concepts` overrides it. Ratio
 derivation (P/E, ROE, debt/equity, etc.) from raw `FundamentalRecord`s,
 and any actual value/quality factor signal built on top of them, are
-still out of scope until real fundamentals data has actually been
-ingested and inspected -- no fundamentals-based signal can be evaluated
-before that happens. The next concrete step is running
-`ingest_fundamentals_data.py` from the user's own network-capable
-environment against the 40-symbol universe and relaying the manifest
-back.
+still out of scope -- real data now exists (Decision 6), but has not
+yet been used for anything beyond the XOM anomaly investigation above.
+A systematic per-symbol identity-continuity check (the general version
+of what caught XOM) also remains unbuilt. The next concrete step is
+re-running ingestion with `--cik-overrides XOM:0000034088` (a
+`--symbols XOM` targeted re-run is sufficient; the other 38 symbols'
+existing records need no re-fetch) and relaying the corrected count,
+then deciding whether to build the systematic identity-continuity
+check before or after starting on an actual fundamentals-based signal.
