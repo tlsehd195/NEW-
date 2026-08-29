@@ -386,17 +386,43 @@ ingestion once more, now with both fixes in place
 (`--cik-overrides XOM:0000034088` and the corrected key), rather than
 attempting a partial in-place repair.
 
+## Decision 8 -- clean full re-ingestion, confirmed
+
+The user deleted the local DB and re-ran the full 39-symbol ingestion
+with both Decision 6/7 fixes in place (`--cik-overrides
+XOM:0000034088`, corrected `source_record_id`). Result: 39/39 CIKs
+resolved, 0 provider errors, XOM at **771 records** (matching the
+independently curl-verified real figure from Decision 6's
+investigation -- neither the wrong-CIK 14 nor the key-collision-
+collapsed 317), **29,429 total records**. The per-symbol counts printed
+during the run were independently summed and matched the script's own
+reported total exactly (29,429 == 29,429) -- an inexpensive
+cross-check that the manifest's arithmetic is internally consistent,
+not just self-reported.
+
+This is the first time this project has held a **verified-clean**
+(both known bugs fixed, one full-universe pass, printed totals
+independently checked) set of real fundamentals data. It is not
+proof no further data-quality issue exists (see the still-open
+identity-continuity caveat below), only that the two specific,
+confirmed defects found this phase are actually fixed in what is now
+stored, not merely fixed in code with stale bad data still sitting
+underneath.
+
 ## What's still not built
 
 Concept selection (which `us-gaap` tags to fetch) is a starting
 default, not fixed for all time -- `--concepts` overrides it. Ratio
 derivation (P/E, ROE, debt/equity, etc.) from raw `FundamentalRecord`s,
 and any actual value/quality factor signal built on top of them, are
-still out of scope -- no fundamentals-based signal can be evaluated
-against data known to be undercounted (Decision 7). A systematic
-per-symbol identity-continuity check (the general version of what
-caught XOM's CIK issue) also remains unbuilt. The next concrete step
-is a full, fresh 39-symbol re-ingestion (both fixes now in place) and
-relaying the resulting manifest, then deciding whether to build the
-systematic identity-continuity check before or after starting on an
-actual fundamentals-based signal.
+the natural next step now that clean real data exists (Decision 8) --
+not yet started. A systematic per-symbol identity-continuity check
+(the general version of what caught XOM's CIK issue -- Decision 6's
+own caveat that the other 38 symbols were never individually verified
+free of a subtler version of the same holdco-reorg problem still
+stands) also remains unbuilt. Any future fundamentals-based signal
+evaluation must reuse `strategy_research.locked_windows.
+overlaps_any_locked_window` against TEST-1 exactly as the rule-based
+research this phase followed on from already does (RULE 0.8) -- this
+was designed generally in ADR-0041/`ML-RESEARCH-PROTOCOL.md` and
+applies to fundamentals signals with no special-casing needed.
