@@ -42,6 +42,8 @@ claim of financial optimality.
 | 11 | Max consecutive failures | *(no field exists)* | -- | **BLOCKING** | Not configurable as a count. Behaviorally *stricter* than a countable threshold today: `LiveTradingSession.submit` treats the **first** `BrokerError` as sufficient to flip the whole session to `OperationalState.RECONCILIATION_REQUIRED`, blocking every further submission (`docs/decisions/ADR-0022` decision 8) -- there is no "N consecutive failures" concept because a single ambiguous failure already halts everything. If a future policy wants to distinguish "one blip" from "sustained failure" as different severities, that is new design work, not a number to fill in here. |
 | 12 | Broker failure threshold | `KillSwitchTriggerContext.broker_health` | health-status check (`UNAVAILABLE`/`UNKNOWN` trigger) | **INHERITED, coarse** | Not a *count* of failures -- a health-*status* check fed by whatever computes `broker_health` upstream (Phase 14 `monitoring.collectors.collect_broker`). The numeric failure-rate thresholds behind that status live in `MonitoringConfig` (Phase 14), already DEFINED there, just not restated here as a duplicate number. |
 | 13 | Data failure threshold | `KillSwitchTriggerContext.data_health` | health-status check (`UNAVAILABLE`/`UNKNOWN` trigger) | **DEFINED (Phase 17 addition)** | Before this phase, `KillSwitchTriggerContext` had no `data_health` field at all -- `monitoring.collectors.collect_data_quality` (Phase 14) already computed this signal, but nothing wired it into kill-switch evaluation. Added this phase (`src/broker/live/kill_switch.py`, `Optional[ComponentHealthStatus] = None`, additive/backward-compatible) with a regression test (`tests/broker/live/test_live_kill_switch.py::TestEachTriggerIndependently::test_data_health_unavailable_triggers`). The underlying numeric thresholds (invalid-rate, staleness) are Phase 14's `MonitoringConfig`, already DEFINED. |
+| 14 | Withdrawal (cash-out) policy | *(no field exists)* | -- | **BLOCKING** | Raised by the user (conversational, not yet a phase instruction): once Live is generating real returns, when/how much capital should ever be withdrawn from the account? No field, mechanism, or even a placeholder exists anywhere in `broker.live.*`/`risk.*` for this -- there is no concept of "withdrawal" distinct from any other cash movement at all. This is deliberately a human financial-planning decision, not one this system should make on its own (see the DECISION REQUIRED block below for why). |
+| 15 | Rebalancing cash buffer, Live-specific | `RiskConfig.minimum_cash_ratio` (same field as #9) | `0.05` | **INHERITED, needs Live-specific re-examination** | Also raised by the user alongside #14: separate from item #9's existing pre-trade floor (a Phase 8 backtesting default that happens to also gate Live via the same field), how much cash should the strategy proactively hold for liquidity/rebalancing once real withdrawals (per #14) are a live possibility? No such policy has ever been decided with real capital or withdrawal timing in mind -- `0.05` is inherited from backtesting, not chosen for this purpose. |
 
 ## Summary
 
@@ -49,8 +51,9 @@ claim of financial optimality.
 |---|---|---|
 | DEFINED | 1 | #13 |
 | INHERITED | 6 | #2, #3, #4, #8, #9, #12 |
+| INHERITED, needs Live-specific re-examination | 1 | #15 |
 | UNDEFINED | 3 | #1, #6, #7 |
-| BLOCKING | 3 | #5, #10, #11 |
+| BLOCKING | 4 | #5, #10, #11, #14 |
 
 ## DECISION REQUIRED entries
 
@@ -324,6 +327,76 @@ responsible for the account must explicitly set (or explicitly
 reject/revise) each value in `LiveTradingConfig`/`RiskConfig` before it
 has any effect; until then all three remain `None` and unenforced, per
 the None-semantics above.
+
+## Items #14/#15 — raised conversationally, listed only, not analyzed or proposed yet
+
+The user asked (outside any specific phase instruction): once the
+system is generating real returns and rebalancing on its own, when
+should money ever be withdrawn, and how much cash should it hold in
+reserve? Recorded here as two separate open items per the user's own
+request to track them, not to resolve them now -- no option analysis,
+no proposed numbers, unlike #1/#6/#7's Phase 20 treatment above.
+
+```
+DECISION REQUIRED
+Problem: #14 -- No withdrawal mechanism, field, or policy exists
+anywhere in this codebase. If Live activates and generates real
+returns, there is currently no way for the system to distinguish
+"capital the account owner wants pulled out" from any other cash
+state, and no schedule, trigger, or approval flow for it.
+Current Design: N/A -- nothing built. broker.live.* only models
+order submission/execution/reconciliation; no capital-withdrawal
+concept exists in that layer or in risk.*.
+Why this should very likely stay a human decision, not an AI one
+(surfaced in conversation, not yet formally analyzed): withdrawal
+timing is a personal financial-planning question independent of
+strategy performance -- the account owner's own cash needs, tax
+timing, and diversification goals, none of which this system observes
+or should infer. It also interacts with sequence-of-returns risk:
+withdrawing during a drawdown converts a paper loss into a realized
+one, so "the AI decides when to withdraw based on market state" is a
+materially different (and riskier) design than "a human sets a
+schedule/rule the system merely executes."
+Options: not yet enumerated -- this needs its own design pass
+(e.g. a fixed schedule the system executes, vs. a rule-based policy a
+human pre-approves, vs. purely manual/out-of-band withdrawal that
+never touches this system at all) before Option A/B framing like the
+other DECISION REQUIRED blocks above is meaningful.
+Recommendation: none yet -- explicitly deferred, per the user's own
+"just add it to the list" request.
+Impact: none today -- Live is independently blocked by the Toss
+capability gap regardless, so this has no immediate safety
+consequence. Recorded so it is not forgotten before any real
+withdrawal need arises.
+```
+
+```
+DECISION REQUIRED
+Problem: #15 -- separate from #14's withdrawal-timing question, how
+much cash should the strategy proactively hold for liquidity and
+rebalancing flexibility once Live capital and eventual withdrawals are
+real? RiskConfig.minimum_cash_ratio (0.05) already exists and already
+gates Live via the same field as #9, but it was chosen for Phase 8
+backtesting, not decided with Live withdrawal needs in mind.
+Current Design: PortfolioRiskEngine enforces minimum_cash_ratio as a
+floor after any BUY (src/risk/engine.py) -- a single static ratio, not
+a policy that considers anticipated withdrawals, market regime, or
+anything else. risk_controlled_momentum's own real bug (ADR-0038-era
+finding, Section H of STRATEGY-VALIDATION-REPORT.md) already showed
+uninvested cash from position-cap overflow is not currently
+redistributed -- cash buffer today is partly a strategy side effect,
+not a deliberately engineered policy.
+Options: not yet enumerated -- needs its own design pass (e.g. a
+static floor as today vs. a buffer sized off anticipated withdrawal
+schedule from #14 vs. something regime-conditional) before this can be
+proposed the way #1/#6/#7 were.
+Recommendation: none yet -- explicitly deferred, per the user's own
+"just add it to the list" request. Whatever is eventually decided
+should be reconciled with #14 (a cash buffer sized for zero
+anticipated withdrawals is a different number than one sized to cover
+several months of planned withdrawals without forced selling).
+Impact: none today -- same independent Toss-gap blocker as #14.
+```
 
 ## Phase 22 — Revised (more conservative) proposed values, and Option B adopted for #1/#7
 
