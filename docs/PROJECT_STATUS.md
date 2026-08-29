@@ -248,11 +248,19 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   결과(ADR-0025~0041은 전부 Tier 2 문서 또는 `ENVIRONMENT_BLOCKED`였음).
   이 원격 세션 자체는 여전히 차단되어 있음 — `ENVIRONMENT_BLOCKED`는
   이 컨테이너 고유의 egress allowlist 문제이지 SEC EDGAR 자체의
-  가용성 문제가 아님이 실측으로 확정됨. 최상위 응답 구조(`cik`/
-  `entityName`/`facts`→taxonomy→concept)는 확인됐지만, `us-gaap`
-  concept의 `units` 배열 안 필드명(`end`/`val`/`accn`/`fy`/`fp`/
-  `form`/`filed`)까지는 아직 미확인(처음 요청이 `head -c 500`에
-  잘려서). ADR-0042에 후속 확인 명령 추가 기록 — relay 대기 중.
+  가용성 문제가 아님이 실측으로 확정됨.
+- **필드 레벨 파싱 계약까지 완전 검증 완료**: 사용자가 후속 명령으로
+  `facts.us-gaap.Assets.units.USD`의 실제 항목을 relay —
+  `end`/`val`/`accn`/`fy`/`fp`/`form`/`filed` 전부 우리 코드
+  (`normalize_company_facts`)가 가정한 그대로 존재, `Assets`는 instant
+  concept이라 `start`가 없는 것도 예상대로 일치. `sec_edgar.py` 코드
+  수정 전혀 불필요 — Tier 2 문서 기반으로 먼저 짠 파싱 로직이 실제
+  데이터와 첫 접촉에서 100% 들어맞음. `ADR-0042`가 이제
+  `VERIFIED_BY_ACTUAL_ACCESS`(최상위 구조 + 필드 레벨 모두)로 완결.
+  **다음 단계(아직 미착수)**: 실제 저장 계층(`FundamentalRecord` 전용
+  point-in-time 쿼리 가능한 repository, DuckDB 스키마)과 40종목
+  유니버스 대상 ingestion CLI — 이건 접근성이 아니라 순수히 "아직
+  안 만들었다"는 문제이므로 다음 세션에서 이어서 구축.
 
 ### Completed (Session 33 — Phase 31 continued)
 

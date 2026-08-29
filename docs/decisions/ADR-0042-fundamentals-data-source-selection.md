@@ -113,14 +113,43 @@ things are now confirmed, not merely assumed:
    below) -> concept -> `label`/`description`/`units`, exactly the
    nesting `normalize_company_facts` was written against.
 
-Still unconfirmed: the exact field names inside one `units` entry
-(`end`/`start`/`val`/`accn`/`fy`/`fp`/`form`/`filed`) that
-`normalize_company_facts` actually parses -- the relayed snippet was
-truncated by `head -c 500` before reaching any `us-gaap` concept's
-`units` array. A follow-up fetch targeting a `us-gaap` concept
-directly (e.g. `Assets` or `Revenues`) is needed before this can be
-upgraded from "top-level shape confirmed" to "full parsing contract
-confirmed."
+**Second update -- entry-level shape confirmed too, same day.** The
+user ran the follow-up fetch this ADR's "Next step" section requested
+(`facts.us-gaap.Assets.units.USD`, the most recent entry) and relayed
+the real result back verbatim:
+
+```json
+{
+  "end": "2026-06-27",
+  "val": 383266000000,
+  "accn": "0000320193-26-000020",
+  "fy": 2026,
+  "fp": "Q3",
+  "form": "10-Q",
+  "filed": "2026-07-31",
+  "frame": "CY2026Q2I"
+}
+```
+
+Every field `normalize_company_facts` reads (`end`, `val`, `accn`,
+`fy`, `fp`, `form`, `filed`) is present with the assumed type and
+meaning; `start` is absent, exactly as expected for `Assets` (a
+balance-sheet/instant concept, not a duration concept like `Revenues`)
+-- matching `FundamentalRecord.period_start`'s own documented "`None`
+for instant concepts" contract precisely. The one field present in the
+real response but not read by `normalize_company_facts` (`frame`, an
+EDGAR-internal cross-period grouping label) is harmless to ignore --
+`normalize_company_facts` never assumed a closed field set, only that
+the fields it does read exist with the right shape, and they do.
+
+**This closes out ADR-0042's own "still unconfirmed" gap.**
+`SecEdgarFundamentalsProvider`'s parsing contract is now
+`VERIFIED_BY_ACTUAL_ACCESS` end to end (top-level shape and
+entry-level fields both), not merely Tier 2 documentation -- the first
+time this project has reached that status for any provider integration
+without first shipping to a live ingestion run. No code change is
+needed in `sec_edgar.py`; the Tier 2 assumptions it shipped with
+(Decision 3, below) turned out correct on first real contact.
 
 ## Decision 3 -- Build the provider now against Tier 2 documentation, same pattern as `TiingoDataProvider`
 
@@ -172,34 +201,26 @@ New code, all additive:
   `Liabilities`, `StockholdersEquity`) is the obvious starting point
   but is not fixed here; left for whoever runs real ingestion.
 
-## Next step (requires the user's own network-capable environment) -- reachability done, entry-level shape still open
+## Verification status: complete
 
-Reachability is now confirmed (see the Decision 2 addendum above).
-What remains, still cheap and still requiring the user's own
-environment (this session's own `data.sec.gov` access stays blocked
-regardless): confirm the exact field names inside a `us-gaap` concept's
-`units` array, since that is the part `normalize_company_facts`
-actually parses record-by-record and the truncated first fetch never
-reached it.
+Both open items from the original "Next step" section are now
+resolved (see the two Decision 2 addenda above) --
+`VERIFIED_BY_ACTUAL_ACCESS` for both reachability and the parsing
+contract, from the user's own environment, same day this ADR was
+written. This session's own `data.sec.gov` access remains
+`ENVIRONMENT_BLOCKED` regardless (a property of this container, not of
+SEC EDGAR).
 
-```
-curl -sS -A "research-project contact@example.com" \
-  "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json" \
-  -o /tmp/aapl_facts.json
-python3 -c "
-import json
-d = json.load(open('/tmp/aapl_facts.json'))
-entry = d['facts']['us-gaap']['Assets']['units']['USD'][-1]
-print(json.dumps(entry, indent=2))
-"
-```
+## What Decision 4 actually still blocks on now
 
-If that one entry has `end`, `val`, `accn`, `fy`, `fp`, `form`, and
-`filed` keys (with `start` present for a duration concept like
-`Revenues` but absent for an instant one like `Assets`, per XBRL's own
-distinction), `normalize_company_facts`'s parsing contract is fully
-confirmed against real data, not just its top-level shape. Per SEC's
-fair-access policy, the `User-Agent` string must be a genuine
-descriptive contact -- the placeholder above must be replaced with a
-real one before any sustained use, matching `SecEdgarConfig.
-user_agent`'s own docstring.
+With the provider itself verified, the remaining deferred items
+(storage/ingestion wiring, concept selection, ratio derivation) are no
+longer blocked on *access* -- they are blocked only on being *built*.
+None of that exists yet as of this ADR. Whoever picks this up next
+should treat "the provider is verified" as the starting point, not the
+finish line: a `FundamentalRecord` repository (DuckDB schema, `as_of_time`-filtered
+query methods mirroring `data_infra.repository.DataRepository`'s
+existing `get_bars`/`get_corporate_actions` shape) and an ingestion CLI
+driving `SecEdgarFundamentalsProvider` against the 40-symbol
+`RESEARCH_UNIVERSE_STAGE2` universe are both still to be designed and
+implemented before any fundamentals-based signal can be evaluated.
