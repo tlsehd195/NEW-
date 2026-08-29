@@ -31,6 +31,7 @@ from data_infra.enums import (
     InstrumentType,
     SecurityStatus,
 )
+from data_infra.fundamentals_models import FundamentalRecord
 from data_infra.models import (
     BenchmarkPoint,
     CorporateAction,
@@ -151,6 +152,41 @@ def row_to_provenance(row: dict) -> Provenance:
         retrieved_at=from_utc_naive(row["provenance_retrieved_at"]),
         data_version=row["provenance_data_version"],
         schema_version=int(row["provenance_schema_version"]),
+    )
+
+
+def fundamental_record_to_row(record: FundamentalRecord) -> dict:
+    row = {
+        "security_id": record.security_id,
+        "concept": record.concept,
+        "period_start": to_utc_naive(record.period_start),
+        "period_end": to_utc_naive(record.period_end),
+        "fiscal_year": record.fiscal_year,
+        "fiscal_period": record.fiscal_period,
+        "form_type": record.form_type,
+        "value": record.value,
+        "unit": record.unit,
+        "available_time": to_utc_naive(record.available_time),
+        "ingestion_time": to_utc_naive(record.ingestion_time),
+    }
+    row.update(provenance_to_row(record.provenance))
+    return row
+
+
+def row_to_fundamental_record(row: dict) -> FundamentalRecord:
+    return FundamentalRecord(
+        security_id=row["security_id"],
+        concept=row["concept"],
+        period_start=from_utc_naive(row.get("period_start")),
+        period_end=from_utc_naive(row["period_end"]),
+        fiscal_year=int(row["fiscal_year"]),
+        fiscal_period=row["fiscal_period"],
+        form_type=row["form_type"],
+        value=row["value"],
+        unit=row["unit"],
+        available_time=from_utc_naive(row["available_time"]),
+        ingestion_time=from_utc_naive(row["ingestion_time"]),
+        provenance=row_to_provenance(row),
     )
 
 

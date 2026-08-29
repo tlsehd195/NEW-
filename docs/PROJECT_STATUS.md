@@ -257,10 +257,29 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   수정 전혀 불필요 — Tier 2 문서 기반으로 먼저 짠 파싱 로직이 실제
   데이터와 첫 접촉에서 100% 들어맞음. `ADR-0042`가 이제
   `VERIFIED_BY_ACTUAL_ACCESS`(최상위 구조 + 필드 레벨 모두)로 완결.
-  **다음 단계(아직 미착수)**: 실제 저장 계층(`FundamentalRecord` 전용
-  point-in-time 쿼리 가능한 repository, DuckDB 스키마)과 40종목
-  유니버스 대상 ingestion CLI — 이건 접근성이 아니라 순수히 "아직
-  안 만들었다"는 문제이므로 다음 세션에서 이어서 구축.
+- **저장 계층 + 실제 ingestion CLI 구축 완료 (사용자 승인 "진행해" 후
+  같은 세션 내)**:
+  - `src/storage/fundamentals_repository.py` — `DuckDBFundamentalsRepository`.
+    새 `fundamental_records` DuckDB 테이블(Parquet 아님 — benchmark
+    data와 동일한 저용량·point-lookup 기준 적용). `get_fundamentals`는
+    가격 데이터의 `get_bars`/`get_corporate_actions`와 정확히 같은
+    `available_time <= as_of_time` look-ahead guard 적용.
+    `latest_known_value`는 같은 `period_end`에 재공시(restatement)가
+    있을 때 더 나중에 제출된(`available_time` 최신) 쪽을 우선하는
+    실제 point-in-time-safe feature용 조회 함수.
+  - `scripts/ingest_fundamentals_data.py` — 실제 ingestion CLI.
+    `ingest_real_market_data.py`와 동일한 규율(wall-clock 시각 절대
+    안 읽음, `--user-agent` 필수·기본값 없음, 재현성 manifest +
+    checksum). ticker→CIK 변환 → 기본 concept 5종(Revenues,
+    NetIncomeLoss, Assets, Liabilities, StockholdersEquity) 수집·저장.
+    가격 스크립트와 마찬가지로 자동 테스트에서 절대 실행 안 됨(실제
+    네트워크 호출) — AST/소스텍스트 기반 구조 테스트로 검증.
+  - 신규 테스트 22개(저장소 15 + CLI 구조 테스트 7). 전체 1944개 통과.
+  - **다음 단계**: 사용자의 네트워크 가능 환경에서
+    `ingest_fundamentals_data.py`를 40종목 유니버스 대상으로 실행하고
+    manifest를 relay — 그래야 실제 재무 데이터가 처음으로 저장소에
+    들어오고, 그 다음에야 비율(P/E, ROE 등) 계산이나 실제 펀더멘털
+    신호 검증으로 넘어갈 수 있음. 아직 이 단계는 시작 안 됨.
 
 ### Completed (Session 33 — Phase 31 continued)
 

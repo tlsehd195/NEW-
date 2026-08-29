@@ -211,16 +211,56 @@ written. This session's own `data.sec.gov` access remains
 `ENVIRONMENT_BLOCKED` regardless (a property of this container, not of
 SEC EDGAR).
 
-## What Decision 4 actually still blocks on now
+## Decision 5 -- Storage + ingestion CLI, built same day
 
-With the provider itself verified, the remaining deferred items
-(storage/ingestion wiring, concept selection, ratio derivation) are no
-longer blocked on *access* -- they are blocked only on being *built*.
-None of that exists yet as of this ADR. Whoever picks this up next
-should treat "the provider is verified" as the starting point, not the
-finish line: a `FundamentalRecord` repository (DuckDB schema, `as_of_time`-filtered
-query methods mirroring `data_infra.repository.DataRepository`'s
-existing `get_bars`/`get_corporate_actions` shape) and an ingestion CLI
-driving `SecEdgarFundamentalsProvider` against the 40-symbol
-`RESEARCH_UNIVERSE_STAGE2` universe are both still to be designed and
-implemented before any fundamentals-based signal can be evaluated.
+With the provider verified, the user asked to proceed. Built:
+
+- `src/storage/fundamentals_repository.py` -- `DuckDBFundamentalsRepository`,
+  a persistent, point-in-time-safe store for `FundamentalRecord`s.
+  Backed by a new `fundamental_records` DuckDB table (`schema.py`),
+  not Parquet -- same low-volume, point-lookup/filter-heavy criterion
+  ADR-0010 section 1 already applied to Benchmark data.
+  `get_fundamentals(security_id, concept, as_of_time, ...)` applies
+  the same `available_time <= as_of_time` look-ahead guard
+  `DuckDBDataRepository.get_bars`/`get_corporate_actions` already
+  apply for prices, extended to fundamentals' own point-in-time field.
+  `latest_known_value(...)` additionally resolves ties on `period_end`
+  toward the most-recently-*filed* record (`available_time` DESC) --
+  the practical query a point-in-time-safe feature actually needs
+  ("the latest value we could have known as of this moment"), distinct
+  from `get_fundamentals`'s full, unresolved history (a period can
+  legitimately have more than one filing, e.g. an original 10-Q and a
+  later restatement).
+- `scripts/ingest_fundamentals_data.py` -- real ingestion CLI, mirrors
+  `ingest_real_market_data.py`'s structure and discipline exactly
+  (never reads wall-clock time; `--user-agent` is required with no
+  silent default, since SEC's fair-access policy needs a genuine
+  contact string; writes a reproducibility manifest with a content
+  checksum). Resolves each universe symbol's CIK via
+  `provider.fetch_ticker_map`/`resolve_cik`, then fetches and persists
+  a short default concept set (`Revenues`, `NetIncomeLoss`, `Assets`,
+  `Liabilities`, `StockholdersEquity`) via `SecEdgarFundamentalsProvider`.
+  Like the price-ingestion script, this one is never imported or
+  executed by the automated test suite (it makes a real network call)
+  -- verified instead by AST/source-text structural tests
+  (`tests/data_infra/test_ingest_fundamentals_data_wiring.py`), the
+  same discipline `test_ingest_real_market_data_wiring.py` already
+  established.
+- 22 new tests (15 for the repository -- persistence/restart,
+  idempotency, the look-ahead guard, `period_end` range filtering,
+  `latest_known_value`'s tie-break behavior, `None`/set `period_start`
+  round-tripping; 7 structural tests for the ingestion script). Full
+  suite: 1944 passed.
+
+## What's still not built (unchanged from before Decision 5)
+
+Concept selection (which `us-gaap` tags to fetch) is a starting
+default, not fixed for all time -- `--concepts` overrides it. Ratio
+derivation (P/E, ROE, debt/equity, etc.) from raw `FundamentalRecord`s,
+and any actual value/quality factor signal built on top of them, are
+still out of scope until real fundamentals data has actually been
+ingested and inspected -- no fundamentals-based signal can be evaluated
+before that happens. The next concrete step is running
+`ingest_fundamentals_data.py` from the user's own network-capable
+environment against the 40-symbol universe and relaying the manifest
+back.

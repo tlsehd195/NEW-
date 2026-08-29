@@ -722,6 +722,32 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # -- Phase 33: Fundamentals Data (SEC EDGAR) -- ADR-0042. Low-volume,
+    # point-lookup/filter-heavy (one company's history is a few hundred
+    # rows at most, queried per security+concept), same criterion
+    # ADR-0010 section 1 already applied to Benchmark data -- a DuckDB
+    # table with explicit typed columns, not Parquet.
+    """
+    CREATE TABLE IF NOT EXISTS fundamental_records (
+        provenance_source_record_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        concept TEXT NOT NULL,
+        period_start TIMESTAMP,
+        period_end TIMESTAMP NOT NULL,
+        fiscal_year INTEGER NOT NULL,
+        fiscal_period TEXT NOT NULL,
+        form_type TEXT NOT NULL,
+        value DOUBLE NOT NULL,
+        unit TEXT NOT NULL,
+        available_time TIMESTAMP NOT NULL,
+        ingestion_time TIMESTAMP NOT NULL,
+        provenance_source TEXT NOT NULL,
+        provenance_source_dataset TEXT NOT NULL,
+        provenance_retrieved_at TIMESTAMP NOT NULL,
+        provenance_data_version TEXT NOT NULL,
+        provenance_schema_version INTEGER NOT NULL
+    )
+    """,
 )
 
 
