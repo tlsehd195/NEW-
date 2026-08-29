@@ -1250,20 +1250,55 @@ A re-run will include it automatically. `risk_controlled_momentum`'s
 -39.40% max drawdown against only a 3.99% total gain is the worst
 reward-to-pain ratio of the 4 -- OBSERVED, directly from the table.
 
-### K. Regime analysis -- UNKNOWN for the held-out TEST result specifically
+### K. Regime analysis -- OBSERVED for walk-forward TRAIN+VALIDATION; still UNKNOWN for the held-out TEST result itself
 
-The report's `regime_breakdown` field exists per-strategy but only
-for the walk-forward TRAIN+VALIDATION region (fold-based); the report
-schema does not attach a regime label to the single continuous
-held-out TEST backtest. `scripts/analyze_long_horizon_result.py`'s
-`regime_conditional_summary` can report TRAIN+VALIDATION fold
-performance by regime once the user runs it against the full report;
-this session was only relayed `buy_and_hold`'s walk-forward
-`regime_breakdown` fold *counts* (BEAR=16, BULL=54, NEUTRAL=6 folds)
-early in this conversation, not its regime-conditional *returns*, and
-not the other 3 strategies' breakdowns at all -- insufficient to
-answer "did this strategy only work in one regime" with anything
-better than UNKNOWN.
+Closed via `scripts/analyze_long_horizon_result.py`, run by the user
+against the real report and relayed into this session. Covers the
+walk-forward TRAIN+VALIDATION region only (76 folds, 2010..2023-04-28)
+-- the report schema still does not attach a regime label to the
+single continuous held-out TEST backtest itself, so "how did each
+strategy do in a BULL regime *during the TEST window*" remains
+UNKNOWN; what follows is regime-conditional performance from the
+*prior*, non-overlapping walk-forward period.
+
+| Strategy | BEAR win-rate / mean return (n=16) | BULL win-rate / mean return (n=54) | NEUTRAL win-rate / mean return (n=6) |
+|---|---|---|---|
+| buy_and_hold | 18.75% / -0.63% | 51.85% / 1.32% | 50.00% / 0.75% |
+| long_term_momentum | 37.50% / -1.22% | 55.56% / 2.69% | 100.00% / 3.84% |
+| risk_controlled_momentum | 37.50% / -0.86% | 55.56% / 1.92% | 100.00% / 3.44% |
+| trend_volatility | 37.50% / -0.95% | **68.52%** / 1.15% | 50.00% / 1.81% |
+
+OBSERVED: all 4 lose money on average in BEAR folds and make money on
+average in BULL folds -- unsurprising for long-only strategies, and not
+by itself informative about relative skill. `trend_volatility` has the
+best BULL win-rate of the 4 (68.52%, the only one clearing the report's
+own 60% fold-consistency bar overall) -- its trend/volatility filter is
+doing something real at the fold level.
+
+**INFERRED, and this is the most important new finding from this
+data**: `risk_controlled_momentum`'s walk-forward BULL fold mean return
+(1.92%) is *higher* than `trend_volatility`'s (1.15%) -- yet in the
+held-out TEST, a single continuous ~3.3-year bull run,
+`risk_controlled_momentum` returned only 3.99% net while
+`trend_volatility` returned 22.78%. This divergence is consistent with,
+and strengthens, the Section H HYPOTHESIS about *why*: each
+walk-forward BULL fold is an independent ~2-month window, almost
+certainly starting from fresh positions each time, so the "already-held
+positions are never topped up, capped weight excess sits in cash"
+pathology identified in `risk_controlled_momentum.py`'s code would
+barely show up in short, independent folds -- but compounds severely
+over one single continuous 3.3-year holding period where the same
+momentum leaders persist quarter after quarter. The short-fold
+walk-forward result and the long-continuous held-out result are
+measuring different things for this specific strategy, not
+contradicting each other.
+
+Also OBSERVED: `trend_volatility`'s better fold-level regime profile
+did NOT translate to the best held-out TEST result among the 4 (it
+ranked 3rd of 4 in absolute held-out return, behind `buy_and_hold` and
+`long_term_momentum`) -- its 3.13%-of-capital cost drag (Section I,
+246 trades from monthly rebalancing) ate most of the advantage its
+regime-conditional signal quality otherwise showed.
 
 ### L. Symbol / sector concentration -- UNKNOWN, blocked by data location (same reason as G)
 
