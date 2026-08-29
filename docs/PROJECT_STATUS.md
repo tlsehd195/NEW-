@@ -240,9 +240,19 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     변환, 40종목에 대해 어떤 concept을 실제로 가져올지 확정 — 전부
     실제 EDGAR 접근이 검증된 뒤로 미룸(ADR-0039와 동일한 "성급한
     스키마 설계 방지" 논리).
-- **다음 단계 (사용자의 네트워크 가능 환경에서 실행 필요)**:
-  ADR-0042에 curl 검증 명령 기록 — `data.sec.gov`가 실제로 도달
-  가능한지, 응답 형태 가정이 맞는지 확인 후 relay.
+- **실제 접근 검증 완료 (같은 세션 내, 사용자가 자신의 환경에서 실행)**:
+  사용자가 ADR-0042의 curl 명령을 자신의 네트워크 가능 환경에서 실제
+  실행 — `data.sec.gov`가 실제로 응답함(`{"cik":320193,"entityName":
+  "Apple Inc.","facts":{"dei":{...`). 이 프로젝트가 지금까지 어떤
+  프로바이더에 대해서도 얻어본 적 없는 첫 `VERIFIED_BY_ACTUAL_ACCESS`
+  결과(ADR-0025~0041은 전부 Tier 2 문서 또는 `ENVIRONMENT_BLOCKED`였음).
+  이 원격 세션 자체는 여전히 차단되어 있음 — `ENVIRONMENT_BLOCKED`는
+  이 컨테이너 고유의 egress allowlist 문제이지 SEC EDGAR 자체의
+  가용성 문제가 아님이 실측으로 확정됨. 최상위 응답 구조(`cik`/
+  `entityName`/`facts`→taxonomy→concept)는 확인됐지만, `us-gaap`
+  concept의 `units` 배열 안 필드명(`end`/`val`/`accn`/`fy`/`fp`/
+  `form`/`filed`)까지는 아직 미확인(처음 요청이 `head -c 500`에
+  잘려서). ADR-0042에 후속 확인 명령 추가 기록 — relay 대기 중.
 
 ### Completed (Session 33 — Phase 31 continued)
 

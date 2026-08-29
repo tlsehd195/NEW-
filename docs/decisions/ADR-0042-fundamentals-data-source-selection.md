@@ -86,6 +86,42 @@ requires no credential at all), not
 `PROVIDER_DOES_NOT_SUPPORT_FEATURE` (never reached), and not
 `USER_ACCOUNT_LIMITATION` (no account exists to be limited).
 
+**Update -- real access confirmed from the user's own environment,
+same-day.** The user ran the exact `curl` command in this ADR's own
+"Next step" section from their own machine (not this remote execution
+environment) and relayed the response back verbatim:
+
+```
+{"cik":320193,"entityName":"Apple Inc.","facts":{"dei":{"EntityCommonStockSharesOutstanding":{"label":"Entity Common Stock, Shares Outstanding","description":"...",...
+```
+
+This is the first `VERIFIED_BY_ACTUAL_ACCESS` result (not merely Tier
+2 documentation) this project has obtained for *any* market-data
+provider, price or fundamentals, across every prior phase (ADR-0025
+through ADR-0041 all recorded `ENVIRONMENT_BLOCKED`/Tier 2 only). Two
+things are now confirmed, not merely assumed:
+
+1. **`data.sec.gov` is reachable** -- from the user's environment,
+   not this session's. The `ENVIRONMENT_BLOCKED` finding above is
+   therefore precisely scoped: it describes this remote execution
+   container's own egress allowlist, never SEC EDGAR's actual
+   availability.
+2. **The top-level response shape matches this module's Tier 2
+   assumption** -- `cik`, `entityName`, `facts` -> taxonomy (`dei`
+   shown here; `us-gaap`, the taxonomy `sec_edgar.py` actually reads,
+   not yet confirmed at the field level -- see the follow-up request
+   below) -> concept -> `label`/`description`/`units`, exactly the
+   nesting `normalize_company_facts` was written against.
+
+Still unconfirmed: the exact field names inside one `units` entry
+(`end`/`start`/`val`/`accn`/`fy`/`fp`/`form`/`filed`) that
+`normalize_company_facts` actually parses -- the relayed snippet was
+truncated by `head -c 500` before reaching any `us-gaap` concept's
+`units` array. A follow-up fetch targeting a `us-gaap` concept
+directly (e.g. `Assets` or `Revenues`) is needed before this can be
+upgraded from "top-level shape confirmed" to "full parsing contract
+confirmed."
+
 ## Decision 3 -- Build the provider now against Tier 2 documentation, same pattern as `TiingoDataProvider`
 
 Rather than wait for network access that may never come from inside
@@ -136,21 +172,34 @@ New code, all additive:
   `Liabilities`, `StockholdersEquity`) is the obvious starting point
   but is not fixed here; left for whoever runs real ingestion.
 
-## Next step (requires the user's own network-capable environment)
+## Next step (requires the user's own network-capable environment) -- reachability done, entry-level shape still open
 
-Same pattern as every real-data step since Phase 23: the user runs
-ingestion from an environment where `data.sec.gov` is reachable and
-relays results back. Two things to verify first, cheaply, before any
-ingestion code runs:
+Reachability is now confirmed (see the Decision 2 addendum above).
+What remains, still cheap and still requiring the user's own
+environment (this session's own `data.sec.gov` access stays blocked
+regardless): confirm the exact field names inside a `us-gaap` concept's
+`units` array, since that is the part `normalize_company_facts`
+actually parses record-by-record and the truncated first fetch never
+reached it.
 
 ```
 curl -sS -A "research-project contact@example.com" \
-  "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json" | head -c 500
+  "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json" \
+  -o /tmp/aapl_facts.json
+python3 -c "
+import json
+d = json.load(open('/tmp/aapl_facts.json'))
+entry = d['facts']['us-gaap']['Assets']['units']['USD'][-1]
+print(json.dumps(entry, indent=2))
+"
 ```
 
-A `200` with a JSON body confirms reachability + the assumed response
-shape in one step (Apple's CIK, `0000320193`, chosen only because it
-is well-known and stable). Per SEC's fair-access policy, the
-`User-Agent` string must be a genuine descriptive contact -- the
-placeholder above must be replaced with a real one before any
-sustained use, matching `SecEdgarConfig.user_agent`'s own docstring.
+If that one entry has `end`, `val`, `accn`, `fy`, `fp`, `form`, and
+`filed` keys (with `start` present for a duration concept like
+`Revenues` but absent for an instant one like `Assets`, per XBRL's own
+distinction), `normalize_company_facts`'s parsing contract is fully
+confirmed against real data, not just its top-level shape. Per SEC's
+fair-access policy, the `User-Agent` string must be a genuine
+descriptive contact -- the placeholder above must be replaced with a
+real one before any sustained use, matching `SecEdgarConfig.
+user_agent`'s own docstring.
