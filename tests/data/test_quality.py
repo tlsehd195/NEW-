@@ -65,6 +65,57 @@ class TestOhlcInvariant:
         assert any(i.check == "negative_volume" for i in run.issues)
 
 
+class TestNonFiniteValueGuard:
+    """Added following a gs-quant comparison: gs-quant's pandas-based
+    timeseries functions inherit automatic NaN handling; this
+    project's stdlib arithmetic (backtest.metrics, strategy_research)
+    does not, and every other numeric check here (ohlc_consistency,
+    negative_or_zero_price) uses plain comparisons that silently
+    evaluate False against NaN -- a NaN close would previously pass
+    every other check undetected."""
+
+    def test_nan_close_is_flagged_critical(self) -> None:
+        bad = _bar(close=float("nan"))
+        run = DataQualityFramework().run([bad], dataset="test", data_version="v1")
+        issues = [i for i in run.issues if i.check == "non_finite_value"]
+        assert len(issues) == 1
+        assert issues[0].severity == DataQualitySeverity.CRITICAL
+        assert run.status == DataQualityRunStatus.CRITICAL_FAILURE
+
+    def test_nan_close_previously_slipped_past_every_other_numeric_check(self) -> None:
+        # Regression guard for exactly the gap this check closes: a NaN
+        # close does NOT trip ohlc_consistency or negative_or_zero_price
+        # (both use plain comparisons, which are always False against
+        # NaN) -- only the new check catches it.
+        bad = _bar(close=float("nan"))
+        run = DataQualityFramework().run([bad], dataset="test", data_version="v1")
+        assert not any(i.check == "ohlc_consistency" for i in run.issues)
+        assert not any(i.check == "negative_or_zero_price" for i in run.issues)
+        assert any(i.check == "non_finite_value" for i in run.issues)
+
+    def test_infinite_volume_is_flagged(self) -> None:
+        bad = _bar(volume=float("inf"))
+        run = DataQualityFramework().run([bad], dataset="test", data_version="v1")
+        issues = [i for i in run.issues if i.check == "non_finite_value"]
+        assert len(issues) == 1
+        assert "volume" in issues[0].message
+
+    def test_nan_adjusted_close_is_flagged(self) -> None:
+        bad = _bar(adjusted_close=float("nan"))
+        run = DataQualityFramework().run([bad], dataset="test", data_version="v1")
+        assert any(i.check == "non_finite_value" for i in run.issues)
+
+    def test_missing_optional_adjusted_close_is_not_flagged(self) -> None:
+        ok = _bar()  # adjusted_close defaults to None -- must not be treated as non-finite
+        run = DataQualityFramework().run([ok], dataset="test", data_version="v1")
+        assert not any(i.check == "non_finite_value" for i in run.issues)
+
+    def test_all_finite_values_produce_no_issue(self) -> None:
+        run = DataQualityFramework().run([_bar()], dataset="test", data_version="v1")
+        assert not any(i.check == "non_finite_value" for i in run.issues)
+        assert run.status == DataQualityRunStatus.PASSED
+
+
 class TestDuplicateDetection:
     def test_no_duplicates_among_distinct_bars(self) -> None:
         bars = [_bar(day=2), _bar(day=3)]

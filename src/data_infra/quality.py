@@ -11,6 +11,7 @@ section 3.1 error states).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable, Optional, Sequence
@@ -61,6 +62,7 @@ _CHECK_NAMES = (
     "invalid_timestamps",
     "duplicate_records",
     "timestamp_monotonicity",
+    "non_finite_value",
     "ohlc_consistency",
     "negative_or_zero_price",
     "negative_volume",
@@ -150,6 +152,7 @@ class DataQualityFramework:
         issues: list[DataQualityIssue] = []
         issues.extend(self._check_duplicates(bars))
         issues.extend(self._check_timestamp_monotonicity(bars))
+        issues.extend(self._check_non_finite_values(bars))
         issues.extend(self._check_ohlc_consistency(bars))
         issues.extend(self._check_negative_or_zero_price(bars))
         issues.extend(self._check_negative_volume(bars))
@@ -238,6 +241,48 @@ class DataQualityFramework:
                 )
             if last is None or bar.timestamp > last:
                 last_by_security[bar.security_id] = bar.timestamp
+        return issues
+
+    @staticmethod
+    def _check_non_finite_values(bars: Sequence[PriceBar]) -> list[DataQualityIssue]:
+        """NaN/+-Infinity guard. Found comparing against gs-quant's
+        pandas-based `timeseries` module, whose `mean`/`std`/`volatility`
+        all inherit pandas' automatic NaN propagation/exclusion
+        semantics -- this project's own stdlib arithmetic
+        (`backtest.metrics`, every `strategy_research` candidate) has
+        no equivalent, and every OTHER numeric check in this framework
+        (`negative_or_zero_price`, `ohlc_consistency`,
+        `impossible_price_movement`) uses plain comparison operators
+        that silently evaluate to `False` against a NaN (e.g. `float(
+        "nan") <= 0` is `False`, `min()` over a list containing NaN
+        does not reliably surface it either) -- a NaN or +-Infinity in
+        any price/volume field would previously pass every other check
+        here undetected and then propagate silently through every
+        downstream computation (portfolio value, Sharpe, momentum
+        score, ...) without ever raising. CRITICAL (not ERROR, unlike
+        `negative_or_zero_price`) since a non-finite value is data
+        corruption at the source, not a plausible-but-wrong reading."""
+        issues: list[DataQualityIssue] = []
+        for bar in bars:
+            fields = {
+                "open": bar.open, "high": bar.high, "low": bar.low,
+                "close": bar.close, "volume": bar.volume,
+            }
+            if bar.adjusted_close is not None:
+                fields["adjusted_close"] = bar.adjusted_close
+            if bar.vwap is not None:
+                fields["vwap"] = bar.vwap
+            bad = {name: value for name, value in fields.items() if not math.isfinite(value)}
+            if bad:
+                issues.append(
+                    DataQualityIssue(
+                        check="non_finite_value",
+                        severity=DataQualitySeverity.CRITICAL,
+                        message=f"Non-finite (NaN/Infinity) field(s): {bad}",
+                        security_id=bar.security_id,
+                        timestamp=bar.timestamp,
+                    )
+                )
         return issues
 
     @staticmethod

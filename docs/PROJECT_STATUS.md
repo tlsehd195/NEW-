@@ -118,6 +118,18 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   기존 synthetic IC 테스트 1개의 기대값이 정당하게 변경됨(0.5 →
   -1/6, 여전히 부분적 IC — 회귀 아님, 주석으로 설명). 신규 테스트
   5개(`trim_to_lookback` 자체) 포함 전체 1828개 통과.
+- **보류했던 gs-quant 발견사항 2건 중 나머지 1건도 재검증 후 적용 —
+  NaN/Infinity 데이터 품질 가드 추가**
+  (`docs/decisions/ADR-0040-non-finite-value-data-quality-check.md`):
+  compaction 이전 기억이 불확실해서 지난번엔 억지로 적용 안 하고
+  건너뛰었던 항목 — 이번에 gs-quant의 pandas 기반 `timeseries`(자동
+  NaN 전파/제외)와 다시 비교해서 처음부터 재검증. 실제 갭 확인:
+  `DataQualityFramework`의 기존 숫자 체크(`negative_or_zero_price`,
+  `ohlc_consistency`, `impossible_price_movement`)가 전부 단순 비교
+  연산자를 쓰는데, NaN과 비교하면 항상 `False`가 나와서 NaN이 조용히
+  전부 통과됨(회귀 테스트로 직접 증명). `_check_non_finite_values`
+  신규 추가(CRITICAL 등급), 데이터 품질 경계에서만 작동 — 전략/파라미터
+  전혀 안 건드림. 신규 테스트 6개 포함 전체 1834개 통과.
 - **포트폴리오 최적화 라이브러리 도입 보류 결정**
   (`docs/decisions/ADR-0039-defer-portfolio-optimization-library.md`):
   40종목 결과(4개 전략 전부 CANDIDATE 미달 + held-out TEST에서 SPY
