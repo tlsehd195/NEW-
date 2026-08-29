@@ -428,6 +428,11 @@ def performance_report_to_dict(report: PerformanceReport) -> dict:
         "max_drawdown_duration_days": report.max_drawdown_duration_days,
         "max_drawdown_recovery_days": report.max_drawdown_recovery_days,
         "max_drawdown_still_underwater": report.max_drawdown_still_underwater,
+        "ulcer_index": report.ulcer_index,
+        "value_at_risk_95": report.value_at_risk_95,
+        "conditional_value_at_risk_95": report.conditional_value_at_risk_95,
+        "max_consecutive_wins": report.max_consecutive_wins,
+        "max_consecutive_losses": report.max_consecutive_losses,
     }
 
 

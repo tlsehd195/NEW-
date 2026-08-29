@@ -13,11 +13,15 @@ from backtest.metrics import (
     annualized_volatility,
     cagr,
     calmar_ratio,
+    compute_consecutive_streaks,
     compute_drawdown_episodes,
     compute_max_drawdown,
     compute_returns,
+    conditional_value_at_risk,
     sharpe_ratio,
     sortino_ratio,
+    ulcer_index,
+    value_at_risk,
     worst_drawdown_episode,
 )
 
@@ -147,3 +151,91 @@ class TestDrawdownEpisodes:
     def test_mismatched_lengths_raise(self) -> None:
         with pytest.raises(ValueError):
             compute_drawdown_episodes([100, 90], [utc(2020, 1, 1)])
+
+
+class TestUlcerIndex:
+    """Added following a quantstats/empyrical comparison: depth+duration
+    of every drawdown compressed into one number, distinct from
+    max_drawdown (worst point only) and from the episode duration
+    fields (which only describe the single worst episode)."""
+
+    def test_known_series_matches_hand_computation(self) -> None:
+        # Same series as TestMaxDrawdown's known -0.25 case.
+        values = [100, 110, 120, 90, 95, 130]
+        assert ulcer_index(values) == pytest.approx(0.13285504492853467)
+
+    def test_monotonically_increasing_series_has_zero_ulcer_index(self) -> None:
+        assert ulcer_index([100, 105, 110, 120]) == 0.0
+
+    def test_empty_series_has_zero_ulcer_index(self) -> None:
+        assert ulcer_index([]) == 0.0
+
+    def test_deep_brief_and_shallow_long_drawdowns_can_have_similar_index(self) -> None:
+        # A single deep dip vs. a shallow-but-sustained dip -- Ulcer
+        # Index reflects both depth and duration, unlike max_drawdown
+        # (which would rank these very differently: -0.20 vs -0.05).
+        deep_brief = [100, 80, 100, 100, 100, 100]
+        shallow_long = [100, 95, 95, 95, 95, 100]
+        assert compute_max_drawdown(deep_brief) == pytest.approx(-0.20)
+        assert compute_max_drawdown(shallow_long) == pytest.approx(-0.05)
+        # Not asserting equality (they aren't identical) -- just that
+        # duration meaningfully offsets depth, unlike max_drawdown alone.
+        assert ulcer_index(shallow_long) > 0.0
+
+
+class TestValueAtRisk:
+    """Historical (non-parametric) VaR/CVaR -- percentile of the
+    observed return distribution, following empyrical's convention
+    (no normal-distribution assumption, unlike quantstats' parametric
+    version)."""
+
+    def test_known_evenly_spaced_returns_matches_hand_computation(self) -> None:
+        # 11 evenly spaced returns from -0.05 to 0.05; at 90% confidence
+        # (cutoff=0.10), idx = 0.10 * 10 = 1.0 exactly -> sorted[1] = -0.04.
+        returns = [round(-0.05 + 0.01 * i, 2) for i in range(11)]
+        assert value_at_risk(returns, confidence=0.90) == pytest.approx(-0.04)
+
+    def test_cvar_is_mean_of_tail_at_or_below_var(self) -> None:
+        returns = [round(-0.05 + 0.01 * i, 2) for i in range(11)]
+        # VaR(90%) = -0.04 -> tail = [-0.05, -0.04] -> mean = -0.045
+        assert conditional_value_at_risk(returns, confidence=0.90) == pytest.approx(-0.045)
+
+    def test_empty_returns_gives_none_not_zero(self) -> None:
+        assert value_at_risk([]) is None
+        assert conditional_value_at_risk([]) is None
+
+    def test_cvar_is_never_less_extreme_than_var(self) -> None:
+        # The tail mean must be at or beyond the VaR threshold itself.
+        returns = [0.05, 0.03, 0.01, -0.01, -0.02, -0.10]
+        var = value_at_risk(returns, confidence=0.80)
+        cvar = conditional_value_at_risk(returns, confidence=0.80)
+        assert cvar <= var
+
+
+class _StubClosedTrade:
+    def __init__(self, realized_pnl: float) -> None:
+        self.realized_pnl = realized_pnl
+
+
+class TestConsecutiveStreaks:
+    def test_no_trades_gives_zero_zero(self) -> None:
+        assert compute_consecutive_streaks([]) == (0, 0)
+
+    def test_all_wins_gives_full_win_streak(self) -> None:
+        trades = [_StubClosedTrade(10.0) for _ in range(4)]
+        assert compute_consecutive_streaks(trades) == (4, 0)
+
+    def test_alternating_wins_and_losses_gives_streak_of_one(self) -> None:
+        trades = [_StubClosedTrade(pnl) for pnl in (10.0, -5.0, 8.0, -3.0)]
+        assert compute_consecutive_streaks(trades) == (1, 1)
+
+    def test_longest_streak_in_the_middle_is_found(self) -> None:
+        # win, loss, loss, loss, win, win -- longest loss streak is 3.
+        trades = [_StubClosedTrade(pnl) for pnl in (5.0, -1.0, -2.0, -3.0, 4.0, 6.0)]
+        assert compute_consecutive_streaks(trades) == (2, 3)
+
+    def test_zero_pnl_trade_counts_as_a_loss_not_a_win(self) -> None:
+        # win_rate elsewhere treats realized_pnl > 0 as the win
+        # condition -- streaks must use the identical threshold.
+        trades = [_StubClosedTrade(10.0), _StubClosedTrade(0.0)]
+        assert compute_consecutive_streaks(trades) == (1, 1)

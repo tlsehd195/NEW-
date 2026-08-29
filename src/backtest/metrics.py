@@ -83,6 +83,92 @@ def calmar_ratio(cagr_value: float, max_drawdown: float) -> float:
     return cagr_value / abs(max_drawdown)
 
 
+def ulcer_index(values: Sequence[float]) -> float:
+    """Root-mean-square of the drawdown-from-running-peak series, in the
+    same (<=0) sign convention as `compute_max_drawdown`'s per-point
+    drawdown. Unlike `compute_max_drawdown` (worst single point only),
+    this reflects both DEPTH and DURATION of every drawdown in one
+    number: a shallow-but-long drawdown and a deep-but-brief one can
+    produce a similar Ulcer Index even though `compute_max_drawdown`
+    would rank them very differently -- a genuinely different question
+    from what depth-only or the episode-duration fields above answer.
+
+    Follows the same convention as `compute_max_drawdown` for the
+    degenerate case: an empty or peak-less series returns 0.0 (not
+    None) since "no drawdown observed" is a real, honest answer here,
+    not an undefined one."""
+    peak = float("-inf")
+    squared_drawdowns = []
+    for v in values:
+        if v > peak:
+            peak = v
+        if peak > 0:
+            squared_drawdowns.append(((v - peak) / peak) ** 2)
+    if not squared_drawdowns:
+        return 0.0
+    return (sum(squared_drawdowns) / len(squared_drawdowns)) ** 0.5
+
+
+def _percentile(sorted_values: Sequence[float], q: float) -> float:
+    """Linear-interpolation percentile on an already-sorted sequence,
+    matching `numpy.percentile`'s default interpolation. `q` in [0, 1]."""
+    n = len(sorted_values)
+    if n == 1:
+        return sorted_values[0]
+    idx = q * (n - 1)
+    lower = int(idx)
+    upper = min(lower + 1, n - 1)
+    frac = idx - lower
+    return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * frac
+
+
+def value_at_risk(returns: Sequence[float], confidence: float = 0.95) -> Optional[float]:
+    """Historical (non-parametric) VaR: the `1 - confidence` percentile
+    of the observed return distribution, with no assumption that
+    returns are normally distributed. `None` (not 0.0) when `returns`
+    is empty -- a VaR of 0 would falsely read as "no risk observed"
+    rather than "not computable"."""
+    if not returns:
+        return None
+    return _percentile(sorted(returns), 1.0 - confidence)
+
+
+def conditional_value_at_risk(returns: Sequence[float], confidence: float = 0.95) -> Optional[float]:
+    """Expected Shortfall: mean return among observations at or below
+    the VaR threshold -- "given a bad day happens, how bad on
+    average". `None` when `returns` is empty, for the same reason as
+    `value_at_risk`."""
+    if not returns:
+        return None
+    var = value_at_risk(returns, confidence)
+    tail = [r for r in returns if r <= var]
+    if not tail:
+        return var
+    return sum(tail) / len(tail)
+
+
+def compute_consecutive_streaks(closed_trades: Sequence["object"]) -> tuple[int, int]:
+    """Longest consecutive-winning-trade and consecutive-losing-trade
+    streaks, in the closed_trades' existing chronological order (same
+    trade-level win/loss definition `win_rate` already uses --
+    `realized_pnl > 0` counts as a win, `<= 0` as a loss). Returns
+    `(0, 0)` for no trades -- an honest, non-fabricated answer since a
+    zero-trade run genuinely has zero-length streaks in either
+    direction, not an undefined ratio."""
+    max_wins = current_wins = 0
+    max_losses = current_losses = 0
+    for trade in closed_trades:
+        if trade.realized_pnl > 0:
+            current_wins += 1
+            current_losses = 0
+        else:
+            current_losses += 1
+            current_wins = 0
+        max_wins = max(max_wins, current_wins)
+        max_losses = max(max_losses, current_losses)
+    return max_wins, max_losses
+
+
 @dataclass(frozen=True)
 class DrawdownEpisode:
     """One peak-to-trough-to-recovery episode. `depth` follows
@@ -196,6 +282,18 @@ class PerformanceReport:
     max_drawdown_duration_days: Optional[int] = None
     max_drawdown_recovery_days: Optional[int] = None
     max_drawdown_still_underwater: bool = False
+    # Added following a quantstats/empyrical comparison: depth+duration
+    # combined into one number (Ulcer Index), and tail-risk metrics
+    # (historical VaR/CVaR) plus trade-streak metrics that
+    # cumulative-return/Sharpe/Calmar alone don't surface. Same
+    # additive-with-defaults pattern as the drawdown-duration fields
+    # above -- every pre-existing construction site keeps working
+    # unmodified.
+    ulcer_index: float = 0.0
+    value_at_risk_95: Optional[float] = None
+    conditional_value_at_risk_95: Optional[float] = None
+    max_consecutive_wins: int = 0
+    max_consecutive_losses: int = 0
 
 
 def compute_performance_report(
@@ -219,6 +317,9 @@ def compute_performance_report(
         dd_duration_days = None
         dd_recovery_days = None
         dd_still_underwater = False
+        ulcer = 0.0
+        var_95 = None
+        cvar_95 = None
     else:
         returns = compute_returns(values)
         cumulative = values[-1] / values[0] - 1.0 if values[0] != 0 else 0.0
@@ -228,6 +329,9 @@ def compute_performance_report(
         sortino = sortino_ratio(returns, risk_free_rate, periods_per_year)
         max_dd = compute_max_drawdown(values)
         calmar = calmar_ratio(cagr_value, max_dd)
+        ulcer = ulcer_index(values)
+        var_95 = value_at_risk(returns, confidence=0.95)
+        cvar_95 = conditional_value_at_risk(returns, confidence=0.95)
 
         timestamps = [p.as_of_time for p in series]
         worst = worst_drawdown_episode(compute_drawdown_episodes(values, timestamps))
@@ -248,6 +352,7 @@ def compute_performance_report(
         if closed_trades
         else 0.0
     )
+    max_wins, max_losses = compute_consecutive_streaks(closed_trades)
 
     if benchmark is not None:
         benchmark_cumulative = benchmark.cumulative_return
@@ -270,6 +375,11 @@ def compute_performance_report(
         max_drawdown_duration_days=dd_duration_days,
         max_drawdown_recovery_days=dd_recovery_days,
         max_drawdown_still_underwater=dd_still_underwater,
+        ulcer_index=ulcer,
+        value_at_risk_95=var_95,
+        conditional_value_at_risk_95=cvar_95,
+        max_consecutive_wins=max_wins,
+        max_consecutive_losses=max_losses,
         turnover=portfolio.turnover(),
         total_transaction_cost=portfolio.transaction_costs,
         win_rate=win_rate,
