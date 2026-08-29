@@ -1029,3 +1029,121 @@ hypothesis (e.g. the broader/less survivorship-biased universe
 `docs/decisions/ADR-0034-real-data-acquisition-strategy.md` already
 identified as the actual next requirement), decided before seeing its
 own result, not after.
+
+## 40-Symbol (RESEARCH_UNIVERSE Stage 2) Re-Validation
+
+Per `docs/decisions/ADR-0036-research-universe-stage2-expansion.md`,
+the universe was widened from `PILOT_UNIVERSE_V1` (16 symbols, mostly
+mega-cap tech/growth) to `RESEARCH_UNIVERSE_STAGE2` (40 symbols,
+sector-balanced) specifically to test whether the 16-symbol PBO=62.86%
+finding above was a concentration-risk artifact rather than evidence
+about the strategies themselves -- decided and documented *before* this
+result existed, per RULE 0.8. The user re-ran
+`scripts/run_long_horizon_validation.py --universe RESEARCH_UNIVERSE
+--data-status REAL` (same 4 strategies, same 2010-01-01..2026-08-27
+window, same 76-fold walk-forward config) in their own
+network-enabled environment, then
+`scripts/compute_pbo_dsr_from_report.py` against the resulting report,
+relayed into this session and recorded here rather than fabricated:
+
+```
+PBO (Probability of Backtest Overfitting): 0.00% across 70 CSCV splits (4 candidates, 8 groups)
+CANDIDATE requires PBO < 50% and Deflated Sharpe Ratio >= 95%
+
+buy_and_hold: evidence=ROBUSTNESS_PENDING (45% positive folds, below the 60% fold-consistency bar)
+long_term_momentum: evidence=ROBUSTNESS_PENDING (55% positive folds, below the 60% fold-consistency bar)
+risk_controlled_momentum: evidence=ROBUSTNESS_PENDING (55% positive folds, below the 60% fold-consistency bar)
+trend_volatility: evidence=ROBUSTNESS_PENDING -- 61% of 76 real folds positive (clears the
+  fold-consistency bar), but Deflated Sharpe=0.93 (must be >= 0.95, FAILED); PBO=0.00 (passed).
+```
+
+**Still no strategy reaches CANDIDATE**, but the failure mode changed
+in an important way: PBO across all 4 candidates dropped from 62.86%
+(16-symbol) to 0.00% (40-symbol) -- the specific "picked the best of
+several noisy trials" concern PBO exists to catch is essentially gone
+at this breadth. `trend_volatility` is now blocked by DSR alone (0.93
+vs the 0.95 bar), the closest any candidate has come to CANDIDATE in
+this project's history. Per RULE 0.8, 0.93 is still a miss against a
+bar fixed before this result -- it is reported as a miss, not rounded
+up.
+
+### Held-out TEST vs benchmark: PBO improving is not the same as being investable
+
+The held-out TEST period this split produces is 2023-04-28..2026-08-27
+(`chronological_split` in the report, ~3.3 years) -- a strong SPY bull
+run (benchmark cumulative return **93.1%** net, CAGR ~21.8%). Against
+that same window, net performance:
+
+| Strategy | Net cumulative return | Net CAGR | Excess vs. SPY |
+|---|---|---|---|
+| SPY (`SPY_TOTAL_RETURN_REAL`) | 93.1% | 21.8% | -- |
+| buy_and_hold | 40.4% | 10.7% | -52.7pp |
+| long_term_momentum | 30.7% | 8.4% | -62.4pp |
+| trend_volatility | 22.8% | 6.4% | -70.3pp |
+| risk_controlled_momentum | 4.0% | 1.2% | -89.1pp |
+
+**All 4 strategies substantially underperformed simply holding SPY
+over this specific held-out window.** This is the honest, necessary
+correction to reading the PBO improvement above as good news on its
+own: a low PBO says a strategy's cross-validated Sharpe is probably not
+an artifact of trying multiple candidates -- it says nothing about
+whether that Sharpe is *large enough* to be worth trading over a passive
+benchmark. Passing (or nearly passing) the PBO/DSR bar is a necessary
+condition for calling a signal real, never a sufficient one for calling
+it investable; this table is the concrete evidence that those are
+different questions, not a restatement of the same one.
+
+### Root-cause read on `risk_controlled_momentum`'s outsized underperformance
+
+`risk_controlled_momentum` (4.0% net) did far worse than
+`long_term_momentum` (30.7% net) despite using the *identical* momentum
+score (`_momentum_score` in both `risk_controlled_momentum.py` and
+`long_term_momentum.py` -- same lookback, same ranking) and the same
+`top_n=5`. Reading both strategies' `generate_orders`
+side by side identifies two structural, code-verifiable mechanisms,
+neither of which is present in `long_term_momentum`:
+
+1. **Inverse-volatility weights are normalized across all `top_n`
+   ranked names, but only *newly-entering* names (`quantity_of(sid) ==
+   0`) are ever bought** (`risk_controlled_momentum.py` lines
+   140-159). When a momentum leader stays in the top 5 across several
+   consecutive rebalances -- exactly what happens in a persistent,
+   narrow, mega-cap-led rally like 2023-2026 -- its normalized weight
+   share is "claimed" by an already-held position that is never
+   topped up, so each rebalance deploys new capital against only a
+   shrinking, already-small newly-entering share of the target
+   weights.
+2. **Weight above the 20% `max_position_weight` cap is left as
+   uninvested cash, never redistributed** to other selected names
+   (explicitly by design, per the module's own comment at line
+   150-153). `long_term_momentum`, by contrast, has no such cap and
+   deploys ~98% of available cash into whatever names it buys at each
+   rebalance (`per_symbol_cash = portfolio.cash * 0.98 / len(to_buy)`)
+   -- it never leaves capital structurally idle.
+
+Both mechanisms bias toward holding cash specifically during the kind
+of long, concentrated, single-theme rally this TEST window happens to
+be, which plausibly explains most of the 30.7%-vs-4.0% gap between two
+strategies sharing the same underlying signal.
+
+**This is a diagnosis, not a fix.** Per RULE 0.8 and this project's
+train/validation/TEST discipline, `risk_controlled_momentum`'s logic
+must not be modified and re-evaluated against this same 2023-2026 TEST
+window -- doing so would be post-hoc tuning against the held-out set
+itself, a worse violation than tuning against train/validation. Any
+future redesign of this strategy's position-sizing/cap-redistribution
+logic is a new hypothesis requiring a new, not-yet-observed evaluation
+window, decided on its own merits rather than as a reaction to this
+result.
+
+### Status after this addendum
+
+`REAL_VALIDATION_NOT_COMPLETED` remains the correct classification for
+all 4 strategies. This addendum does not change that conclusion; it
+sharpens it -- the concentration-risk explanation for the 16-symbol
+PBO finding is now largely ruled out (PBO here is 0.00%), and the
+project's own held-out discipline surfaced a second, independent
+reason none of these 4 candidates should be traded with real capital
+yet: none, including `trend_volatility` (the closest to CANDIDATE),
+comes close to matching a passive SPY position over the one out-of-
+sample window this project has ever evaluated them against.

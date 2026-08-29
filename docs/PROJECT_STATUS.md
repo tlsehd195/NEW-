@@ -4,8 +4,8 @@
 > 진행되었는지 파악할 수 있어야 한다. 이 파일은 각 세션 종료 시 반드시
 > 최신 상태로 갱신한다.
 
-**Last Updated:** 2026-08-28
-**Updated By:** Claude Code (Session 32 — Phase 31 Real Data Acquisition / Historical Universe Data Source Audit)
+**Last Updated:** 2026-08-29
+**Updated By:** Claude Code (Session 33 — Phase 31 continued: 40-symbol real re-validation result, additive diagnostics, storage performance fix)
 
 ---
 
@@ -62,6 +62,45 @@ VERIFIED_BY_DOCUMENTATION/VERIFIED_BY_ACTUAL_ACCESS/UNKNOWN/
 NOT_AVAILABLE/ENVIRONMENT_BLOCKED 어휘로 provider matrix 재작성 +
 decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)을
 명시적으로 선택.
+
+### Completed (Session 33 — Phase 31 continued)
+
+- **40종목(RESEARCH_UNIVERSE_STAGE2) 실 재검증 결과 수신·기록**: 사용자가
+  자신의 네트워크 가능 환경에서 `run_long_horizon_validation.py
+  --universe RESEARCH_UNIVERSE --data-status REAL`(2010-01-01~
+  2026-08-27, 4개 전략 x 76 fold)와 `compute_pbo_dsr_from_report.py`를
+  실행해 relay — 상세는
+  `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "40-Symbol
+  (RESEARCH_UNIVERSE Stage 2) Re-Validation" 절 참조. 핵심: PBO가
+  16종목 62.86% → 40종목 0.00%로 급락(집중도 리스크 가설이 옳았음을
+  시사), 그래도 4개 전략 전부 여전히 CANDIDATE 미달
+  (`trend_volatility`가 DSR 0.93로 0.95 기준에 가장 근접). **새 발견**:
+  held-out TEST(2023-04-28~2026-08-27, SPY +93.1%) 구간에서 4개 전략
+  전부 SPY 단순 보유보다 큰 폭으로 저조(`risk_controlled_momentum`은
+  net CAGR 1.2%에 불과) — PBO/DSR 통과가 "우연이 아니다"는 뜻이지
+  "투자할 가치가 있다"는 뜻이 아님을 실측으로 확인. 코드 비교로
+  `risk_controlled_momentum`의 구조적 원인(포지션 상한 초과분 미재분배
+  + 신규 종목만 매수해 이미 보유 중인 momentum 리더에 추가 투입 안 함)도
+  진단·기록 — RULE 0.8에 따라 이 TEST 구간에 대해서는 로직을 고치지
+  않고 진단만 기록함(같은 held-out 구간에 대한 사후 수정은 금지).
+- **가산적 진단 지표 4종 추가** (전략 로직 미변경, stdlib만 사용):
+  낙폭 지속기간/회복일수(`backtest.metrics.compute_drawdown_episodes`),
+  신호 예측력 rank IC(`strategy_research.signal_ic`), 종목별 손익
+  집중도/HHI(`backtest.contribution`), Ulcer Index·역사적
+  VaR/CVaR·연속 승/패 스트릭(`backtest.metrics`) — quantstats/
+  empyrical/mlfinlab 실제 코드를 clone해 비교 검증(mlfinlab은 상업
+  라이선스라 미사용, quantstats의 PSR 공식에서 첨도 처리 버그 발견 →
+  오히려 이 프로젝트 자체 구현이 맞다는 것을 재확인).
+- **`DuckDBDataRepository` 성능 수정**: `get_bars`/`get_corporate_actions`가
+  체크포인트 x 종목마다 매번 parquet 디렉토리 전체를 다시 글롭·쿼리하던
+  구조적 비효율을 발견(40종목 walk-forward가 4시간 넘게 걸린 주 원인으로
+  추정) — 종목별 전체 데이터를 인스턴스당 1회만 로드해 메모리에 캐시하고
+  이후 호출은 Python에서 `as_of_time`/날짜 필터만 재적용하는 방식으로
+  변경. Point-in-time 정확성은 캐시가 "필터링 전 원본"만 보관하고
+  필터는 매 호출 그대로 재적용하므로 100% 보존. `append_bars`/
+  `add_corporate_action`에서 해당 종목 캐시를 무효화해 stale read 방지.
+  신규 회귀 테스트 3개(쓰기 후 캐시 무효화, 종목별 캐시 격리) 포함 전체
+  1823개 테스트 통과.
 
 ### Completed (Session 32 — Phase 31)
 
