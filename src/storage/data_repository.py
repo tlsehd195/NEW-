@@ -19,6 +19,7 @@ see the ``AppendableDataRepository`` Protocol in data_infra.repository).
 
 from __future__ import annotations
 
+import bisect
 import json
 from datetime import datetime
 from pathlib import Path
@@ -77,27 +78,55 @@ class DuckDBDataRepository:
         self._price_bars_dir = engine.config.parquet_dir / "price_bars"
         self._raw_market_data_dir = engine.config.parquet_dir / "raw_market_data"
         self._next_raw_batch_id = 1
+        # Per-security in-memory cache of this instance's own reads, keyed
+        # by security_id, each held sorted by timestamp -- populated
+        # lazily by _bars_for_security/_corporate_actions_for_security on
+        # first access. get_bars/get_corporate_actions were previously
+        # re-querying the full Parquet/DuckDB dataset (including a
+        # directory glob) on every single call; a walk-forward run calls
+        # them per security per checkpoint, so this cache is the
+        # difference between one query per security for a whole run and
+        # one query per security per DAY. Caching the raw, UNFILTERED
+        # per-security series and re-applying the as_of_time/date-range
+        # filter in Python on every call (never caching a filtered view)
+        # keeps point-in-time correctness identical to the un-cached
+        # version -- see the as_of_time filtering in _bars_for_security's
+        # callers below. Invalidated per-security in append_bars/
+        # add_corporate_action so a write is never served stale.
+        self._bars_cache: dict[str, list[PriceBar]] = {}
+        self._corporate_actions_cache: dict[str, list[CorporateAction]] = {}
 
     # -- DataRepository Protocol --------------------------------------
+
+    def _bars_for_security(self, security_id: str) -> list[PriceBar]:
+        """Every bar ever ingested for `security_id`, unfiltered, sorted
+        by timestamp, loaded from Parquet once per instance and cached
+        (see `self._bars_cache` in `__init__`)."""
+        cached = self._bars_cache.get(security_id)
+        if cached is not None:
+            return cached
+        files = existing_files(self._price_bars_dir)
+        if not files:
+            bars: list[PriceBar] = []
+        else:
+            sql = (
+                f"SELECT * FROM read_parquet('{glob_pattern(self._price_bars_dir)}') "
+                "WHERE security_id = ? ORDER BY timestamp"
+            )
+            cur = self._engine.connection.execute(sql, [security_id])
+            bars = [row_to_price_bar(r) for r in _rows(cur)]
+        self._bars_cache[security_id] = bars
+        return bars
 
     def get_bars(
         self, security_id: str, start: datetime, end: datetime, as_of_time: datetime
     ) -> list[PriceBar]:
         for name, value in (("start", start), ("end", end), ("as_of_time", as_of_time)):
             _require_aware(name, value)
-        files = existing_files(self._price_bars_dir)
-        if not files:
-            return []
-        sql = (
-            f"SELECT * FROM read_parquet('{glob_pattern(self._price_bars_dir)}') "
-            "WHERE security_id = ? AND timestamp >= ? AND timestamp <= ? "
-            "AND available_time <= ? ORDER BY timestamp"
-        )
-        cur = self._engine.connection.execute(
-            sql,
-            [security_id, to_utc_naive(start), to_utc_naive(end), to_utc_naive(as_of_time)],
-        )
-        return [row_to_price_bar(r) for r in _rows(cur)]
+        bars = self._bars_for_security(security_id)
+        lo = bisect.bisect_left(bars, start, key=lambda b: b.timestamp)
+        hi = bisect.bisect_right(bars, end, key=lambda b: b.timestamp)
+        return [b for b in bars[lo:hi] if b.available_time <= as_of_time]
 
     def get_security(self, security_id: str, as_of_time: datetime) -> Optional[SecurityMaster]:
         _require_aware("as_of_time", as_of_time)
@@ -110,23 +139,37 @@ class DuckDBDataRepository:
         rows = _rows(cur)
         return row_to_security_master(rows[0]) if rows else None
 
+    def _corporate_actions_for_security(self, security_id: str) -> list[CorporateAction]:
+        """Every corporate action ever ingested for `security_id`,
+        unfiltered, sorted the same way `get_corporate_actions`'s
+        previous per-call SQL ordered its result (by
+        COALESCE(effective_time, event_time), falling back to
+        available_time), loaded from DuckDB once per instance and
+        cached (see `self._corporate_actions_cache` in `__init__`)."""
+        cached = self._corporate_actions_cache.get(security_id)
+        if cached is not None:
+            return cached
+        sql = "SELECT * FROM corporate_actions WHERE security_id = ?"
+        cur = self._engine.connection.execute(sql, [security_id])
+        actions = [row_to_corporate_action(r) for r in _rows(cur)]
+        actions.sort(key=lambda a: a.effective_time or a.event_time or a.available_time)
+        self._corporate_actions_cache[security_id] = actions
+        return actions
+
     def get_corporate_actions(
         self, security_id: str, start: datetime, end: datetime, as_of_time: datetime
     ) -> list[CorporateAction]:
         for name, value in (("start", start), ("end", end), ("as_of_time", as_of_time)):
             _require_aware(name, value)
-        sql = (
-            "SELECT *, COALESCE(effective_time, event_time) AS reference_time FROM corporate_actions "
-            "WHERE security_id = ? AND available_time <= ? "
-            "AND (COALESCE(effective_time, event_time) IS NULL "
-            "     OR COALESCE(effective_time, event_time) BETWEEN ? AND ?) "
-            "ORDER BY COALESCE(reference_time, available_time)"
-        )
-        cur = self._engine.connection.execute(
-            sql,
-            [security_id, to_utc_naive(as_of_time), to_utc_naive(start), to_utc_naive(end)],
-        )
-        return [row_to_corporate_action(r) for r in _rows(cur)]
+        result = []
+        for action in self._corporate_actions_for_security(security_id):
+            if action.available_time > as_of_time:
+                continue
+            reference_time = action.effective_time or action.event_time
+            if reference_time is not None and not (start <= reference_time <= end):
+                continue
+            result.append(action)
+        return result
 
     def get_trading_calendar(self, market: str) -> TradingCalendar:
         try:
@@ -209,6 +252,8 @@ class DuckDBDataRepository:
         if not rows_to_write:
             return 0
         write_batch(self._price_bars_dir, rows_to_write, columns=PRICE_BAR_COLUMNS)
+        for sid in security_ids:
+            self._bars_cache.pop(sid, None)
         return len(rows_to_write)
 
     # -- Raw market data (pre-normalization payloads) -------------------
@@ -299,6 +344,7 @@ class DuckDBDataRepository:
             "ON CONFLICT (provenance_source_record_id) DO NOTHING",
             [row[c] for c in cols],
         )
+        self._corporate_actions_cache.pop(action.security_id, None)
 
     def add_benchmark_point(self, point: BenchmarkPoint) -> None:
         row = benchmark_point_to_row(point)

@@ -132,6 +132,52 @@ class TestPersistenceAndRestart:
         assert len(got2) == 1
         engine.close()
 
+    def test_append_after_a_read_is_not_served_stale_from_cache(self, tmp_path) -> None:
+        """Regression guard for the per-security in-memory cache in
+        `_bars_for_security`: a `get_bars` call must not permanently
+        pin a security's cached bar list -- a later `append_bars` for
+        that same security, on the same repository instance, has to
+        invalidate the cache so the next `get_bars` sees the new bar."""
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine)
+        repo.append_bars([make_bar("AAA", date(2024, 1, 2), 100.0)])
+        first = repo.get_bars("AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
+        assert len(first) == 1  # populates the cache
+
+        repo.append_bars([make_bar("AAA", date(2024, 1, 3), 101.0)])
+        second = repo.get_bars("AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
+        assert len(second) == 2  # must reflect the append, not the stale cached pair
+        engine.close()
+
+    def test_corporate_action_after_a_read_is_not_served_stale_from_cache(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine)
+        first = repo.get_corporate_actions("AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
+        assert first == []  # populates the (empty) cache
+
+        repo.add_corporate_action(make_split("AAA", date(2024, 1, 5)))
+        second = repo.get_corporate_actions("AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
+        assert len(second) == 1
+        engine.close()
+
+    def test_cache_is_scoped_per_security_not_shared(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine)
+        repo.append_bars([make_bar("AAA", date(2024, 1, 2), 100.0)])
+        repo.append_bars([make_bar("BBB", date(2024, 1, 2), 200.0)])
+
+        aaa = repo.get_bars("AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
+        bbb = repo.get_bars("BBB", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
+        assert [b.security_id for b in aaa] == ["AAA"]
+        assert [b.security_id for b in bbb] == ["BBB"]
+
+        # Appending only to AAA must not invalidate or otherwise affect
+        # BBB's already-cached (and still correct) result.
+        repo.append_bars([make_bar("AAA", date(2024, 1, 3), 101.0)])
+        bbb_again = repo.get_bars("BBB", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
+        assert len(bbb_again) == 1
+        engine.close()
+
     def test_survivorship_query_differs_by_as_of_time(self, tmp_path) -> None:
         engine = new_engine(tmp_path)
         repo = DuckDBDataRepository(engine)
