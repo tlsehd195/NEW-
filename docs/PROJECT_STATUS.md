@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-29
-**Updated By:** Claude Code (Session 34 — Phase 32: TEST-1 permanent lock, Track A result-decomposition tooling, ML Research Track governance design, next-hypothesis signal diagnostics)
+**Updated By:** Claude Code (Session 35 — Phase 33: fundamentals data source decision (SEC EDGAR) + provider implementation)
 
 ---
 
@@ -186,6 +186,63 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     데이터 등 다른 데이터 소스 확보 중 하나로 무게중심 이동. 어느
     쪽을 실제로 시작할지는 아직 미결정(문서에도 단정하지 않고 옵션만
   기록).
+
+### Completed (Session 35 — Phase 33: 펀더멘털 데이터 소스 결정 + 프로바이더 구현)
+
+- **"ML vs 다른 데이터 소스" 방향 결정 (사용자 요청 — "어떤 방향이 우리
+  프로젝트 완성에 더 좋다고 생각해?")**: 다른 데이터 소스(펀더멘털)
+  먼저를 추천 — 실패한 3개 가설이 전부 가격/거래량 파생 신호였기 때문에
+  같은 정보원 위에 ML을 얹어봤자 얻을 정보가 없고, 40종목·13년 규모는
+  ML 학습 표본으로도 작아 오히려 과적합 위험(16종목 시절 PBO 62.86%
+  선례)만 키운다는 논리. "새 정보원 확보 → 신호 검증 → 신호가 있으면
+  그때 ML로 결합"이 올바른 순서라고 판단. 사용자 승인("ㄱㄱ") 후 즉시
+  착수.
+- **펀더멘털 데이터 소스 접근성 재확인 — 역시 `ENVIRONMENT_BLOCKED`**:
+  이 세션(원격 실행 환경)에서 `data.sec.gov`(SEC EDGAR),
+  `www.sec.gov`, `www.alphavantage.co`, `financialmodelingprep.com`,
+  `stooq.com`에 직접 curl 시도 — 전부 프록시 단계에서 `403`
+  (`connect_rejected`, `policy denial`)으로 차단. ADR-0034가 가격
+  데이터 프로바이더 전체에 대해 이미 확인한 것과 동일한 패턴이
+  펀더멘털 소스에도 예외 없이 적용됨을 재확인 — 이 환경 자체의
+  egress allowlist 제약이지 특정 프로바이더의 문제가 아님.
+- **소스 선정: SEC EDGAR (XBRL company facts API)** — 무료·API 키 불필요
+  (미국 정부 공식 데이터, 지금까지 평가한 모든 상업 프로바이더의
+  무료 티어 제약 문제를 원천적으로 피함), 원본 출처(모든 상업
+  펀더멘털 프로바이더가 결국 SEC 공시 데이터를 재가공한 것),
+  무엇보다 **각 재무 수치에 실제 `filed`(공시 제출일) 필드가 붙어
+  있어 point-in-time 안전성이 원천적으로 확보됨** (분기말 시점과
+  실제 공시일 사이 수 주의 시차 — 이 프로젝트의 ADR-0004 point-in-time
+  원칙과 정확히 같은 문제를 소스 자체가 이미 구조적으로 해결).
+  상세 근거·트레이드오프는 `docs/decisions/ADR-0042-fundamentals-
+  data-source-selection.md` 참조.
+- **`SecEdgarFundamentalsProvider` 구현 (Tier 2 문서 기반, `TiingoDataProvider`와
+  동일한 패턴 — 실제 네트워크 검증 전에도 코드 선(先) 구축)**:
+  - `src/data_infra/fundamentals_models.py` — 새 도메인 모델
+    `FundamentalRecord` (`PriceBar`/`CorporateAction`과 병렬 구조).
+    핵심 불변식: `available_time`(실제 공시일)이 `period_end`(보고
+    기간 종료일)보다 이를 수 없음 — `__post_init__`에서 강제.
+  - `src/data_infra/providers/sec_edgar_config.py`,
+    `sec_edgar_transport.py`, `sec_edgar.py` —
+    `tiingo_config.py`/`tiingo_transport.py`/`tiingo.py` 구조를 그대로
+    미러링. `DataProvider` Protocol은 의도적으로 미구현(가격 바 형태에
+    맞춘 인터페이스라 공시 기반 소스와 형태가 안 맞음 — 이유는
+    `sec_edgar.py` 모듈 docstring에 명시). SEC의 fair-access 정책이
+    요구하는 User-Agent 헤더 처리 포함.
+  - `resolve_cik(ticker, ticker_map)` — 순수 함수, 네트워크 없이
+    ticker→CIK(10자리 zero-padded) 변환.
+  - 신규 테스트 42개 (`test_fundamentals_models.py`,
+    `test_sec_edgar_transport.py`, `test_sec_edgar_config.py`,
+    `test_sec_edgar_provider.py`) — 전부 `urllib.request.urlopen`
+    monkeypatch, 실제 네트워크 절대 미접근(기존 Tiingo 테스트와 동일
+    원칙). 전체 1922개 통과.
+  - **아직 안 한 것 (명시적으로 유보)**: 실제 ingestion/저장 계층
+    (`FundamentalRepository`류), raw concept → 비율(P/E, ROE 등)
+    변환, 40종목에 대해 어떤 concept을 실제로 가져올지 확정 — 전부
+    실제 EDGAR 접근이 검증된 뒤로 미룸(ADR-0039와 동일한 "성급한
+    스키마 설계 방지" 논리).
+- **다음 단계 (사용자의 네트워크 가능 환경에서 실행 필요)**:
+  ADR-0042에 curl 검증 명령 기록 — `data.sec.gov`가 실제로 도달
+  가능한지, 응답 형태 가정이 맞는지 확인 후 relay.
 
 ### Completed (Session 33 — Phase 31 continued)
 
