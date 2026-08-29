@@ -116,23 +116,34 @@ def main(argv=None) -> int:
     repository = DuckDBFundamentalsRepository(engine)
 
     try:
+        # Printed with flush=True and before/after each real network
+        # call (not batched to the end) -- fetching all of company_tickers.json
+        # (a multi-MB file listing every SEC filer) plus each symbol's
+        # full XBRL company-facts response (multi-MB for a large-cap
+        # with a long filing history) genuinely takes real wall-clock
+        # time; without incremental output a terminal watching this run
+        # looks indistinguishable from a hang.
+        print(f"Fetching SEC EDGAR ticker map from {_TICKER_MAP_HOST} (a multi-MB file, may take a moment)...", flush=True)
         try:
             ticker_map = provider.fetch_ticker_map(ticker_map_transport)
         except (TransientProviderError, PermanentProviderError) as exc:
             print(f"FATAL: could not fetch SEC EDGAR ticker map: {exc}", file=sys.stderr)
             return 1
+        print(f"Ticker map fetched ({len(ticker_map)} entries). Fetching {len(symbols)} symbol(s)...", flush=True)
 
         per_symbol_results = []
         unresolved_symbols = []
         total_records_persisted = 0
 
-        for symbol in symbols:
+        for i, symbol in enumerate(symbols, start=1):
             cik = resolve_cik(symbol, ticker_map)
             if cik is None:
+                print(f"  [{i}/{len(symbols)}] {symbol}: no CIK found, skipping", flush=True)
                 unresolved_symbols.append(symbol)
                 per_symbol_results.append({"security_id": symbol, "cik": None, "records_persisted": 0, "error": "ticker not found in SEC EDGAR company_tickers.json"})
                 continue
 
+            print(f"  [{i}/{len(symbols)}] {symbol} (CIK {cik}): fetching company facts...", flush=True)
             try:
                 raw_facts = provider.fetch_company_facts(cik)
                 records = provider.normalize_company_facts(
@@ -141,8 +152,10 @@ def main(argv=None) -> int:
                 repository.add_fundamentals(records)
                 total_records_persisted += len(records)
                 per_symbol_results.append({"security_id": symbol, "cik": cik, "records_persisted": len(records), "error": None})
+                print(f"      -> {len(records)} record(s) persisted", flush=True)
             except (TransientProviderError, PermanentProviderError) as exc:
                 per_symbol_results.append({"security_id": symbol, "cik": cik, "records_persisted": 0, "error": str(exc)})
+                print(f"      -> FAILED: {exc}", flush=True)
 
             time.sleep(_REQUEST_DELAY_SECONDS)
 
