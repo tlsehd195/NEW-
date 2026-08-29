@@ -329,18 +329,74 @@ confirmation that no subtler version of the same problem exists among
 them. This is recorded as an explicit, unresolved caveat, not
 smoothed over.
 
+## Decision 7 -- a second, more serious real bug: `source_record_id` collided across periods within the same filing
+
+The XOM correction re-run (`--symbols XOM --cik-overrides
+XOM:0000034088`) printed "771 records persisted", but a direct DB
+query afterward found only **317** rows actually stored for XOM --
+less than half. Investigated live, not assumed:
+
+`normalize_company_facts`'s `Provenance.source_record_id` was built as
+`f"{security_id}:{concept}:{accn or entry['end']}"` -- keyed only on
+the filing's accession number (`accn`), never the period the entry
+actually describes. A single 10-K or 10-Q routinely reports the *same*
+concept for *more than one period at once* (comparative figures --
+e.g. a balance sheet showing both the current and prior fiscal
+year-end, or a 10-Q showing both the current quarter and
+year-to-date), all under the identical `accn`. Every one of those
+period-distinct entries collapsed onto the same natural key, so
+`DuckDBFundamentalsRepository.add_fundamental`'s `ON CONFLICT (
+provenance_source_record_id) DO NOTHING` silently kept only whichever
+period-entry was processed first per `(concept, accn)` and dropped
+every other period sharing that filing -- a real, silent data-loss bug,
+not a hypothetical one; XOM's own 771 -> 317 collapse is the direct,
+measured evidence.
+
+**This affected every symbol ingested in Decision 6's run, not just
+XOM.** XOM's anomaly was caught by chance (this ADR was already
+mid-investigation into XOM for the unrelated CIK issue) -- every other
+symbol's per-symbol counts reported in Decision 6 are undercounts of
+what real distinct-period data actually exists for them, by however
+much of their history XBRL reports as multi-period entries within one
+filing (plausibly common for most symbols, though not separately
+measured per symbol).
+
+**Fix**: `source_record_id` now includes `unit`, `accn`, `end`, and
+`start` -- `f"{security_id}:{concept}:{unit}:{accn}:{entry['end']}:
+{entry.get('start') or ''}"` -- so two entries can only collide on this
+key if they are the identical (concept, unit, filing, period) tuple,
+which is the correct idempotency boundary (re-ingesting the same real
+fact twice should still no-op; two distinct real facts must never
+collide). 2 new regression tests in
+`tests/data_infra/test_sec_edgar_provider.py`
+(`TestSameAccnMultiplePeriodsAreAllPreservedNotCollapsed`) construct
+exactly this same-accn-different-period shape and assert both periods
+survive with distinct `source_record_id`s -- a fixture the original
+test suite never exercised (every existing fixture entry happened to
+use a distinct `accn` per period, which is why this shipped
+undetected in Decision 5/6). Full suite: 1950 passed.
+
+**Consequence for already-ingested data**: this fix only changes
+future ingestion; it does not repair rows already persisted under the
+old, collapsed key. **All 39 symbols' existing local data (from
+Decision 6's run) is undercounted and should be re-ingested from
+scratch** -- the pragmatic path is deleting the local `data/
+fundamentals_data` directory and re-running the full 39-symbol
+ingestion once more, now with both fixes in place
+(`--cik-overrides XOM:0000034088` and the corrected key), rather than
+attempting a partial in-place repair.
+
 ## What's still not built
 
 Concept selection (which `us-gaap` tags to fetch) is a starting
 default, not fixed for all time -- `--concepts` overrides it. Ratio
 derivation (P/E, ROE, debt/equity, etc.) from raw `FundamentalRecord`s,
 and any actual value/quality factor signal built on top of them, are
-still out of scope -- real data now exists (Decision 6), but has not
-yet been used for anything beyond the XOM anomaly investigation above.
-A systematic per-symbol identity-continuity check (the general version
-of what caught XOM) also remains unbuilt. The next concrete step is
-re-running ingestion with `--cik-overrides XOM:0000034088` (a
-`--symbols XOM` targeted re-run is sufficient; the other 38 symbols'
-existing records need no re-fetch) and relaying the corrected count,
-then deciding whether to build the systematic identity-continuity
-check before or after starting on an actual fundamentals-based signal.
+still out of scope -- no fundamentals-based signal can be evaluated
+against data known to be undercounted (Decision 7). A systematic
+per-symbol identity-continuity check (the general version of what
+caught XOM's CIK issue) also remains unbuilt. The next concrete step
+is a full, fresh 39-symbol re-ingestion (both fixes now in place) and
+relaying the resulting manifest, then deciding whether to build the
+systematic identity-continuity check before or after starting on an
+actual fundamentals-based signal.

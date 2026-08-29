@@ -155,7 +155,32 @@ class SecEdgarFundamentalsProvider:
                             provenance=Provenance(
                                 source="sec_edgar",
                                 source_dataset=f"sec_edgar_companyfacts_{security_id}",
-                                source_record_id=f"{security_id}:{concept}:{accn or entry['end']}",
+                                # A single filing (accn) very commonly
+                                # reports the SAME concept for MULTIPLE
+                                # periods at once (e.g. a 10-K's balance
+                                # sheet showing both the current and
+                                # prior fiscal year-end, or a 10-Q
+                                # showing both the current quarter and
+                                # year-to-date) -- keying on accn alone
+                                # (a prior version of this line) collided
+                                # those distinct period observations onto
+                                # the same natural key, so
+                                # DuckDBFundamentalsRepository's
+                                # ON CONFLICT DO NOTHING silently kept
+                                # only the first and dropped the rest.
+                                # Discovered from a REAL ingestion run
+                                # (Phase 33, ADR-0042 Decision 7): XOM's
+                                # corrected re-fetch produced 771 raw
+                                # entries but only 317 distinct rows
+                                # persisted under the old key. `unit` is
+                                # also included since the outer loop
+                                # already iterates per-unit and a concept
+                                # could in principle be reported in more
+                                # than one.
+                                source_record_id=(
+                                    f"{security_id}:{concept}:{unit}:{accn}:"
+                                    f"{entry['end']}:{entry.get('start') or ''}"
+                                ),
                                 retrieved_at=retrieved_at,
                                 data_version=compute_data_version(content_fields),
                             ),

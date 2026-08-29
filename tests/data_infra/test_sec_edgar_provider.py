@@ -139,6 +139,48 @@ class TestNormalizeCompanyFacts:
         assert records == []
 
 
+class TestSameAccnMultiplePeriodsAreAllPreservedNotCollapsed:
+    """Regression guard (Phase 33, ADR-0042 Decision 7): a REAL
+    ingestion run found this exact bug -- a single filing (accn)
+    commonly reports the same concept for more than one period at once
+    (e.g. a 10-K's balance sheet shows both the current AND prior
+    fiscal year-end under the same accession number). A prior version
+    of `source_record_id` keyed only on (security_id, concept, accn),
+    which collided these distinct period observations onto the same
+    natural key -- silently dropping all but the first when persisted
+    (`ON CONFLICT DO NOTHING`). Confirmed via a real XOM re-fetch:
+    771 raw entries produced only 317 distinct stored rows under the
+    old key. Fixed by including `unit`/`end`/`start` in the key too."""
+
+    def test_two_period_end_values_under_the_same_accn_both_survive(self) -> None:
+        raw = {
+            "facts": {"us-gaap": {"Assets": {"units": {"USD": [
+                {"end": "2022-12-31", "val": 100.0, "accn": "SAME-ACCN", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-01"},
+                {"end": "2021-12-31", "val": 90.0, "accn": "SAME-ACCN", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-01"},
+            ]}}}}
+        }
+        provider = _provider()
+        records = provider.normalize_company_facts(
+            "XOM", raw, ["Assets"], retrieved_at=utc(2024, 1, 1), ingestion_time=utc(2024, 1, 1),
+        )
+        assert len(records) == 2  # both periods present, neither dropped
+        assert {r.period_end for r in records} == {utc(2022, 12, 31), utc(2021, 12, 31)}
+
+    def test_the_two_periods_get_distinct_source_record_ids(self) -> None:
+        raw = {
+            "facts": {"us-gaap": {"Assets": {"units": {"USD": [
+                {"end": "2022-12-31", "val": 100.0, "accn": "SAME-ACCN", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-01"},
+                {"end": "2021-12-31", "val": 90.0, "accn": "SAME-ACCN", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2023-02-01"},
+            ]}}}}
+        }
+        provider = _provider()
+        records = provider.normalize_company_facts(
+            "XOM", raw, ["Assets"], retrieved_at=utc(2024, 1, 1), ingestion_time=utc(2024, 1, 1),
+        )
+        ids = {r.provenance.source_record_id for r in records}
+        assert len(ids) == 2  # a repository keying on this natural key would never collapse them
+
+
 class TestFetchCompanyFacts:
     def test_builds_the_correct_zero_padded_cik_path(self) -> None:
         calls = []
