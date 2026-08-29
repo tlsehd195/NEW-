@@ -298,6 +298,47 @@ class TestPboDsrActuallyAppliedNotJustPrinted:
         classify_idx = source.index("classify_evidence_level(")
         assert compute_pbo_idx < classify_idx
 
+
+class TestConcentrationReportWiring:
+    """Per-security P&L contribution/concentration analysis (added
+    following the master instruction's "Symbol Contribution" /
+    "Leave-One-Out / Concentration Check" requirement,
+    `backtest.contribution`), wired into the held-out TEST result --
+    the single full-period backtest, the most decision-relevant target
+    for "did a handful of symbols drive this whole result." Must be
+    computed from `held_out_result.net.fills` (the NET fills, matching
+    every other held-out TEST field already being the net-of-costs one)
+    and stored inside the `held_out_test` dict, never silently omitted."""
+
+    def test_compute_contribution_report_from_fills_is_imported(self) -> None:
+        source = _source()
+        assert "compute_contribution_report_from_fills" in source
+        assert "from backtest.contribution import compute_contribution_report_from_fills" in source
+
+    def test_concentration_is_computed_from_net_fills_not_gross(self) -> None:
+        tree = _tree()
+        calls = _find_calls(tree, "compute_contribution_report_from_fills")
+        assert len(calls) == 1
+        call = calls[0]
+        first_arg = call.args[0]
+        # held_out_result.net.fills -- an attribute chain ending in "fills"
+        # off of something ending in "net", never "gross".
+        assert isinstance(first_arg, ast.Attribute) and first_arg.attr == "fills"
+        assert isinstance(first_arg.value, ast.Attribute) and first_arg.value.attr == "net"
+
+    def test_concentration_result_is_stored_in_held_out_test_dict(self) -> None:
+        source = _source()
+        held_out_test_block_start = source.index("held_out_test = {")
+        held_out_test_block_end = source.index("}", held_out_test_block_start)
+        block = source[held_out_test_block_start:held_out_test_block_end]
+        assert '"concentration"' in block
+
+    def test_concentration_computed_before_held_out_test_dict_is_built(self) -> None:
+        source = _source()
+        concentration_call_idx = source.index("compute_contribution_report_from_fills(")
+        held_out_test_dict_idx = source.index("held_out_test = {")
+        assert concentration_call_idx < held_out_test_dict_idx
+
     def test_pbo_dsr_computation_gated_on_is_real_data(self) -> None:
         """PBO/DSR must never be computed against synthetic fixture
         data -- that would answer "is this noise" about a result this

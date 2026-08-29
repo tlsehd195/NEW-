@@ -100,6 +100,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from backtest.contribution import compute_contribution_report_from_fills  # noqa: E402
 from backtest.strategy import BuyAndHoldStrategy  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
 from data_infra.calendar import US_EQUITY  # noqa: E402
@@ -143,6 +144,10 @@ def _parse_date(value: str) -> datetime:
 
 def _perf_dict(perf) -> dict:
     return asdict(perf)
+
+
+def _concentration_dict(report) -> dict:
+    return asdict(report)
 
 
 def _fold_dict(fold) -> dict:
@@ -262,6 +267,14 @@ def main() -> int:
         bars_by_symbol = {
             sid: repository.get_bars(sid, args.start, args.end, as_of_time=args.end)
             for sid in sorted(security_ids)
+        }
+        # Last available close per symbol -- used only as `final_prices`
+        # for the held-out TEST's concentration/contribution report
+        # below (backtest.contribution), to value any still-open
+        # position at the end of that period. Not used anywhere else.
+        final_prices = {
+            sid: (bars[-1].adjusted_close or bars[-1].close)
+            for sid, bars in bars_by_symbol.items() if bars
         }
         data_version = compute_data_version(
             {
@@ -410,10 +423,14 @@ def main() -> int:
                     start_date=split.test_start.date(), end_date=split.test_end.date(),
                     initial_capital=args.initial_capital, benchmark_id=benchmark_id,
                 )
+                concentration = compute_contribution_report_from_fills(
+                    held_out_result.net.fills, args.initial_capital, final_prices
+                )
                 held_out_test = {
                     "gross": _perf_dict(held_out_result.gross.performance),
                     "net": _perf_dict(held_out_result.net.performance),
                     "num_trades_net": len(held_out_result.net.fills),
+                    "concentration": _concentration_dict(concentration),
                 }
             held_out_by_name[name] = held_out_test
 
