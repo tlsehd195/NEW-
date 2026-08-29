@@ -1136,6 +1136,204 @@ logic is a new hypothesis requiring a new, not-yet-observed evaluation
 window, decided on its own merits rather than as a reaction to this
 result.
 
+## Phase 32 Track A Addendum -- decomposition, classified by evidence strength
+
+Per Phase 32's own discipline (governing instructions section 50):
+every claim below is labeled OBSERVED (directly present in the report
+data actually relayed into this session), INFERRED (a computation over
+OBSERVED data), HYPOTHESIS (a plausible but unconfirmed explanation),
+or UNKNOWN (this session's repository checkout has no real 40-symbol
+report file -- `data/` is `.gitignore`d and empty here, confirmed by
+direct search -- so anything needing fold-level, regime-level, or
+per-security detail beyond what was already pasted into this
+conversation cannot be computed here). `scripts/
+analyze_long_horizon_result.py` (new this Phase) computes several of
+the UNKNOWN items directly from the report file; running it and
+relaying its output is the next step to close those gaps.
+
+### E/F. Strategy performance + SPY comparison (OBSERVED, held-out TEST, net)
+
+| Strategy | Net cum. return | Net CAGR | Sharpe | Sortino | Max DD | Turnover | Total cost | Win rate | Trades | Excess vs SPY |
+|---|---|---|---|---|---|---|---|---|---|---|
+| SPY benchmark | 93.09% | 21.83% | -- | -- | -19.61%(worst, `trend_volatility` window) to -18.76%(`buy_and_hold`/`long_term_momentum` window) | -- | -- | -- | -- | -- |
+| buy_and_hold | 40.41% | 10.72% | 0.491 | 0.787 | -26.45% | 0.50 | $33.89 | 0.0* | 30 | -52.68pp |
+| long_term_momentum | 30.67% | 8.36% | 0.457 | 0.704 | -48.47% | 7.26 | $102.79 | 0.50 | 53 | -62.42pp |
+| trend_volatility | 22.78% | 6.35% | 0.367 | 0.557 | -19.61% | 9.48 | $312.96 | 0.32 | 246 | -70.31pp |
+| risk_controlled_momentum | 3.99% | 1.18% | 0.328 | 0.483 | -39.40% | 7.55 | $97.57 | 0.52 | 51 | -89.10pp |
+
+\* `buy_and_hold`'s `win_rate=0.0` is `PerformanceReport`'s existing,
+correct convention for zero *closed* trades (it only ever opens
+positions) -- not evidence of losing trades.
+
+**Q1 (governing instructions section 19 / 49): is there an investable
+candidate among the 4?** OBSERVED: no. Every strategy's Sharpe (0.33-
+0.49) is well below what the CANDIDATE bar's DSR requirement implies
+is needed for statistical confidence, and every strategy trails SPY by
+53-89 percentage points over the only TEST window evaluated. None
+qualifies as an investable candidate on this evidence.
+
+### G. Signal-level analysis (Rank IC) -- UNKNOWN, blocked by data location
+
+`strategy_research.signal_ic.compute_ic_series` exists and is unit-
+tested against synthetic fixtures, but computing it against the REAL
+40-symbol data requires a live `DataRepository` (the user's own
+DuckDB catalog), which this session does not have access to. Genuinely
+UNKNOWN whether `long_term_momentum`'s underlying momentum score (also
+used, before position-sizing, by `risk_controlled_momentum`) had real
+rank-predictive power in this window, independent of what portfolio
+construction did to it afterward.
+
+### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
+
+`long_term_momentum` and `risk_controlled_momentum` share the
+*identical* `_momentum_score` (same lookback, same ranking, same
+`top_n=5`) -- OBSERVED via direct code comparison, not inference. Their
+held-out results diverge enormously (30.67% vs. 3.99% net). INFERRED,
+from reading `risk_controlled_momentum.py`'s `generate_orders`
+directly (not a backtest re-run): two structural mechanisms explain
+most of this gap --
+(1) inverse-volatility weights are normalized across all `top_n`
+ranked names, but only *newly-entering* positions are ever bought
+(`quantity_of(sid) == 0`), so once a momentum leader stays in the top
+5 across consecutive rebalances -- expected during a persistent,
+narrow rally -- little new capital gets deployed each rebalance; (2)
+weight above the 20% `max_position_weight` cap is left as uninvested
+cash, never redistributed (by explicit design, per that module's own
+comment). Both bias toward holding cash specifically during a
+long, concentrated rally, which the 2023-2026 TEST window was. This
+remains a HYPOTHESIS for the *magnitude* of the gap (a true
+decomposition would need to re-run the strategy with each mechanism
+isolated, which RULE 0.8 forbids against this already-observed TEST
+window) but an OBSERVED, code-verified mechanism for its *direction*.
+
+For `buy_and_hold` and `trend_volatility`, UNKNOWN whether their gap
+to SPY is more attributable to signal weakness or construction --
+`buy_and_hold` has no signal at all (by design, a reference baseline)
+so its entire 52.68pp gap to SPY is pure portfolio-construction/
+universe-composition (this 40-symbol equal-ish-weighted basket vs.
+SPY's cap-weighted, mega-cap-AI-heavy composition during this specific
+rally) -- INFERRED from that structural fact, not from decomposing
+`trend_volatility`'s filter-driven cash exposure, which is UNKNOWN
+without the fold-level filter-pass-rate data the existing report does
+not expose.
+
+### I. Transaction cost / turnover analysis (OBSERVED)
+
+Gross-to-net degradation, computed directly from the report:
+
+| Strategy | Turnover (held-out) | Total cost | Cost as % of initial capital |
+|---|---|---|---|
+| buy_and_hold | 0.50x | $33.89 | 0.34% |
+| long_term_momentum | 7.26x | $102.79 | 1.03% |
+| trend_volatility | 9.48x | $312.96 | **3.13%** |
+| risk_controlled_momentum | 7.55x | $97.57 | 0.98% |
+
+`trend_volatility`'s cost drag (gross 30.80% -> net 22.78%, an 8.02pp/
+26% relative haircut) is the largest of the 4, driven by 246 trades
+over a 3.3-year window (monthly rebalance, no position cap forcing it
+to constantly enter/exit names as they cross its trend/vol filters).
+OBSERVED: none of the 4 strategies' underperformance vs. SPY is
+primarily a transaction-cost story -- even at 0% cost (gross), every
+strategy's gross cumulative return (not separately re-tabulated here,
+but visible in the original held_out_test JSON) still trails SPY's
+93.09% by a wide margin. Cost is a real, measurable drag, not the
+dominant explanation.
+
+### J. Drawdown analysis -- PARTIAL
+
+Max drawdown OBSERVED (table above). Duration/recovery-day breakdown
+(`compute_drawdown_episodes`, added this session) is UNKNOWN for this
+specific report -- the running process that produced it started before
+that field existed in the code, so the report predates it (established
+earlier this session by direct code-timeline reasoning, not assumed).
+A re-run will include it automatically. `risk_controlled_momentum`'s
+-39.40% max drawdown against only a 3.99% total gain is the worst
+reward-to-pain ratio of the 4 -- OBSERVED, directly from the table.
+
+### K. Regime analysis -- UNKNOWN for the held-out TEST result specifically
+
+The report's `regime_breakdown` field exists per-strategy but only
+for the walk-forward TRAIN+VALIDATION region (fold-based); the report
+schema does not attach a regime label to the single continuous
+held-out TEST backtest. `scripts/analyze_long_horizon_result.py`'s
+`regime_conditional_summary` can report TRAIN+VALIDATION fold
+performance by regime once the user runs it against the full report;
+this session was only relayed `buy_and_hold`'s walk-forward
+`regime_breakdown` fold *counts* (BEAR=16, BULL=54, NEUTRAL=6 folds)
+early in this conversation, not its regime-conditional *returns*, and
+not the other 3 strategies' breakdowns at all -- insufficient to
+answer "did this strategy only work in one regime" with anything
+better than UNKNOWN.
+
+### L. Symbol / sector concentration -- UNKNOWN, blocked by data location (same reason as G)
+
+The `concentration` field (`backtest.contribution`, added this
+session) is absent from this report for the identical reason
+drawdown-duration is (the report predates the code that produces it).
+A re-run will include it automatically.
+
+### M. PBO/DSR vs. held-out TEST divergence -- reinterpreted
+
+```
+                    PBO      DSR      fold_win_rate   held-out net CAGR
+buy_and_hold        0.00%    0.997    45% (below bar)  10.72%
+long_term_momentum  0.00%    0.994    55% (below bar)   8.36%
+trend_volatility     0.00%    0.928    61% (clears bar)  6.35%
+risk_controlled_mom  0.00%    0.988    55% (below bar)   1.18%
+```
+
+**Why PBO improved dramatically (62.86% -> 0.00%) while held-out TEST
+performance stayed poor**, classified:
+
+- OBSERVED: PBO answers "would the best-of-N candidates, selected by
+  in-sample walk-forward performance, still look good under CSCV
+  resampling" -- a question about whether the SELECTION among these 4
+  candidates was itself noise-driven. It does not, and was never
+  designed to, answer "does the selected candidate beat a passive
+  benchmark."
+- INFERRED: none of the 4 candidates' walk-forward fold Sharpe values
+  are large in absolute terms (0.23-0.50 median, per the earlier PBO
+  script output) -- PBO can correctly conclude "the ranking among 4
+  mediocre candidates is not itself an artifact of overfitting" while
+  every one of those candidates remains mediocre in absolute,
+  benchmark-relative terms. Low PBO is evidence against one specific
+  failure mode (selection-among-noisy-candidates), not evidence for
+  investment quality.
+- HYPOTHESIS: the 2023-2026 window's benchmark-relative difficulty
+  (a narrow, mega-cap-AI-concentrated rally) may specifically
+  disadvantage diversified, long-only, moderate-turnover rule-based
+  strategies relative to a cap-weighted index -- consistent with, but
+  not proven by, `buy_and_hold`'s own large gap to SPY (that gap has
+  no signal/portfolio-construction complexity to blame, only universe
+  composition/weighting, which points toward this being at least
+  partially a structural, not strategy-specific, effect).
+- UNKNOWN: whether the same 4 strategies would show a smaller gap to
+  SPY in a differently-composed test window (e.g. a broader bear
+  market, or a rally more evenly distributed across sectors) -- this
+  project has only ever evaluated one held-out window and, per RULE
+  0.8, cannot manufacture another one to check.
+
+### Q2/Q3 (governing instructions section 19)
+
+**Q2 -- is the failure signal, portfolio construction, risk control, or
+regime?** Best-supported answer, using only what is OBSERVED/INFERRED
+above: partially portfolio construction (`risk_controlled_momentum`,
+code-verified), and at least partially a structural/regime effect
+common to all 4 including the zero-complexity `buy_and_hold` baseline
+(a rally this concentrated in a handful of mega-cap names is hard for
+any diversified long-only approach to match). Signal quality itself
+remains UNKNOWN pending Signal IC computation against real data.
+
+**Q3 -- is ML research now more valuable than more rule-based
+strategies?** See `docs/research/ML-RESEARCH-PROTOCOL.md` and
+`docs/decisions/ADR-0041-test-1-lock-and-ml-research-track.md` for the
+full governance answer; in short, ML infrastructure design work is
+judged worthwhile now (this Phase does exactly that), but starting
+actual ML model training is not yet justified by evidence -- the
+Signal-IC/regime/concentration UNKNOWNs above should be closed first
+(cheap, from data already collected) before deciding whether the
+*existing* rule-based signals are worth abandoning in favor of ML ones.
+
 ### Status after this addendum
 
 `REAL_VALIDATION_NOT_COMPLETED` remains the correct classification for

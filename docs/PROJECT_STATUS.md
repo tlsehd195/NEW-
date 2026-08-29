@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-29
-**Updated By:** Claude Code (Session 33 — Phase 31 continued: 40-symbol real re-validation result, additive diagnostics, storage performance fix)
+**Updated By:** Claude Code (Session 34 — Phase 32: TEST-1 permanent lock, Track A result-decomposition tooling, ML Research Track governance design)
 
 ---
 
@@ -62,6 +62,55 @@ VERIFIED_BY_DOCUMENTATION/VERIFIED_BY_ACTUAL_ACCESS/UNKNOWN/
 NOT_AVAILABLE/ENVIRONMENT_BLOCKED 어휘로 provider matrix 재작성 +
 decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)을
 명시적으로 선택.
+
+### Completed (Session 34 — Phase 32: 결과 심층분석 + ML Research Track 설계)
+
+사용자가 챗지피티 상담 후 받아온 상세 지시문(PHASE 32)을 실행. 새로운
+좋은 결과를 만드는 게 목적이 아니라, 기존 40종목 결과를 정직하게
+분해하고 TEST-1을 영구 잠그고 ML 트랙의 거버넌스를 먼저 설계하는 게
+목적이었음.
+
+- **`TEST-1` 영구 잠금** (`src/strategy_research/locked_windows.py`,
+  `docs/decisions/ADR-0041-...md`): 2023-04-28~2026-08-27을 코드
+  레벨 상수(`TEST_1`)로 기록(실제 리포트 값 그대로, 재계산 아님) +
+  `overlaps_any_locked_window()` 헬퍼로 향후 어떤 전략/ML 모델이든
+  이 구간을 다시 train/validation/test로 쓰려 하면 감지 가능하게 함.
+  신규 테스트 9개.
+- **Track A 결과 분해 도구 신규 구축**
+  (`src/strategy_research/result_analysis.py` +
+  `scripts/analyze_long_horizon_result.py`): fold 수익률 분포,
+  레짐별(walk-forward TRAIN+VALIDATION 구간만) 성과, gross-to-net
+  비용 드래그를 리포트 JSON만으로 계산. **중요한 발견**: 이 세션
+  체크아웃엔 40종목 실제 리포트 파일이 아예 없음(`data/`는
+  gitignore돼 있고 비어있음, 직접 확인) — 그래서 Signal IC와 종목별
+  집중도는 `NOT_COMPUTABLE_FROM_REPORT`로 명시하고, 사용자가 이
+  스크립트를 실제 리포트에 돌려서 결과를 relay해야 완성됨. 신규 테스트
+  24개(locked_windows 9 + result_analysis 13 + CLI 2).
+- **Track A 해석적 분석 작성** (STRATEGY-VALIDATION-REPORT.md "Phase
+  32 Track A Addendum"): 이미 이 대화에 relay된 데이터만 사용해서
+  OBSERVED/INFERRED/HYPOTHESIS/UNKNOWN으로 분류 — 4개 전략 전부
+  SPY보다 53~89%p 저조, `trend_volatility`가 거래비용 드래그 최대
+  (3.13%), `risk_controlled_momentum`이 손익 대비 최악의 낙폭
+  (-39.4% DD로 겨우 +4.0% 수익), PBO 개선과 TEST 저조 사이의 관계를
+  "선택 편향 없음"과 "투자할 가치 있음"은 다른 질문이라고 재해석.
+  Signal IC/레짐별 TEST 성과/종목 집중도는 UNKNOWN으로 정직하게 남김.
+- **ML Research Track 거버넌스 설계** (`docs/research/
+  ML-RESEARCH-PROTOCOL.md`, 신규 ML 코드/의존성 0줄): 기존
+  `predict/`(Phase 6)·`learning/`(Phase 9, 실은 거래 경험 기반 학습이라
+  시장데이터 기반 예측과는 다른 문제)·`evolution/`(Phase 11)·
+  `regime/features.py`(Phase 5) 감사 — 놀랍게도 point-in-time 안전
+  `Predictor` Protocol과 버저닝 관례는 이미 상당 부분 존재함을 확인.
+  Leakage 방지(feature_available_at), TRAIN/VALIDATION/TEST 구조
+  (기존 `build_chronological_split` 재사용), 실험 거버넌스/하이퍼파라미터
+  예산 추적, 모델 선택을 multiple-testing으로 취급(기존 `compute_pbo`/
+  `compute_dsr_for_all_candidates` 재사용 예정), feature/target/model
+  registry 스키마(구현은 아직 안 함), 의존성 정책(ADR-0039와 동일 논리로
+  지금 numpy/scipy/scikit-learn 등 추가 안 함) 명시. 상태:
+  `ML_RESEARCH_PARTIALLY_READY`.
+- **브랜치**: `claude/phase-32-result-analysis-ml-research` 신규 생성
+  (main에서 분기). Baseline 1834 passed, 이번 Phase 작업 후 1858
+  passed(신규 24개). 보안 스캔: 신규 코드에 API 키/시크릿/네트워크
+  호출 전혀 없음(확인됨).
 
 ### Completed (Session 33 — Phase 31 continued)
 
