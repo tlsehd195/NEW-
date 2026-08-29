@@ -1172,25 +1172,52 @@ is needed for statistical confidence, and every strategy trails SPY by
 53-89 percentage points over the only TEST window evaluated. None
 qualifies as an investable candidate on this evidence.
 
-### G. Signal-level analysis (Rank IC) -- tooling built; TEST-1 deliberately excluded
+### G. Signal-level analysis (Rank IC) -- OBSERVED for walk-forward TRAIN+VALIDATION; TEST-1 deliberately excluded
 
-`scripts/compute_signal_ic_from_catalog.py` (new) runs
-`strategy_research.signal_ic.compute_ic_series` against the user's
-real DuckDB catalog. It computes IC only over the walk-forward
-TRAIN+VALIDATION region (2010-01-01..2023-04-28) by construction --
-default `--end` is `TEST_1.start`, and the script hard-refuses (no
-override flag) any requested range overlapping `TEST_1`. This is
-deliberate, not an oversight: `long_term_momentum`/
-`risk_controlled_momentum`'s `_momentum_score` was corrected by
-ADR-0038 *after* TEST-1 was observed, so computing IC with today's
-code against TEST-1 dates would answer "does the corrected signal
-predict returns in the window the uncorrected strategies already
-failed on" -- exactly the TEST-reuse RULE 0.8 forbids, even though IC
-itself changes nothing. Running this script and relaying its output
-is the next step to close the TRAIN+VALIDATION-region portion of this
-UNKNOWN; the TEST-1-region portion remains permanently unanswerable
-until a new TEST window exists (see `docs/research/
-ML-RESEARCH-PROTOCOL.md` section 3).
+`scripts/compute_signal_ic_from_catalog.py`, run by the user against
+the real DuckDB catalog (2010-01-01..2023-04-28, the walk-forward
+TRAIN+VALIDATION region only -- `TEST_1` was correctly excluded by the
+script's own hard-refusal guard, see this section's prior note for why):
+
+```
+long_term_momentum (_momentum_score, shared with risk_controlled_momentum):
+  80 rebalance dates, 79 observations
+  mean_ic = -0.0078
+  ic_information_ratio = -0.031
+  positive_ic_ratio = 51.90%
+```
+
+**OBSERVED, and this is the single most important Track A finding**:
+the momentum score's rank-correlation with future returns is
+essentially zero -- `mean_ic` is a hair's breadth from 0 (slightly
+negative), the information ratio is near 0 (no consistent edge, in
+either direction), and `positive_ic_ratio` (51.9%) is barely above the
+50% a coin flip would produce. **The underlying signal used by both
+`long_term_momentum` and (before its position-sizing/cap logic)
+`risk_controlled_momentum` shows no real cross-sectional predictive
+power over this universe and period.**
+
+This changes how Section H's finding should be read: it is NOT that a
+good signal was ruined by bad portfolio construction. INFERRED: the
+signal itself appears to carry little to no genuine information, and
+`risk_controlled_momentum`'s catastrophic held-out result is better
+understood as a weak-to-nonexistent signal compounded further by a
+portfolio-construction bug, rather than construction being the primary
+cause on its own. `long_term_momentum`'s relatively less-bad held-out
+result (30.67% net, still 62pp behind SPY) is then most plausibly
+attributable to whatever broad long-only market exposure ("beta")
+happened to be embedded in a 40-symbol, mostly-large-cap universe
+during a rally -- not to any stock-picking skill from the momentum
+ranking itself, since IC data does not support that ranking having any.
+
+`trend_volatility`'s and `buy_and_hold`'s own signals were not
+computed here (`_passes_filter` is a boolean trend/vol gate, not a
+continuous rank score IC is defined for; `buy_and_hold` has no signal
+by design) -- still UNKNOWN whether `trend_volatility`'s trend filter
+specifically (as opposed to its moving-average-window bug, already
+fixed) carries real information; that would need a different
+diagnostic (e.g. comparing forward returns of filter-passing vs.
+filter-failing securities) not yet built.
 
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
@@ -1372,13 +1399,26 @@ performance stayed poor**, classified:
 ### Q2/Q3 (governing instructions section 19)
 
 **Q2 -- is the failure signal, portfolio construction, risk control, or
-regime?** Best-supported answer, using only what is OBSERVED/INFERRED
-above: partially portfolio construction (`risk_controlled_momentum`,
-code-verified), and at least partially a structural/regime effect
-common to all 4 including the zero-complexity `buy_and_hold` baseline
-(a rally this concentrated in a handful of mega-cap names is hard for
-any diversified long-only approach to match). Signal quality itself
-remains UNKNOWN pending Signal IC computation against real data.
+regime?** Updated with real Signal IC data (mean_ic=-0.0078,
+ic_information_ratio=-0.031, positive_ic_ratio=51.9% over 79
+walk-forward observations, 2010..2023-04-28): **primarily signal.** The
+momentum score `long_term_momentum` and `risk_controlled_momentum`
+share shows essentially no rank-predictive power -- barely
+distinguishable from a coin flip. Portfolio construction
+(`risk_controlled_momentum`, code-verified) and a structural/regime
+effect common to all 4 (a rally this concentrated in a handful of
+mega-cap names is hard for any diversified long-only approach to
+match, including the zero-complexity `buy_and_hold` baseline) both
+compound a weak signal further, but are not the primary cause on their
+own -- a signal with real IC would very plausibly have produced a
+better held-out result even with `risk_controlled_momentum`'s
+construction bug intact, or even under the same regime headwind.
+`trend_volatility`'s own filter's IC was not computed (its
+`_passes_filter` returns a boolean gate, not a continuous rank score --
+see Section G) and remains a genuine open question; it is the one
+candidate whose fold-consistency bar it clears, which is at least
+consistent with (not proof of) its filter carrying more information
+than the shared momentum score does.
 
 **Q3 -- is ML research now more valuable than more rule-based
 strategies?** See `docs/research/ML-RESEARCH-PROTOCOL.md` and

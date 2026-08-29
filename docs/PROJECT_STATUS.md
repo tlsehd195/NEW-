@@ -133,6 +133,16 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   REPORT.md Section L).
 - 전체 테스트: 1865 passed (Phase 32 신규 총 31개: locked_windows 9 +
   result_analysis 13 + analyze CLI 2 + signal_ic CLI 7).
+- **사용자가 Signal IC 스크립트를 실제 카탈로그에 실행, 결과 relay —
+  가장 중요한 Track A 결론**: `long_term_momentum`/
+  `risk_controlled_momentum`가 공유하는 모멘텀 점수의 실제 예측력이
+  **거의 0**(mean_ic=-0.0078, IC information ratio=-0.031,
+  positive_ic_ratio=51.9% — 동전던지기 수준, 79개 관측치 기준
+  2010~2023-04-28). 이걸로 기존 해석이 바뀜: `risk_controlled_
+  momentum`의 참사는 "포트폴리오 구성 버그가 좋은 신호를 망친 것"이
+  아니라 "애초에 신호 자체가 정보가 거의 없었는데 구성 버그까지
+  겹친 것"으로 재해석. STRATEGY-VALIDATION-REPORT.md Section G/Q2
+  갱신.
 
 ### Completed (Session 33 — Phase 31 continued)
 
