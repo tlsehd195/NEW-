@@ -101,6 +101,33 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   `add_corporate_action`에서 해당 종목 캐시를 무효화해 stale read 방지.
   신규 회귀 테스트 3개(쓰기 후 캐시 무효화, 종목별 캐시 격리) 포함 전체
   1823개 테스트 통과.
+- **보류했던 gs-quant 발견사항 1건 적용 — 모멘텀/이동평균/변동성 윈도우
+  희석 버그 수정** (`docs/decisions/ADR-0038-momentum-window-trim-fix.md`):
+  `long_term_momentum`/`risk_controlled_momentum`/`trend_volatility`
+  전부, lookback 쿼리에 준 캘린더-일 padding(`*1.6`~`*2`)을 실제 신호
+  계산 윈도우로 그대로 써버려서 `lookback_months` 등 파라미터가
+  명시한 것보다 약 1.4~1.6배 넓은 기간으로 모멘텀/이동평균/변동성을
+  계산하고 있던 실제 버그 발견 — gs-quant의
+  `timeseries.moving_average`/`volatility`(정확한 크기의 윈도우 사용)와
+  비교해서 발견. `strategy_research._dates.trim_to_lookback()` 신규
+  추가해 3개 전략 전부에 적용(파라미터 값은 전혀 안 건드림, 윈도우
+  계산만 원래 의도대로 수정 — 튜닝이 아니라 정합성 수정). **RULE 0.8
+  준수**: 이미 관측된 2023-2026 held-out TEST 구간에 대해서는 수정된
+  전략을 재평가하지 않음(같은 TEST 셋 재사용 금지) — 향후 이 3개
+  전략의 실제 효과를 알려면 새로운, 아직 관측 안 된 TEST 구간이 필요.
+  기존 synthetic IC 테스트 1개의 기대값이 정당하게 변경됨(0.5 →
+  -1/6, 여전히 부분적 IC — 회귀 아님, 주석으로 설명). 신규 테스트
+  5개(`trim_to_lookback` 자체) 포함 전체 1828개 통과.
+- **포트폴리오 최적화 라이브러리 도입 보류 결정**
+  (`docs/decisions/ADR-0039-defer-portfolio-optimization-library.md`):
+  40종목 결과(4개 전략 전부 CANDIDATE 미달 + held-out TEST에서 SPY
+  대비 큰 폭 저조)를 근거로 PyPortfolioOpt/Riskfolio-Lib 지금 도입
+  안 하기로 결정 — 아직 검증된 신호가 하나도 없는데 신호 간 배분을
+  최적화하는 건 의미가 없고, 이 프로젝트는 지금 한 번에 전략 1개만
+  돌리므로 배분 문제 자체가 아직 실존하지 않음. `risk_controlled_
+  momentum`의 배분 로직 버그가 오히려 "배분 기법을 더할수록 실수
+  가능성도 커진다"는 반증 사례. 재검토 조건 명시(전략 1개 이상
+  CANDIDATE 도달 + 동시에 여러 신호 운용 계획 확정 시).
 
 ### Completed (Session 32 — Phase 31)
 
