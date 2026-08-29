@@ -84,6 +84,93 @@ def calmar_ratio(cagr_value: float, max_drawdown: float) -> float:
 
 
 @dataclass(frozen=True)
+class DrawdownEpisode:
+    """One peak-to-trough-to-recovery episode. `depth` follows
+    `compute_max_drawdown`'s convention (<= 0). `recovery_time`/
+    `recovery_days` are `None` when the series ends still underwater --
+    this is a real, distinct case from a shallow-but-recovered
+    drawdown, and is never reported as `0` (which would falsely read
+    as "recovered instantly").
+
+    Added following a comparison against `quantopian/pyfolio`'s
+    drawdown table: this project previously only reported drawdown
+    DEPTH as a single number (`compute_max_drawdown`), with no notion
+    of how long capital stayed underwater -- for a long-horizon
+    system, duration is often as decision-relevant as depth alone."""
+
+    peak_time: datetime
+    trough_time: datetime
+    recovery_time: Optional[datetime]
+    depth: float
+    duration_to_trough_days: int
+    recovery_days: Optional[int]
+
+
+def compute_drawdown_episodes(
+    values: Sequence[float], timestamps: Sequence[datetime]
+) -> tuple[DrawdownEpisode, ...]:
+    """Walks `values`/`timestamps` (parallel sequences, one entry per
+    valuation point) and returns every distinct drawdown episode in
+    chronological order. A trailing episode that never returns to its
+    starting peak by the end of the series is still included, with
+    `recovery_time=None` -- never silently dropped."""
+    if len(values) != len(timestamps):
+        raise ValueError("values and timestamps must have the same length")
+    if len(values) < 2:
+        return ()
+
+    episodes: list[DrawdownEpisode] = []
+    peak_value, peak_time = values[0], timestamps[0]
+    trough_value, trough_time = values[0], timestamps[0]
+    in_drawdown = False
+
+    for v, t in zip(values[1:], timestamps[1:]):
+        if v >= peak_value:
+            if in_drawdown:
+                depth = (trough_value - peak_value) / peak_value if peak_value > 0 else 0.0
+                episodes.append(
+                    DrawdownEpisode(
+                        peak_time=peak_time,
+                        trough_time=trough_time,
+                        recovery_time=t,
+                        depth=depth,
+                        duration_to_trough_days=(trough_time - peak_time).days,
+                        recovery_days=(t - trough_time).days,
+                    )
+                )
+                in_drawdown = False
+            peak_value, peak_time = v, t
+            trough_value, trough_time = v, t
+        else:
+            in_drawdown = True
+            if v < trough_value:
+                trough_value, trough_time = v, t
+
+    if in_drawdown:
+        depth = (trough_value - peak_value) / peak_value if peak_value > 0 else 0.0
+        episodes.append(
+            DrawdownEpisode(
+                peak_time=peak_time,
+                trough_time=trough_time,
+                recovery_time=None,
+                depth=depth,
+                duration_to_trough_days=(trough_time - peak_time).days,
+                recovery_days=None,
+            )
+        )
+    return tuple(episodes)
+
+
+def worst_drawdown_episode(episodes: Sequence[DrawdownEpisode]) -> Optional[DrawdownEpisode]:
+    """The episode with the deepest `depth`, or `None` if `episodes` is
+    empty. Ties broken by whichever `min()` encounters first (earliest
+    in chronological order, since `episodes` is built in order)."""
+    if not episodes:
+        return None
+    return min(episodes, key=lambda e: e.depth)
+
+
+@dataclass(frozen=True)
 class PerformanceReport:
     cumulative_return: float
     cagr: float
@@ -101,6 +188,14 @@ class PerformanceReport:
     benchmark_max_drawdown: Optional[float]
     excess_return: Optional[float]
     annualized_excess_return: Optional[float]
+    # Added following a pyfolio comparison (see docs/decisions/ or chat
+    # log): drawdown DURATION, not just depth. Defaulted so every
+    # pre-existing PerformanceReport(...) construction site (paper
+    # trading persistence, serialization, tests) keeps working
+    # unmodified -- purely additive.
+    max_drawdown_duration_days: Optional[int] = None
+    max_drawdown_recovery_days: Optional[int] = None
+    max_drawdown_still_underwater: bool = False
 
 
 def compute_performance_report(
@@ -121,6 +216,9 @@ def compute_performance_report(
         sortino = 0.0
         max_dd = 0.0
         calmar = 0.0
+        dd_duration_days = None
+        dd_recovery_days = None
+        dd_still_underwater = False
     else:
         returns = compute_returns(values)
         cumulative = values[-1] / values[0] - 1.0 if values[0] != 0 else 0.0
@@ -130,6 +228,12 @@ def compute_performance_report(
         sortino = sortino_ratio(returns, risk_free_rate, periods_per_year)
         max_dd = compute_max_drawdown(values)
         calmar = calmar_ratio(cagr_value, max_dd)
+
+        timestamps = [p.as_of_time for p in series]
+        worst = worst_drawdown_episode(compute_drawdown_episodes(values, timestamps))
+        dd_duration_days = worst.duration_to_trough_days if worst is not None else None
+        dd_recovery_days = worst.recovery_days if worst is not None else None
+        dd_still_underwater = worst is not None and worst.recovery_time is None
 
     closed_trades = portfolio.closed_trades
     win_rate = (
@@ -163,6 +267,9 @@ def compute_performance_report(
         sortino_ratio=sortino,
         max_drawdown=max_dd,
         calmar_ratio=calmar,
+        max_drawdown_duration_days=dd_duration_days,
+        max_drawdown_recovery_days=dd_recovery_days,
+        max_drawdown_still_underwater=dd_still_underwater,
         turnover=portfolio.turnover(),
         total_transaction_cost=portfolio.transaction_costs,
         win_rate=win_rate,

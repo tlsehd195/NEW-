@@ -1,0 +1,187 @@
+"""Signal predictiveness (Information Coefficient) diagnostic.
+
+Added following a comparison against `quantopian/alphalens`: this
+project's existing evaluation path only ever backtests a FULLY FORMED
+strategy (rank -> top-N -> orders -> P&L) -- it never asks the
+narrower, prior question alphalens is built around: does the raw
+ranking signal itself have ANY forward-predictive power, independent
+of the top-N/rebalance/cost wrapper around it? A weak full-backtest
+result is ambiguous between "the signal has no edge" and "the signal
+has edge but the wrapper (position sizing, top-N cutoff, costs) is
+destroying it" -- IC analysis is the tool that tells those two apart.
+
+Definition (alphalens's own, Spearman rank correlation): at each
+rebalance date, rank every security by its score, rank every security
+by its N-day-forward return, and correlate the two rankings. Mean IC
+across many dates, and its stability (mean/stdev, an "IR" analogous to
+but distinct from a Sharpe ratio), together answer "is this signal
+predictive at all" -- independent of any specific top-N/rebalance-
+frequency/cost choice.
+
+**Point-in-time discipline, read before changing this module**:
+`AsOfDataView` (`backtest/asof.py`) is deliberately incapable of
+looking past its bound `BacktestClock`'s current checkpoint -- "There
+is no method, override, or parameter through which a well-behaved
+Strategy implementation could request data beyond the clock's current
+checkpoint" (that module's own docstring). This is correct and must
+stay that way for any live Strategy. This module is NOT a Strategy --
+it is after-the-fact research analysis asking "did this signal predict
+what actually happened," so it deliberately queries the underlying
+`DataRepository` directly for forward returns (bypassing the clock),
+while still routing every SCORE computation through a properly clocked
+`AsOfDataView` so the score itself remains exactly as point-in-time-safe
+as it would be inside a real backtest. Never blur this line: the score
+must never see the future, the forward-return check must.
+
+No numpy/scipy: Spearman rank correlation is Pearson correlation of the
+RANKS (a standard identity), computed here in pure Python, matching
+this project's existing stdlib-only convention (`strategy_research.pbo_dsr`).
+"""
+
+from __future__ import annotations
+
+import statistics
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Callable, Optional, Sequence
+
+from backtest.asof import AsOfDataView
+from backtest.clock import BacktestClock
+from data_infra.repository import DataRepository
+
+ScoreFn = Callable[[str, datetime, AsOfDataView], Optional[float]]
+
+
+def _forward_return(
+    repository: DataRepository, security_id: str, as_of_time: datetime, horizon_days: int
+) -> Optional[float]:
+    """The realized return from `as_of_time` to `as_of_time + horizon_days`,
+    queried directly against `repository` (deliberately NOT through an
+    `AsOfDataView` -- see module docstring). `as_of_time` for the
+    availability filter is `end_time` itself: for a period that has
+    already fully elapsed, this returns exactly what actually happened,
+    which is precisely what an after-the-fact predictiveness check
+    needs to see."""
+    end_time = as_of_time + timedelta(days=horizon_days)
+    bars = repository.get_bars(security_id, as_of_time, end_time, as_of_time=end_time)
+    if len(bars) < 2:
+        return None
+    start_price = bars[0].adjusted_close or bars[0].close
+    end_price = bars[-1].adjusted_close or bars[-1].close
+    if start_price <= 0:
+        return None
+    return end_price / start_price - 1.0
+
+
+def _rank(values: Sequence[float]) -> list[float]:
+    """Average ranks (1-indexed); tied values get the mean of the ranks
+    they span -- the standard convention Spearman correlation requires."""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        avg_rank = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg_rank
+        i = j + 1
+    return ranks
+
+
+def _pearson(xs: Sequence[float], ys: Sequence[float]) -> Optional[float]:
+    n = len(xs)
+    if n < 2:
+        return None
+    mean_x, mean_y = sum(xs) / n, sum(ys) / n
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    var_y = sum((y - mean_y) ** 2 for y in ys)
+    if var_x == 0 or var_y == 0:
+        return None
+    return cov / (var_x * var_y) ** 0.5
+
+
+def spearman_ic(scores: dict, forward_returns: dict) -> Optional[float]:
+    """Spearman rank correlation between `scores` and `forward_returns`,
+    matched by key (security_id). Requires >= 2 securities present in
+    both dicts; returns `None` otherwise -- never a fabricated `0.0`
+    standing in for "not enough data"."""
+    common = sorted(set(scores) & set(forward_returns))
+    if len(common) < 2:
+        return None
+    score_ranks = _rank([scores[s] for s in common])
+    return_ranks = _rank([forward_returns[s] for s in common])
+    return _pearson(score_ranks, return_ranks)
+
+
+@dataclass(frozen=True)
+class IcObservation:
+    as_of_time: datetime
+    ic: float
+    num_securities: int
+
+
+@dataclass(frozen=True)
+class IcSummary:
+    observations: tuple
+    mean_ic: Optional[float]
+    ic_information_ratio: Optional[float]
+    positive_ic_ratio: Optional[float]
+
+
+def compute_ic_series(
+    security_ids: Sequence[str],
+    rebalance_dates: Sequence[datetime],
+    score_fn: ScoreFn,
+    repository: DataRepository,
+    *,
+    horizon_days: int,
+) -> IcSummary:
+    """Computes IC at each date in `rebalance_dates`: `score_fn` is
+    called through a per-date `AsOfDataView` clocked to exactly that
+    date (point-in-time-safe, same as inside a real backtest);
+    forward returns are read directly from `repository` (deliberately
+    not point-in-time-limited -- see module docstring). A date with
+    fewer than 2 securities carrying both a score and a computable
+    forward return is silently skipped, not counted as `ic=0`."""
+    observations: list[IcObservation] = []
+    for as_of_time in rebalance_dates:
+        data_view = AsOfDataView(repository, BacktestClock(checkpoints=(as_of_time,)))
+        scores = {}
+        for sid in security_ids:
+            score = score_fn(sid, as_of_time, data_view)
+            if score is not None:
+                scores[sid] = score
+
+        forward_returns = {}
+        for sid in scores:
+            fr = _forward_return(repository, sid, as_of_time, horizon_days)
+            if fr is not None:
+                forward_returns[sid] = fr
+
+        ic = spearman_ic(scores, forward_returns)
+        if ic is not None:
+            observations.append(
+                IcObservation(as_of_time=as_of_time, ic=ic, num_securities=len(forward_returns))
+            )
+
+    if not observations:
+        return IcSummary(observations=(), mean_ic=None, ic_information_ratio=None, positive_ic_ratio=None)
+
+    ic_values = [o.ic for o in observations]
+    mean_ic = statistics.fmean(ic_values)
+    if len(ic_values) >= 2:
+        stdev_ic = statistics.pstdev(ic_values)
+        ic_ir = (mean_ic / stdev_ic) if stdev_ic > 0 else None
+    else:
+        ic_ir = None
+    positive_ratio = sum(1 for v in ic_values if v > 0) / len(ic_values)
+
+    return IcSummary(
+        observations=tuple(observations),
+        mean_ic=mean_ic,
+        ic_information_ratio=ic_ir,
+        positive_ic_ratio=positive_ratio,
+    )

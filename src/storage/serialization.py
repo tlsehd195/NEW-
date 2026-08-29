@@ -425,6 +425,9 @@ def performance_report_to_dict(report: PerformanceReport) -> dict:
         "benchmark_max_drawdown": report.benchmark_max_drawdown,
         "excess_return": report.excess_return,
         "annualized_excess_return": report.annualized_excess_return,
+        "max_drawdown_duration_days": report.max_drawdown_duration_days,
+        "max_drawdown_recovery_days": report.max_drawdown_recovery_days,
+        "max_drawdown_still_underwater": report.max_drawdown_still_underwater,
     }
 
 
