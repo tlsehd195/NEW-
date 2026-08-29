@@ -130,3 +130,30 @@ class TestEndToEndAgainstSyntheticCatalog:
         out = capsys.readouterr().out
         assert "Signal IC: long_term_momentum" in out
         assert "mean_ic=" in out
+
+    def test_low_volatility_factor_option_also_runs_end_to_end(self, tmp_path, capsys) -> None:
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        low_vol_closes = [100.0 + 0.5 * ((-1) ** i) for i in range(len(days))]
+        high_vol_closes = [100.0 * (1.0 + 0.06 * ((-1) ** i)) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+        repo.append_bars(make_bars(symbols[0], days, low_vol_closes))
+        repo.append_bars(make_bars(symbols[1], days, high_vol_closes))
+        engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--db-path", str(tmp_path / "store"),
+            "--universe", "PILOT_UNIVERSE",
+            "--strategy", "low_volatility",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "Signal IC: low_volatility" in out

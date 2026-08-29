@@ -124,3 +124,48 @@ needed.
   existing strategy's signal-generation code touched by this ADR.
 - Full suite passing (see PROJECT_STATUS.md Phase 32 entry for the
   exact count).
+
+## Addendum -- Signal IC came back near-zero; next hypothesis chosen before its own result exists
+
+The user ran `compute_signal_ic_from_catalog.py --strategy
+long_term_momentum` against the real catalog:
+`mean_ic=-0.0078, ic_information_ratio=-0.031, positive_ic_ratio=51.9%`
+over 79 walk-forward observations -- essentially no rank-predictive
+power (see `STRATEGY-VALIDATION-REPORT.md` Section G/Q2 for full
+interpretation). This reframes the project's most consequential open
+question from "did portfolio construction ruin a good signal" to "was
+the signal itself ever informative."
+
+Per this same discipline (a new hypothesis must be committed BEFORE
+its own result exists, not chosen by searching for whatever would look
+good against this specific finding), two further diagnostics were
+built and are documented here as decided *before* being run:
+
+1. **`strategy_research.factor_scores.low_volatility_score`** +
+   `compute_signal_ic_from_catalog.py --strategy low_volatility` --
+   the low-volatility anomaly, a well-documented, independently
+   pre-existing hypothesis (decades old in the literature), not a
+   cosmetic variant of momentum. Chosen specifically because it is
+   cheap to test (reuses `trim_to_lookback`/`annualized_volatility`,
+   no new dependency) -- the deliberate next step BEFORE investing in
+   a full ML build-out, matching `ML-RESEARCH-PROTOCOL.md`'s
+   dependency-policy reasoning (adopt heavier machinery only once a
+   specific need is justified, not speculatively).
+2. **`strategy_research.signal_ic.bucket_return_analysis`** +
+   `scripts/compute_filter_bucket_returns_from_catalog.py` -- the
+   boolean-filter analog of IC (mean forward return of filter-passing
+   vs. filter-failing groups), for `trend_volatility`'s
+   `_passes_filter`, which has no continuous score for Spearman IC to
+   apply to. `trend_volatility` is the one candidate that cleared the
+   fold-consistency bar, making whether its filter carries real
+   information the single most decision-relevant open question left.
+
+Both reuse the identical TEST-1 hard-refusal guard (no override flag)
+as the original IC script, for the identical reason: their underlying
+window computations were also corrected by this same ADR's Decision-1
+fix, so evaluating them against TEST-1 would test whether the fix
+helped using the already-observed window. 15 new tests
+(`bucket_return_analysis` unit tests, `low_volatility_score` unit
+tests against the synthetic FLATLOW/FLATHIGH pair, and both scripts'
+CLI tests including the refusal path). Neither has been run against
+the real catalog yet -- both remain open, pre-committed next steps.

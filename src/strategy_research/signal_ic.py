@@ -50,6 +50,7 @@ from backtest.clock import BacktestClock
 from data_infra.repository import DataRepository
 
 ScoreFn = Callable[[str, datetime, AsOfDataView], Optional[float]]
+FilterFn = Callable[[str, datetime, AsOfDataView], bool]
 
 
 def _forward_return(
@@ -184,4 +185,87 @@ def compute_ic_series(
         mean_ic=mean_ic,
         ic_information_ratio=ic_ir,
         positive_ic_ratio=positive_ratio,
+    )
+
+
+@dataclass(frozen=True)
+class BucketObservation:
+    as_of_time: datetime
+    passing_mean_return: Optional[float]
+    passing_count: int
+    failing_mean_return: Optional[float]
+    failing_count: int
+
+
+@dataclass(frozen=True)
+class BucketReturnSummary:
+    observations: tuple
+    mean_passing_return: Optional[float]
+    mean_failing_return: Optional[float]
+    mean_spread: Optional[float]  # mean(passing - failing), averaged per-date then across dates
+    positive_spread_ratio: Optional[float]
+    dates_with_both_groups: int
+
+
+def bucket_return_analysis(
+    security_ids: Sequence[str],
+    rebalance_dates: Sequence[datetime],
+    filter_fn: FilterFn,
+    repository: DataRepository,
+    *,
+    horizon_days: int,
+) -> BucketReturnSummary:
+    """For a BOOLEAN filter (e.g. `TrendVolatilityStrategy._passes_filter`)
+    that IC's continuous-score definition does not apply to: splits
+    securities at each rebalance date into "passing"/"failing" groups
+    and compares their mean forward returns -- same point-in-time
+    discipline as `compute_ic_series` (filter evaluated through a
+    clocked `AsOfDataView`, forward return read directly from
+    `repository`). A date where either group is empty is excluded from
+    the summary's aggregate stats (but still recorded in
+    `observations`, with `None` for the missing side) -- never
+    fabricated as a 0% return or silently dropped without a trace."""
+    observations: list[BucketObservation] = []
+    for as_of_time in rebalance_dates:
+        data_view = AsOfDataView(repository, BacktestClock(checkpoints=(as_of_time,)))
+        passing_returns: list[float] = []
+        failing_returns: list[float] = []
+        for sid in security_ids:
+            fr = _forward_return(repository, sid, as_of_time, horizon_days)
+            if fr is None:
+                continue
+            if filter_fn(sid, as_of_time, data_view):
+                passing_returns.append(fr)
+            else:
+                failing_returns.append(fr)
+        observations.append(
+            BucketObservation(
+                as_of_time=as_of_time,
+                passing_mean_return=(statistics.fmean(passing_returns) if passing_returns else None),
+                passing_count=len(passing_returns),
+                failing_mean_return=(statistics.fmean(failing_returns) if failing_returns else None),
+                failing_count=len(failing_returns),
+            )
+        )
+
+    usable = [o for o in observations if o.passing_mean_return is not None and o.failing_mean_return is not None]
+    if not usable:
+        return BucketReturnSummary(
+            observations=tuple(observations), mean_passing_return=None, mean_failing_return=None,
+            mean_spread=None, positive_spread_ratio=None, dates_with_both_groups=0,
+        )
+
+    mean_passing = statistics.fmean([o.passing_mean_return for o in usable])
+    mean_failing = statistics.fmean([o.failing_mean_return for o in usable])
+    spreads = [o.passing_mean_return - o.failing_mean_return for o in usable]
+    mean_spread = statistics.fmean(spreads)
+    positive_spread_ratio = sum(1 for s in spreads if s > 0) / len(spreads)
+
+    return BucketReturnSummary(
+        observations=tuple(observations),
+        mean_passing_return=mean_passing,
+        mean_failing_return=mean_failing,
+        mean_spread=mean_spread,
+        positive_spread_ratio=positive_spread_ratio,
+        dates_with_both_groups=len(usable),
     )

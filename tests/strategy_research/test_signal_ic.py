@@ -11,10 +11,13 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
+import pytest
+
 from research_helpers import synthetic_multi_year_repository
 
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy
-from strategy_research.signal_ic import _pearson, _rank, compute_ic_series, spearman_ic
+from strategy_research.signal_ic import _pearson, _rank, bucket_return_analysis, compute_ic_series, spearman_ic
+from strategy_research.trend_volatility import TrendVolatilityParameters, TrendVolatilityStrategy
 
 
 def _utc(y, m, d):
@@ -159,3 +162,71 @@ class TestComputeIcSeriesAgainstRealMomentumScore:
         )
 
         assert summary_alone.observations[0].ic == summary_with_later.observations[0].ic
+
+
+def _fixed_filter(passing_ids: frozenset):
+    def _filter(security_id, as_of_time, data) -> bool:
+        return security_id in passing_ids
+    return _filter
+
+
+class TestBucketReturnAnalysis:
+    """Boolean-filter analog of IC -- for a filter like
+    `TrendVolatilityStrategy._passes_filter` that has no continuous
+    score for Spearman IC to apply to. Compares mean forward returns
+    of the filter-passing group vs. the filter-failing group."""
+
+    def test_hand_computable_spread_with_a_fixed_filter(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        filter_fn = _fixed_filter(frozenset({"TRENDUP"}))
+        rebalance_dates = [_utc(2021, 3, 1), _utc(2021, 6, 1)]
+
+        summary = bucket_return_analysis(list(universe), rebalance_dates, filter_fn, repo, horizon_days=30)
+
+        assert summary.dates_with_both_groups == 2
+        assert summary.mean_passing_return is not None  # TRENDUP group
+        assert summary.mean_failing_return is not None  # TRENDDOWN group
+        # TRENDUP trends up, TRENDDOWN trends down -- the filter that
+        # always picks TRENDUP must show a positive spread.
+        assert summary.mean_spread == pytest.approx(summary.mean_passing_return - summary.mean_failing_return)
+        assert summary.mean_spread > 0
+        assert summary.positive_spread_ratio == 1.0
+
+    def test_a_real_strategy_filter_favoring_the_uptrend_security_shows_a_positive_spread(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        strategy = TrendVolatilityStrategy(
+            list(universe), TrendVolatilityParameters(trend_lookback_months=6, vol_threshold=0.45)
+        )
+        rebalance_dates = [_utc(2021, m, 1) for m in (3, 6, 9)]
+
+        summary = bucket_return_analysis(
+            list(universe), rebalance_dates, strategy._passes_filter, repo, horizon_days=30
+        )
+
+        assert summary.dates_with_both_groups > 0
+        assert summary.mean_spread is not None
+        assert summary.mean_spread > 0
+
+    def test_no_rebalance_dates_produces_empty_summary_not_a_fabricated_zero(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2021, 1, 3), symbols=universe)
+        summary = bucket_return_analysis(list(universe), [], _fixed_filter(frozenset()), repo, horizon_days=30)
+        assert summary.observations == ()
+        assert summary.mean_spread is None
+        assert summary.dates_with_both_groups == 0
+
+    def test_a_date_where_everything_fails_the_filter_is_excluded_from_aggregate_but_recorded(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        filter_fn = _fixed_filter(frozenset())  # nothing ever passes
+        rebalance_dates = [_utc(2021, 3, 1)]
+
+        summary = bucket_return_analysis(list(universe), rebalance_dates, filter_fn, repo, horizon_days=30)
+
+        assert len(summary.observations) == 1
+        assert summary.observations[0].passing_mean_return is None
+        assert summary.observations[0].passing_count == 0
+        assert summary.dates_with_both_groups == 0
+        assert summary.mean_spread is None  # not fabricated as 0

@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-29
-**Updated By:** Claude Code (Session 34 — Phase 32: TEST-1 permanent lock, Track A result-decomposition tooling, ML Research Track governance design)
+**Updated By:** Claude Code (Session 34 — Phase 32: TEST-1 permanent lock, Track A result-decomposition tooling, ML Research Track governance design, next-hypothesis signal diagnostics)
 
 ---
 
@@ -143,6 +143,24 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   아니라 "애초에 신호 자체가 정보가 거의 없었는데 구성 버그까지
   겹친 것"으로 재해석. STRATEGY-VALIDATION-REPORT.md Section G/Q2
   갱신.
+- **다음 가설 2건 추가 구축** (실제 신호가 momentum 하나에서만 실패한
+  건지, 규칙 기반 신호 전체가 안 되는 건지 판단하기 위해 — 결과 보기
+  전에 미리 정한 가설, ML 착수 전 저비용 검증 우선):
+  1. **저변동성 팩터** (`strategy_research.factor_scores.
+     low_volatility_score`) — momentum과 무관한, 학계에 독립적으로
+     이미 존재하는 가설(low-volatility anomaly). 새 의존성 없음,
+     기존 `trim_to_lookback`/`annualized_volatility` 재사용.
+     `compute_signal_ic_from_catalog.py --strategy low_volatility`로
+     실행 가능.
+  2. **`trend_volatility` 필터의 실제 예측력** — boolean 필터라 IC 계산
+     불가해서 새 진단 함수 `signal_ic.bucket_return_analysis` 추가
+     (필터 통과/탈락 그룹의 forward return 평균 비교). 신규 스크립트
+     `scripts/compute_filter_bucket_returns_from_catalog.py`.
+  둘 다 momentum IC 스크립트와 동일한 **TEST-1 강제 거부 로직**
+  내장(override 없음, 이유 동일 — ADR-0038이 이 필터/점수 윈도우도
+  수정했기 때문). 아직 실제 카탈로그엔 안 돌림 — 사용자 실행 대기 중.
+  신규 테스트 15개(`bucket_return_analysis` 4 + `low_volatility_score`
+  5 + 두 CLI 스크립트 6). 전체 1880개 통과.
 
 ### Completed (Session 33 — Phase 31 continued)
 

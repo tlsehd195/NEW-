@@ -1215,9 +1215,25 @@ computed here (`_passes_filter` is a boolean trend/vol gate, not a
 continuous rank score IC is defined for; `buy_and_hold` has no signal
 by design) -- still UNKNOWN whether `trend_volatility`'s trend filter
 specifically (as opposed to its moving-average-window bug, already
-fixed) carries real information; that would need a different
-diagnostic (e.g. comparing forward returns of filter-passing vs.
-filter-failing securities) not yet built.
+fixed) carries real information.
+
+**Update**: the "different diagnostic" this needs now exists --
+`scripts/compute_filter_bucket_returns_from_catalog.py` (new) uses
+`strategy_research.signal_ic.bucket_return_analysis`: splits the
+universe into filter-passing/filter-failing groups at each rebalance
+date and compares mean forward returns, the boolean-filter analog of
+IC. Same TEST-1 hard-refusal guard as the momentum IC script (identical
+reasoning: `_passes_filter`'s windows were also corrected by ADR-0038).
+Not yet run against the real catalog -- still UNKNOWN pending that.
+
+Also new: `strategy_research.factor_scores.low_volatility_score`, a
+second, genuinely independent rule-based hypothesis (the well-
+documented low-volatility anomaly, not a momentum variant) now
+selectable via `compute_signal_ic_from_catalog.py --strategy
+low_volatility`, deliberately picked as the next candidate to test
+BEFORE investing in a full ML build-out -- cheap to test, reuses
+already-proven primitives (`trim_to_lookback`, `annualized_volatility`),
+no new dependency. Also not yet run against the real catalog.
 
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 

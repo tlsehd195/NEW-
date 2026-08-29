@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Track A (Phase 32): computes real-data Signal IC (rank correlation
-of a strategy's own score against realized forward returns) for
+of a score against realized forward returns) for one of --
 `long_term_momentum`/`risk_controlled_momentum`'s shared
-`_momentum_score`, using `strategy_research.signal_ic.compute_ic_series`
+`_momentum_score`, or the standalone `low_volatility_score` factor
+(`strategy_research.factor_scores` -- a genuinely different,
+independently pre-existing hypothesis, not a momentum variant, picked
+specifically to avoid re-testing the same failed idea with cosmetic
+changes) -- using `strategy_research.signal_ic.compute_ic_series`
 against a live DuckDB catalog.
 
 Why this needs a live catalog (unlike `analyze_long_horizon_result.py`,
@@ -46,20 +50,29 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
+from strategy_research.factor_scores import low_volatility_score  # noqa: E402
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy  # noqa: E402
 from strategy_research.risk_controlled_momentum import (  # noqa: E402
     RiskControlledMomentumParameters,
     RiskControlledMomentumStrategy,
 )
-from strategy_research.signal_ic import compute_ic_series  # noqa: E402
+from strategy_research.signal_ic import ScoreFn, compute_ic_series  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE2}
 
-_STRATEGIES = {
+_MOMENTUM_STRATEGIES = {
     "long_term_momentum": (LongTermMomentumStrategy, LongTermMomentumParameters),
     "risk_controlled_momentum": (RiskControlledMomentumStrategy, RiskControlledMomentumParameters),
 }
+_SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + ["low_volatility"])
+
+
+def _build_score_fn(name: str, symbol_ids: list[str]) -> ScoreFn:
+    if name == "low_volatility":
+        return low_volatility_score
+    strategy_cls, params_cls = _MOMENTUM_STRATEGIES[name]
+    return strategy_cls(symbol_ids, params_cls())._momentum_score
 
 
 def _rebalance_dates(start: datetime, end: datetime, step_months: int) -> list[datetime]:
@@ -75,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--db-path", required=True, type=Path)
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE")
-    parser.add_argument("--strategy", choices=sorted(_STRATEGIES), required=True)
+    parser.add_argument("--strategy", choices=_SCORE_CHOICES, required=True)
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
     parser.add_argument(
         "--end", type=str, default=None,
@@ -109,12 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
     repository = DuckDBDataRepository(engine)
 
-    strategy_cls, params_cls = _STRATEGIES[args.strategy]
-    strategy = strategy_cls(list(universe.symbol_ids), params_cls())
+    score_fn = _build_score_fn(args.strategy, list(universe.symbol_ids))
     rebalance_dates = _rebalance_dates(start, end, args.step_months)
 
     summary = compute_ic_series(
-        list(universe.symbol_ids), rebalance_dates, strategy._momentum_score, repository,
+        list(universe.symbol_ids), rebalance_dates, score_fn, repository,
         horizon_days=args.horizon_days,
     )
 
