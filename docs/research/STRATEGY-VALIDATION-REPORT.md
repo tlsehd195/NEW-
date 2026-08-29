@@ -1172,16 +1172,25 @@ is needed for statistical confidence, and every strategy trails SPY by
 53-89 percentage points over the only TEST window evaluated. None
 qualifies as an investable candidate on this evidence.
 
-### G. Signal-level analysis (Rank IC) -- UNKNOWN, blocked by data location
+### G. Signal-level analysis (Rank IC) -- tooling built; TEST-1 deliberately excluded
 
-`strategy_research.signal_ic.compute_ic_series` exists and is unit-
-tested against synthetic fixtures, but computing it against the REAL
-40-symbol data requires a live `DataRepository` (the user's own
-DuckDB catalog), which this session does not have access to. Genuinely
-UNKNOWN whether `long_term_momentum`'s underlying momentum score (also
-used, before position-sizing, by `risk_controlled_momentum`) had real
-rank-predictive power in this window, independent of what portfolio
-construction did to it afterward.
+`scripts/compute_signal_ic_from_catalog.py` (new) runs
+`strategy_research.signal_ic.compute_ic_series` against the user's
+real DuckDB catalog. It computes IC only over the walk-forward
+TRAIN+VALIDATION region (2010-01-01..2023-04-28) by construction --
+default `--end` is `TEST_1.start`, and the script hard-refuses (no
+override flag) any requested range overlapping `TEST_1`. This is
+deliberate, not an oversight: `long_term_momentum`/
+`risk_controlled_momentum`'s `_momentum_score` was corrected by
+ADR-0038 *after* TEST-1 was observed, so computing IC with today's
+code against TEST-1 dates would answer "does the corrected signal
+predict returns in the window the uncorrected strategies already
+failed on" -- exactly the TEST-reuse RULE 0.8 forbids, even though IC
+itself changes nothing. Running this script and relaying its output
+is the next step to close the TRAIN+VALIDATION-region portion of this
+UNKNOWN; the TEST-1-region portion remains permanently unanswerable
+until a new TEST window exists (see `docs/research/
+ML-RESEARCH-PROTOCOL.md` section 3).
 
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
@@ -1300,12 +1309,24 @@ ranked 3rd of 4 in absolute held-out return, behind `buy_and_hold` and
 246 trades from monthly rebalancing) ate most of the advantage its
 regime-conditional signal quality otherwise showed.
 
-### L. Symbol / sector concentration -- UNKNOWN, blocked by data location (same reason as G)
+### L. Symbol / sector concentration -- UNKNOWN, and NOT closeable the way Section G was
 
 The `concentration` field (`backtest.contribution`, added this
-session) is absent from this report for the identical reason
-drawdown-duration is (the report predates the code that produces it).
-A re-run will include it automatically.
+session) is absent from this report because the report predates the
+code that produces it. Unlike Signal IC (Section G), there is no safe
+way to close this gap against the existing report: computing
+concentration needs the actual `Fill` objects from a backtest run,
+which the report JSON does not persist -- the only way to get them is
+re-running `run_long_horizon_validation.py`, and today's codebase
+includes the ADR-0038 momentum-window fix, so re-running against the
+same `--start 2010-01-01 --end 2026-08-27` would re-evaluate the
+corrected strategies against the already-observed TEST-1 window --
+precisely what this project's TEST-1 lock forbids. This UNKNOWN stays
+open until a genuinely new TEST window exists (real future data past
+2026-08-27, or a deliberately pre-registered TEST-2 per `ML-RESEARCH-
+PROTOCOL.md` section 3 Option B) and a fresh run against that new
+window is performed -- at which point concentration will be included
+automatically, with no further code changes needed.
 
 ### M. PBO/DSR vs. held-out TEST divergence -- reinterpreted
 

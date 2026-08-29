@@ -108,9 +108,31 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   지금 numpy/scipy/scikit-learn 등 추가 안 함) 명시. 상태:
   `ML_RESEARCH_PARTIALLY_READY`.
 - **브랜치**: `claude/phase-32-result-analysis-ml-research` 신규 생성
-  (main에서 분기). Baseline 1834 passed, 이번 Phase 작업 후 1858
-  passed(신규 24개). 보안 스캔: 신규 코드에 API 키/시크릿/네트워크
-  호출 전혀 없음(확인됨).
+  (main에서 분기). Baseline 1834 passed. 보안 스캔: 신규 코드에 API
+  키/시크릿/네트워크 호출 전혀 없음(확인됨).
+- **사용자가 `analyze_long_horizon_result.py`를 실제 환경에서 실행,
+  결과 relay** — 레짐별(BEAR/BULL/NEUTRAL) fold 승률/수익률 확보.
+  **핵심 발견**: `risk_controlled_momentum`의 walk-forward BULL fold
+  평균수익(1.92%)이 `trend_volatility`(1.15%)보다 오히려 좋았는데도
+  held-out TEST(3.3년 연속 상승장)에서는 정반대로 최악(3.99% vs
+  22.78%) — "이미 보유 중인 종목엔 추가매수 안 함 + 포지션 상한
+  초과분 현금 방치" 가설을 뒷받침(짧은 2개월 fold에선 안 드러나다가
+  긴 연속 보유기간엔 누적되는 결함).
+- **Signal IC 계산 스크립트 신규 구축**
+  (`scripts/compute_signal_ic_from_catalog.py`): 실 DuckDB 카탈로그
+  대상으로 `signal_ic.compute_ic_series` 실행. **TEST-1 보호 로직
+  내장**(override 플래그 없음) — 기본 `--end`가 `TEST_1.start`이고,
+  요청 구간이 TEST-1과 조금이라도 겹치면 즉시 거부(exit 1). 이유:
+  `long_term_momentum`/`risk_controlled_momentum`의 `_momentum_score`가
+  ADR-0038로 수정됐기 때문에, 지금 코드로 TEST-1 구간 IC를 계산하면
+  "수정된 신호가 이미 관측한 TEST에서 잘 맞는지" 확인하는 꼴이 되어
+  RULE 0.8 위반. 신규 테스트 7개(TEST-1 거부 로직 포함, 실제 통과).
+  종목 집중도(concentration)는 재실행이 필요한데 재실행하면 수정된
+  코드로 TEST-1을 다시 건드리게 되므로 새 TEST 구간 생길 때까지
+  구조적으로 닫을 수 없는 UNKNOWN으로 문서화(STRATEGY-VALIDATION-
+  REPORT.md Section L).
+- 전체 테스트: 1865 passed (Phase 32 신규 총 31개: locked_windows 9 +
+  result_analysis 13 + analyze CLI 2 + signal_ic CLI 7).
 
 ### Completed (Session 33 — Phase 31 continued)
 
