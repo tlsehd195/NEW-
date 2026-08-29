@@ -1217,23 +1217,60 @@ by design) -- still UNKNOWN whether `trend_volatility`'s trend filter
 specifically (as opposed to its moving-average-window bug, already
 fixed) carries real information.
 
-**Update**: the "different diagnostic" this needs now exists --
-`scripts/compute_filter_bucket_returns_from_catalog.py` (new) uses
-`strategy_research.signal_ic.bucket_return_analysis`: splits the
-universe into filter-passing/filter-failing groups at each rebalance
-date and compares mean forward returns, the boolean-filter analog of
-IC. Same TEST-1 hard-refusal guard as the momentum IC script (identical
-reasoning: `_passes_filter`'s windows were also corrected by ADR-0038).
-Not yet run against the real catalog -- still UNKNOWN pending that.
+**Update -- both run against the real catalog, both OBSERVED, both
+negative or null:**
 
-Also new: `strategy_research.factor_scores.low_volatility_score`, a
-second, genuinely independent rule-based hypothesis (the well-
-documented low-volatility anomaly, not a momentum variant) now
-selectable via `compute_signal_ic_from_catalog.py --strategy
-low_volatility`, deliberately picked as the next candidate to test
-BEFORE investing in a full ML build-out -- cheap to test, reuses
-already-proven primitives (`trim_to_lookback`, `annualized_volatility`),
-no new dependency. Also not yet run against the real catalog.
+```
+low_volatility (factor_scores.low_volatility_score, 2010-01-01..2023-04-28):
+  80 rebalance dates, 79 observations
+  mean_ic = -0.0486
+  ic_information_ratio = -0.147
+  positive_ic_ratio = 45.57%
+
+trend_volatility filter (_passes_filter, bucket_return_analysis, same window):
+  160 rebalance dates, 155 with both groups present
+  mean_passing_return = 0.0110   (filter-passing group)
+  mean_failing_return = 0.0189   (filter-failing group)
+  mean_spread = -0.0078          (passing minus failing -- NEGATIVE)
+  positive_spread_ratio = 47.74%
+```
+
+**OBSERVED**: neither shows positive predictive power. The
+low-volatility factor's IC is mildly negative (still small in
+magnitude relative to its own noise -- 79 observations is not a large
+sample -- so "no detectable edge" is the more defensible reading than
+"a real anti-signal", but there is certainly no positive edge here).
+`trend_volatility`'s own filter is more striking: securities it
+REJECTS averaged a *higher* forward return (1.89%) than securities it
+ACCEPTS (1.10%) -- the opposite of what "price above trend + low
+volatility predicts continuation" claims, though `positive_spread_ratio`
+(47.74%, barely below the 50% a coin flip gives) says this is closer
+to "no information" than "a strong reversed signal."
+
+**INFERRED**: this is now 3 independent, pre-committed rule-based
+hypotheses tested with the same rigorous methodology (momentum,
+low-volatility, trend+volatility-filter) against this specific
+40-symbol universe over 2010-2023-04-28, and **none shows positive
+forward-predictive power.** `trend_volatility`'s real walk-forward
+fold-consistency (61% positive folds, the only one of 4 candidates to
+clear that bar) is therefore better explained by broad market
+exposure during a mostly-BULL walk-forward period (Section K: 54 of
+76 folds were BULL-classified) than by its filter actually selecting
+better-performing securities -- consistent with, and now
+better-evidenced than, the earlier Q2 synthesis's structural/regime
+explanation.
+
+This does not prove no exploitable signal exists anywhere for this
+universe -- it is evidence about these 3 specific, simple,
+price/volume-only technical rules, nothing broader. But 3-for-3 null
+results across independently-motivated hypotheses is a legitimate,
+non-cherry-picked basis (no result here was searched for after seeing
+a favorable one; all 3 were null or negative) to treat further
+simple-technical-rule hunting on this exact dataset as having
+diminishing expected value, and to weight the Q3 decision (rule-based
+vs. ML) more toward ML, or toward acquiring a genuinely different data
+source (fundamentals, alternative data) rather than more price-derived
+technical variants of the same 3 already-tested ideas.
 
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
@@ -1437,14 +1474,27 @@ consistent with (not proof of) its filter carrying more information
 than the shared momentum score does.
 
 **Q3 -- is ML research now more valuable than more rule-based
-strategies?** See `docs/research/ML-RESEARCH-PROTOCOL.md` and
-`docs/decisions/ADR-0041-test-1-lock-and-ml-research-track.md` for the
-full governance answer; in short, ML infrastructure design work is
-judged worthwhile now (this Phase does exactly that), but starting
-actual ML model training is not yet justified by evidence -- the
-Signal-IC/regime/concentration UNKNOWNs above should be closed first
-(cheap, from data already collected) before deciding whether the
-*existing* rule-based signals are worth abandoning in favor of ML ones.
+strategies? UPDATED with all 3 real Signal IC/bucket-return results
+in:** governance groundwork is done (`docs/research/
+ML-RESEARCH-PROTOCOL.md`, `docs/decisions/
+ADR-0041-test-1-lock-and-ml-research-track.md`). On the evidence
+question specifically: momentum (mean_ic=-0.0078), low-volatility
+(mean_ic=-0.0486), and `trend_volatility`'s filter
+(mean_spread=-0.0078, wrong direction) all show no positive
+forward-predictive power against this 40-symbol, price/volume-only
+universe over 2010-2023-04-28. 3 independently-motivated, pre-
+committed hypotheses, 3 null-or-negative results, none searched for
+after seeing a favorable one. This is now a real, if not overwhelming
+(small sample, ~79-155 observations per test), evidentiary basis to
+say further simple-technical-rule variants on this exact dataset carry
+diminishing expected value, and to weight further investment toward
+either (a) actual ML model development (the governance/tooling for
+which now exists) or (b) acquiring a genuinely different data source
+(fundamentals, alternative data) rather than another price-derived
+technical rule -- both remain real options, not one prescribed answer,
+since this evidence rules out three specific ideas, not "rule-based
+signals in general" or "this universe has no exploitable structure at
+all."
 
 ### Status after this addendum
 

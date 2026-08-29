@@ -158,9 +158,34 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
      `scripts/compute_filter_bucket_returns_from_catalog.py`.
   둘 다 momentum IC 스크립트와 동일한 **TEST-1 강제 거부 로직**
   내장(override 없음, 이유 동일 — ADR-0038이 이 필터/점수 윈도우도
-  수정했기 때문). 아직 실제 카탈로그엔 안 돌림 — 사용자 실행 대기 중.
-  신규 테스트 15개(`bucket_return_analysis` 4 + `low_volatility_score`
-  5 + 두 CLI 스크립트 6). 전체 1880개 통과.
+  수정했기 때문). 신규 테스트 15개(`bucket_return_analysis` 4 +
+  `low_volatility_score` 5 + 두 CLI 스크립트 6). 전체 1880개 통과.
+- **두 가설 모두 실제 카탈로그에 실행 완료 — 둘 다 null/음성**
+  (2010-01-01~2023-04-28, TEST-1 이전 구간만 사용):
+  - **저변동성 팩터**: 80 rebalance dates, mean_ic = **-0.0486**,
+    ic_information_ratio = -0.147, positive_ic_ratio = 45.57% — 음의
+    방향이지만 79개 관측치 기준 노이즈 대비 작아 "역신호"보다는
+    "탐지 가능한 엣지 없음"으로 해석.
+  - **`trend_volatility` 필터**: 160 rebalance dates(155개는 양쪽
+    그룹 존재), mean_passing_return = 1.10%, mean_failing_return =
+    1.89%, mean_spread = **-0.0078**(필터 통과 그룹이 오히려 더
+    나쁨 — 필터가 의도한 방향과 반대), positive_spread_ratio =
+    47.74%(동전던지기에 가까움).
+  - **momentum(기존 -0.0078) + 저변동성 + trend_volatility 필터 =
+    독립적으로 선정한 가설 3개 전부 null 또는 음성.** 사후 유리한
+    결과가 나올 때까지 가설을 바꿔가며 찾은 것이 아니라(cherry-picking
+    아님), 결과를 보기 전에 미리 정한 3개가 전부 실패 — "이 3개 규칙이
+    안 통한다"의 근거로는 충분하지만 "규칙 기반 신호 자체가 전부
+    안 통한다"까지 일반화할 근거는 아님. `trend_volatility`의 실제
+    fold-consistency(76개 중 61% 양의 fold)는 필터의 종목 선별력보다
+    2023-2026 TEST 구간이 대체로 BULL 장이었던 것(76 fold 중 54개
+    BULL)으로 설명하는 편이 더 타당함 — Q2의 구조적/레짐 설명을
+    재확인·강화. `docs/research/STRATEGY-VALIDATION-REPORT.md` Section
+    G/Q3 갱신. **다음 방향(사용자 위임)**: 가격/거래량 기반 단순 규칙을
+    더 찾는 것은 기대값이 낮다고 판단 — ML 착수 또는 펀더멘털/대체
+    데이터 등 다른 데이터 소스 확보 중 하나로 무게중심 이동. 어느
+    쪽을 실제로 시작할지는 아직 미결정(문서에도 단정하지 않고 옵션만
+  기록).
 
 ### Completed (Session 33 — Phase 31 continued)
 
