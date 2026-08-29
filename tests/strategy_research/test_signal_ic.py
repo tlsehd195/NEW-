@@ -102,9 +102,17 @@ class TestComputeIcSeriesAgainstRealMomentumScore:
     def test_a_confounding_third_security_can_produce_a_partial_ic(self) -> None:
         # Adding CYCLICAL's oscillation changes rank order between it
         # and TRENDDOWN at some dates -- a real, honestly-computed
-        # partial IC (0.5, not the 3-item perfect 1.0), demonstrating
-        # this module does not silently round a partial signal up to
-        # "perfectly predictive."
+        # partial IC (neither the 3-item perfect 1.0 nor a fabricated
+        # 0.0), demonstrating this module does not silently round a
+        # partial signal to "perfectly predictive." The exact value
+        # below (-1/6) reflects _momentum_score's trim_to_lookback fix
+        # (strategy_research/_dates.py): the momentum window is now the
+        # precisely-sized trailing `lookback_months`, not the wider,
+        # unstrimmed padded fetch a prior version of this test was
+        # written against -- CYCLICAL's rank relative to TRENDDOWN over
+        # that corrected window differs from before, which is expected
+        # (a real signal-window bug fix changing a downstream numeric
+        # result), not a regression.
         universe = ("TRENDUP", "TRENDDOWN", "CYCLICAL")
         repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
         strategy = LongTermMomentumStrategy(
@@ -116,8 +124,8 @@ class TestComputeIcSeriesAgainstRealMomentumScore:
             list(universe), rebalance_dates, strategy._momentum_score, repo, horizon_days=60
         )
 
-        assert summary.mean_ic == 0.5
-        assert 0.0 < summary.mean_ic < 1.0
+        assert summary.mean_ic == -1 / 6
+        assert -1.0 < summary.mean_ic < 1.0  # partial, not a clean extreme
 
     def test_no_rebalance_dates_produces_empty_summary_not_a_fabricated_zero(self) -> None:
         universe = ("TRENDUP", "TRENDDOWN")

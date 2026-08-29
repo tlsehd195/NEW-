@@ -34,7 +34,7 @@ from backtest.enums import OrderSide, OrderType
 from backtest.portfolio import PortfolioView
 from backtest.strategy import OrderIntent
 
-from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months
+from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months, trim_to_lookback
 
 LOOKBACK_MONTHS_RANGE = (6, 9, 12, 18)
 REBALANCE_MONTHS_RANGE = (1, 3)
@@ -75,7 +75,16 @@ class LongTermMomentumStrategy:
 
     def _momentum_score(self, security_id: str, as_of_time: datetime, data: AsOfDataView) -> Optional[float]:
         lookback_days = self._params.lookback_months * TRADING_DAYS_PER_MONTH
-        bars = data.get_bars(security_id, as_of_time - timedelta(days=lookback_days * 2), as_of_time)
+        # The *2 padding exists only so the query covers enough calendar
+        # days to contain `lookback_days` trading days (weekends/
+        # holidays) -- trim_to_lookback trims the over-fetched result
+        # back down to the actually-intended window before it is used
+        # as the momentum lookback (see its docstring for the bug this
+        # fixes: gs-quant comparison, moving-average/momentum window).
+        bars = trim_to_lookback(
+            data.get_bars(security_id, as_of_time - timedelta(days=lookback_days * 2), as_of_time),
+            lookback_days,
+        )
         if len(bars) < 2:
             return None
         start_price = bars[0].adjusted_close or bars[0].close

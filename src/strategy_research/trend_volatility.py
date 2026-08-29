@@ -30,7 +30,7 @@ from backtest.metrics import annualized_volatility, compute_returns
 from backtest.portfolio import PortfolioView
 from backtest.strategy import OrderIntent
 
-from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months
+from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months, trim_to_lookback
 
 TREND_LOOKBACK_MONTHS_RANGE = (6, 9, 12)
 VOL_LOOKBACK_DAYS_RANGE = (60, 90, 126)
@@ -73,7 +73,18 @@ class TrendVolatilityStrategy:
 
     def _passes_filter(self, security_id: str, as_of_time: datetime, data: AsOfDataView) -> bool:
         trend_days = self._params.trend_lookback_months * TRADING_DAYS_PER_MONTH
-        trend_bars = data.get_bars(security_id, as_of_time - timedelta(days=int(trend_days * 1.6)), as_of_time)
+        # The *1.6 padding only guarantees enough calendar days are
+        # fetched to contain `trend_days` trading days -- without
+        # trim_to_lookback, the moving average below was silently
+        # computed over the whole padded (roughly 1.6x too large)
+        # window rather than the `trend_lookback_months` this
+        # strategy's own parameters document (found comparing against
+        # gs-quant's timeseries.moving_average, which operates on a
+        # precisely-sized window).
+        trend_bars = trim_to_lookback(
+            data.get_bars(security_id, as_of_time - timedelta(days=int(trend_days * 1.6)), as_of_time),
+            trend_days,
+        )
         if len(trend_bars) < 2:
             return False
         closes = [b.adjusted_close or b.close for b in trend_bars]
@@ -82,8 +93,11 @@ class TrendVolatilityStrategy:
         if moving_average <= 0 or current_price <= moving_average:
             return False
 
-        vol_bars = data.get_bars(
-            security_id, as_of_time - timedelta(days=int(self._params.vol_lookback_days * 1.6)), as_of_time
+        vol_bars = trim_to_lookback(
+            data.get_bars(
+                security_id, as_of_time - timedelta(days=int(self._params.vol_lookback_days * 1.6)), as_of_time
+            ),
+            self._params.vol_lookback_days,
         )
         if len(vol_bars) < 2:
             return False

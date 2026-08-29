@@ -36,7 +36,7 @@ from backtest.metrics import annualized_volatility, compute_returns
 from backtest.portfolio import PortfolioView
 from backtest.strategy import OrderIntent
 
-from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months
+from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months, trim_to_lookback
 from strategy_research.long_term_momentum import LOOKBACK_MONTHS_RANGE
 
 VOL_LOOKBACK_DAYS_RANGE = (60, 90, 126)
@@ -84,7 +84,14 @@ class RiskControlledMomentumStrategy:
 
     def _momentum_score(self, security_id: str, as_of_time: datetime, data: AsOfDataView) -> Optional[float]:
         lookback_days = self._params.lookback_months * TRADING_DAYS_PER_MONTH
-        bars = data.get_bars(security_id, as_of_time - timedelta(days=lookback_days * 2), as_of_time)
+        # See long_term_momentum.py's identical comment: the *2 padding
+        # only guarantees enough calendar days are fetched -- trim back
+        # to the intended trading-day window before using it as the
+        # momentum lookback.
+        bars = trim_to_lookback(
+            data.get_bars(security_id, as_of_time - timedelta(days=lookback_days * 2), as_of_time),
+            lookback_days,
+        )
         if len(bars) < 2:
             return None
         start_price = bars[0].adjusted_close or bars[0].close
@@ -94,8 +101,11 @@ class RiskControlledMomentumStrategy:
         return end_price / start_price - 1.0
 
     def _realized_vol(self, security_id: str, as_of_time: datetime, data: AsOfDataView) -> Optional[float]:
-        bars = data.get_bars(
-            security_id, as_of_time - timedelta(days=int(self._params.vol_lookback_days * 1.6)), as_of_time
+        bars = trim_to_lookback(
+            data.get_bars(
+                security_id, as_of_time - timedelta(days=int(self._params.vol_lookback_days * 1.6)), as_of_time
+            ),
+            self._params.vol_lookback_days,
         )
         if len(bars) < 2:
             return None
