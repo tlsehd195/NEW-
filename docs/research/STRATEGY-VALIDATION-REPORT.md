@@ -1272,6 +1272,61 @@ vs. ML) more toward ML, or toward acquiring a genuinely different data
 source (fundamentals, alternative data) rather than more price-derived
 technical variants of the same 3 already-tested ideas.
 
+**Second update -- the first fundamentals-based factor, also null.**
+Per the direction chosen after the 3-for-3 result above (ADR-0042:
+acquire a genuinely different data source before trying ML on a
+feature space already shown to carry no information), real
+fundamentals data was ingested from SEC EDGAR for the same 39-symbol
+universe (see ADR-0042 for the full ingestion story, including two
+real bugs found and fixed along the way) and the first fundamentals
+factor -- Return on Equity, a quality-factor hypothesis
+(`strategy_research.factor_scores.roe_score`) -- was tested with the
+identical Signal IC methodology, over the identical pre-TEST-1 window:
+
+```
+roe (factor_scores.roe_score, 2010-01-01..2023-04-28):
+  80 rebalance dates, 80 observations
+  mean_ic = -0.0359
+  ic_information_ratio = -0.1584
+  positive_ic_ratio = 46.25%
+```
+
+**OBSERVED**: mildly negative, small in magnitude relative to sample
+size (80 observations) -- the same "no detectable edge" reading as
+`low_volatility`'s comparable result, not "a real anti-signal."
+`positive_ic_ratio` (46.25%) is close enough to the 50% coin-flip
+baseline that this is unambiguously a null result, not a reversed one.
+
+**INFERRED**: this is now **4 independent, pre-committed hypotheses
+tested with the same rigorous methodology, spanning 2 genuinely
+different data domains** (3 price/volume-derived: momentum,
+low-volatility, trend+volatility-filter; 1 fundamentals-derived: ROE),
+and all 4 are null or negative. This is meaningfully stronger evidence
+than the 3-for-3 price-only result alone -- that result left open the
+possibility that the whole price/volume data domain was simply
+unsuitable for this universe while a different domain (fundamentals)
+might still work; a first genuinely different-domain factor also
+coming back null is evidence against that specific escape hatch too,
+though it remains evidence about these exact 4 ideas on this exact
+39-symbol large-cap universe over this exact window, not a general
+claim that no signal exists anywhere. One factor from a new domain is
+a much smaller sample than 3 factors from the old one -- this
+conclusion is provisional on that domain's own hypothesis count in a
+way the price/volume conclusion, backed by 3 independent tries, is
+not.
+
+**A caveat specific to this factor, not the others**: `roe_score` is
+restricted to annual (`fiscal_period == "FY"`) figures (Section G's
+own factor-scores.py docstring explains why -- avoiding a real
+quarter/year period-mismatch bug), so its value updates once per
+fiscal year rather than at every 2-month rebalance step this IC
+computation uses. A signal that is often stale relative to its own
+rebalance cadence has a structural handicap a faster-updating
+price-based signal does not -- this is a genuine difference in what
+was tested, not just noise, and should be weighed before concluding
+"fundamentals as a domain don't work" as strongly as "these 3
+price-based rules don't work" was concluded above.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the
@@ -1474,27 +1529,33 @@ consistent with (not proof of) its filter carrying more information
 than the shared momentum score does.
 
 **Q3 -- is ML research now more valuable than more rule-based
-strategies? UPDATED with all 3 real Signal IC/bucket-return results
-in:** governance groundwork is done (`docs/research/
-ML-RESEARCH-PROTOCOL.md`, `docs/decisions/
+strategies? UPDATED with all 3 price-based results AND the first
+fundamentals-based result in:** governance groundwork is done
+(`docs/research/ML-RESEARCH-PROTOCOL.md`, `docs/decisions/
 ADR-0041-test-1-lock-and-ml-research-track.md`). On the evidence
 question specifically: momentum (mean_ic=-0.0078), low-volatility
-(mean_ic=-0.0486), and `trend_volatility`'s filter
-(mean_spread=-0.0078, wrong direction) all show no positive
-forward-predictive power against this 40-symbol, price/volume-only
-universe over 2010-2023-04-28. 3 independently-motivated, pre-
-committed hypotheses, 3 null-or-negative results, none searched for
-after seeing a favorable one. This is now a real, if not overwhelming
-(small sample, ~79-155 observations per test), evidentiary basis to
-say further simple-technical-rule variants on this exact dataset carry
-diminishing expected value, and to weight further investment toward
-either (a) actual ML model development (the governance/tooling for
-which now exists) or (b) acquiring a genuinely different data source
-(fundamentals, alternative data) rather than another price-derived
-technical rule -- both remain real options, not one prescribed answer,
-since this evidence rules out three specific ideas, not "rule-based
-signals in general" or "this universe has no exploitable structure at
-all."
+(mean_ic=-0.0486), `trend_volatility`'s filter (mean_spread=-0.0078,
+wrong direction), and now ROE (mean_ic=-0.0359, the first
+fundamentals-derived, not price/volume-derived, factor tested) all
+show no positive forward-predictive power against this 39-symbol
+universe over 2010-2023-04-28. 4 independently-motivated,
+pre-committed hypotheses across 2 genuinely different data domains, 4
+null-or-negative results, none searched for after seeing a favorable
+one. This is a stronger evidentiary basis than the 3-for-3 price-only
+result alone -- it was still possible then that fundamentals data
+specifically would break the pattern; the first fundamentals factor
+tried did not. Still not overwhelming (small samples, ~79-160
+observations per test; ROE is a single factor from its domain versus 3
+from price/volume, and its FY-only update cadence is a real structural
+handicap noted in Section G's own caveat) -- but real investment
+toward either (a) actual ML model development (the governance/tooling
+for which now exists) or (b) further fundamentals factors (value
+factors once shares-outstanding data is ingested; other quality/
+leverage ratios already computable from data already ingested) both
+remain legitimate next options, not one prescribed answer, since this
+evidence rules out four specific ideas, not "rule-based signals in
+general," "fundamentals data as a domain," or "this universe has no
+exploitable structure at all."
 
 ### Status after this addendum
 

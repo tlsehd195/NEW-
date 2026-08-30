@@ -369,9 +369,22 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     `--fundamentals-db-path` 두 카탈로그를 받도록만 확장.
   - 신규 테스트 17개(전부 synthetic/wiring 검증, 실제 데이터 결과
     주장 아님). 전체 1967개 통과.
-  - **다음 단계**: 사용자 환경에 실제 가격 카탈로그와 방금 만든
-    39종목 펀더멘털 카탈로그가 둘 다 있어야 실행 가능 — 아직 실행
-    안 함.
+- **ROE 실제 결과 수신 — 4번째 가설도 null**: 사용자가
+  `data/real_2010_latest`(가격) + `data/fundamentals_data`(펀더멘털)
+  두 카탈로그로 실행 — 2010-01-01~2023-04-28, 80 rebalance dates,
+  80 observations, **mean_ic = -0.0359**, IR = -0.1584,
+  positive_ic_ratio = 46.25%. momentum(-0.0078)/저변동성(-0.0486)/
+  trend_volatility(-0.0078)에 이어 **가격/거래량이 아닌 완전히 다른
+  데이터(펀더멘털)로 만든 첫 팩터도 null**. 즉 이제 "다른 데이터
+  소스면 다를 것"이라는 남은 가능성 하나까지 실측으로 약화됨 —
+  단, ROE 하나만 테스트한 거라 3개 대 1개로 표본이 작고, 연간
+  공시 기준이라 업데이트 주기가 느린 구조적 handicap도 있어서
+  "펀더멘털 도메인 자체가 안 된다"고 momentum 계열만큼 강하게
+  결론 내리긴 이름. `STRATEGY-VALIDATION-REPORT.md` Section G/Q3,
+  `ADR-0042` 갱신. **다음 방향은 여전히 미결정** — ML 착수, 아니면
+  다른 펀더멘털 팩터(발행주식수 확보 후 밸류 팩터, 또는 지금 데이터로
+  바로 가능한 다른 quality/leverage 비율) 추가 시도 둘 다 여전히
+  유효한 옵션.
 
 ### Completed (Session 33 — Phase 31 continued)
 

@@ -453,6 +453,37 @@ both the real price catalog (from `ingest_real_market_data.py`, which
 this session does not have locally) and the real fundamentals catalog
 (Decision 8's 29,429-record store) in the same environment.
 
+## Decision 10 -- real ROE result: null, same as every price-based hypothesis
+
+The user ran the CLI from their own environment (`data/real_2010_latest`
+for prices, `data/fundamentals_data` for fundamentals) and relayed:
+
+```
+Fundamentals Signal IC: roe over [2010-01-01, 2023-04-28) (80 rebalance dates)
+  observations=80
+  mean_ic=-0.0359
+  ic_information_ratio=-0.1584347328674904
+  positive_ic_ratio=46.25%
+```
+
+Mildly negative, near the 50% coin-flip baseline on `positive_ic_ratio`
+-- the same "no detectable edge" reading `low_volatility` got, not a
+reversed signal. This is now the 4th independently-motivated,
+pre-committed hypothesis tested with this project's Signal IC
+methodology, and the 1st from a genuinely different data domain
+(fundamentals, not price/volume) -- also null. Full analysis and the
+important caveat about ROE's annual-only update cadence being a real
+structural handicap (not just noise) are in
+`docs/research/STRATEGY-VALIDATION-REPORT.md` Section G/Q3, updated
+alongside this decision.
+
+This does not resolve the ML-vs-more-fundamentals-factors question --
+one factor from the fundamentals domain is a much smaller sample than
+the three from price/volume, so "fundamentals as a domain doesn't
+work" is not yet as well-evidenced as "these three price-based rules
+don't work" was. Both remain legitimate next options, deliberately
+left as an open decision rather than resolved here.
+
 ## What's still not built
 
 A systematic per-symbol identity-continuity check (the general version
