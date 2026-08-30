@@ -1765,10 +1765,17 @@ first, before either more fundamentals-factor search or ML. See the
 `--fundamentals-db-path`) and the real result: `leverage` does NOT
 clear the CANDIDATE fold-consistency bar (56% positive folds vs. the
 required 60%) -- the multiple-testing caution's warning was borne out,
-not merely a hypothetical risk. (a) and (b) remain open, and this
-result is a data point for choosing between them: 4 of 5 rule-based/
-fundamentals candidates now fail even the fold-consistency bar, only
+not merely a hypothetical risk. 4 of 5 rule-based/fundamentals
+candidates now fail even the fold-consistency bar, only
 `trend_volatility` gets as far as failing DSR alone.
+
+**Then (a) chosen**: given 8 hypotheses tested with none reaching
+CANDIDATE, the user delegated the next direction to the assistant, who
+recommended and began the ML Track -- see `ADR-0043-ml-first-model.md`
+and `ML-RESEARCH-PROTOCOL.md` section 14 for what was built (a first
+plain-OLS model combining all 6 factor scores, `src/ml/`,
+`scripts/train_ml_model_from_catalog.py`). Not yet run against the
+real catalog.
 
 ### Status after this addendum
 

@@ -53,7 +53,7 @@ ScoreFn = Callable[[str, datetime, AsOfDataView], Optional[float]]
 FilterFn = Callable[[str, datetime, AsOfDataView], bool]
 
 
-def _forward_return(
+def forward_return(
     repository: DataRepository, security_id: str, as_of_time: datetime, horizon_days: int
 ) -> Optional[float]:
     """The realized return from `as_of_time` to `as_of_time + horizon_days`,
@@ -132,7 +132,7 @@ class IcSummary:
     positive_ic_ratio: Optional[float]
 
 
-def _summarize_ic_observations(observations: list[IcObservation]) -> IcSummary:
+def summarize_ic_observations(observations: list[IcObservation]) -> IcSummary:
     """Shared aggregation tail for `compute_ic_series` and
     `compute_fundamentals_ic_series` -- identical math, factored out
     once both needed it, rather than duplicated."""
@@ -182,7 +182,7 @@ def compute_ic_series(
 
         forward_returns = {}
         for sid in scores:
-            fr = _forward_return(repository, sid, as_of_time, horizon_days)
+            fr = forward_return(repository, sid, as_of_time, horizon_days)
             if fr is not None:
                 forward_returns[sid] = fr
 
@@ -192,7 +192,7 @@ def compute_ic_series(
                 IcObservation(as_of_time=as_of_time, ic=ic, num_securities=len(forward_returns))
             )
 
-    return _summarize_ic_observations(observations)
+    return summarize_ic_observations(observations)
 
 
 FundamentalsScoreFn = Callable[[str, datetime, object], Optional[float]]
@@ -221,7 +221,7 @@ def compute_fundamentals_ic_series(
     point-in-time-safety property `AsOfDataView` exists to enforce for
     price data, just implemented at the repository layer instead of a
     separate wrapper. Forward returns still come from `price_repository`
-    via the same `_forward_return` helper `compute_ic_series` uses,
+    via the same `forward_return` helper `compute_ic_series` uses,
     deliberately not point-in-time-limited (module docstring)."""
     observations: list[IcObservation] = []
     for as_of_time in rebalance_dates:
@@ -233,7 +233,7 @@ def compute_fundamentals_ic_series(
 
         forward_returns = {}
         for sid in scores:
-            fr = _forward_return(price_repository, sid, as_of_time, horizon_days)
+            fr = forward_return(price_repository, sid, as_of_time, horizon_days)
             if fr is not None:
                 forward_returns[sid] = fr
 
@@ -243,7 +243,7 @@ def compute_fundamentals_ic_series(
                 IcObservation(as_of_time=as_of_time, ic=ic, num_securities=len(forward_returns))
             )
 
-    return _summarize_ic_observations(observations)
+    return summarize_ic_observations(observations)
 
 
 @dataclass(frozen=True)
@@ -289,7 +289,7 @@ def bucket_return_analysis(
         passing_returns: list[float] = []
         failing_returns: list[float] = []
         for sid in security_ids:
-            fr = _forward_return(repository, sid, as_of_time, horizon_days)
+            fr = forward_return(repository, sid, as_of_time, horizon_days)
             if fr is None:
                 continue
             if filter_fn(sid, as_of_time, data_view):

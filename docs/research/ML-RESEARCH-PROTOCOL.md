@@ -281,10 +281,17 @@ concrete need.
 
 ## 14. Status
 
-`ML_RESEARCH_PARTIALLY_READY`: governance protocol (this document),
-TEST-1 lock (`strategy_research.locked_windows`), and Track A's
-result-decomposition tooling exist. No feature/target/model registry
-implementation, no ML dataset builder, no trained model, and no
-dependency decision exist yet -- those are the concrete next steps
-when ML work actually begins, each as its own, separately-justified
-Phase.
+**Updated -- first model built (ADR-0043).** `src/ml/` now implements
+the feature/target schemas (section 8), a leakage-safe dataset builder
+(section 4), a first model family (plain OLS, no new dependency per
+section 13), and `scripts/train_ml_model_from_catalog.py` (TEST-1-
+guarded per section 3, no TEST region touched per section 5, full
+experiment-governance record printed per section 6). Not yet run
+against the real catalog -- that real run, and its VALIDATION IC
+result, are the immediate next step. Still not built: any
+feature/target/model registry PERSISTENCE layer (schemas exist, no
+`MLExperimentRepository`), a second candidate model family (so no
+model-selection multiple-comparisons procedure has been exercised
+yet), any TEST-region evaluation, and any risk-control implementation
+(section 10) -- this model produces a research-only IC diagnostic,
+never an order.

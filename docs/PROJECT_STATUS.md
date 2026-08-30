@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 35 — Phase 33: real walk-forward result — `leverage` fails the CANDIDATE fold-consistency bar; TEST-1 lock gap found and fixed in `run_long_horizon_validation.py`)
+**Updated By:** Claude Code (Session 35 — Phase 33: ML Research Track first model built (`src/ml/`, ADR-0043) — plain OLS combining all 6 factor scores; not yet run against real data)
 
 ---
 
@@ -472,6 +472,28 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     확인, 회귀 테스트 3개 추가, 전체 스위트 1989개 통과.
   - `ADR-0042` Decision 14, `STRATEGY-VALIDATION-REPORT.md` Section G
     "Fifth update"에 상세 기록.
+- **"프로젝트 완성에 가까워질 수 있는 방향으로 네가 진행해" — ML 착수
+  (`src/ml/`, `ADR-0043`)**: 8개 가설 전부 CANDIDATE 미달인 상황에서
+  사용자가 다음 방향을 위임 — 어시스턴트가 ML 착수를 추천하고 바로
+  구현.
+  - **모델**: OLS(최소자승) 하나만, numpy/scikit-learn 등 신규
+    의존성 추가 없음 (`ADR-0039`의 동일한 논리 재적용 — 6개 피처·
+    수백 개 샘플 규모에는 순수 Python 정규방정식 계산이면 충분).
+    수치 안정성용 고정 ridge(1e-6)만 있고 튜닝하는 하이퍼파라미터
+    아님.
+  - **피처**: 이미 계산해둔 6개 팩터(momentum, low_volatility, roe,
+    roa, net_margin, leverage)를 하나의 벡터로 결합 — 하나라도
+    없으면 그 샘플 전체를 버림(대체/보간 절대 안 함).
+  - **타겟**: 60일 forward return, `signal_ic.forward_return` 그대로
+    재사용(중복 구현 없음).
+  - `scripts/train_ml_model_from_catalog.py`: TRAIN에 fit, VALIDATION
+    에서 IC로 평가(기존 rule-based 팩터들과 동일한 IC 지표라 직접
+    비교 가능). TEST 구간은 아예 읽지도 않음 — 아직 "LOCK → TEST"
+    단계 진입 전. 다른 CLI들과 동일하게 TEST-1 겹치면 override 없이
+    즉시 거부.
+  - 신규 테스트 37개(`tests/ml/`), 전체 스위트 2010개 통과.
+  - `ADR-0043-ml-first-model.md`, `ML-RESEARCH-PROTOCOL.md` section 14
+    갱신. **아직 실제 카탈로그로 실행 전** — 이게 다음 단계.
 
 ### Completed (Session 33 — Phase 31 continued)
 
