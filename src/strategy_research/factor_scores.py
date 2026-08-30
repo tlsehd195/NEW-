@@ -57,3 +57,59 @@ def low_volatility_score(
         return None
     vol = annualized_volatility(returns)
     return -vol
+
+
+def _latest_fiscal_year_value(repository, security_id: str, concept: str, as_of_time: datetime):
+    """The most recent annual (`fiscal_period == "FY"`) `FundamentalRecord`
+    for `(security_id, concept)` already knowable `as_of_time`. Restricted
+    to `"FY"` rather than using `repository.latest_known_value` directly
+    (which does not distinguish fiscal periods): `NetIncomeLoss` is
+    reported at both quarterly and annual granularity under the same
+    XBRL tag, and mixing a single quarter's net income against a full
+    fiscal year's `StockholdersEquity` would understate ROE by roughly
+    4x with no warning -- an honest but genuinely mismatched-period bug
+    this restriction avoids entirely, at the cost of `roe_score` only
+    updating once per fiscal year rather than every quarter. `Assets`/
+    `Liabilities`/`StockholdersEquity` (instant/balance-sheet concepts)
+    are also reported at each period's end including `"FY"`, so this
+    same filter anchors both sides of a ratio on the same fiscal
+    year-end date."""
+    records = [r for r in repository.get_fundamentals(security_id, concept, as_of_time) if r.fiscal_period == "FY"]
+    if not records:
+        return None
+    records.sort(key=lambda r: (r.period_end, r.available_time))
+    return records[-1]
+
+
+def roe_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Return on Equity (net income / stockholders'
+    equity) as a "quality" factor: companies that generate more profit
+    per dollar of shareholder capital are hypothesized to have better
+    forward returns than a naive earnings-level comparison would
+    suggest. A well-documented, independently pre-existing candidate
+    (quality-factor literature, e.g. Novy-Marx 2013's profitability
+    factor is closely related) -- chosen as this project's first
+    fundamentals-based signal specifically because it needs no new
+    data beyond what `ADR-0042`'s ingestion already collected
+    (`NetIncomeLoss`, `StockholdersEquity`), unlike a price-based value
+    factor (P/E, P/B), which would additionally need shares-outstanding
+    data not yet ingested.
+
+    `repository` is duck-typed to `storage.fundamentals_repository.
+    DuckDBFundamentalsRepository`'s shape (`get_fundamentals`) --
+    not imported by type here, matching `strategy_research.signal_ic.
+    compute_fundamentals_ic_series`'s identical choice to keep this
+    package free of a new dependency on `storage.*`.
+
+    Returns `None` (never a fabricated ratio) when either figure is
+    missing, or when equity is zero or negative -- a company with
+    negative shareholders' equity makes ROE uninterpretable as a
+    "quality" signal (a small loss against negative equity would
+    otherwise produce a spuriously large POSITIVE ratio)."""
+    net_income = _latest_fiscal_year_value(repository, security_id, "NetIncomeLoss", as_of_time)
+    equity = _latest_fiscal_year_value(repository, security_id, "StockholdersEquity", as_of_time)
+    if net_income is None or equity is None:
+        return None
+    if equity.value <= 0:
+        return None
+    return net_income.value / equity.value

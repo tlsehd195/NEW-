@@ -409,20 +409,60 @@ confirmed defects found this phase are actually fixed in what is now
 stored, not merely fixed in code with stale bad data still sitting
 underneath.
 
+## Decision 9 -- first fundamentals-based factor: ROE, with TEST-1-safe tooling
+
+With clean real fundamentals data confirmed (Decision 8), built the
+first actual fundamentals-based signal-testing infrastructure, mirroring
+the momentum/low-volatility Signal IC tooling this project already
+built and used (Phase 32):
+
+- `strategy_research.factor_scores.roe_score` -- Return on Equity
+  (`NetIncomeLoss / StockholdersEquity`), a "quality"-factor hypothesis
+  (related to Novy-Marx 2013's profitability factor), chosen as the
+  first fundamentals signal specifically because it needs no data
+  beyond what is already ingested (unlike a price-based value factor
+  such as P/E or P/B, which needs shares-outstanding data not yet
+  collected). Restricted to annual (`fiscal_period == "FY"`) figures on
+  both sides of the ratio -- `NetIncomeLoss` is reported at both
+  quarterly and annual granularity under the same XBRL tag, and mixing
+  a quarter's income against a full year's equity would silently
+  understate ROE by roughly 4x. Returns `None` (never a fabricated
+  ratio) for zero/negative equity, where the ratio is uninterpretable.
+- `strategy_research.signal_ic.compute_fundamentals_ic_series` -- the
+  fundamentals analog of `compute_ic_series`. Unlike the price-only
+  version, fundamentals scoring and forward-return computation read
+  from two genuinely separate repositories (fundamentals were ingested
+  into their own catalog entirely apart from price data's); no
+  `AsOfDataView`/`BacktestClock` wrapper is needed for the fundamentals
+  side since `DuckDBFundamentalsRepository`'s own methods already
+  enforce `available_time <= as_of_time` directly. Shares its
+  aggregation math with `compute_ic_series` via a new
+  `_summarize_ic_observations` helper (no logic duplicated).
+- `scripts/compute_fundamentals_ic_from_catalog.py` -- mirrors
+  `compute_signal_ic_from_catalog.py`'s exact TEST-1 refusal (no
+  override flag, default `--end=TEST_1.start`), adapted for two
+  `--price-db-path`/`--fundamentals-db-path` catalogs.
+- 17 new tests (4 `compute_fundamentals_ic_series` wiring/point-in-time
+  tests, 8 `roe_score` tests, 5 CLI tests including the safety-critical
+  TEST-1-refusal path) -- none touch real data, all synthetic/wiring
+  verification, matching every prior IC script's own test discipline.
+  Full suite: 1967 passed.
+
+Not yet run against the real catalog -- that is the next step, requiring
+both the real price catalog (from `ingest_real_market_data.py`, which
+this session does not have locally) and the real fundamentals catalog
+(Decision 8's 29,429-record store) in the same environment.
+
 ## What's still not built
 
-Concept selection (which `us-gaap` tags to fetch) is a starting
-default, not fixed for all time -- `--concepts` overrides it. Ratio
-derivation (P/E, ROE, debt/equity, etc.) from raw `FundamentalRecord`s,
-and any actual value/quality factor signal built on top of them, are
-the natural next step now that clean real data exists (Decision 8) --
-not yet started. A systematic per-symbol identity-continuity check
-(the general version of what caught XOM's CIK issue -- Decision 6's
-own caveat that the other 38 symbols were never individually verified
-free of a subtler version of the same holdco-reorg problem still
-stands) also remains unbuilt. Any future fundamentals-based signal
-evaluation must reuse `strategy_research.locked_windows.
-overlaps_any_locked_window` against TEST-1 exactly as the rule-based
-research this phase followed on from already does (RULE 0.8) -- this
-was designed generally in ADR-0041/`ML-RESEARCH-PROTOCOL.md` and
-applies to fundamentals signals with no special-casing needed.
+A systematic per-symbol identity-continuity check (the general version
+of what caught XOM's CIK issue -- Decision 6's own caveat that the
+other 38 symbols were never individually verified free of a subtler
+version of the same holdco-reorg problem still stands) remains
+unbuilt. Value-factor signals (P/E, P/B) need shares-outstanding data
+not yet ingested. Any future fundamentals-based signal evaluation must
+reuse `strategy_research.locked_windows.overlaps_any_locked_window`
+against TEST-1 exactly as the rule-based research this phase followed
+on from already does (RULE 0.8) -- `compute_fundamentals_ic_from_catalog.py`
+already does this (Decision 9); any additional fundamentals script
+must too.

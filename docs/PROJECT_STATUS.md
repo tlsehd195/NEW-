@@ -348,6 +348,30 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     분리 기록. #14(출금 스케줄)와 함께 나중에 재검토 필요.
   - 둘 다 오늘 당장 영향 없음(Toss 게이트가 독립적으로 Live 자체를
     막고 있음) — 나중에 실전 준비할 때 잊지 않기 위한 기록용.
+- **첫 펀더멘털 기반 신호(ROE) 검증 도구 구축 완료 — 아직 실제 카탈로그
+  실행 전**: 사용자 승인("진행") 후 momentum/저변동성 때와 동일한
+  패턴으로 구축:
+  - `strategy_research.factor_scores.roe_score` — NetIncomeLoss /
+    StockholdersEquity(quality factor 가설). 밸류 팩터(P/E, P/B)와
+    달리 발행주식수 없이 지금 가진 데이터만으로 계산 가능해서 첫
+    번째로 선택. 분기치와 연간치가 같은 XBRL 태그로 섞여 들어오는 걸
+    막기 위해 양쪽 다 `fiscal_period=="FY"`(연간)로 제한 — 안 그러면
+    ROE가 최대 4배 정도 과소평가될 수 있음. 자본잠식(음수/0 자본)일
+    땐 비율이 무의미해서 `None` 반환(가짜 값 조작 안 함).
+  - `strategy_research.signal_ic.compute_fundamentals_ic_series` —
+    기존 `compute_ic_series`의 펀더멘털 버전. 가격 데이터와 달리
+    스코어(펀더멘털 카탈로그)와 forward return(가격 카탈로그)이
+    완전히 별개 저장소라 두 개를 따로 받는 구조. 집계 로직은
+    `_summarize_ic_observations`로 공통화(중복 없음).
+  - `scripts/compute_fundamentals_ic_from_catalog.py` — 기존
+    momentum/저변동성 스크립트와 똑같은 TEST-1 강제 거부 로직
+    그대로 적용(override 없음), `--price-db-path`/
+    `--fundamentals-db-path` 두 카탈로그를 받도록만 확장.
+  - 신규 테스트 17개(전부 synthetic/wiring 검증, 실제 데이터 결과
+    주장 아님). 전체 1967개 통과.
+  - **다음 단계**: 사용자 환경에 실제 가격 카탈로그와 방금 만든
+    39종목 펀더멘털 카탈로그가 둘 다 있어야 실행 가능 — 아직 실행
+    안 함.
 
 ### Completed (Session 33 — Phase 31 continued)
 

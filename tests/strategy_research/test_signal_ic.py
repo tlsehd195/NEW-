@@ -15,8 +15,22 @@ import pytest
 
 from research_helpers import synthetic_multi_year_repository
 
+from storage_helpers import new_engine
+
+from data_infra.fundamentals_models import FundamentalRecord
+from data_infra.models import Provenance
+
+from storage.fundamentals_repository import DuckDBFundamentalsRepository
+
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy
-from strategy_research.signal_ic import _pearson, _rank, bucket_return_analysis, compute_ic_series, spearman_ic
+from strategy_research.signal_ic import (
+    _pearson,
+    _rank,
+    bucket_return_analysis,
+    compute_fundamentals_ic_series,
+    compute_ic_series,
+    spearman_ic,
+)
 from strategy_research.trend_volatility import TrendVolatilityParameters, TrendVolatilityStrategy
 
 
@@ -230,3 +244,109 @@ class TestBucketReturnAnalysis:
         assert summary.observations[0].passing_count == 0
         assert summary.dates_with_both_groups == 0
         assert summary.mean_spread is None  # not fabricated as 0
+
+
+def _fundamental_record(security_id, record_id, *, value, available_time, fiscal_period="FY", concept="NetIncomeLoss"):
+    return FundamentalRecord(
+        security_id=security_id, concept=concept, period_end=available_time, fiscal_year=available_time.year,
+        fiscal_period=fiscal_period, form_type="10-K", value=value, unit="USD",
+        available_time=available_time, ingestion_time=available_time,
+        provenance=Provenance(
+            source="sec_edgar", source_dataset=f"sec_edgar_companyfacts_{security_id}",
+            source_record_id=record_id, retrieved_at=available_time, data_version="v1",
+        ),
+    )
+
+
+class TestComputeFundamentalsIcSeries:
+    """`compute_fundamentals_ic_series` -- the fundamentals analog of
+    `compute_ic_series`, added for Phase 33's ROE factor (ADR-0042).
+    Unlike `compute_ic_series`, scoring and forward-return computation
+    read from two SEPARATE repositories (fundamentals are ingested into
+    their own catalog, entirely separate from price data's)."""
+
+    def test_wiring_a_hand_rolled_score_fn_produces_ic_of_one(self) -> None:
+        # Proves the plumbing (two repositories, no AsOfDataView needed
+        # for the fundamentals side) independent of any real factor's
+        # own correctness -- mirrors compute_ic_series's own
+        # "genuinely predictive signal produces ic of 1" style test.
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+
+        def _fixed_score_fn(security_id, as_of_time, fundamentals_repo):
+            return {"TRENDUP": 1.0, "TRENDDOWN": 0.0}[security_id]
+
+        summary = compute_fundamentals_ic_series(
+            list(universe), [_utc(2021, m, 1) for m in (3, 6, 9)], _fixed_score_fn,
+            fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
+        )
+        assert summary.mean_ic == 1.0
+
+    def test_end_to_end_with_the_real_roe_score_against_a_real_fundamentals_repository(self, tmp_path) -> None:
+        from strategy_research.factor_scores import roe_score
+
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        # TRENDUP: strong ROE (high income, modest equity). TRENDDOWN:
+        # weak ROE (small income, same equity) -- filed well before any
+        # rebalance date used below.
+        for security_id, income in (("TRENDUP", 50.0), ("TRENDDOWN", 5.0)):
+            fundamentals_repo.add_fundamental(
+                _fundamental_record(security_id, f"{security_id}:income", value=income, available_time=_utc(2020, 3, 1))
+            )
+            fundamentals_repo.add_fundamental(
+                _fundamental_record(
+                    security_id, f"{security_id}:equity", value=100.0,
+                    available_time=_utc(2020, 3, 1), concept="StockholdersEquity",
+                )
+            )
+
+        summary = compute_fundamentals_ic_series(
+            list(universe), [_utc(2021, m, 1) for m in (3, 6, 9)], roe_score,
+            fundamentals_repository=fundamentals_repo, price_repository=price_repo, horizon_days=30,
+        )
+        assert summary.mean_ic is not None
+        assert summary.observations  # at least one date produced a real observation
+
+    def test_no_rebalance_dates_produces_empty_summary_not_a_fabricated_zero(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2021, 1, 3), symbols=universe)
+        summary = compute_fundamentals_ic_series(
+            list(universe), [], lambda sid, t, repo: 1.0,
+            fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
+        )
+        assert summary.observations == ()
+        assert summary.mean_ic is None
+
+    def test_a_score_not_yet_knowable_as_of_the_rebalance_date_is_never_used(self, tmp_path) -> None:
+        # The point-in-time-critical property: a fundamentals record
+        # filed AFTER the rebalance date must not affect that date's
+        # score at all -- proven here by comparing against a repository
+        # that never got the record in the first place, mirroring
+        # compute_ic_series's own "score never sees data past its own
+        # as_of_time" regression style.
+        from strategy_research.factor_scores import roe_score
+
+        universe = ("TRENDUP",)
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        early_date = _utc(2021, 3, 1)
+
+        engine_without_record = new_engine(tmp_path, name="without")
+        repo_without_record = DuckDBFundamentalsRepository(engine_without_record)
+
+        engine_with_later_record = new_engine(tmp_path, name="with_later")
+        repo_with_later_record = DuckDBFundamentalsRepository(engine_with_later_record)
+        # Filed well AFTER early_date -- must not be visible to a score
+        # computed as of early_date.
+        for concept, value in (("NetIncomeLoss", 50.0), ("StockholdersEquity", 100.0)):
+            repo_with_later_record.add_fundamental(
+                _fundamental_record("TRENDUP", f"late:{concept}", value=value, available_time=_utc(2022, 6, 1), concept=concept)
+            )
+
+        score_without = roe_score("TRENDUP", early_date, repo_without_record)
+        score_with_later = roe_score("TRENDUP", early_date, repo_with_later_record)
+        assert score_without is None
+        assert score_with_later is None  # the later-filed record is correctly invisible at early_date

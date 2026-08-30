@@ -132,6 +132,30 @@ class IcSummary:
     positive_ic_ratio: Optional[float]
 
 
+def _summarize_ic_observations(observations: list[IcObservation]) -> IcSummary:
+    """Shared aggregation tail for `compute_ic_series` and
+    `compute_fundamentals_ic_series` -- identical math, factored out
+    once both needed it, rather than duplicated."""
+    if not observations:
+        return IcSummary(observations=(), mean_ic=None, ic_information_ratio=None, positive_ic_ratio=None)
+
+    ic_values = [o.ic for o in observations]
+    mean_ic = statistics.fmean(ic_values)
+    if len(ic_values) >= 2:
+        stdev_ic = statistics.pstdev(ic_values)
+        ic_ir = (mean_ic / stdev_ic) if stdev_ic > 0 else None
+    else:
+        ic_ir = None
+    positive_ratio = sum(1 for v in ic_values if v > 0) / len(ic_values)
+
+    return IcSummary(
+        observations=tuple(observations),
+        mean_ic=mean_ic,
+        ic_information_ratio=ic_ir,
+        positive_ic_ratio=positive_ratio,
+    )
+
+
 def compute_ic_series(
     security_ids: Sequence[str],
     rebalance_dates: Sequence[datetime],
@@ -168,24 +192,58 @@ def compute_ic_series(
                 IcObservation(as_of_time=as_of_time, ic=ic, num_securities=len(forward_returns))
             )
 
-    if not observations:
-        return IcSummary(observations=(), mean_ic=None, ic_information_ratio=None, positive_ic_ratio=None)
+    return _summarize_ic_observations(observations)
 
-    ic_values = [o.ic for o in observations]
-    mean_ic = statistics.fmean(ic_values)
-    if len(ic_values) >= 2:
-        stdev_ic = statistics.pstdev(ic_values)
-        ic_ir = (mean_ic / stdev_ic) if stdev_ic > 0 else None
-    else:
-        ic_ir = None
-    positive_ratio = sum(1 for v in ic_values if v > 0) / len(ic_values)
 
-    return IcSummary(
-        observations=tuple(observations),
-        mean_ic=mean_ic,
-        ic_information_ratio=ic_ir,
-        positive_ic_ratio=positive_ratio,
-    )
+FundamentalsScoreFn = Callable[[str, datetime, object], Optional[float]]
+
+
+def compute_fundamentals_ic_series(
+    security_ids: Sequence[str],
+    rebalance_dates: Sequence[datetime],
+    score_fn: FundamentalsScoreFn,
+    fundamentals_repository: object,
+    price_repository: DataRepository,
+    *,
+    horizon_days: int,
+) -> IcSummary:
+    """Fundamentals analog of `compute_ic_series` -- the two data
+    sources fundamentals signals need are never the same repository
+    (fundamentals are ingested into their own DuckDB catalog, entirely
+    separate from price data's), unlike `compute_ic_series`'s single
+    `repository` which serves both scoring and forward returns.
+
+    `score_fn` is called directly against `fundamentals_repository`,
+    with no `AsOfDataView`/`BacktestClock` wrapper needed --
+    `DuckDBFundamentalsRepository`'s own methods (`get_fundamentals`/
+    `latest_known_value`) already take `as_of_time` and apply the
+    `available_time <= as_of_time` look-ahead guard directly, the same
+    point-in-time-safety property `AsOfDataView` exists to enforce for
+    price data, just implemented at the repository layer instead of a
+    separate wrapper. Forward returns still come from `price_repository`
+    via the same `_forward_return` helper `compute_ic_series` uses,
+    deliberately not point-in-time-limited (module docstring)."""
+    observations: list[IcObservation] = []
+    for as_of_time in rebalance_dates:
+        scores = {}
+        for sid in security_ids:
+            score = score_fn(sid, as_of_time, fundamentals_repository)
+            if score is not None:
+                scores[sid] = score
+
+        forward_returns = {}
+        for sid in scores:
+            fr = _forward_return(price_repository, sid, as_of_time, horizon_days)
+            if fr is not None:
+                forward_returns[sid] = fr
+
+        ic = spearman_ic(scores, forward_returns)
+        if ic is not None:
+            observations.append(
+                IcObservation(as_of_time=as_of_time, ic=ic, num_securities=len(forward_returns))
+            )
+
+    return _summarize_ic_observations(observations)
 
 
 @dataclass(frozen=True)

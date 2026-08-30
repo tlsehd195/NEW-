@@ -9,11 +9,17 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 from research_helpers import synthetic_multi_year_repository
+from storage_helpers import new_engine
 
 from backtest.asof import AsOfDataView
 from backtest.clock import BacktestClock
 
-from strategy_research.factor_scores import low_volatility_score
+from data_infra.fundamentals_models import FundamentalRecord
+from data_infra.models import Provenance
+
+from storage.fundamentals_repository import DuckDBFundamentalsRepository
+
+from strategy_research.factor_scores import low_volatility_score, roe_score
 
 
 def _utc(y, m, d):
@@ -78,3 +84,118 @@ class TestLowVolatilityScore:
         score_full = low_volatility_score("FLATLOW", as_of_time, _view(full_repo, as_of_time))
 
         assert score_early == score_full
+
+
+def _fy_record(security_id, record_id, *, concept, value, period_end, available_time=None):
+    available_time = available_time or period_end
+    return FundamentalRecord(
+        security_id=security_id, concept=concept, period_end=period_end, fiscal_year=period_end.year,
+        fiscal_period="FY", form_type="10-K", value=value, unit="USD",
+        available_time=available_time, ingestion_time=available_time,
+        provenance=Provenance(
+            source="sec_edgar", source_dataset=f"sec_edgar_companyfacts_{security_id}",
+            source_record_id=record_id, retrieved_at=available_time, data_version="v1",
+        ),
+    )
+
+
+def _q_record(security_id, record_id, *, concept, value, period_end):
+    return FundamentalRecord(
+        security_id=security_id, concept=concept, period_end=period_end, fiscal_year=period_end.year,
+        fiscal_period="Q2", form_type="10-Q", value=value, unit="USD",
+        available_time=period_end, ingestion_time=period_end,
+        provenance=Provenance(
+            source="sec_edgar", source_dataset=f"sec_edgar_companyfacts_{security_id}",
+            source_record_id=record_id, retrieved_at=period_end, data_version="v1",
+        ),
+    )
+
+
+class TestRoeScore:
+    """Category: Phase 33's first real fundamentals-based factor
+    (ADR-0042) -- net income / stockholders' equity, restricted to
+    annual (`fiscal_period == "FY"`) figures on both sides so a
+    quarterly income figure is never divided by a full year's equity
+    (see `factor_scores._latest_fiscal_year_value`'s own docstring for
+    why that mismatch would silently understate ROE)."""
+
+    def test_computes_net_income_over_equity(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        score = roe_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == 0.2
+
+    def test_missing_net_income_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        assert roe_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_equity_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31)))
+
+        assert roe_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_equity_returns_none_not_a_fabricated_ratio(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=-5.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=-50.0, period_end=_utc(2022, 12, 31)))
+
+        # -5 / -50 would compute to a spuriously positive 0.1 -- must be rejected instead.
+        assert roe_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_quarterly_net_income_is_ignored_even_if_more_recent(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni_fy", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "eq_fy", concept="StockholdersEquity", value=100.0, period_end=_utc(2022, 12, 31)))
+        # A more recent Q2 figure exists but must never be mixed with the FY equity.
+        repo.add_fundamental(_q_record("AAA", "ni_q2", concept="NetIncomeLoss", value=6.0, period_end=_utc(2023, 6, 30)))
+
+        score = roe_score("AAA", _utc(2023, 9, 1), repo)
+        assert score == 0.2  # still the FY figure, not 6.0 / 100.0
+
+    def test_picks_the_latest_fiscal_year_among_several(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni_2021", concept="NetIncomeLoss", value=10.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "eq_2021", concept="StockholdersEquity", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "ni_2022", concept="NetIncomeLoss", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "eq_2022", concept="StockholdersEquity", value=120.0, period_end=_utc(2022, 12, 31)))
+
+        score = roe_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == 0.25  # 30 / 120, the 2022 figures, not 2021's
+
+    def test_restated_figure_for_the_same_year_wins_by_later_filing(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(
+            _fy_record("AAA", "ni_orig", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31), available_time=_utc(2023, 2, 1))
+        )
+        repo.add_fundamental(
+            _fy_record("AAA", "ni_restated", concept="NetIncomeLoss", value=22.0, period_end=_utc(2022, 12, 31), available_time=_utc(2023, 6, 1))
+        )
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        score = roe_score("AAA", _utc(2023, 12, 1), repo)
+        assert score == 0.22  # the restated 22.0, not the original 20.0
+
+    def test_a_score_at_an_early_date_ignores_a_not_yet_filed_later_fiscal_year(self, tmp_path) -> None:
+        # Point-in-time correctness: a FY2023 figure filed in 2024 must
+        # not be visible to a score computed mid-2023.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni_2022", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31), available_time=_utc(2023, 2, 1)))
+        repo.add_fundamental(_fy_record("AAA", "eq_2022", concept="StockholdersEquity", value=100.0, period_end=_utc(2022, 12, 31), available_time=_utc(2023, 2, 1)))
+        repo.add_fundamental(_fy_record("AAA", "ni_2023", concept="NetIncomeLoss", value=50.0, period_end=_utc(2023, 12, 31), available_time=_utc(2024, 2, 1)))
+        repo.add_fundamental(_fy_record("AAA", "eq_2023", concept="StockholdersEquity", value=150.0, period_end=_utc(2023, 12, 31), available_time=_utc(2024, 2, 1)))
+
+        score = roe_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == 0.2  # still the 2022 figures -- 2023's are not yet filed as of this date
