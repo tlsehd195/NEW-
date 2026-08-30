@@ -149,3 +149,109 @@ class TestParameterValidation:
     def test_rejects_non_positive_train_window(self) -> None:
         with pytest.raises(ValueError):
             MLStrategyParameters(train_window_months=0)
+
+
+class TestPluggableModelBuilder:
+    """ADR-0043 Decision 5: MLStrategy's model family is swappable via
+    `model_builder`, so a second family (ridge_cv_builder) can run
+    through the identical leakage-safe, lazily-per-fold-fit mechanism
+    without duplicating it."""
+
+    def test_custom_model_builder_is_actually_used(self, tmp_path) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        start, end = date(2022, 1, 3), date(2022, 9, 1)
+        price_repo = synthetic_multi_year_repository(*_LONG_HISTORY, symbols=universe)
+        fundamentals_repo = _fundamentals_repo(tmp_path, universe)
+        calls = []
+
+        class _StubModel:
+            def predict(self, features):
+                return -features["momentum"]  # deliberately inverted ranking
+
+        def _stub_builder(samples):
+            calls.append(len(samples))
+            return _StubModel()
+
+        strategy = MLStrategy(list(universe), fundamentals_repo, _PARAMS, model_builder=_stub_builder)
+        result = BacktestEngine(price_repo, _config(start, end, universe), strategy).run()
+
+        assert calls, "the injected model_builder must have been called at least once"
+        bought = {f.security_id for f in result.fills if f.side.value == "BUY"}
+        assert bought == {"TRENDDOWN"}  # inverted ranking picks the weaker-momentum security
+
+    def test_ridge_cv_builder_produces_a_usable_model(self, tmp_path) -> None:
+        from ml.ml_strategy import ridge_cv_builder
+
+        universe = ("TRENDUP", "TRENDDOWN", "CYCLICAL")
+        start, end = date(2022, 1, 3), date(2022, 9, 1)
+        price_repo = synthetic_multi_year_repository(*_LONG_HISTORY, symbols=universe)
+        fundamentals_repo = _fundamentals_repo(tmp_path, universe)
+
+        strategy = MLStrategy(
+            list(universe), fundamentals_repo, MLStrategyParameters(top_n=1, train_window_months=24),
+            model_builder=ridge_cv_builder, version="ml_ridge_cv_v1",
+        )
+        result = BacktestEngine(price_repo, _config(start, end, universe), strategy).run()
+
+        assert strategy.version == "ml_ridge_cv_v1"
+        # No crash, and the fit actually succeeded (some orders placed) --
+        # correctness of the ridge selection itself is covered directly
+        # in tests/ml/test_linear_model.py.
+        assert len(result.fills) > 0
+
+
+class TestSharedFeatureCache:
+    """ADR-0043 Decision 5: an injected shared cache must not change
+    ANY observable result -- it is a pure performance optimization."""
+
+    def test_shared_cache_produces_identical_fills_to_no_cache(self, tmp_path) -> None:
+        universe = ("TRENDUP", "TRENDDOWN", "CYCLICAL")
+        start, end = date(2022, 1, 3), date(2023, 1, 4)
+        price_repo = synthetic_multi_year_repository(*_LONG_HISTORY, symbols=universe)
+        fundamentals_repo = _fundamentals_repo(tmp_path, universe)
+        config = _config(start, end, universe)
+
+        uncached = BacktestEngine(price_repo, config, MLStrategy(list(universe), fundamentals_repo, _PARAMS)).run()
+
+        shared_features: dict = {}
+        shared_targets: dict = {}
+        cached_strategy = MLStrategy(
+            list(universe), fundamentals_repo, _PARAMS, feature_cache=shared_features, target_cache=shared_targets,
+        )
+        cached = BacktestEngine(price_repo, config, cached_strategy).run()
+
+        def sig(f):
+            return (f.security_id, f.side, f.quantity, f.price, f.execution_time)
+
+        assert [sig(f) for f in uncached.fills] == [sig(f) for f in cached.fills]
+        assert uncached.performance == cached.performance
+        assert shared_features  # actually got populated
+
+    def test_a_cache_shared_across_two_instances_is_reused_correctly(self, tmp_path) -> None:
+        # Simulates two walk-forward folds' fresh MLStrategy instances
+        # sharing one cache dict, exactly as run_long_horizon_validation.py
+        # wires it -- the second instance must produce the SAME result
+        # as an uncached instance would, using values the first instance
+        # already computed.
+        universe = ("TRENDUP", "TRENDDOWN")
+        start, end = date(2022, 1, 3), date(2022, 9, 1)
+        price_repo = synthetic_multi_year_repository(*_LONG_HISTORY, symbols=universe)
+        fundamentals_repo = _fundamentals_repo(tmp_path, universe)
+
+        shared_features: dict = {}
+        shared_targets: dict = {}
+        first = MLStrategy(list(universe), fundamentals_repo, _PARAMS, feature_cache=shared_features, target_cache=shared_targets)
+        BacktestEngine(price_repo, _config(start, end, universe), first).run()
+        cache_size_after_first = len(shared_features)
+        assert cache_size_after_first > 0
+
+        second = MLStrategy(list(universe), fundamentals_repo, _PARAMS, feature_cache=shared_features, target_cache=shared_targets)
+        result_second = BacktestEngine(price_repo, _config(start, end, universe), second).run()
+
+        uncached_third = MLStrategy(list(universe), fundamentals_repo, _PARAMS)
+        result_uncached = BacktestEngine(price_repo, _config(start, end, universe), uncached_third).run()
+
+        def sig(f):
+            return (f.security_id, f.side, f.quantity, f.price, f.execution_time)
+
+        assert [sig(f) for f in result_second.fills] == [sig(f) for f in result_uncached.fills]

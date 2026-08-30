@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 35 — Phase 33: real `ml_ols` walk-forward result received — does not clear the CANDIDATE bar; all 9 hypotheses tested against real data so far reach zero CANDIDATEs)
+**Updated By:** Claude Code (Session 35 — Phase 33: ml_ridge + rank_average_ensemble candidates built, feature-cache performance fix; universe expansion + quarterly fundamentals scoped but not built — need user's environment)
 
 ---
 
@@ -552,6 +552,43 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     leverage 전략 + ml_ols 전략) 전부 CANDIDATE 없음.
   - `ADR-0043` Decision 4, `STRATEGY-VALIDATION-REPORT.md` Section G
     "Sixth update"에 상세 기록.
+- **"규칙 때문에 못 하고 있는 더 좋은/효율적인 방법 있어?" — 5개 개선안
+  제시, 사용자가 "네가 가장 좋다고 생각하는 방법으로 다 실행해"라고
+  위임 → 3개는 바로 구축, 2개는 실제 데이터가 필요해 설계만**:
+  - **공유 피처/타겟 캐시**(`src/ml/ml_strategy.py`): fold마다 새
+    인스턴스가 생기는 구조라 인스턴스별 캐시는 의미 없음 — 여러
+    fold가 겹치는 TRAIN 구간을 반복 계산하는 게 진짜 낭비였음. 캐시를
+    외부에서 주입받게 만들어서 fold끼리, 심지어 ml_ols/ml_ridge끼리도
+    공유 — 출력이 캐시 유무와 무관하게 완전히 동일함을 직접 검증.
+    이걸로 확보한 여유로 `train_window_months`를 성능 때문에 임시로
+    줄였던 36개월에서 원래 하려던 60개월로 복원. 8개 후보(합성
+    데이터, 5종목, 84 fold) 전체 스모크 테스트가 이전 6개 후보·
+    36개월 버전(1분46초)보다 오히려 더 빠른 55초에 완료.
+  - **`ml_ridge`(정규화 모델, 2번째 모델 패밀리)**: ml_ols에서 실제로
+    관측된 문제(leverage 계수 부호 뒤집힘 — 다중공선성 의심)를 직접
+    겨냥 — ridge 강도를 TRAIN 구간 안에서 시간순 확장창(expanding
+    window) 교차검증으로 선택(사전에 정해둔 로그 스케일 그리드에서만
+    선택, 결과 보고 고르지 않음). `MLStrategy`를 model_builder를
+    주입받게 일반화해서 이 로직도 leakage-safe fit 메커니즘을 그대로
+    재사용.
+  - **`rank_average_ensemble`(순위평균 앙상블)**: leverage/ml_ridge와
+    완전히 다른 결합 방식 — fitting 없이, raw IC가 양수였던 두 팩터
+    (leverage, net_margin)의 순위를 평균만 냄.
+  - 두 후보 다 `--fundamentals-db-path` 게이트 안에 연결(총 8개
+    후보). 신규 테스트 18개, 전체 스위트 2038개 통과.
+  - **중요**: 이제 모델/결합 방식이 3개(ml_ols, ml_ridge,
+    rank_average_ensemble)라서 ML-RESEARCH-PROTOCOL.md의
+    모델선택-다중검정 문제가 이론이 아니라 실제로 적용됨 — 기존
+    PBO/DSR 인프라가 8개 후보를 그대로 한 풀로 다루니 새 통계 기법은
+    필요 없지만, 앞으로 ml_ridge/앙상블 결과가 나오면 "3번 시도 중
+    하나"로 읽어야 함.
+  - **종목 수 확장·분기 펀더멘털은 이번엔 안 만듦** — 둘 다 실제
+    데이터 결정(임의로 고르지 않은 종목 선정 규칙, 10-Q 파서 변경은
+    ADR-0042에서 이미 한 번 잡았던 collision 버그 재발 위험)과 사용자
+    환경에서의 실제 ingestion이 필요해서, 이번 세션에서 혼자 만들
+    수 있는 범위가 아니었음. 포기 아니고 다음 단계로 남겨둠.
+  - `ADR-0043` Decision 5, `STRATEGY-VALIDATION-REPORT.md` Section G
+    "Seventh update"에 상세 기록. **아직 실제 카탈로그로 실행 전.**
 
 ### Completed (Session 33 — Phase 31 continued)
 

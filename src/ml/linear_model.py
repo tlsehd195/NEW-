@@ -111,3 +111,79 @@ class LinearRegressionModel:
     @property
     def intercept(self) -> Optional[float]:
         return self._intercept
+
+
+# ADR-0043 Decision 5: a second model family -- Ridge regression with
+# the regularization strength chosen by cross-validation, rather than
+# fixed for numerical stability alone (`LinearRegressionModel`'s own
+# default `ridge=1e-6` above). Motivated directly by a real observed
+# problem: the first OLS fit's `leverage` coefficient came back
+# negative despite a positive raw univariate Signal IC, plausibly a
+# multicollinearity artifact among the correlated profitability
+# features (`roe`/`roa`/`net_margin`/`leverage`) -- genuine
+# regularization is the standard fix for exactly this instability.
+CANDIDATE_RIDGES: tuple[float, ...] = (0.001, 0.01, 0.1, 1.0, 10.0, 100.0)
+
+
+def select_ridge_via_expanding_window_cv(
+    samples: Sequence, feature_ids: Sequence[str],
+    candidate_ridges: Sequence[float] = CANDIDATE_RIDGES, folds: int = 3,
+) -> float:
+    """Picks the ridge strength that minimizes out-of-fold squared
+    error on TRAIN alone, via an EXPANDING-WINDOW chronological CV --
+    each CV fold trains on every sample strictly before a cutoff date
+    and tests on the samples in the following block, mirroring this
+    project's own walk-forward discipline (`strategy_research.
+    walk_forward_evaluation`). Deliberately never a random k-fold
+    split: samples from temporally-adjacent dates are correlated, so a
+    random split would let a held-out sample's near-neighbors sit in
+    its own training fold, inflating the out-of-fold error estimate's
+    apparent reliability without genuinely testing generalization to a
+    LATER, not-yet-seen period -- the same reasoning this project
+    already applies to `build_chronological_split` never shuffling.
+
+    `candidate_ridges` is a small, pre-registered, log-spaced grid
+    (`CANDIDATE_RIDGES`) -- fixed before this function is ever called
+    against a real result, not searched after seeing one. This
+    function is called only on samples already confined to TRAIN (see
+    `MLStrategy._fit`); it never reads VALIDATION or TEST data, so it
+    adds no new leakage surface.
+
+    Falls back to the smallest (weakest) candidate ridge when there is
+    too little TRAIN history to form `folds` meaningful chronological
+    splits, or when every candidate fails to fit on every fold (e.g. a
+    persistently singular design matrix) -- never raises, never
+    fabricates a result."""
+    distinct_dates = sorted({s.as_of_time for s in samples})
+    if len(distinct_dates) < folds + 1:
+        return candidate_ridges[0]
+
+    cutoffs = [distinct_dates[int(len(distinct_dates) * (i + 1) / (folds + 1))] for i in range(folds)]
+    best_ridge = candidate_ridges[0]
+    best_error: Optional[float] = None
+    for ridge in candidate_ridges:
+        errors: list[float] = []
+        for i, cutoff in enumerate(cutoffs):
+            block_end = cutoffs[i + 1] if i + 1 < len(cutoffs) else None
+            cv_train = [s for s in samples if s.as_of_time < cutoff]
+            cv_test = [
+                s for s in samples
+                if cutoff <= s.as_of_time and (block_end is None or s.as_of_time < block_end)
+            ]
+            if len(cv_train) < len(feature_ids) + 2 or not cv_test:
+                continue
+            model = LinearRegressionModel(feature_ids=list(feature_ids), ridge=ridge)
+            try:
+                model.fit(cv_train)
+            except ValueError:
+                continue
+            for sample in cv_test:
+                prediction = model.predict(sample.features)
+                errors.append((prediction - sample.target) ** 2)
+        if not errors:
+            continue
+        mean_error = sum(errors) / len(errors)
+        if best_error is None or mean_error < best_error:
+            best_error = mean_error
+            best_ridge = ridge
+    return best_ridge

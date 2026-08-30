@@ -266,20 +266,112 @@ Signal ICs, `leverage` as a full strategy, and now `ml_ols` as a full
 strategy -- zero have reached CANDIDATE. See `STRATEGY-VALIDATION-
 REPORT.md` Section G's "Sixth update" for the full account.
 
+## Decision 5 -- performance/robustness follow-ups, all self-initiated after the user asked what this project's own discipline was costing in efficiency
+
+Asked directly whether this project's own rules were blocking a more
+effective approach, the assistant identified five candidate
+improvements and ranked them by expected impact: universe breadth,
+regularization, a feature-computation cache (enabling a longer,
+statistically-preferable training window), rank-based ensembling, and
+quarterly fundamentals. The user asked for all five to be executed.
+Three are buildable without new real data and were built in this round;
+two (universe breadth, quarterly fundamentals) require new real
+ingestion in the user's own network-enabled environment and are
+scoped, not built, here.
+
+**Shared feature/target cache** (`src/ml/ml_strategy.py`): a fresh
+`MLStrategy` instance is created per walk-forward fold, so an
+instance-level cache alone buys nothing -- the real cost was many
+different folds' heavily-overlapping `train_window_months`-back TRAIN
+windows recomputing the identical `(security_id, as_of_time)`
+feature/target value repeatedly. Every such value is a pure function of
+`(security_id, as_of_time)` and this run's own read-only repository
+content, so a caller MAY inject one shared `dict` pair across every
+fold's factory call and every MLStrategy-based candidate (`ml_ols` and
+`ml_ridge` consume identical feature/target values regardless of model
+family) with zero change in output -- verified directly: a shared-
+cache run and an uncached run produce byte-identical fills. This
+recovered enough headroom to revert `train_window_months` from 36 back
+to 60 (Decision 3's number was a stopgap for a since-fixed performance
+problem, not a statistically preferred choice) -- a full 8-candidate
+smoke test (buy_and_hold, long_term_momentum, trend_volatility,
+risk_controlled_momentum, leverage, ml_ols, ml_ridge,
+rank_average_ensemble; 5 synthetic symbols, 84 folds) completed in 55
+seconds, faster than the 6-candidate, 36-month-window run before this
+change (1m46s).
+
+**Ridge-regularized second model family** (`ml_ridge`,
+`src/ml/linear_model.py`'s `select_ridge_via_expanding_window_cv`):
+motivated directly by a real observed problem, not speculatively --
+`ml_ols`'s fitted `leverage` coefficient came back negative despite a
+positive raw univariate Signal IC, plausibly multicollinearity among
+the correlated profitability features. The regularization strength is
+chosen from a small, pre-registered, log-spaced grid
+(`CANDIDATE_RIDGES = (0.001, 0.01, 0.1, 1.0, 10.0, 100.0)`) via
+EXPANDING-WINDOW chronological cross-validation on each fold's own
+TRAIN samples only -- never a random k-fold split, which would let
+temporally-adjacent, autocorrelated samples inflate the out-of-fold
+error estimate's apparent reliability, mirroring this project's own
+`build_chronological_split` discipline. `MLStrategy` was generalized to
+accept a pluggable `model_builder` so this and any future model family
+reuse the identical leakage-safe, lazily-per-fold-fit mechanism without
+duplicating it.
+
+**Rank-average ensemble** (`rank_average_ensemble`,
+`src/strategy_research/ensemble_strategy.py`): a genuinely different,
+nonparametric combination technique from `ml_ols`/`ml_ridge`'s fitted
+regression -- averages the ranks of `leverage_score` and
+`net_margin_score` (the only two factors in this project's history
+with a positive raw Signal IC), needing no fitting and no
+leakage-safety machinery of its own (every score is computed fresh at
+the live `as_of_time`, exactly like `LeverageStrategy` already does).
+`strategy_research.signal_ic._rank` was promoted to public
+`rank_average` specifically so this module could reuse it rather than
+reimplementing rank computation a second time (confirmed no other
+caller depended on the private name before renaming).
+
+All three are wired into `run_long_horizon_validation.py` as 3
+additional candidates behind the existing `--fundamentals-db-path`
+gate (8 candidates total when supplied). 18 new tests (ridge-CV
+correctness and honesty, pluggable-model-builder wiring, shared-cache
+correctness across two instances, the ensemble strategy's own
+determinism/leakage/parameter-validation suite, CLI wiring for both
+new candidates). Full suite: 2038 passed (up from 2020).
+
+**A genuine consequence, stated plainly**: three model/combination
+approaches (`ml_ols`, `ml_ridge`, `rank_average_ensemble`) evaluated
+side by side in one run means ML-RESEARCH-PROTOCOL.md section 7's
+model-selection multiple-comparisons framing now actually applies, not
+just in principle -- `compute_pbo`/`compute_dsr_for_all_candidates`
+already treat every strategy in `strategy_specs` as one candidate pool
+(now 8, when fundamentals are included), which is exactly the "wider
+candidates mapping, no new statistical method needed" reuse that
+section anticipated. No result from any of these three has been
+observed against real data yet; when one is, it must be read as one of
+three tries, not evaluated as if it were the only model considered.
+
+**Deliberately not attempted in this round**: universe breadth
+(requires selecting additional real tickers by a documented, non-
+cherry-picked rule -- e.g. actual index constituents rather than a
+hand-picked list, per ADR-0030's own established discipline against
+inventing an unverified universe -- and real ingestion in a
+network-enabled environment) and quarterly (10-Q) fundamentals
+(requires real parser/ingestion changes to extend past the FY-only
+restriction without reintroducing the exact same-filing collision bug
+ADR-0042 Decision 7 already found and fixed once). Both remain
+real, scoped next steps, not abandoned.
+
 ## What this does NOT do
 
-No model-selection procedure exists yet (only one candidate model
-family) -- the moment a second candidate is added, ML-RESEARCH-
-PROTOCOL.md section 7's multiple-comparisons correction becomes
-required, not optional. No TEST evaluation, of any kind, has happened
--- this stays true until a VALIDATION result is judged good enough to
-warrant it. No feature/target/model registry is persisted (schemas
-only, per protocol section 8, matching the "not built until a model
-exists to register" framing -- a persistence layer is a legitimate
-next step, not built here to keep this ADR's footprint to exactly what
-the first model needed). No risk controls (section 10) are implemented
--- `MLStrategy` (Decision 3) produces `OrderIntent`s only inside this
-project's existing research backtest engine (`backtest.engine`), the
-same as every rule-based strategy candidate; nothing in `broker/live/`
-approval or `risk/` is touched, and no path from this model reaches a
+No TEST evaluation, of any kind, has happened -- this stays true
+until a VALIDATION result is judged good enough to warrant it. No
+feature/target/model registry is persisted (schemas only, per protocol
+section 8, matching the "not built until a model exists to register"
+framing -- a persistence layer is a legitimate next step, not built
+here to keep this ADR's footprint to exactly what was needed). No risk
+controls (section 10) are implemented -- every `MLStrategy`-based
+candidate produces `OrderIntent`s only inside this project's existing
+research backtest engine (`backtest.engine`), the same as every
+rule-based strategy candidate; nothing in `broker/live/` approval or
+`risk/` is touched, and no path from any of these models reaches a
 real order.

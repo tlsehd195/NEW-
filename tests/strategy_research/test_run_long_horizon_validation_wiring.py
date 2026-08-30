@@ -480,11 +480,49 @@ class TestMLStrategyOptionallyIncluded:
         preceding_guards = [i for i in guard_positions if i < append_idx]
         assert preceding_guards, "no 'if fundamentals_repository is not None:' guard precedes the ml_ols append"
         nearest_guard_idx = max(preceding_guards)
-        assert nearest_guard_idx < append_idx < nearest_guard_idx + 2000  # same guarded block
+        assert nearest_guard_idx < append_idx < nearest_guard_idx + 3000  # same guarded block
 
     def test_ml_strategy_import_present(self) -> None:
         source = _source()
-        assert "from ml.ml_strategy import MLStrategy, MLStrategyParameters" in source
+        assert "from ml.ml_strategy import MLStrategy, MLStrategyParameters, ridge_cv_builder" in source
+
+    def test_ml_ols_and_ml_ridge_share_the_same_cache_dicts(self) -> None:
+        """ADR-0043 Decision 5: ml_ols and ml_ridge must be wired to
+        the SAME feature_cache/target_cache instances, not two separate
+        ones, or the cross-fold/cross-candidate reuse this was built
+        for silently doesn't happen."""
+        source = _source()
+        assert source.count("ml_feature_cache: dict = {}") == 1
+        assert source.count("ml_target_cache: dict = {}") == 1
+        assert source.count("feature_cache=ml_feature_cache, target_cache=ml_target_cache") == 2
+
+    def test_ml_ridge_candidate_is_gated_on_fundamentals_repository_being_set(self) -> None:
+        source = _source()
+        append_idx = source.index('"ml_ridge",')
+        guard_positions = [
+            i for i in range(len(source))
+            if source.startswith("if fundamentals_repository is not None:", i)
+        ]
+        preceding_guards = [i for i in guard_positions if i < append_idx]
+        assert preceding_guards, "no 'if fundamentals_repository is not None:' guard precedes the ml_ridge append"
+        nearest_guard_idx = max(preceding_guards)
+        assert nearest_guard_idx < append_idx < nearest_guard_idx + 5000  # same guarded block
+
+    def test_rank_average_ensemble_candidate_is_gated_on_fundamentals_repository_being_set(self) -> None:
+        source = _source()
+        append_idx = source.index('"rank_average_ensemble",')
+        guard_positions = [
+            i for i in range(len(source))
+            if source.startswith("if fundamentals_repository is not None:", i)
+        ]
+        preceding_guards = [i for i in guard_positions if i < append_idx]
+        assert preceding_guards, "no 'if fundamentals_repository is not None:' guard precedes the rank_average_ensemble append"
+        nearest_guard_idx = max(preceding_guards)
+        assert nearest_guard_idx < append_idx < nearest_guard_idx + 6000  # same guarded block
+
+    def test_ensemble_strategy_import_present(self) -> None:
+        source = _source()
+        assert "from strategy_research.ensemble_strategy import RankAverageEnsembleParameters, RankAverageEnsembleStrategy" in source
 
 
 class TestExperimentIdReflectsFundamentalsInclusion:

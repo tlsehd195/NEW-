@@ -25,7 +25,7 @@ from storage.fundamentals_repository import DuckDBFundamentalsRepository
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy
 from strategy_research.signal_ic import (
     _pearson,
-    _rank,
+    rank_average,
     bucket_return_analysis,
     compute_fundamentals_ic_series,
     compute_ic_series,
@@ -40,14 +40,14 @@ def _utc(y, m, d):
 
 class TestRank:
     def test_strictly_increasing_values_get_sequential_ranks(self) -> None:
-        assert _rank([10.0, 20.0, 30.0]) == [1.0, 2.0, 3.0]
+        assert rank_average([10.0, 20.0, 30.0]) == [1.0, 2.0, 3.0]
 
     def test_descending_input_still_ranks_by_value_not_position(self) -> None:
-        assert _rank([30.0, 10.0, 20.0]) == [3.0, 1.0, 2.0]
+        assert rank_average([30.0, 10.0, 20.0]) == [3.0, 1.0, 2.0]
 
     def test_tied_values_get_the_average_of_their_ranks(self) -> None:
         # Two values tied for ranks 1-2 -> both get 1.5; the top value gets rank 3.
-        assert _rank([5.0, 5.0, 9.0]) == [1.5, 1.5, 3.0]
+        assert rank_average([5.0, 5.0, 9.0]) == [1.5, 1.5, 3.0]
 
 
 class TestPearson:

@@ -60,6 +60,21 @@ checkpoint." Reusing `forward_return` here would require exactly that
 violation. `_realized_return_via_view` below is the same handful of
 lines of math, re-expressed against `AsOfDataView`'s narrower
 interface, not a parallel leakage-guard mechanism.
+
+**Why an optional shared feature cache is safe (ADR-0043 Decision 5)**:
+a fresh `MLStrategy` instance is created per fold, so an INSTANCE-level
+cache alone buys nothing -- the real cost is many DIFFERENT folds'
+overlapping `train_window_months`-back TRAIN windows recomputing the
+identical `(security_id, as_of_time)` feature/target value over and
+over. Every such value is a pure function of `(security_id,
+as_of_time)` and the underlying repository content, which never
+changes within one `run_long_horizon_validation.py` invocation (the
+catalog is read-only for the whole run) -- so a caller MAY inject one
+shared `dict` across every fold's factory call (see
+`run_long_horizon_validation.py`'s own `strategy_specs` construction)
+and get identical results, only faster. The cache is never created or
+reused across different invocations/catalogs; each run gets its own,
+process-local, throwaway dict.
 """
 
 from __future__ import annotations
@@ -75,7 +90,7 @@ from backtest.strategy import OrderIntent
 
 from ml.dataset import MLSample
 from ml.features import FEATURE_IDS, FUNDAMENTALS_FEATURE_FNS, build_price_feature_fns, compute_feature_vector
-from ml.linear_model import LinearRegressionModel
+from ml.linear_model import LinearRegressionModel, select_ridge_via_expanding_window_cv
 from ml.target import HORIZON_DAYS
 from strategy_research._dates import add_months
 
@@ -89,12 +104,15 @@ class MLStrategyParameters:
     # Own internal fit-lookback -- decoupled from run_walk_forward_
     # evaluation's own train_window_months (which stays a rule-based-
     # strategy-only "documentation parameter", see module docstring).
-    # 3 years balances "enough fiscal-year fundamentals snapshots and
-    # rebalance-date samples to fit 6 features meaningfully" against
-    # "refitting from scratch at every one of a walk-forward
-    # evaluation's 70-100+ folds must stay tractable" -- fixed before
-    # any fold's result is seen, not tuned against one.
-    train_window_months: int = 36
+    # 5 years covers 5 distinct fiscal-year fundamentals snapshots.
+    # Was temporarily 36 months (ADR-0043 Decision 3) purely because
+    # refitting from scratch at every one of a walk-forward
+    # evaluation's 70-100+ folds was too slow without caching; the
+    # shared feature cache (Decision 5) removes most of that marginal
+    # cost by reusing overlapping folds' already-computed training
+    # samples, so this reverts to the statistically preferable value --
+    # fixed before any fold's result is seen, not tuned against one.
+    train_window_months: int = 60
 
     def __post_init__(self) -> None:
         if self.rebalance_months not in REBALANCE_MONTHS_RANGE:
@@ -126,14 +144,55 @@ def _realized_return_via_view(
     return end_price / start_price - 1.0
 
 
+def _default_ols_builder(samples: Sequence[MLSample]) -> Optional[LinearRegressionModel]:
+    model = LinearRegressionModel(feature_ids=list(FEATURE_IDS))
+    try:
+        model.fit(samples)
+    except ValueError:
+        # Singular normal-equations matrix (e.g. too few distinct
+        # samples for this fold) -- no signal, never a fabricated
+        # fallback fit (mirrors this project's non-finite-value/
+        # missing-feature honesty elsewhere).
+        return None
+    return model
+
+
+def ridge_cv_builder(samples: Sequence[MLSample]) -> Optional[LinearRegressionModel]:
+    """The second model family (ADR-0043 Decision 5): same 6 features,
+    same OLS machinery, but the ridge strength is chosen by
+    `select_ridge_via_expanding_window_cv` on this fold's own TRAIN
+    samples instead of fixed at the numerical-stability-only default.
+    Pass as `MLStrategy(..., model_builder=ridge_cv_builder,
+    version="ml_ridge_cv_v1")`."""
+    ridge = select_ridge_via_expanding_window_cv(samples, FEATURE_IDS)
+    model = LinearRegressionModel(feature_ids=list(FEATURE_IDS), ridge=ridge)
+    try:
+        model.fit(samples)
+    except ValueError:
+        return None
+    return model
+
+
 class MLStrategy:
-    """Long-only, cross-sectional ranking by a lazily-self-fit OLS
-    model's predicted forward return, rebalanced by elapsed calendar
-    months -- portfolio construction identical to `LeverageStrategy`'s
+    """Long-only, cross-sectional ranking by a lazily-self-fit model's
+    predicted forward return, rebalanced by elapsed calendar months --
+    portfolio construction identical to `LeverageStrategy`'s
     (equal-weight among newly-entering top-N), for the same reason:
     isolating "does the model's ranking carry information" from "does a
     more elaborate sizing scheme help or hurt." See module docstring
-    for the fitting mechanism and its leakage-safety argument."""
+    for the fitting mechanism and its leakage-safety argument.
+
+    **Model family is pluggable via `model_builder`** (ADR-0043
+    Decision 5): defaults to `_default_ols_builder` (plain OLS, no
+    new dependency, matching the class's default `version`). A caller
+    may inject a different `(Sequence[MLSample]) -> Optional[model]`
+    callable -- the model only needs a `.predict(features: dict) ->
+    float` method -- to run a genuinely different model family through
+    the identical leakage-safe, lazily-per-fold-fit mechanism, without
+    duplicating any of it. `ml.linear_model.select_ridge_via_
+    expanding_window_cv` + a ridge-regularized builder is the first
+    such alternative (see `run_long_horizon_validation.py`'s `ml_ridge`
+    candidate)."""
 
     version = "ml_ols_v1"
     COST_SAFETY_MARGIN = 0.02
@@ -158,14 +217,47 @@ class MLStrategy:
         security_ids: Sequence[str],
         fundamentals_repository: object,
         params: MLStrategyParameters = MLStrategyParameters(),
+        feature_cache: Optional[dict] = None,
+        target_cache: Optional[dict] = None,
+        model_builder=None,
+        version: Optional[str] = None,
     ) -> None:
         self._security_ids = list(security_ids)
         self._fundamentals_repository = fundamentals_repository
         self._params = params
         self._price_score_fns = build_price_feature_fns(self._security_ids)
-        self._model: Optional[LinearRegressionModel] = None
+        self._model_builder = model_builder if model_builder is not None else _default_ols_builder
+        if version is not None:
+            self.version = version
+        self._model = None
         self._fit_attempted = False
         self._next_rebalance_time: Optional[datetime] = None
+        # Keyed by (security_id, as_of_time). Safe to SHARE one dict
+        # across every fold's fresh MLStrategy instance within a single
+        # run_long_horizon_validation.py invocation: every feature/
+        # target value is a pure function of (security_id, as_of_time)
+        # and the underlying repository content, which never changes
+        # mid-run (the DB is read-only for the whole invocation) -- see
+        # module docstring "Why caching here is safe". Defaults to a
+        # fresh, instance-private dict (no cross-fold sharing, backward
+        # compatible) when the caller does not inject a shared one.
+        self._feature_cache: dict = feature_cache if feature_cache is not None else {}
+        self._target_cache: dict = target_cache if target_cache is not None else {}
+
+    def _cached_feature_vector(self, security_id: str, as_of_time: datetime, data: AsOfDataView) -> Optional[dict]:
+        key = (security_id, as_of_time)
+        if key not in self._feature_cache:
+            self._feature_cache[key] = compute_feature_vector(
+                security_id, as_of_time, self._price_score_fns, data,
+                FUNDAMENTALS_FEATURE_FNS, self._fundamentals_repository,
+            )
+        return self._feature_cache[key]
+
+    def _cached_target(self, security_id: str, as_of_time: datetime, data: AsOfDataView) -> Optional[float]:
+        key = (security_id, as_of_time)
+        if key not in self._target_cache:
+            self._target_cache[key] = _realized_return_via_view(data, security_id, as_of_time, HORIZON_DAYS)
+        return self._target_cache[key]
 
     def _fit(self, as_of_time: datetime, data: AsOfDataView) -> Optional[LinearRegressionModel]:
         horizon = timedelta(days=HORIZON_DAYS)
@@ -181,13 +273,10 @@ class MLStrategy:
         samples: list[MLSample] = []
         for training_date in training_dates:
             for security_id in self._security_ids:
-                features = compute_feature_vector(
-                    security_id, training_date, self._price_score_fns, data,
-                    FUNDAMENTALS_FEATURE_FNS, self._fundamentals_repository,
-                )
+                features = self._cached_feature_vector(security_id, training_date, data)
                 if features is None:
                     continue
-                target = _realized_return_via_view(data, security_id, training_date, HORIZON_DAYS)
+                target = self._cached_target(security_id, training_date, data)
                 if target is None:
                     continue
                 samples.append(
@@ -200,16 +289,7 @@ class MLStrategy:
         if not samples:
             return None
 
-        model = LinearRegressionModel(feature_ids=list(FEATURE_IDS))
-        try:
-            model.fit(samples)
-        except ValueError:
-            # Singular normal-equations matrix (e.g. too few distinct
-            # samples for this fold) -- no signal, never a fabricated
-            # fallback fit (mirrors this project's non-finite-value/
-            # missing-feature honesty elsewhere).
-            return None
-        return model
+        return self._model_builder(samples)
 
     def generate_orders(
         self, as_of_time: datetime, data: AsOfDataView, portfolio: PortfolioView
@@ -226,10 +306,7 @@ class MLStrategy:
 
         scores: dict[str, float] = {}
         for security_id in self._security_ids:
-            features = compute_feature_vector(
-                security_id, as_of_time, self._price_score_fns, data,
-                FUNDAMENTALS_FEATURE_FNS, self._fundamentals_repository,
-            )
+            features = self._cached_feature_vector(security_id, as_of_time, data)
             if features is not None:
                 scores[security_id] = self._model.predict(features)
 

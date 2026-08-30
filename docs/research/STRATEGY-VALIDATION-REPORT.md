@@ -1563,6 +1563,47 @@ price/volume Signal ICs, 4 fundamentals-factor Signal ICs, `leverage`
 as a full strategy, and now `ml_ols` as a full strategy -- zero have
 reached CANDIDATE. See ADR-0043 Decision 4 for the full account.
 
+**Seventh update -- asked whether this project's own discipline was
+costing efficiency, the user requested all five identified
+improvements be executed; three are built.** See ADR-0043 Decision 5
+for the full account:
+
+- A shared feature/target cache (`src/ml/ml_strategy.py`) removed the
+  redundant recomputation across walk-forward folds' overlapping TRAIN
+  windows -- verified to change no output, only speed -- which
+  recovered enough headroom to revert `ml_ols`'s `train_window_months`
+  from 36 back to the statistically preferable 60. A full 8-candidate
+  synthetic smoke test then ran FASTER (55s) than the prior 6-candidate,
+  36-month-window run (1m46s).
+- `ml_ridge` -- a second model family, same 6 features, but with the
+  ridge regularization strength chosen by chronological cross-
+  validation on TRAIN, motivated directly by `ml_ols`'s real sign-
+  flipped `leverage` coefficient (a multicollinearity symptom
+  regularization is the standard fix for).
+- `rank_average_ensemble` -- a nonparametric rank-average combination
+  of `leverage_score` and `net_margin_score` (the only two factors
+  with a positive raw Signal IC), a genuinely different combination
+  technique from `ml_ols`/`ml_ridge`'s fitted regression.
+
+Both new candidates are wired into `run_long_horizon_validation.py`
+behind the existing `--fundamentals-db-path` gate (8 candidates total).
+18 new tests, full suite: 2038 passed. **A real consequence**: with 3
+model/combination approaches now evaluated side by side,
+ML-RESEARCH-PROTOCOL.md section 7's model-selection multiple-
+comparisons framing genuinely applies now, not just in principle --
+`compute_pbo`/`compute_dsr_for_all_candidates` already treat all 8 as
+one candidate pool, so no new machinery is needed, but any future
+result from `ml_ridge` or `rank_average_ensemble` must be read as one
+of three tries. Not yet run against the real catalog.
+
+Universe breadth and quarterly (10-Q) fundamentals -- the two
+remaining improvements -- were deliberately NOT attempted this round:
+both require real data decisions (a non-cherry-picked ticker-selection
+rule; parser changes re-exposed to the exact collision-bug risk
+ADR-0042 Decision 7 already fixed once) and real ingestion in the
+user's own network-enabled environment, not something buildable inside
+this session alone.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

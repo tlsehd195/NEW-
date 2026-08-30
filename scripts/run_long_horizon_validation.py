@@ -124,7 +124,8 @@ from strategy_research.classification import (  # noqa: E402
 )
 from strategy_research.evidence import assess_pbo_dsr_applicability, classify_evidence_level  # noqa: E402
 from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
-from ml.ml_strategy import MLStrategy, MLStrategyParameters  # noqa: E402
+from ml.ml_strategy import MLStrategy, MLStrategyParameters, ridge_cv_builder  # noqa: E402
+from strategy_research.ensemble_strategy import RankAverageEnsembleParameters, RankAverageEnsembleStrategy  # noqa: E402
 from strategy_research.leverage_strategy import LeverageParameters, LeverageStrategy  # noqa: E402
 from strategy_research.locked_windows import overlaps_any_locked_window  # noqa: E402
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy  # noqa: E402
@@ -429,10 +430,57 @@ def main() -> int:
             # `MLStrategy` fits itself lazily per fold -- see
             # src/ml/ml_strategy.py's own docstring for why that needs
             # no extra plumbing here.
+            #
+            # `ml_ols_feature_cache`/`ml_ols_target_cache` (ADR-0043
+            # Decision 5): shared across EVERY MLStrategy-based
+            # candidate below (ml_ols AND ml_ridge both consume the
+            # identical feature/target values regardless of which
+            # model family fits them) and across every walk-forward
+            # fold's own fresh strategy instance -- safe because every
+            # value is a pure function of (security_id, as_of_time) and
+            # this run's own read-only repositories (see
+            # src/ml/ml_strategy.py's "Why an optional shared feature
+            # cache is safe"). Without this, refitting from scratch at
+            # every one of a walk-forward evaluation's 70-100+ folds
+            # was measured to not complete in reasonable time.
+            ml_feature_cache: dict = {}
+            ml_target_cache: dict = {}
             strategy_specs.append((
                 "ml_ols",
                 "OLS combining all 6 factor scores, fundamentals-based (see src/ml/ml_strategy.py, ADR-0043)",
-                lambda: MLStrategy(security_ids, fundamentals_repository, MLStrategyParameters()),
+                lambda: MLStrategy(
+                    security_ids, fundamentals_repository, MLStrategyParameters(),
+                    feature_cache=ml_feature_cache, target_cache=ml_target_cache,
+                ),
+            ))
+            # Second model family (ADR-0043 Decision 5): same 6
+            # features, but the ridge regularization strength is
+            # chosen by cross-validation on each fold's own TRAIN data
+            # instead of fixed at the numerical-stability-only default
+            # -- motivated directly by `ml_ols`'s real result showing a
+            # sign-flipped `leverage` coefficient, a plausible
+            # multicollinearity symptom regularization is the standard
+            # fix for.
+            strategy_specs.append((
+                "ml_ridge",
+                "ridge-regularized combination of all 6 factor scores, regularization chosen by chronological CV on TRAIN (see src/ml/linear_model.py, ADR-0043 Decision 5)",
+                lambda: MLStrategy(
+                    security_ids, fundamentals_repository, MLStrategyParameters(),
+                    feature_cache=ml_feature_cache, target_cache=ml_target_cache,
+                    model_builder=ridge_cv_builder, version="ml_ridge_cv_v1",
+                ),
+            ))
+            # Rank-average ensemble (ADR-0043 Decision 5): a
+            # nonparametric combination of the two factors with a
+            # positive raw Signal IC (leverage, net_margin) -- a
+            # genuinely different combination technique from ml_ols/
+            # ml_ridge's fitted linear regression, needing no fitting
+            # and no leakage-safety machinery of its own (see
+            # src/strategy_research/ensemble_strategy.py).
+            strategy_specs.append((
+                "rank_average_ensemble",
+                "rank-average of leverage_score and net_margin_score, fundamentals-based (see src/strategy_research/ensemble_strategy.py, ADR-0043 Decision 5)",
+                lambda: RankAverageEnsembleStrategy(security_ids, fundamentals_repository, RankAverageEnsembleParameters()),
             ))
 
         report = {

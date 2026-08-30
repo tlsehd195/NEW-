@@ -74,7 +74,7 @@ def forward_return(
     return end_price / start_price - 1.0
 
 
-def _rank(values: Sequence[float]) -> list[float]:
+def rank_average(values: Sequence[float]) -> list[float]:
     """Average ranks (1-indexed); tied values get the mean of the ranks
     they span -- the standard convention Spearman correlation requires."""
     order = sorted(range(len(values)), key=lambda i: values[i])
@@ -112,8 +112,8 @@ def spearman_ic(scores: dict, forward_returns: dict) -> Optional[float]:
     common = sorted(set(scores) & set(forward_returns))
     if len(common) < 2:
         return None
-    score_ranks = _rank([scores[s] for s in common])
-    return_ranks = _rank([forward_returns[s] for s in common])
+    score_ranks = rank_average([scores[s] for s in common])
+    return_ranks = rank_average([forward_returns[s] for s in common])
     return _pearson(score_ranks, return_ranks)
 
 
