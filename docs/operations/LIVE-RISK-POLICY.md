@@ -422,7 +422,7 @@ effect. `us_longterm_config.build_us_longterm_paper_config` (Paper
 Trading only) does not set any of #1/#6/#7 — Paper Trading has no
 Live-style kill switch/safety gate to enforce them against.
 
-### Option B adopted for #1 and #7 (not #6) — supersedes the Phase 17-20 "still open" framing for those two fields only
+### Option B adopted for #1, #6, and #7 — supersedes the Phase 17-20 "still open" framing
 
 Phase 19's analysis (above) weighed Option A ("`None` = not enforced,
 Live can activate anyway") against Option B ("`None` on a required
@@ -446,21 +446,29 @@ not block on this condition, and the default (unset) `LiveTradingConfig`
 blocks by default — matching the fail-closed framing this document has
 used throughout.
 
-**`RiskConfig.max_turnover` (#6) is NOT part of this change** and
-remains genuinely **UNDEFINED / Option A vs. B still open**, exactly as
-Phase 19 left it. `evaluate_safety_gate` reads only
-`SafetyGateContext.config` (a `LiveTradingConfig`); `max_turnover` lives
-on the separate `RiskConfig` object, which the safety gate has no
-structural reference to today. Making #6 participate in the same
-Option-B fail-closed pattern would require adding a new field or
-parameter to `SafetyGateContext`/`evaluate_safety_gate` itself — new
-plumbing, not a semantics flip on an existing check — and was
-deliberately left out of this phase's additive, minimal-change scope
-rather than done speculatively. This is a real, still-open gap, not an
-oversight papered over: a Live account with `max_daily_loss` and
-`max_order_frequency_per_hour` both set (satisfying the new Option-B
-gate condition) could still have `max_turnover=None`, silently
-unenforced, exactly as before.
+**Session 36 update: `RiskConfig.max_turnover` (#6) now participates in
+the same Option-B fail-closed pattern**, closing the gap this section
+used to describe. The user, asked directly whether `max_turnover=None`
+should also structurally block Live (mirroring #1/#7), delegated the
+choice; the recommendation made and adopted was to close the asymmetry
+for the same reasons Phase 22 gave #1/#7 in the first place — see
+ADR-0045. `evaluate_safety_gate` still never imports `risk.config`
+(`tests/broker/live/test_live_boundary.py::
+TestNoRiskLimitOrModelApprovalMutation` structurally forbids it) — the
+new `SafetyGateContext.max_turnover: Optional[float]` field is a plain
+value the caller sources from their own `RiskConfig.max_turnover`, not
+the whole config object:
+
+```python
+if context.max_turnover is None:
+    failed.append("risk_limit_not_configured_max_turnover")
+```
+
+Covered by `tests/broker/live/test_live_safety_gate.py::
+TestMaxTurnoverNoneSemanticsOptionB` (3 tests), mirroring #1/#7's own
+regression coverage. A Live account with `max_daily_loss`, `max_order_
+frequency_per_hour`, AND `max_turnover` all unset is now blocked on all
+three conditions simultaneously, not just two.
 
 **Practical effect today**: because Toss capability verification
 independently and unconditionally blocks Live activation

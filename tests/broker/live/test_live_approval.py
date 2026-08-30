@@ -17,13 +17,13 @@ class TestApprovedByMustBeHuman:
         with pytest.raises(ValueError):
             LiveActivationApproval(
                 approved_by=name, approved_at=utc(2024, 1, 2), confirmation_token=REQUIRED_CONFIRMATION_TOKEN,
-                checklist_completed=True,
+                checklist_completed=True, strategy_evidence_reviewed=True,
             )
 
     def test_real_operator_identity_accepted(self) -> None:
         approval = LiveActivationApproval(
             approved_by="jane.doe", approved_at=utc(2024, 1, 2), confirmation_token=REQUIRED_CONFIRMATION_TOKEN,
-            checklist_completed=True,
+            checklist_completed=True, strategy_evidence_reviewed=True,
         )
         assert approval.is_valid() is True
 
@@ -33,14 +33,14 @@ class TestConfirmationToken:
         with pytest.raises(ValueError):
             LiveActivationApproval(
                 approved_by="jane.doe", approved_at=utc(2024, 1, 2), confirmation_token="wrong phrase",
-                checklist_completed=True,
+                checklist_completed=True, strategy_evidence_reviewed=True,
             )
 
     def test_empty_token_rejected(self) -> None:
         with pytest.raises(ValueError):
             LiveActivationApproval(
                 approved_by="jane.doe", approved_at=utc(2024, 1, 2), confirmation_token="",
-                checklist_completed=True,
+                checklist_completed=True, strategy_evidence_reviewed=True,
             )
 
 
@@ -49,8 +49,30 @@ class TestChecklistMustBeCompleted:
         with pytest.raises(ValueError):
             LiveActivationApproval(
                 approved_by="jane.doe", approved_at=utc(2024, 1, 2), confirmation_token=REQUIRED_CONFIRMATION_TOKEN,
-                checklist_completed=False,
+                checklist_completed=False, strategy_evidence_reviewed=True,
             )
+
+
+class TestStrategyEvidenceMustBeReviewed:
+    """Session 36 (ADR-0045): the strategy being activated must have
+    reached this project's CANDIDATE evidence level and had its
+    held-out TEST result specifically reviewed by a human, not just its
+    evidence label -- motivated by a real observed case where CANDIDATE
+    alone came with the worst TEST result this project has recorded."""
+
+    def test_unreviewed_evidence_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            LiveActivationApproval(
+                approved_by="jane.doe", approved_at=utc(2024, 1, 2), confirmation_token=REQUIRED_CONFIRMATION_TOKEN,
+                checklist_completed=True, strategy_evidence_reviewed=False,
+            )
+
+    def test_reviewed_evidence_accepted(self) -> None:
+        approval = LiveActivationApproval(
+            approved_by="jane.doe", approved_at=utc(2024, 1, 2), confirmation_token=REQUIRED_CONFIRMATION_TOKEN,
+            checklist_completed=True, strategy_evidence_reviewed=True,
+        )
+        assert approval.is_valid() is True
 
 
 class TestTimestampMustBeAware:
@@ -60,5 +82,5 @@ class TestTimestampMustBeAware:
         with pytest.raises(ValueError):
             LiveActivationApproval(
                 approved_by="jane.doe", approved_at=datetime(2024, 1, 2), confirmation_token=REQUIRED_CONFIRMATION_TOKEN,
-                checklist_completed=True,
+                checklist_completed=True, strategy_evidence_reviewed=True,
             )

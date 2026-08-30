@@ -40,6 +40,15 @@ class LiveTradingConfig:
     max_daily_loss: Optional[float] = None
     max_order_frequency_per_hour: Optional[int] = None
 
+    # Cancel-on-kill-switch automation (Session 36 -- the user explicitly
+    # decided this should be automatic, resolving the long-open "DECISION
+    # REQUIRED" this project had repeatedly cited without ever actually
+    # recording a decision; see docs/decisions/ADR-0045). `True` by
+    # default: this field only has any effect once `live_trading_enabled`
+    # is separately opted into, so defaulting it "on" does not itself
+    # make the system any less inert.
+    auto_cancel_on_kill_switch: bool = True
+
     def __post_init__(self) -> None:
         if self.environment != "live":
             raise ValueError(

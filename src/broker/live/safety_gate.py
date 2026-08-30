@@ -35,6 +35,15 @@ class SafetyGateContext:
 
     as_of_time: datetime
     config: LiveTradingConfig
+    # `RiskConfig.max_turnover` itself -- deliberately a plain value, not
+    # the whole `risk.config.RiskConfig` object, so this module never
+    # imports `risk.config` at all (`tests/broker/live/test_live_
+    # boundary.py::TestNoRiskLimitOrModelApprovalMutation` structurally
+    # forbids it -- this gate must never become a place that could read,
+    # let alone set, a risk limit's other fields). `None` means "the
+    # caller could not determine this," never "not applicable" -- see
+    # the check below.
+    max_turnover: Optional[float]
     approval: Optional[LiveActivationApproval]
     required_capabilities: tuple[BrokerCapability, ...]
     broker_capabilities: Optional[BrokerCapabilities]
@@ -89,17 +98,22 @@ def evaluate_safety_gate(context: SafetyGateContext) -> SafetyGateResult:
     # Phase 22 addition: Option B of the long-open "None means not
     # enforced vs. structurally blocks Live" DECISION REQUIRED
     # (docs/operations/LIVE-RISK-POLICY.md) is now adopted for the two
-    # risk limits the gate already has direct visibility into via
+    # risk limits the gate already had direct visibility into via
     # LiveTradingConfig -- an unset daily-loss or order-frequency limit
     # is itself a fail-closed condition for Live, not merely "no
-    # automatic circuit breaker." This does not extend to
-    # RiskConfig.max_turnover, which the gate has no visibility into at
-    # all (a separate config object owned by the pre-trade Risk Engine,
-    # Phase 8) -- see LIVE-RISK-POLICY.md for why that one remains open.
+    # automatic circuit breaker."
     if context.config.max_daily_loss is None:
         failed.append("risk_limit_not_configured_max_daily_loss")
     if context.config.max_order_frequency_per_hour is None:
         failed.append("risk_limit_not_configured_max_order_frequency_per_hour")
+
+    # Session 36: Option B extended to RiskConfig.max_turnover, closing
+    # the asymmetry the two checks above left open (that limit lives in
+    # a separate config object owned by the pre-trade Risk Engine, Phase
+    # 8, which this module never imports -- see the field's own comment
+    # above, docs/operations/LIVE-RISK-POLICY.md, and ADR-0045).
+    if context.max_turnover is None:
+        failed.append("risk_limit_not_configured_max_turnover")
 
     if context.risk_health != ComponentHealthStatus.HEALTHY:
         failed.append("risk_engine_not_healthy")

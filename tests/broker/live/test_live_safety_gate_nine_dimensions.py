@@ -121,7 +121,8 @@ class TestDimension5_Reconciliation:
         risk = make_risk_checked_position(risk_id="RISK-DIM5", final_target_quantity=10.0, provenance=TradeProvenance.LIVE_TRADING)
         order = build_validated_order(risk, current_quantity=0.0, configuration_version="cfg-v1").validated_order
         gate_context = SafetyGateContext(
-            as_of_time=utc(2024, 1, 2), config=session.config, approval=make_approval(),
+            as_of_time=utc(2024, 1, 2), config=session.config, max_turnover=2.0,
+            approval=make_approval(),
             required_capabilities=(BrokerCapability.MARKET_ORDER,), broker_capabilities=make_broker_capabilities(),
             risk_health=ComponentHealthStatus.HEALTHY, order_validation_status=OrderValidationStatus.ACCEPTED,
             kill_switch_engaged=False, account_state_known=True, position_state_known=True,

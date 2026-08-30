@@ -151,6 +151,38 @@ class TestRiskLimitNoneSemanticsOptionB:
         assert "risk_limit_not_configured_max_order_frequency_per_hour" in result.failed_conditions
 
 
+class TestMaxTurnoverNoneSemanticsOptionB:
+    """Session 36: Option B (Phase 22, above) extended to
+    RiskConfig.max_turnover, closing the asymmetry left open when Phase
+    22 shipped -- see ADR-0045 and LIVE-RISK-POLICY.md. The gate never
+    imports risk.config (tests/broker/live/test_live_boundary.py::
+    TestNoRiskLimitOrModelApprovalMutation), so this is exercised
+    through the plain SafetyGateContext.max_turnover field, sourced by
+    the caller from their own RiskConfig."""
+
+    def test_max_turnover_none_blocks(self) -> None:
+        ctx = make_passing_gate_context(max_turnover=None)
+        result = evaluate_safety_gate(ctx)
+        assert result.passed is False
+        assert "risk_limit_not_configured_max_turnover" in result.failed_conditions
+
+    def test_max_turnover_set_does_not_block_on_this_condition(self) -> None:
+        ctx = make_passing_gate_context(max_turnover=2.0)
+        result = evaluate_safety_gate(ctx)
+        assert "risk_limit_not_configured_max_turnover" not in result.failed_conditions
+        assert result.passed is True
+
+    def test_max_turnover_none_combines_with_other_risk_limit_failures(self) -> None:
+        ctx = make_passing_gate_context(
+            config=make_live_config(live_trading_enabled=True, max_daily_loss=None, max_order_frequency_per_hour=6),
+            max_turnover=None,
+        )
+        result = evaluate_safety_gate(ctx)
+        assert result.passed is False
+        assert "risk_limit_not_configured_max_daily_loss" in result.failed_conditions
+        assert "risk_limit_not_configured_max_turnover" in result.failed_conditions
+
+
 class TestMultipleFailuresAllReported:
     def test_all_conditions_failing_reports_all_reasons(self) -> None:
         ctx = make_passing_gate_context(

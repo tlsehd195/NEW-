@@ -134,16 +134,32 @@ satisfied on its own; there is no override.
    forward.
 2. Call `broker.live.session.run_shutdown_checks(...)` and record the
    returned open-order list.
-3. This system does **not** automatically cancel open orders on
-   shutdown (a deliberate choice, not an oversight — see ADR-0022 §8 of
-   the spec's Known Limitations). Decide manually whether to cancel
-   each open order, and do so explicitly if so.
+3. This general, planned shutdown path (end of day, maintenance) still
+   does **not** automatically cancel open orders — that remains a
+   manual decision for this path specifically. Decide manually whether
+   to cancel each open order, and do so explicitly if so. **This is
+   distinct from an emergency kill-switch engagement, which now DOES
+   auto-cancel — see below.**
 
 ## Emergency Halt / Kill Switch
 
 - `broker.live.kill_switch.engage_kill_switch(...)` can be, and in
   several conditions automatically is, called by `LiveTradingSession`
   itself — this requires no human action to take effect.
+- **Session 36 (ADR-0045): `LiveTradingSession.engage_kill_switch(...)`
+  now automatically attempts to cancel every order this session does
+  not already know to be closed** (`LiveTradingConfig.
+  auto_cancel_on_kill_switch`, `True` by default) — a runaway order
+  loop or any other kill-switch trigger no longer leaves working orders
+  unmanaged while waiting for a human to act. The call now returns a
+  `KillSwitchEngagementResult` (`event` plus `cancellation_outcomes`,
+  one `OrderCancellationOutcome` per order the auto-cancel pass
+  attempted) instead of the bare `KillSwitchEvent` it used to. **Still
+  run the full Reconciliation section after any engagement regardless**
+  — a cancel attempt can itself fail or return `UNKNOWN`
+  (`cancellation_outcomes[i].cancelled=False`), and even a successful
+  cancellation does not confirm the broker's own book matches this
+  session's — only reconciliation does that.
 - Releasing it requires constructing a `LiveActivationApproval` exactly
   as in the Activation section above, then calling
   `LiveTradingSession.release_kill_switch(approval, ...)`. There is no

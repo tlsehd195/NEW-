@@ -73,7 +73,8 @@ class TestGateContextRequiresAwareTimestamp:
 
         with pytest.raises(ValueError):
             SafetyGateContext(
-                as_of_time=datetime(2024, 1, 2), config=None, approval=None, required_capabilities=(),
+                as_of_time=datetime(2024, 1, 2), config=None, max_turnover=None, approval=None,
+                required_capabilities=(),
                 broker_capabilities=None, risk_health=None, order_validation_status=None,
                 kill_switch_engaged=False, account_state_known=False, position_state_known=False,
                 model_state_valid=False, configuration_integrity_valid=False,

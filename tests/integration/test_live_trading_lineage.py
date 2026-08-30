@@ -71,7 +71,8 @@ class TestRiskToLiveTradingLineageEndToEnd:
         )
 
         gate_context = SafetyGateContext(
-            as_of_time=as_of, config=session.config, approval=make_approval(),
+            as_of_time=as_of, config=session.config, max_turnover=2.0,
+            approval=make_approval(),
             required_capabilities=(BrokerCapability.MARKET_ORDER,),
             broker_capabilities=adapter.get_capabilities(as_of=as_of),
             risk_health=ComponentHealthStatus.HEALTHY, order_validation_status=validation.status,
@@ -154,7 +155,8 @@ class TestRiskToLiveTradingLineageEndToEnd:
             recorded_at=as_of,
         )
         gate_context = SafetyGateContext(
-            as_of_time=as_of, config=make_live_config(live_trading_enabled=True), approval=make_approval(),
+            as_of_time=as_of, config=make_live_config(live_trading_enabled=True),
+            max_turnover=2.0, approval=make_approval(),
             required_capabilities=(BrokerCapability.MARKET_ORDER, BrokerCapability.ACCOUNT_BALANCE, BrokerCapability.POSITIONS),
             broker_capabilities=toss_capabilities, risk_health=ComponentHealthStatus.HEALTHY,
             order_validation_status=validation.status, kill_switch_engaged=False, account_state_known=True,

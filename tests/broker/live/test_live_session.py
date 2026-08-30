@@ -78,6 +78,67 @@ class TestScenario8KillSwitchOn:
         assert "kill_switch_engaged" in outcome.gate_result.failed_conditions
 
 
+class TestCancelOnKillSwitch:
+    """Session 36 -- ADR-0045: `engage_kill_switch` now automatically
+    attempts to cancel every order not already known to be closed,
+    gated by `LiveTradingConfig.auto_cancel_on_kill_switch` (default
+    `True`). Distinct from the general, still-manual `Shutdown`
+    procedure (`run_shutdown_checks`) -- a kill-switch trigger is the
+    emergency condition where leaving orders unmanaged is the wrong
+    default."""
+
+    def test_open_order_is_cancelled_on_kill_switch(self) -> None:
+        session = _session(failure_mode="partial_fill")
+        ctx = _gate_ctx(session)
+        order = _order()
+        outcome = session.submit(order, requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert outcome.status == "PARTIAL_FILLED"  # an OPEN status -- a real cancellation candidate
+
+        result = session.engage_kill_switch("manual_test", occurred_at=utc(2024, 1, 3))
+        assert result.event.engaged is True
+        assert len(result.cancellation_outcomes) == 1
+        cancellation = result.cancellation_outcomes[0]
+        assert cancellation.client_order_id == order.client_order_id
+        assert cancellation.cancelled is True
+        assert cancellation.broker_status == "CANCELED"
+        assert cancellation.error is None
+
+    def test_filled_order_is_not_a_cancellation_candidate(self) -> None:
+        session = _session()  # default failure_mode=None -> MARKET orders fill immediately
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        result = session.engage_kill_switch("manual_test", occurred_at=utc(2024, 1, 3))
+        assert result.cancellation_outcomes == ()
+
+    def test_auto_cancel_disabled_leaves_open_orders_untouched(self) -> None:
+        adapter = MockBrokerAdapter(BrokerConfig(), failure_mode="partial_fill")
+        config = make_live_config(
+            live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=6,
+            auto_cancel_on_kill_switch=False,
+        )
+        session = LiveTradingSession(config, adapter)
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+
+        result = session.engage_kill_switch("manual_test", occurred_at=utc(2024, 1, 3))
+        assert result.cancellation_outcomes == ()
+
+    def test_unknown_status_order_is_still_a_cancellation_attempt(self) -> None:
+        """UNKNOWN (a disconnected submission) is not CLOSED -- attempting
+        cancellation is the fail-safe response, not silently skipping an
+        order this session cannot confirm is actually closed."""
+        session = _session(failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        order = _order()
+        outcome = session.submit(order, requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert outcome.status == "UNKNOWN"
+
+        result = session.engage_kill_switch("manual_test", occurred_at=utc(2024, 1, 3))
+        assert len(result.cancellation_outcomes) == 1
+        assert result.cancellation_outcomes[0].cancelled is False
+        assert result.cancellation_outcomes[0].error is not None
+
+
 class TestScenario11DuplicateClientOrderId:
     def test_duplicate_submission_returns_same_response_no_new_order(self) -> None:
         session = _session()

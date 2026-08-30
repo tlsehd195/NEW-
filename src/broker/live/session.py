@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from broker.enums import BrokerOrderStatus
+from broker.enums import BrokerOrderStatus, is_closed_status
 from broker.errors import BrokerError
 from broker.live.config import LiveTradingConfig
 from broker.live.enums import OperationalState, ReconciliationStatus
@@ -73,6 +73,33 @@ class StartupCheckResult:
 
 
 @dataclass(frozen=True)
+class OrderCancellationOutcome:
+    """One cancel_order attempt's result -- `cancelled=True` only when
+    the broker's own response status is CANCELED, never inferred from
+    "no exception was raised" (mirrors `submit`'s own refusal to treat
+    absence-of-error as presence-of-success)."""
+
+    client_order_id: str
+    cancelled: bool
+    broker_status: Optional[str] = None  # a BrokerOrderStatus value, or None if the call itself raised
+    error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class KillSwitchEngagementResult:
+    """`engage_kill_switch`'s return value -- the event plus whatever
+    the automatic cancel-on-kill-switch pass (Session 36 decision,
+    `LiveTradingConfig.auto_cancel_on_kill_switch`) actually did.
+    `cancellation_outcomes` is empty both when the config disables
+    auto-cancel and when no order needed cancelling -- callers that need
+    to distinguish those two cases should check
+    `LiveTradingConfig.auto_cancel_on_kill_switch` directly."""
+
+    event: KillSwitchEvent
+    cancellation_outcomes: tuple[OrderCancellationOutcome, ...]
+
+
+@dataclass(frozen=True)
 class ShutdownCheckResult:
     open_client_order_ids: tuple[str, ...]
     shutdown_at: datetime
@@ -96,9 +123,16 @@ def run_startup_checks(
 
 
 def run_shutdown_checks(*, open_client_order_ids: tuple[str, ...], shutdown_at: datetime) -> ShutdownCheckResult:
-    """Never force-cancels an open order -- cancellation-on-shutdown is
-    a distinct financial policy decision this phase does not make
-    unilaterally (instruction section 29)."""
+    """A general, operator-initiated shutdown (end of day, planned
+    maintenance) never force-cancels an open order -- this remains a
+    manual decision (`docs/operations/LIVE-TRADING-RUNBOOK.md`
+    "Shutdown"). This is distinct from an automatic kill-switch
+    engagement (`LiveTradingSession.engage_kill_switch`), which -- per
+    the Session 36 decision, `LiveTradingConfig.
+    auto_cancel_on_kill_switch` -- DOES automatically cancel every
+    order not already known to be closed, since a kill-switch trigger
+    is exactly the emergency condition where leaving orders unmanaged
+    is the wrong default (see ADR-0045)."""
     return ShutdownCheckResult(
         open_client_order_ids=open_client_order_ids, shutdown_at=shutdown_at,
         operational_state=OperationalState.SHUTTING_DOWN,
@@ -171,14 +205,43 @@ class LiveTradingSession:
                 self._operational_state = OperationalState.ACTIVE
         return result
 
-    def engage_kill_switch(self, reason: str, *, occurred_at: datetime) -> KillSwitchEvent:
+    def engage_kill_switch(self, reason: str, *, occurred_at: datetime) -> KillSwitchEngagementResult:
         event = _engage_kill_switch(
             event_id=self._kill_switch_ids.allocate(), reason=reason, occurred_at=occurred_at,
             configuration_version=self.config.configuration_version(),
         )
         self._kill_switch_repository.record(event)
         self._operational_state = OperationalState.KILL_SWITCHED
-        return event
+
+        outcomes: list[OrderCancellationOutcome] = []
+        if self.config.auto_cancel_on_kill_switch:
+            # Every order this session does not already know to be
+            # CLOSED -- including UNKNOWN (a disconnected submission may
+            # or may not have gone through; attempting cancellation is
+            # the fail-safe response, not skipping it) -- is a
+            # cancellation candidate. Iterates a snapshot of the dict's
+            # keys since the loop body mutates `self._internal_status`.
+            not_confirmed_closed = tuple(
+                client_order_id for client_order_id, status in self._internal_status.items()
+                if not is_closed_status(status)
+            )
+            for client_order_id in not_confirmed_closed:
+                try:
+                    response = self.adapter.cancel_order(client_order_id, requested_at=occurred_at)
+                except BrokerError as exc:
+                    self._internal_status[client_order_id] = BrokerOrderStatus.UNKNOWN
+                    outcomes.append(OrderCancellationOutcome(
+                        client_order_id=client_order_id, cancelled=False, broker_status=None,
+                        error=f"{type(exc).__name__}: {exc}",
+                    ))
+                    continue
+                self._internal_status[client_order_id] = response.status
+                outcomes.append(OrderCancellationOutcome(
+                    client_order_id=client_order_id, cancelled=response.status == BrokerOrderStatus.CANCELED,
+                    broker_status=response.status.value, error=response.error_message,
+                ))
+
+        return KillSwitchEngagementResult(event=event, cancellation_outcomes=tuple(outcomes))
 
     def release_kill_switch(self, approval: LiveActivationApproval, *, occurred_at: datetime) -> KillSwitchEvent:
         event = _release_kill_switch(

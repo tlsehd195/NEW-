@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 — 역대 최초 CANDIDATE 등급(leverage) 통과했으나 held-out TEST가 이 프로젝트 사상 최악(-26.43%); 전체 PBO는 오히려 20%→38.57%로 악화)
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리 — max_turnover Option B 확장, kill switch cancel-on-kill-switch 자동화, Live 활성화 전 CANDIDATE 증거 검토 필수화(ADR-0045))
 
 ---
 
@@ -708,6 +708,42 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   - `REAL_VALIDATION_NOT_COMPLETED` 8개 후보 전부 유지.
   - `ADR-0043` Decision 7, `STRATEGY-VALIDATION-REPORT.md` Section G
     "Tenth update"에 상세 기록.
+- **"인프라 축 100% 채우기" 작업 — 사용자가 답변 못 하는 건 위임, 결정
+  가능한 건 직접 결정 요청받아 진행 (`ADR-0045`)**:
+  - 먼저 실제 현재 상태 감사 (agent 조사): `PRODUCTION-READINESS-
+    MATRIX.md`의 Walk Forward/Benchmark 행이 낡아서 실제로는 이미 다
+    구현·실행된 PBO/DSR·실 SPY 데이터를 "미구현/미확보"로 표시하고
+    있었음 → 바로 갱신.
+  - **(B) 사용자 위임 결정 3건**:
+    1. `max_turnover=None`일 때 Live 차단 여부 — 위임 → 기존 max_daily_
+       loss/max_order_frequency_per_hour와 동일하게 차단하도록 확장
+       (Option B 통일). `evaluate_safety_gate`가 `risk.config`를 절대
+       import하면 안 된다는 기존 AST 경계 테스트가 있어서, `RiskConfig`
+       객체 전체가 아니라 `max_turnover: Optional[float]` 값 하나만
+       `SafetyGateContext`에 추가하는 식으로 우회 없이 설계.
+    2. cancel-on-kill-switch 자동화 — 사용자가 직접 "자동화 진행"
+       지시. 구현 전 `ADR-0022 decision 8`을 실제로 확인해보니 그
+       decision은 cancel-on-shutdown과 전혀 무관한 내용(제출 예외 처리
+       얘기)이었음 — 이 프로젝트 여러 문서에 반복 인용됐던 출처가
+       애초에 틀렸던 걸 발견해서 바로잡음. 일반 수동 Shutdown 절차와
+       킬스위치 발동은 별개로 구분해서, 킬스위치 발동 시에만 자동
+       취소하도록 구현 (`LiveTradingConfig.auto_cancel_on_kill_switch`,
+       기본값 True). `engage_kill_switch` 반환 타입이
+       `KillSwitchEngagementResult`(이벤트+취소 결과)로 변경.
+    3. Live 활성화 전 CANDIDATE 등급 필수 여부 — 위임 → 필수로 못박는
+       쪽으로 결정(방금 leverage가 CANDIDATE 통과하고도 TEST가 역대
+       최악이었던 게 근거). `LiveActivationApproval`에
+       `strategy_evidence_reviewed: bool` 신규 필수 필드 추가 —
+       `checklist_completed`와 같은 방식의 구조적 확인 절차(완전
+       자동검증은 아니고, 거짓 표기 없이는 건너뛸 수 없게 만드는 것).
+  - 신규 테스트: `TestMaxTurnoverNoneSemanticsOptionB`(3),
+    `TestCancelOnKillSwitch`(4), `TestStrategyEvidenceMustBeReviewed`(2)
+    + 기존 호출부 다수 갱신.
+  - `LIVE-RISK-POLICY.md`/`LIVE-TRADING-RUNBOOK.md`/
+    `PRODUCTION-READINESS-MATRIX.md` 갱신, `ADR-0045` 신규 작성.
+  - 실제 리스크 한도 숫자(얼마로 정할지)는 여전히 미결 — 이번 세션은
+    "None이면 차단하는가"만 정한 것이지 구체적 숫자는 초기 Live 자본
+    규모가 정해져야 결정 가능.
 
 ### Completed (Session 33 — Phase 31 continued)
 

@@ -25,10 +25,11 @@ def make_live_config(**overrides) -> LiveTradingConfig:
 def make_approval(
     *, approved_by: str = "jane.doe", approved_at: datetime = utc(2024, 1, 2),
     confirmation_token: str = REQUIRED_CONFIRMATION_TOKEN, checklist_completed: bool = True,
+    strategy_evidence_reviewed: bool = True,
 ) -> LiveActivationApproval:
     return LiveActivationApproval(
         approved_by=approved_by, approved_at=approved_at, confirmation_token=confirmation_token,
-        checklist_completed=checklist_completed,
+        checklist_completed=checklist_completed, strategy_evidence_reviewed=strategy_evidence_reviewed,
     )
 
 
@@ -55,6 +56,10 @@ def make_passing_gate_context(**overrides) -> SafetyGateContext:
         # max_order_frequency_per_hour are None (Option B, LIVE-RISK-POLICY.md)
         # -- a "passing" gate context fixture must supply both.
         config=make_live_config(live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=6),
+        # Session 36: same Option B treatment extended to
+        # RiskConfig.max_turnover (ADR-0045) -- a "passing" fixture must
+        # supply it too.
+        max_turnover=2.0,
         approval=make_approval(),
         required_capabilities=(BrokerCapability.MARKET_ORDER,),
         broker_capabilities=make_broker_capabilities(),
