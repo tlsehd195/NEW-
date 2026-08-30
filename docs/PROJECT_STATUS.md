@@ -397,6 +397,26 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   - 신규 테스트 9개. 전체 1976개 통과. 아직 실제 카탈로그 실행 전.
   - ML은 규모가 커서(신규 subsystem 수준) 이번엔 안 건드림 — 팩터
     3개 결과 받은 뒤 첫 구체적인 ML 스텝을 제안할 예정.
+- **팩터 3개 실제 결과 수신 — leverage에서 이 프로젝트 최초의 진짜
+  양의 결과**: `roa`는 null(mean_ic=-0.0053, ROE보다도 더 0에 가까움).
+  `net_margin`은 약한 양의 신호(mean_ic=+0.0238, IR=+0.1000,
+  positive_ic_ratio=56.96%). **`leverage`는 지금까지 테스트한 7개
+  가설 전체에서 가장 강한 결과**(mean_ic=+0.0782, IR=+0.2559,
+  positive_ic_ratio=61.25%, 전 지표 양의 방향).
+  - **중요: 이걸 "검증된 엣지"로 보면 안 됨.** 7개 독립 가설을 테스트
+    하다 보면 신호가 하나도 없어도 우연히 이 정도 결과가 하나쯤
+    나오는 게 이상하지 않음 — 이게 정확히 이 프로젝트의 PBO/DSR
+    체계가 막으려는 다중검정(multiple-testing) 문제이고, raw
+    factor IC 테스트에도 똑같이 적용됨. 그나마 유리한 점: 3개를
+    미리 정해놓고 한 번에 테스트한 거라 사후 선택은 아니었고,
+    "낮은 레버리지" 자체가 학계에 독립적으로 존재하는 quality/safety
+    팩터 가설(Asness/Frazzini/Pedersen 2013 등)이라는 것.
+  - `STRATEGY-VALIDATION-REPORT.md` Section G "Third update"/Q3 표,
+    `ADR-0042` Decision 12에 상세 기록.
+  - **다음 방향은 이제 3갈래**: (a) ML 착수, (b) financial-health
+    계열(net_margin/leverage와 비슷한) 펀더멘털 팩터 추가 탐색,
+    (c) leverage를 실제 전략(walk-forward + PBO/DSR)으로 검증부터
+    하기 — 셋 다 유효, 아직 결정 안 함.
 
 ### Completed (Session 33 — Phase 31 continued)
 

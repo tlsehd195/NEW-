@@ -513,6 +513,41 @@ distinction for `net_margin_score`, the low-leverage-scores-higher
 convention for `leverage_score`, CLI wiring for all three). Full
 suite: 1976 passed. Not yet run against the real catalog.
 
+## Decision 12 -- real results: ROA null, net_margin weak positive, leverage the project's first real lead
+
+The user ran all three against the real catalog and relayed:
+
+```
+roa:         mean_ic=-0.0053, ic_information_ratio=-0.0222, positive_ic_ratio=51.25%
+net_margin:  mean_ic=+0.0238, ic_information_ratio=+0.1000, positive_ic_ratio=56.96%
+leverage:    mean_ic=+0.0782, ic_information_ratio=+0.2559, positive_ic_ratio=61.25%
+```
+
+`roa` is null (even smaller than `roe`'s own near-zero result).
+`net_margin` is weakly positive across every metric. `leverage` is
+the **strongest result this project has produced across any of the 7
+hypotheses tested to date**, positive on every metric with meaningfully
+more separation from its null baseline than anything before it.
+
+**This must not be read as a validated edge.** With 7 independent,
+pre-committed hypotheses now tested, finding 1 result this size is
+close to what chance alone would produce even with zero real signal
+anywhere -- the exact multiple-comparisons problem this project's own
+PBO/DSR discipline exists to guard against for full strategies,
+applying with the same force here even though this is a raw
+factor-IC test. `leverage` is the project's most promising LEAD, not a
+confirmed result -- full reasoning, what weighs for and against
+trusting it, and the concrete next validation step (walk-forward + PBO/
+DSR before treating it as a candidate) are in
+`docs/research/STRATEGY-VALIDATION-REPORT.md` Section G's "Third
+update" and the Q3 synthesis table, both updated alongside this
+decision. Full test suite unaffected by this data-only update (no code
+changed to receive this result).
+
+The ML-vs-more-factors-vs-validate-leverage-first question is now a
+genuine three-way fork, deliberately left open rather than resolved by
+this ADR.
+
 ## What's still not built
 
 A systematic per-symbol identity-continuity check (the general version

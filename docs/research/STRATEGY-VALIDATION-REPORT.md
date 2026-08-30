@@ -1327,6 +1327,96 @@ was tested, not just noise, and should be weighed before concluding
 "fundamentals as a domain don't work" as strongly as "these 3
 price-based rules don't work" was concluded above.
 
+**Third update -- 3 more fundamentals factors; ONE shows the first
+real positive result of the entire project, with an explicit multiple-
+testing caution attached.** Per the user's decision to pursue both
+remaining options ("let's do both" -- more fundamentals factors and
+ML), three more ratios sharing `roe_score`'s FY-restricted, point-in-
+time-safe plumbing (`_fy_ratio`) were tested over the identical
+window, all pre-committed before any of the three was run:
+
+```
+roa (factor_scores.roa_score, 2010-01-01..2023-04-28):
+  80 rebalance dates, 80 observations
+  mean_ic = -0.0053
+  ic_information_ratio = -0.0222
+  positive_ic_ratio = 51.25%
+
+net_margin (factor_scores.net_margin_score, same window):
+  80 rebalance dates, 79 observations
+  mean_ic = 0.0238
+  ic_information_ratio = 0.1000
+  positive_ic_ratio = 56.96%
+
+leverage (factor_scores.leverage_score, same window):
+  80 rebalance dates, 80 observations
+  mean_ic = 0.0782
+  ic_information_ratio = 0.2559
+  positive_ic_ratio = 61.25%
+```
+
+**OBSERVED**: `roa` is essentially zero (even smaller in magnitude
+than `roe`'s own near-zero result) -- no detectable edge, the same
+reading as most of this project's prior tests. `net_margin` is
+mildly positive across all three metrics (positive mean_ic, positive
+IR, majority of dates positive) but small. `leverage` is the
+strongest result this entire project has produced across any of the 7
+hypotheses tested so far -- positive on every metric, with
+`positive_ic_ratio` (61.25%) and `ic_information_ratio` (0.2559)
+both clearly further from their respective null baselines (50%, 0)
+than anything seen before.
+
+**INFERRED, with an explicit multiple-testing caution -- this is the
+single most important methodological point of this update**: this
+project has now tested **7 independent, pre-committed hypotheses**
+(momentum, low-volatility, trend+volatility-filter, ROE, ROA,
+net_margin, leverage). Finding 1 result out of 7 that looks
+meaningfully positive is close to what pure chance alone would produce
+even if NONE of the 7 carried any real signal -- this is exactly the
+multiple-comparisons problem `strategy_research.pbo_dsr` and this
+project's own PBO/Deflated-Sharpe-Ratio discipline exist to guard
+against for full strategies, and the same caution applies here even
+though this is a raw factor-IC test, not a full backtest. **`leverage`
+should be read as the most promising LEAD this project has produced,
+not as a validated edge** -- treating it as confirmed after seeing a
+favorable result among 7 tries is precisely the kind of post-hoc
+overconfidence this project's entire discipline (RULE 0.8, PBO, DSR)
+exists to prevent.
+
+What weighs somewhat in `leverage`'s favor, short of confirmation:
+(1) it was one of 3 factors pre-committed as a batch before any of the
+3 was run, not selected after seeing results across a larger untracked
+search; (2) "low leverage" is an independently pre-existing,
+economically-motivated hypothesis in the academic literature (e.g. one
+of the explicit "safety" pillars in Asness, Frazzini & Pedersen 2013's
+quality-minus-junk construction), not invented in reaction to a
+favorable number; (3) `net_margin`'s smaller but same-direction
+positive result is at least consistent with (not independent
+confirmation of) a broader "financial-health/quality" theme, rather
+than `leverage` being an isolated fluke among otherwise-random
+directions.
+
+What weighs against over-trusting it: (1) the 80 rebalance-date
+observations are NOT 80 independent samples -- adjacent dates 2 months
+apart share overlapping 60-day forward-return windows, so the
+effective sample size for any significance judgment is smaller than
+80; (2) no significance test or multiple-testing correction (a
+Deflated Sharpe Ratio-style adjustment, or simply requiring
+out-of-sample stability across sub-periods) has been applied to this
+raw IC number at all; (3) `leverage` has never been evaluated as a
+full strategy (rank -> top-N -> orders -> costs -> walk-forward ->
+PBO/DSR) the way the original 4 candidates were -- a positive Signal
+IC is a necessary, not sufficient, condition for that.
+
+**Next step this implies, not yet done**: before treating `leverage`
+as anything beyond a lead, it should go through the same rigor the
+original 4 strategies did -- a real walk-forward backtest with PBO/DSR
+applied, sub-period stability checks, and ideally a genuinely new
+out-of-sample check rather than trusting this one pre-TEST-1 window's
+number at face value. This is deliberately flagged as future work, not
+executed here, to avoid exactly the "found something, immediately
+declare victory" pattern this whole methodology exists to prevent.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the
@@ -1529,33 +1619,43 @@ consistent with (not proof of) its filter carrying more information
 than the shared momentum score does.
 
 **Q3 -- is ML research now more valuable than more rule-based
-strategies? UPDATED with all 3 price-based results AND the first
-fundamentals-based result in:** governance groundwork is done
+strategies? UPDATED with all 7 real results in, including the
+project's first positive lead.** governance groundwork is done
 (`docs/research/ML-RESEARCH-PROTOCOL.md`, `docs/decisions/
-ADR-0041-test-1-lock-and-ml-research-track.md`). On the evidence
-question specifically: momentum (mean_ic=-0.0078), low-volatility
-(mean_ic=-0.0486), `trend_volatility`'s filter (mean_spread=-0.0078,
-wrong direction), and now ROE (mean_ic=-0.0359, the first
-fundamentals-derived, not price/volume-derived, factor tested) all
-show no positive forward-predictive power against this 39-symbol
-universe over 2010-2023-04-28. 4 independently-motivated,
-pre-committed hypotheses across 2 genuinely different data domains, 4
-null-or-negative results, none searched for after seeing a favorable
-one. This is a stronger evidentiary basis than the 3-for-3 price-only
-result alone -- it was still possible then that fundamentals data
-specifically would break the pattern; the first fundamentals factor
-tried did not. Still not overwhelming (small samples, ~79-160
-observations per test; ROE is a single factor from its domain versus 3
-from price/volume, and its FY-only update cadence is a real structural
-handicap noted in Section G's own caveat) -- but real investment
-toward either (a) actual ML model development (the governance/tooling
-for which now exists) or (b) further fundamentals factors (value
-factors once shares-outstanding data is ingested; other quality/
-leverage ratios already computable from data already ingested) both
-remain legitimate next options, not one prescribed answer, since this
-evidence rules out four specific ideas, not "rule-based signals in
-general," "fundamentals data as a domain," or "this universe has no
-exploitable structure at all."
+ADR-0041-test-1-lock-and-ml-research-track.md`). Evidence to date, all
+against this 39-symbol universe over 2010-2023-04-28:
+
+| Hypothesis | Domain | mean_ic / mean_spread | Read |
+|---|---|---|---|
+| momentum | price/volume | -0.0078 | null |
+| low_volatility | price/volume | -0.0486 | null |
+| trend_volatility filter | price/volume | -0.0078 | null (wrong direction) |
+| roe | fundamentals | -0.0359 | null |
+| roa | fundamentals | -0.0053 | null |
+| net_margin | fundamentals | +0.0238 | weak positive |
+| leverage | fundamentals | **+0.0782** | positive, strongest yet |
+
+6 of 7 pre-committed, independently-motivated hypotheses are null or
+negative, consistent with everything found before this update.
+`leverage`'s result is the exception and the most important new fact
+this update adds -- but per Section G's own detailed caution, **it
+must be read as one positive result out of seven tries, not a
+validated edge**: with 7 independent tests, seeing one result this
+size from pure chance is not a low-probability event, no significance
+or multiple-testing correction has been applied to the raw IC number,
+and `leverage` has never been run through the same walk-forward/PBO/
+DSR rigor the original 4 strategy candidates were. What it does do is
+convert the earlier binary "does fundamentals data work at all"
+question into a genuine three-way fork: (a) actual ML model
+development (governance/tooling already exists), (b) more fundamentals
+factors in the same vein as `net_margin`/`leverage` (financial-health/
+quality-adjacent, since those are the two non-null results so far), or
+(c) properly validating `leverage` itself as a candidate strategy
+before doing either (a) or (b) -- since a lead this promising, if it
+survives PBO/DSR and walk-forward scrutiny, could change how much
+appetite there is for continuing to search versus building on what
+already looks real. All three remain legitimate, not one prescribed
+answer.
 
 ### Status after this addendum
 
