@@ -215,6 +215,57 @@ walk-forward + PBO/DSR pipeline -- that real run, and whether `ml_ols`
 clears the CANDIDATE fold-consistency bar `leverage` itself just
 missed, is the immediate next step.
 
+## Decision 4 -- real walk-forward result: `ml_ols` has the SECOND-WORST fold-consistency of all 6 candidates, despite by far the strongest raw VALIDATION IC
+
+The user ran `run_long_horizon_validation.py` with `--fundamentals-db-path`
+against the real 39-symbol catalogs (`--start 2010-01-01 --end
+2023-04-28`) and relayed the real result:
+
+```
+PBO: 12.86% across 70 CSCV splits (6 candidates)
+
+buy_and_hold:              42% positive folds (60 folds) -- below 60% bar. TEST net cumret=+20.16% sharpe=0.38
+ml_ols:                     53% positive folds -- below 60% bar. TEST net cumret=+55.59% sharpe=0.57, DSR=0.9999
+long_term_momentum:        57% positive folds -- below 60% bar. TEST net cumret=+16.81% sharpe=0.37
+risk_controlled_momentum:  57% positive folds -- below 60% bar. TEST net cumret=+8.70% sharpe=0.32
+leverage:                  57% positive folds -- below 60% bar. TEST net cumret=+33.56% sharpe=0.54
+trend_volatility:          60% positive folds -- clears the bar, but DSR=0.9398 < 0.95 (FAILED). TEST net cumret=+0.13% sharpe=0.27
+```
+
+**`ml_ols` does NOT clear the CANDIDATE fold-consistency bar (53%
+positive folds vs. the required 60%)** -- and its 53% is the
+SECOND-WORST of all 6 candidates, beating only `buy_and_hold`'s 42%,
+despite `ml_ols` producing by far the strongest raw VALIDATION Signal
+IC of anything this project has tested (mean_ic=+0.1055 vs.
+`leverage_score`'s own +0.0782). This is the multiple-testing/
+robustness caution from Decision 3 playing out for a second time, more
+starkly than for `leverage` itself: a promising raw metric not only
+failed to confirm as a robust walk-forward edge, it underperformed on
+that specific robustness measure relative to several strategies whose
+own raw Signal ICs were null.
+
+**A genuine tension worth naming rather than glossing over**: `ml_ols`
+also produced the BEST held-out TEST performance of all 6 candidates
+(+55.59% net, sharpe=0.57, versus `leverage`'s +33.56% and
+`buy_and_hold`'s +20.16%). Per this project's own established reading
+of exactly this pattern (`STRATEGY-VALIDATION-REPORT.md`'s "PBO/DSR
+vs. held-out TEST divergence" section, first raised for
+`risk_controlled_momentum`'s own case): a strong single-window TEST
+result paired with weak walk-forward fold-consistency is evidence the
+TEST-window result is plausibly regime-specific luck rather than a
+confirmed, structurally robust edge -- fold-consistency, not one
+window's return, is what this project's own CANDIDATE bar is built to
+measure for exactly this reason. Per RULE 0.8, this TEST observation
+cannot be used to retune or re-select `ml_ols` (or anything else) now
+that it has been seen.
+
+`REAL_VALIDATION_NOT_COMPLETED` remains the correct classification for
+all 6 candidates. Across every hypothesis this project has now tested
+against real data -- 3 price/volume Signal ICs, 4 fundamentals-factor
+Signal ICs, `leverage` as a full strategy, and now `ml_ols` as a full
+strategy -- zero have reached CANDIDATE. See `STRATEGY-VALIDATION-
+REPORT.md` Section G's "Sixth update" for the full account.
+
 ## What this does NOT do
 
 No model-selection procedure exists yet (only one candidate model

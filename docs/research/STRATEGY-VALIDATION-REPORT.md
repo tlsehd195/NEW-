@@ -1518,6 +1518,51 @@ scripts exactly -- verified both directions against a fresh synthetic
 catalog, 3 new regression tests, full suite 1989 passed. See
 `ADR-0042` Decision 14 for the full account.
 
+**Sixth update -- real walk-forward result: `ml_ols` has the
+SECOND-WORST fold-consistency of all 6 candidates, despite by far the
+strongest raw VALIDATION IC.** The user ran the same real walk-forward
++ PBO/DSR pipeline against `ml_ols` (the ML Research Track's first
+model, see ADR-0043 Decision 3):
+
+```
+PBO: 12.86% across 70 CSCV splits (6 candidates)
+buy_and_hold:              42% positive folds (60 folds) -- below 60% bar. TEST net cumret=+20.16%
+ml_ols:                     53% positive folds -- below 60% bar. TEST net cumret=+55.59%, DSR=0.9999
+long_term_momentum:        57% positive folds -- below 60% bar. TEST net cumret=+16.81%
+risk_controlled_momentum:  57% positive folds -- below 60% bar. TEST net cumret=+8.70%
+leverage:                  57% positive folds -- below 60% bar. TEST net cumret=+33.56%
+trend_volatility:          60% positive folds -- clears the bar, but DSR=0.9398 < 0.95 (FAILED). TEST net cumret=+0.13%
+```
+
+**OBSERVED: `ml_ols` does NOT clear the CANDIDATE fold-consistency
+bar** (53% positive folds vs. the required 60%) -- and its 53% is the
+second-worst of all 6, beating only `buy_and_hold`'s 42%, despite
+`ml_ols` producing by far the strongest raw VALIDATION Signal IC this
+project has ever computed (mean_ic=+0.1055 vs. `leverage_score`'s own
++0.0782). This is the multiple-testing/robustness caution from the
+prior update playing out a second time, more starkly: a promising raw
+metric not only failed to confirm as a robust walk-forward edge, it
+underperformed several strategies whose own raw Signal ICs were null.
+
+**A genuine tension, named rather than glossed over**: `ml_ols` also
+produced the BEST held-out TEST performance of all 6 candidates
+(+55.59% net vs. `leverage`'s +33.56% and `buy_and_hold`'s +20.16%).
+Per this report's own established reading of exactly this pattern (see
+"PBO/DSR vs. held-out TEST divergence" below, first raised for
+`risk_controlled_momentum`): a strong single-window TEST result paired
+with weak walk-forward fold-consistency is evidence that TEST-window
+result is plausibly regime-specific luck, not a confirmed structural
+edge -- fold-consistency, not one window's return, is what the
+CANDIDATE bar exists to measure for exactly this reason. Per RULE 0.8,
+this TEST observation cannot be used to retune or re-select `ml_ols`
+now that it has been seen.
+
+`REAL_VALIDATION_NOT_COMPLETED` remains correct for all 6 candidates.
+Across every hypothesis tested against real data to date -- 3
+price/volume Signal ICs, 4 fundamentals-factor Signal ICs, `leverage`
+as a full strategy, and now `ml_ols` as a full strategy -- zero have
+reached CANDIDATE. See ADR-0043 Decision 4 for the full account.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the
@@ -1805,10 +1850,19 @@ through the same walk-forward + PBO/DSR pipeline rather than trust it
 directly. Building this surfaced and required fixing a real
 performance problem (refitting per fold is expensive at real
 walk-forward fold counts -- see ADR-0043 Decision 3 for the full
-account and the fix). Not yet run against the real catalog through
-this full pipeline -- that real run, and whether `ml_ols` clears the
-same CANDIDATE fold-consistency bar `leverage` itself just missed, is
-the immediate next step.
+account and the fix).
+
+**Real walk-forward result received -- the caution above was
+justified.** `ml_ols` does NOT clear the CANDIDATE fold-consistency
+bar (53% positive folds vs. the required 60%) -- the second-worst of
+all 6 candidates, despite its raw VALIDATION IC being the strongest
+this project has ever produced. It also produced the best held-out
+TEST performance of the 6 (+55.59% net), a divergence this report
+reads as likely regime-specific luck rather than confirmed robustness,
+per the established "PBO/DSR vs. held-out TEST divergence" reading
+below. See Section G's "Sixth update" and ADR-0043 Decision 4 for the
+full account. Across all 9 hypotheses now tested against real data,
+zero reach CANDIDATE.
 
 ### Status after this addendum
 

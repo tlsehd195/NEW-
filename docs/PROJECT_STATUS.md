@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 35 — Phase 33: real ML VALIDATION result received (strongest raw metric yet, but only 11 observations over a COVID-era window); `MLStrategy` built as 6th candidate to validate it properly; not yet run through the full walk-forward pipeline)
+**Updated By:** Claude Code (Session 35 — Phase 33: real `ml_ols` walk-forward result received — does not clear the CANDIDATE bar; all 9 hypotheses tested against real data so far reach zero CANDIDATEs)
 
 ---
 
@@ -523,8 +523,35 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     문제 재발 방지.
   - 신규 테스트 10개(전략 8 + wiring 2), 전체 스위트 2020개 통과.
   - `ADR-0043` Decision 3, `STRATEGY-VALIDATION-REPORT.md` Section G에
-    상세 기록. **아직 실제 카탈로그로 전체 walk-forward+PBO/DSR
-    파이프라인 실행 전** — 이게 다음 단계.
+    상세 기록.
+- **`ml_ols` 실제 walk-forward 결과 수신 — 6개 후보 중 두 번째로 나쁜
+  fold-consistency, 그런데도 held-out TEST는 6개 중 1등**:
+  ```
+  PBO: 12.86% across 70 CSCV splits (6개 후보)
+  buy_and_hold:              42% 양의 fold — 기준(60%) 미달. TEST +20.16%
+  ml_ols:                     53% — 기준 미달. TEST +55.59%, DSR=0.9999
+  long_term_momentum:        57% — 기준 미달. TEST +16.81%
+  risk_controlled_momentum:  57% — 기준 미달. TEST +8.70%
+  leverage:                  57% — 기준 미달. TEST +33.56%
+  trend_volatility:          60% — 기준 통과, but DSR=0.9398(<0.95)로 실패. TEST +0.13%
+  ```
+  - **`ml_ols`는 CANDIDATE fold-consistency 기준(60%)을 통과 못 함
+    (53%)** — 이 프로젝트에서 나온 raw VALIDATION IC 중 가장 강했던
+    모델인데도, 6개 후보 중 두 번째로 나쁜 fold-consistency(꼴찌는
+    buy_and_hold 42%). raw IC가 강했던 게 walk-forward 견고성으로는
+    전혀 이어지지 않음 — 이전 leverage 때보다도 더 극명하게 다중검정
+    경고가 맞아떨어진 사례.
+  - **동시에 짚어야 할 진짜 긴장 관계**: `ml_ols`의 held-out TEST
+    성과(+55.59%)는 6개 중 1등이기도 함. 이 리포트가 이미
+    `risk_controlled_momentum` 때 세운 해석 기준(PBO/DSR vs held-out
+    TEST 괴리 — fold-consistency가 약한데 TEST 한 구간만 좋으면 그건
+    구조적 엣지가 아니라 특정 레짐에서의 우연일 가능성이 큼)을 그대로
+    적용 — TEST 수치 하나로 재조정/재선택하지 않음(RULE 0.8).
+  - `REAL_VALIDATION_NOT_COMPLETED` 6개 후보 전부 유지. 지금까지 실제
+    데이터로 테스트한 9개 가설(가격/거래량 3 + 펀더멘털 팩터 4 +
+    leverage 전략 + ml_ols 전략) 전부 CANDIDATE 없음.
+  - `ADR-0043` Decision 4, `STRATEGY-VALIDATION-REPORT.md` Section G
+    "Sixth update"에 상세 기록.
 
 ### Completed (Session 33 — Phase 31 continued)
 
