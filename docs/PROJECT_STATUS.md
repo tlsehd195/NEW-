@@ -4,8 +4,8 @@
 > 진행되었는지 파악할 수 있어야 한다. 이 파일은 각 세션 종료 시 반드시
 > 최신 상태로 갱신한다.
 
-**Last Updated:** 2026-08-29
-**Updated By:** Claude Code (Session 35 — Phase 33: fundamentals data source decision (SEC EDGAR) + provider implementation)
+**Last Updated:** 2026-08-30
+**Updated By:** Claude Code (Session 35 — Phase 33: `LeverageStrategy` built and wired into the walk-forward/PBO/DSR pipeline; not yet run against real data)
 
 ---
 
@@ -417,6 +417,30 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     계열(net_margin/leverage와 비슷한) 펀더멘털 팩터 추가 탐색,
     (c) leverage를 실제 전략(walk-forward + PBO/DSR)으로 검증부터
     하기 — 셋 다 유효, 아직 결정 안 함.
+- **"3번 으로" — `LeverageStrategy` 구축, walk-forward/PBO/DSR
+  파이프라인에 연결**: 사용자가 (c)를 선택 — raw Signal IC를 그대로
+  믿지 않고, 원래 4개 전략 후보가 거친 것과 동일한 검증(walk-forward
+  + PBO/DSR)을 leverage에도 적용.
+  - `src/strategy_research/leverage_strategy.py` 신규 — 이 프로젝트
+    최초의 펀더멘털 기반 전략 후보(5번째 후보). 포트폴리오 구성은
+    의도적으로 가장 단순한, 이미 검증된 방식(동일가중 top-N,
+    월 단위 리밸런싱) — `LongTermMomentumStrategy`와 동일. 신규
+    테스트 6개, 전부 통과.
+  - `scripts/run_long_horizon_validation.py`에 선택적 `--fundamentals
+    -db-path` 인자 추가 — 생략 시 기존 동작(전략 4개) 그대로, 지정 시
+    `leverage`가 5번째 후보로 합류.
+  - **배포 전 수동 스모크 테스트에서 실제 버그 발견·수정**: 펀더멘털
+    포함 여부가 다른 두 설정(전략 4개 vs 5개, 서로 다른 리포트)이
+    동일한 `experiment_id`를 만들어냄 — Phase 26에서 만든 재현성
+    계약("설정이 다르면 experiment_id도 반드시 달라야 함")을 위반.
+    `experiment_id` 해시 입력에 `fundamentals_included` 필드 추가,
+    `data_version`에도 펀더멘털 레코드 개수 fingerprint 추가해서 수정.
+    직접 실행으로 확인(두 설정이 이제 서로 다른 id 생성, 동일 설정
+    재실행 시 동일 id 재현) 후 회귀 테스트 추가. 전체 스위트 1986개
+    통과.
+  - `ADR-0042` Decision 13, `STRATEGY-VALIDATION-REPORT.md` Section G
+    "Fourth update"에 상세 기록. **아직 실제 39종목 펀더멘털 카탈로그
+    + 실제 가격 카탈로그로 실행 전** — 이게 다음 단계.
 
 ### Completed (Session 33 — Phase 31 continued)
 

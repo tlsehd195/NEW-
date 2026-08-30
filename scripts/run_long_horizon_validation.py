@@ -37,7 +37,7 @@ This script is the Phase 25 successor to
 `scripts/run_first_real_strategy_evaluation.py` (Phase 24's
 single-window, no-split real-data run). It adds, without changing a
 single line of `backtest/engine.py`, `backtest/strategy.py`, any cost
-model, or any of the four existing strategy candidates:
+model, or any of the four original strategy candidates:
 
 1. A chronological TRAIN / VALIDATION / TEST split of the real ingested
    window (`strategy_research.splits.build_chronological_split`,
@@ -83,6 +83,13 @@ populated by scripts/ingest_real_market_data.py):
         --db-path ./data/real_market_data \\
         --data-status REAL
 
+Add `--fundamentals-db-path ./data/fundamentals_data` (populated by
+`scripts/ingest_fundamentals_data.py`, ADR-0042) to additionally
+include the `leverage` fundamentals-based candidate
+(`src/strategy_research/leverage_strategy.py`) in the run -- omitted
+entirely, with every other candidate unaffected, when this flag is not
+passed.
+
 Never executed by this repository's own automated test suite (it reads
 real, already-ingested data from a path the test suite never has, and
 its runtime scales with how much real history has actually been
@@ -108,6 +115,7 @@ from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UN
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
+from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 
 from strategy_research.classification import (  # noqa: E402
     CandidateClassification,
@@ -116,6 +124,7 @@ from strategy_research.classification import (  # noqa: E402
 )
 from strategy_research.evidence import assess_pbo_dsr_applicability, classify_evidence_level  # noqa: E402
 from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
+from strategy_research.leverage_strategy import LeverageParameters, LeverageStrategy  # noqa: E402
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy  # noqa: E402
 from strategy_research.research_log import ResearchLog  # noqa: E402
 from strategy_research.risk_controlled_momentum import (  # noqa: E402
@@ -190,6 +199,15 @@ def main() -> int:
     parser.add_argument("--start", required=True, type=_parse_date)
     parser.add_argument("--end", required=True, type=_parse_date)
     parser.add_argument("--db-path", required=True, type=Path, help="Path to the DuckDB catalog scripts/ingest_real_market_data.py already populated")
+    parser.add_argument(
+        "--fundamentals-db-path", type=Path, default=None,
+        help=(
+            "Path to the DuckDB catalog scripts/ingest_fundamentals_data.py already "
+            "populated (ADR-0042). Optional -- when omitted, the 'leverage' fundamentals-"
+            "based candidate (src/strategy_research/leverage_strategy.py) is skipped "
+            "entirely and every other candidate runs exactly as before this flag existed."
+        ),
+    )
     parser.add_argument("--initial-capital", type=float, default=10_000.0, help="Matches PAPER_CAPITAL_USD (broker.paper.us_longterm_config), not a currency-converted figure")
     parser.add_argument("--train-fraction", type=float, default=0.6, help="Chronological split: fraction of [start,end] reserved for TRAIN (fixed before this script's first real-data run, never tuned against a result)")
     parser.add_argument("--validation-fraction", type=float, default=0.2, help="Chronological split: fraction reserved for VALIDATION; remaining fraction is the held-out TEST window")
@@ -223,6 +241,11 @@ def main() -> int:
 
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
     repository = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+    fundamentals_engine = None
+    fundamentals_repository = None
+    if args.fundamentals_db_path is not None:
+        fundamentals_engine = StorageEngine(StorageConfig(root_dir=args.fundamentals_db_path))
+        fundamentals_repository = DuckDBFundamentalsRepository(fundamentals_engine)
 
     try:
         # Real SPY TOTAL_RETURN benchmark, same construction as Phase
@@ -255,6 +278,14 @@ def main() -> int:
                 "train_fraction": args.train_fraction, "validation_fraction": args.validation_fraction,
                 "train_window_months": args.train_window_months, "test_window_months": args.test_window_months,
                 "step_months": args.step_months, "initial_capital": args.initial_capital,
+                # A run WITH --fundamentals-db-path adds the leverage
+                # candidate and changes the PBO/DSR applicability count --
+                # a materially different report from an otherwise-identical
+                # configuration without it. Without this field the two
+                # would collide on the same experiment_id, violating the
+                # "different configuration always yields a different one"
+                # contract documented above.
+                "fundamentals_included": fundamentals_repository is not None,
             }
         )[:16]
 
@@ -276,12 +307,28 @@ def main() -> int:
             sid: (bars[-1].adjusted_close or bars[-1].close)
             for sid, bars in bars_by_symbol.items() if bars
         }
+        # When fundamentals are included, `leverage`'s report content
+        # depends on the fundamentals catalog's own contents too (not
+        # just price bars) -- a re-ingestion that adds new fundamentals
+        # records for this universe must change data_version the same
+        # way a price re-ingestion already does, per this block's own
+        # "reflects only what the repository actually contains" contract.
+        per_symbol_fundamentals_counts = None
+        if fundamentals_repository is not None:
+            universe_ids = set(security_ids)
+            per_symbol_fundamentals_counts = {}
+            for record in fundamentals_repository.all_fundamentals():
+                if record.security_id in universe_ids:
+                    per_symbol_fundamentals_counts[record.security_id] = (
+                        per_symbol_fundamentals_counts.get(record.security_id, 0) + 1
+                    )
         data_version = compute_data_version(
             {
                 "security_ids": sorted(security_ids) + [BENCHMARK_SYMBOL],
                 "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
                 "per_symbol_bar_counts": {sid: len(bars) for sid, bars in bars_by_symbol.items()},
                 "benchmark_bar_count": len(spy_bars),
+                "per_symbol_fundamentals_counts": per_symbol_fundamentals_counts,
             }
         )
 
@@ -334,6 +381,19 @@ def main() -> int:
             ("trend_volatility", "trend + realized-volatility filter (see src/strategy_research/trend_volatility.py)", lambda: TrendVolatilityStrategy(security_ids, TrendVolatilityParameters())),
             ("risk_controlled_momentum", "momentum + inverse-vol sizing + position cap (see src/strategy_research/risk_controlled_momentum.py)", lambda: RiskControlledMomentumStrategy(security_ids, RiskControlledMomentumParameters())),
         ]
+        if fundamentals_repository is not None:
+            # Only included when --fundamentals-db-path is supplied
+            # (ADR-0042 Decision 12/13) -- the first fundamentals-based
+            # candidate, added specifically to put leverage_score's real
+            # Signal IC lead (mean_ic=+0.0782, the strongest of 7
+            # hypotheses tested) through the same walk-forward/PBO/DSR
+            # rigor every other candidate here already went through,
+            # rather than trusting the raw IC number on its own.
+            strategy_specs.append((
+                "leverage",
+                "low-leverage quality/safety factor, fundamentals-based (see src/strategy_research/leverage_strategy.py)",
+                lambda: LeverageStrategy(security_ids, fundamentals_repository, LeverageParameters()),
+            ))
 
         report = {
             "note": (
@@ -532,6 +592,8 @@ def main() -> int:
         return 0
     finally:
         engine.close()
+        if fundamentals_engine is not None:
+            fundamentals_engine.close()
 
 
 if __name__ == "__main__":

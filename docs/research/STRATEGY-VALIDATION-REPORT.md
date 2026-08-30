@@ -1417,6 +1417,49 @@ number at face value. This is deliberately flagged as future work, not
 executed here, to avoid exactly the "found something, immediately
 declare victory" pattern this whole methodology exists to prevent.
 
+**Fourth update -- `leverage` built as a real strategy candidate
+(`LeverageStrategy`), wired into the walk-forward + PBO/DSR pipeline;
+not yet run against real data.** The user chose the third of the three
+forks above explicitly ("3번 으로") -- validate `leverage` through this
+project's existing rigor rather than trust the raw IC number above.
+
+`src/strategy_research/leverage_strategy.py` adds `LeverageStrategy` as
+the project's 5th strategy candidate, and its first built on a
+fundamentals-derived score. Portfolio construction is deliberately the
+simplest one already proven correct in this codebase -- equal-weight
+among newly-entering top-N names, rebalanced by elapsed calendar
+months, identical to `LongTermMomentumStrategy`'s own construction --
+to isolate "does the ranking signal itself carry information" from
+"does a more elaborate sizing scheme help or hurt" (this project's own
+`risk_controlled_momentum` bug, Section H below, is the concrete
+cautionary precedent for why added complexity can obscure or fabricate
+a signal's apparent quality). `scripts/run_long_horizon_validation.py`
+gained an optional `--fundamentals-db-path` argument: omitted, every
+pre-existing invocation runs exactly as before (4 candidates);
+supplied, `leverage` joins as a 5th candidate through the identical
+chronological split, walk-forward evaluation, evidence classification,
+and PBO/DSR applicability check as the original 4.
+
+A real bug surfaced during the pre-ship manual smoke test (not by any
+automated test): two runs of the script with materially different
+configurations (with vs. without `--fundamentals-db-path`) produced the
+IDENTICAL `experiment_id`, since its hash input never captured whether
+fundamentals/`leverage` were included -- fixed by adding that field to
+`experiment_id`'s payload and extending `data_version` with a
+fundamentals-content fingerprint, confirmed by direct execution and
+now regression-tested (see ADR-0042 Decision 13 for the full account).
+
+**This has NOT yet been run against the real 39-symbol fundamentals
+catalog + the real price catalog** -- that real run, using the walk-
+forward TRAIN+VALIDATION region only (TEST-1 stays locked, no override,
+exactly as every other candidate's run has always respected), is the
+immediate next step. Its result -- `leverage`'s evidence classification,
+and whether the PBO/DSR applicability trigger condition is met with 5
+candidates -- will determine whether `leverage` graduates from LEAD to
+CANDIDATE, or whether the walk-forward result itself fails to
+corroborate the raw Signal IC (a real, live possibility this update
+does not prejudge).
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the
@@ -1657,6 +1700,14 @@ appetite there is for continuing to search versus building on what
 already looks real. All three remain legitimate, not one prescribed
 answer.
 
+**Resolved -- the user chose (c)** ("3번 으로"): validate `leverage`
+first, before either more fundamentals-factor search or ML. See the
+"Fourth update" in Section G above for what was built
+(`LeverageStrategy`, wired into `run_long_horizon_validation.py` behind
+`--fundamentals-db-path`) and its current status (built and tested,
+not yet run against real data). (a) and (b) remain open, not
+abandoned, pending that real run's result.
+
 ### Status after this addendum
 
 `REAL_VALIDATION_NOT_COMPLETED` remains the correct classification for
@@ -1667,4 +1718,6 @@ project's own held-out discipline surfaced a second, independent
 reason none of these 4 candidates should be traded with real capital
 yet: none, including `trend_volatility` (the closest to CANDIDATE),
 comes close to matching a passive SPY position over the one out-of-
-sample window this project has ever evaluated them against.
+sample window this project has ever evaluated them against. `leverage`,
+the project's 5th candidate, is built and tested but not yet evaluated
+against real data at all -- its classification is not yet determined.

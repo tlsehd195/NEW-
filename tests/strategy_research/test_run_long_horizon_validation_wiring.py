@@ -373,3 +373,86 @@ class TestConcentrationReportWiring:
         source = _source()
         assert "was never fed" in source
         assert "back into `classify_evidence_level`" in source
+
+
+class TestLeverageStrategyOptionallyIncluded:
+    """Phase 33 addition (ADR-0042 Decision 12/13): the fundamentals-
+    based `leverage` candidate is only run when `--fundamentals-db-path`
+    is supplied, so every pre-existing invocation of this script
+    (without that flag) must behave exactly as before this change."""
+
+    def test_fundamentals_db_path_argument_exists_and_is_optional(self) -> None:
+        tree = _tree()
+        add_argument_calls = _find_calls(tree, "add_argument")
+        matches = [
+            c for c in add_argument_calls
+            if c.args and isinstance(c.args[0], ast.Constant) and c.args[0].value == "--fundamentals-db-path"
+        ]
+        assert len(matches) == 1
+        kwargs = {kw.arg: kw.value for kw in matches[0].keywords}
+        # Must NOT be required=True -- every existing invocation without
+        # this flag must keep working unchanged.
+        assert "required" not in kwargs or getattr(kwargs["required"], "value", None) is not True
+
+    def test_leverage_candidate_is_gated_on_fundamentals_repository_being_set(self) -> None:
+        source = _source()
+        assert 'strategy_specs.append((\n                "leverage"' in source or '"leverage",' in source
+        # The append call itself must live inside an
+        # `if fundamentals_repository is not None:` guard, not
+        # unconditionally alongside the other four candidates. This
+        # guard string also appears earlier in the file (the
+        # data_version fundamentals-fingerprint block), so find the
+        # occurrence nearest to -- and preceding -- the append itself.
+        # Search for the tuple-entry form specifically (`"leverage",`),
+        # not any prose mention of the word elsewhere in the file.
+        append_idx = source.index('"leverage",')
+        guard_positions = [
+            i for i in range(len(source))
+            if source.startswith("if fundamentals_repository is not None:", i)
+        ]
+        preceding_guards = [i for i in guard_positions if i < append_idx]
+        assert preceding_guards, "no 'if fundamentals_repository is not None:' guard precedes the leverage append"
+        nearest_guard_idx = max(preceding_guards)
+        assert nearest_guard_idx < append_idx < nearest_guard_idx + 800  # same small block, not a coincidental later match
+
+    def test_fundamentals_engine_is_closed_in_finally_when_opened(self) -> None:
+        source = _source()
+        finally_idx = source.index("finally:")
+        tail = source[finally_idx:]
+        assert "fundamentals_engine.close()" in tail
+        assert "if fundamentals_engine is not None:" in tail
+
+
+class TestExperimentIdReflectsFundamentalsInclusion:
+    """Regression test for a real bug found in a pre-ship manual smoke
+    test: a run WITH --fundamentals-db-path (5 candidates, including
+    `leverage`) and an otherwise-identical run WITHOUT it (4 candidates)
+    produced the IDENTICAL experiment_id, since the compute_data_version
+    payload never captured whether fundamentals were included -- a
+    direct violation of this script's own documented Phase 26
+    reproducibility contract ("a different configuration always yields
+    a different [experiment_id]"). Confirmed fixed by direct execution:
+    two manual runs against the same synthetic catalogs, with and
+    without --fundamentals-db-path, now produce distinct experiment_ids
+    (and distinct data_versions), while re-running either configuration
+    unchanged reproduces its own id exactly."""
+
+    def test_experiment_id_hash_input_includes_fundamentals_included(self) -> None:
+        tree = _tree()
+        compute_calls = _find_calls(tree, "compute_data_version")
+        assert len(compute_calls) == 2, "expected exactly two compute_data_version calls (experiment_id, data_version)"
+        found = False
+        for call in compute_calls:
+            if not call.args or not isinstance(call.args[0], ast.Dict):
+                continue
+            for key, value in zip(call.args[0].keys, call.args[0].values):
+                if (
+                    isinstance(key, ast.Constant) and key.value == "fundamentals_included"
+                    and isinstance(value, ast.Compare)
+                ):
+                    found = True
+        assert found, (
+            "compute_data_version's payload for experiment_id must include a "
+            "'fundamentals_included' field derived from fundamentals_repository, "
+            "not a hardcoded literal"
+        )

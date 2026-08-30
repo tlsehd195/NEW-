@@ -548,6 +548,81 @@ The ML-vs-more-factors-vs-validate-leverage-first question is now a
 genuine three-way fork, deliberately left open rather than resolved by
 this ADR.
 
+## Decision 13 -- validate `leverage` through the existing walk-forward + PBO/DSR pipeline, not the raw IC alone
+
+The user chose the third fork explicitly ("3번 으로" -- "go with
+option 3"): put `leverage_score` through the same rigor the original 4
+strategy candidates went through, rather than trusting Decision 12's
+raw Signal IC number.
+
+Built `src/strategy_research/leverage_strategy.py` --
+`LeverageStrategy`, the project's fifth strategy candidate and its
+first built around a fundamentals-derived score rather than a
+price/volume-derived one:
+
+- Long-only, cross-sectional ranking by `leverage_score`, top-N
+  equal-weight, rebalanced by elapsed calendar months --
+  deliberately the SAME simple construction as `LongTermMomentumStrategy`
+  (sell what drops out of the target set, buy only newly-entering
+  names), chosen to isolate "does the ranking signal itself carry
+  information" from "does a more elaborate sizing scheme help or hurt"
+  (citing `risk_controlled_momentum`'s own real ADR-0038-era bug as the
+  cautionary precedent for why complexity can obscure or fabricate a
+  signal's apparent quality).
+- Needs two repositories where every other strategy needs one: price
+  (via the `Strategy` Protocol's existing `AsOfDataView` parameter, for
+  order sizing) and fundamentals (injected through the constructor,
+  outside the Protocol's fixed `generate_orders` signature, for
+  `leverage_score` itself) -- the same two-repository split
+  `compute_fundamentals_ic_series` already established, since
+  fundamentals live in an entirely separate DuckDB catalog from price
+  data with no way to reach both through one `AsOfDataView`.
+- 6 new tests (`tests/strategy_research/test_leverage_strategy.py`):
+  picks the lower-leverage name, rebalance cadence, deterministic
+  replay, a security with no fundamentals data is never scored as a
+  fabricated 0.0, parameter validation. All passed on first run.
+
+Wired into `scripts/run_long_horizon_validation.py` behind a new
+optional `--fundamentals-db-path` argument: when omitted, every
+pre-existing invocation behaves exactly as before (4 candidates); when
+supplied, a `DuckDBFundamentalsRepository` is opened and `leverage`
+joins the candidate set as a 5th, going through the identical
+chronological split, walk-forward evaluation, evidence classification,
+and PBO/DSR applicability check as the original 4 -- no separate code
+path.
+
+**A real bug found during the pre-ship manual smoke test, not by any
+automated test**: running the script twice against materially
+different configurations (once with `--fundamentals-db-path`, once
+without -- 5 candidates vs. 4, different PBO/DSR applicability counts,
+different reports) produced the IDENTICAL `experiment_id`. The
+`compute_data_version({...})` payload for `experiment_id` never
+included any field reflecting whether fundamentals were included --
+violating this script's own documented Phase 26 reproducibility
+contract ("a different configuration always yields a different
+[experiment_id]"), the same namespace-separation principle Decision-era
+work already applied to REAL-vs-SYNTHETIC runs. Fixed by adding
+`"fundamentals_included": fundamentals_repository is not None` to that
+payload, and extending `data_version` with a
+`per_symbol_fundamentals_counts` fingerprint (mirroring its existing
+`per_symbol_bar_counts` for price data) so a fundamentals re-ingestion
+that adds new content changes `data_version` the same way a price
+re-ingestion already does. Confirmed by direct execution against
+temporary synthetic price+fundamentals catalogs: the two configurations
+now produce distinct `experiment_id`/`data_version` pairs, while
+re-running either configuration unchanged reproduces its own id
+exactly. A new regression test
+(`TestExperimentIdReflectsFundamentalsInclusion`) guards against
+reintroducing this collision. Full suite: 1986 passed.
+
+Not yet run against the real 39-symbol catalog + `data/real_2010_latest`
+price catalog -- that real run, and its result, are the immediate next
+step (see `docs/research/STRATEGY-VALIDATION-REPORT.md` Section G).
+Computing PBO/DSR itself (as opposed to merely its applicability) for
+`leverage` specifically remains a further, separate step after that,
+per this script's own DECISION REQUIRED framing around PBO/DSR
+adoption.
+
 ## What's still not built
 
 A systematic per-symbol identity-continuity check (the general version
