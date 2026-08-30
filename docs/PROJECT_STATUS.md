@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 35 — Phase 33: ml_ridge + rank_average_ensemble candidates built, feature-cache performance fix; universe expansion + quarterly fundamentals scoped but not built — need user's environment)
+**Updated By:** Claude Code (Session 35 — Phase 33: real 8-candidate result — ml_ridge/ensemble modestly better fold-consistency than ml_ols but still no CANDIDATE; second real experiment_id collision found and fixed)
 
 ---
 
@@ -588,7 +588,44 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     환경에서의 실제 ingestion이 필요해서, 이번 세션에서 혼자 만들
     수 있는 범위가 아니었음. 포기 아니고 다음 단계로 남겨둠.
   - `ADR-0043` Decision 5, `STRATEGY-VALIDATION-REPORT.md` Section G
-    "Seventh update"에 상세 기록. **아직 실제 카탈로그로 실행 전.**
+    "Seventh update"에 상세 기록.
+- **실제 8후보 결과 수신 — ml_ridge/앙상블이 ml_ols보다 fold-consistency
+  약간 나음, 그래도 CANDIDATE는 없음; 같은 라운드에서 experiment_id
+  충돌 버그를 한 번 더 발견·수정**:
+  ```
+  PBO: 20.00% across 70 CSCV splits (8개 후보)
+  buy_and_hold:              42% — 기준(60%) 미달
+  ml_ols:                    53% — 미달. TEST +37.34%
+  long_term_momentum/risk_controlled_momentum/leverage: 57% — 미달
+  ml_ridge:                  58% — 미달. TEST +30.76%, DSR=1.0000(8개 중 최고)
+  rank_average_ensemble:     58% — 미달. TEST -23.04%(이 프로젝트 사상
+                              최초의 마이너스 TEST 결과)
+  trend_volatility:          60% — 기준 통과, but DSR=0.93(<0.95)로 실패
+  ```
+  - **ml_ridge/앙상블 둘 다 ml_ols(53%)보다 fold-consistency가 나음
+    (58%)** — 정규화·순위평균 둘 다 겨냥했던 불안정성을 실제로 어느
+    정도 줄였다는 real evidence. 그래도 60% 기준은 못 넘음.
+  - **정반대 방향의 새로운 괴리**: rank_average_ensemble은
+    fold-consistency는 괜찮은데(58%) held-out TEST가 이 프로젝트
+    역대 최악(-23.04%) — "이 두 지표가 답하는 질문이 다르다"는 원칙이
+    이번엔 반대 방향으로 확인됨.
+  - **experiment_id 버그 한 번 더 발견**: 이전 6후보 실행과 이번
+    8후보 실행이 candidate 구성이 바뀌었고(6→8) ml_ols 자체 내부
+    파라미터도 바뀌었는데(train_window_months 36→60, 실제 결과도
+    +55.59%→+37.34%로 달라짐) 두 실행의 experiment_id가 동일하게
+    찍힘 — `fundamentals_included`는 "펀더멘털 있음/없음"만 구분하지
+    "어떤 후보들인지"는 구분 못 해서 생긴 문제, ADR-0042 Decision 14에서
+    한 번 잡았던 것과 같은 종류의 버그가 다른 축에서 재발한 것.
+    `experiment_id` 계산을 strategy_specs 완성 후로 옮기고
+    `candidate_names`(정렬된 후보 이름 목록)를 해시에 추가해서 수정.
+    **완전한 수정은 아님** — 이름은 그대로인 기존 후보의 내부 고정
+    파라미터 변경(예: MLStrategyParameters.train_window_months)까지는
+    여전히 못 잡음. 코드 버전 자체를 해시하는 메커니즘이 없다는 걸
+    알려진 한계로 명시적으로 문서화만 해둠. 회귀 테스트 2개 추가,
+    전체 스위트 2040개 통과.
+  - `REAL_VALIDATION_NOT_COMPLETED` 8개 후보 전부 유지.
+  - `ADR-0043` Decision 6, `STRATEGY-VALIDATION-REPORT.md` Section G
+    "Eighth update"에 상세 기록.
 
 ### Completed (Session 33 — Phase 31 continued)
 

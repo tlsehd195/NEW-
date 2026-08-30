@@ -290,33 +290,6 @@ def main() -> int:
                 repository.add_benchmark_point(point)
             benchmark_id = _BENCHMARK_ID if benchmark_points else None
 
-        # experiment_id: deterministic from caller-supplied run
-        # configuration only (never datetime.now()/utcnow() -- rule
-        # 0-11) -- the SAME configuration run twice always yields the
-        # SAME experiment_id (Phase 26 section 22/21 -- reproducibility
-        # tracking), a different configuration always yields a
-        # different one.
-        experiment_id = compute_data_version(
-            {
-                "data_status": args.data_status,  # REAL and SYNTHETIC runs of an
-                # otherwise-identical configuration must never collide into the
-                # same experiment_id (section 27's namespace-separation requirement).
-                "universe_name": universe.name, "universe_version": universe.version,
-                "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
-                "train_fraction": args.train_fraction, "validation_fraction": args.validation_fraction,
-                "train_window_months": args.train_window_months, "test_window_months": args.test_window_months,
-                "step_months": args.step_months, "initial_capital": args.initial_capital,
-                # A run WITH --fundamentals-db-path adds the leverage
-                # candidate and changes the PBO/DSR applicability count --
-                # a materially different report from an otherwise-identical
-                # configuration without it. Without this field the two
-                # would collide on the same experiment_id, violating the
-                # "different configuration always yields a different one"
-                # contract documented above.
-                "fundamentals_included": fundamentals_repository is not None,
-            }
-        )[:16]
-
         # data_version: reflects only what the repository actually
         # contains for this universe+window at run time (per-symbol bar
         # and corporate-action counts, plus SPY's own), same construction
@@ -482,6 +455,52 @@ def main() -> int:
                 "rank-average of leverage_score and net_margin_score, fundamentals-based (see src/strategy_research/ensemble_strategy.py, ADR-0043 Decision 5)",
                 lambda: RankAverageEnsembleStrategy(security_ids, fundamentals_repository, RankAverageEnsembleParameters()),
             ))
+
+        # experiment_id: deterministic from caller-supplied run
+        # configuration only (never datetime.now()/utcnow() -- rule
+        # 0-11) -- the SAME configuration run twice always yields the
+        # SAME experiment_id (Phase 26 section 22/21 -- reproducibility
+        # tracking), a different configuration always yields a
+        # different one. Computed AFTER strategy_specs is fully built
+        # (not before, as this used to be) so `candidate_names` below
+        # can reflect the actual candidate set -- a real incident, not
+        # hypothetical: adding ml_ridge/rank_average_ensemble as new
+        # candidates, and reverting ml_ols's own internal train_window_
+        # months default (ADR-0043 Decision 5), silently produced the
+        # SAME experiment_id as the prior 6-candidate run, since neither
+        # the candidate count nor any MLStrategy-internal parameter was
+        # ever part of this hash -- the exact same class of collision
+        # ADR-0042 Decision 14 already fixed once for the TEST-1-lock-
+        # unrelated fundamentals_included case, discovered here by
+        # direct comparison of two real runs' printed experiment_id.
+        experiment_id = compute_data_version(
+            {
+                "data_status": args.data_status,  # REAL and SYNTHETIC runs of an
+                # otherwise-identical configuration must never collide into the
+                # same experiment_id (section 27's namespace-separation requirement).
+                "universe_name": universe.name, "universe_version": universe.version,
+                "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
+                "train_fraction": args.train_fraction, "validation_fraction": args.validation_fraction,
+                "train_window_months": args.train_window_months, "test_window_months": args.test_window_months,
+                "step_months": args.step_months, "initial_capital": args.initial_capital,
+                # A run WITH --fundamentals-db-path adds fundamentals-
+                # based candidates and changes the PBO/DSR applicability
+                # count -- a materially different report from an
+                # otherwise-identical configuration without it.
+                "fundamentals_included": fundamentals_repository is not None,
+                # The actual candidate set evaluated -- catches "a
+                # candidate was added/removed" (e.g. 6 vs 8 candidates
+                # above). NOT a full code-identity/git-commit hash (this
+                # script has no mechanism for that): an EXISTING
+                # candidate's own internal fixed defaults (e.g.
+                # MLStrategyParameters.train_window_months) can still
+                # change silently across a code update without changing
+                # this experiment_id. This is a real, KNOWN, unresolved
+                # gap in this reproducibility contract, not something
+                # this field claims to close.
+                "candidate_names": sorted(name for name, _, _ in strategy_specs),
+            }
+        )[:16]
 
         report = {
             "note": (

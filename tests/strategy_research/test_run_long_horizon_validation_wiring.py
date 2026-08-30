@@ -558,3 +558,44 @@ class TestExperimentIdReflectsFundamentalsInclusion:
             "'fundamentals_included' field derived from fundamentals_repository, "
             "not a hardcoded literal"
         )
+
+
+class TestExperimentIdReflectsCandidateSet:
+    """Regression test for a second real experiment_id collision, found
+    by direct comparison of two real runs' printed output: a run with 6
+    candidates (buy_and_hold/long_term_momentum/trend_volatility/
+    risk_controlled_momentum/leverage/ml_ols) and a later run with 8
+    (the same 6 plus ml_ridge and rank_average_ensemble -- ADR-0043
+    Decision 5) produced the IDENTICAL experiment_id, since neither the
+    candidate count nor any candidate's own internal parameters were
+    ever part of the hash -- `fundamentals_included` alone only
+    distinguishes "no fundamentals" from "some fundamentals candidates",
+    not which ones. Fixed by moving the experiment_id computation to
+    AFTER strategy_specs is fully built and hashing the actual sorted
+    candidate name list."""
+
+    def test_experiment_id_hash_input_includes_candidate_names(self) -> None:
+        tree = _tree()
+        compute_calls = _find_calls(tree, "compute_data_version")
+        assert len(compute_calls) == 2, "expected exactly two compute_data_version calls (experiment_id, data_version)"
+        found = False
+        for call in compute_calls:
+            if not call.args or not isinstance(call.args[0], ast.Dict):
+                continue
+            for key, value in zip(call.args[0].keys, call.args[0].values):
+                if isinstance(key, ast.Constant) and key.value == "candidate_names" and isinstance(value, ast.Call):
+                    found = True
+        assert found, (
+            "compute_data_version's payload for experiment_id must include a "
+            "'candidate_names' field derived from strategy_specs (a call, e.g. "
+            "sorted(...)), not a hardcoded literal"
+        )
+
+    def test_experiment_id_is_computed_after_strategy_specs_is_fully_built(self) -> None:
+        source = _source()
+        last_append_idx = source.rindex('strategy_specs.append((')
+        experiment_id_idx = source.index("experiment_id = compute_data_version(")
+        assert last_append_idx < experiment_id_idx, (
+            "experiment_id must be computed after every strategy_specs.append() call, "
+            "not before -- otherwise candidate_names cannot reflect the actual candidate set"
+        )

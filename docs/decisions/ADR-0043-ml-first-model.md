@@ -361,6 +361,67 @@ restriction without reintroducing the exact same-filing collision bug
 ADR-0042 Decision 7 already found and fixed once). Both remain
 real, scoped next steps, not abandoned.
 
+## Decision 6 -- real 8-candidate result: regularization helped modestly, still no CANDIDATE; a second real experiment_id collision found and fixed
+
+The user ran `run_long_horizon_validation.py` with `--fundamentals-db-path`
+against the real 39-symbol catalogs (same `--start`/`--end` as Decision
+4's run). The real result:
+
+```
+PBO: 20.00% across 70 CSCV splits (8 candidates)
+
+buy_and_hold:              42% positive folds -- below 60% bar. TEST net cumret=+20.16%
+ml_ols:                    53% positive folds -- below 60% bar. TEST net cumret=+37.34% sharpe=0.58, DSR=0.9999
+long_term_momentum:        57% positive folds -- below 60% bar. TEST net cumret=+16.81%
+risk_controlled_momentum:  57% positive folds -- below 60% bar. TEST net cumret=+8.70%
+leverage:                  57% positive folds -- below 60% bar. TEST net cumret=+33.56%
+ml_ridge:                  58% positive folds -- below 60% bar. TEST net cumret=+30.76% sharpe=0.63, DSR=1.0000
+rank_average_ensemble:     58% positive folds -- below 60% bar. TEST net cumret=-23.04% sharpe=0.44, DSR=0.9989
+trend_volatility:          60% positive folds -- clears the bar, but DSR=0.9323 < 0.95 (FAILED). TEST net cumret=+0.13%
+```
+
+**`ml_ridge` and `rank_average_ensemble` both modestly outperform
+`ml_ols` on fold-consistency (58% vs 53%)** -- some real evidence that
+regularization (and, separately, rank-averaging) reduces the
+instability a plain unregularized fit on this little data showed, the
+motivation Decision 5 built both against. **Neither clears the 60%
+bar.** `ml_ridge`'s DSR (1.0000) is the highest of all 8 candidates,
+but is never evaluated against the 0.95 threshold since fold-
+consistency blocks first -- the same "never reaches the second gate"
+pattern every fundamentals/ML candidate has shown so far.
+
+**A second genuine divergence, in the opposite direction from
+Decision 4's**: `rank_average_ensemble` has among the better fold-
+consistency of the fundamentals/ML candidates (58%, tied with
+`ml_ridge`) but the WORST held-out TEST result of all 8
+(-23.04% net, the only negative TEST return this project has ever
+observed for any candidate). Read per this project's established
+"PBO/DSR vs. held-out TEST divergence" framing: reasonable walk-
+forward consistency does not guarantee a good TEST-window outcome
+either -- the two metrics answer genuinely different questions, and
+neither substitutes for the other. `REAL_VALIDATION_NOT_COMPLETED`
+remains correct for all 8 candidates.
+
+**A second real `experiment_id` collision, found by direct comparison
+of this run's printed output against Decision 4's**: both runs printed
+the SAME `experiment_id`, despite Decision 5 adding 2 new candidates
+(6 -> 8) and reverting `ml_ols`'s own `train_window_months` default
+(36 -> 60, changing its fitted model and therefore its real result --
+compare `ml_ols`'s TEST cumret here, +37.34%, against Decision 4's
++55.59%, the SAME candidate under the SAME `experiment_id`). Root
+cause: `fundamentals_included` only distinguishes "no fundamentals"
+from "some fundamentals candidates," not which ones, and no field ever
+captured the candidate set itself. Fixed by moving the `experiment_id`
+computation to AFTER `strategy_specs` is fully built and hashing the
+actual sorted candidate name list (`candidate_names`). **Explicitly
+NOT a full fix**: this still cannot detect a change to an EXISTING
+candidate's own fixed internal parameters (e.g. `MLStrategyParameters.
+train_window_months` changing while the candidate is still named
+`ml_ols`) -- there is no code-identity/git-commit-hash mechanism in
+this script, and building one is out of scope here. This is recorded
+as a real, known, deliberately unresolved gap, not silently left
+undocumented. 2 new regression tests. Full suite: 2040 passed.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true

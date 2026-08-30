@@ -1594,7 +1594,26 @@ comparisons framing genuinely applies now, not just in principle --
 `compute_pbo`/`compute_dsr_for_all_candidates` already treat all 8 as
 one candidate pool, so no new machinery is needed, but any future
 result from `ml_ridge` or `rank_average_ensemble` must be read as one
-of three tries. Not yet run against the real catalog.
+of three tries.
+
+**Eighth update -- real result received: regularization and rank-
+averaging both modestly improved fold-consistency over `ml_ols`'s own, but neither
+clears the bar, and a second real `experiment_id` collision was found
+in the same round.** `ml_ridge` and `rank_average_ensemble` both hit
+58% positive folds (vs `ml_ols`'s 53%) -- real evidence the
+instability Decision 5 targeted was reduced, still short of the
+required 60%. `rank_average_ensemble` produced the WORST held-out TEST
+result of any candidate this project has ever evaluated (-23.04% net)
+despite reasonable fold-consistency -- the same "these two metrics
+answer different questions" caution, now demonstrated in the opposite
+direction from `ml_ols`'s own case. `REAL_VALIDATION_NOT_COMPLETED`
+remains correct for all 8. Separately: comparing this run's printed
+`experiment_id` against the prior 6-candidate run's found they were
+IDENTICAL despite the candidate set changing (6->8) and `ml_ols`'s own
+internal parameters changing -- a second real reproducibility gap of
+the same kind ADR-0042 Decision 14 already fixed once, now fixed by
+hashing the actual candidate name list. See ADR-0043 Decision 6 for
+the full account.
 
 Universe breadth and quarterly (10-Q) fundamentals -- the two
 remaining improvements -- were deliberately NOT attempted this round:
