@@ -1460,6 +1460,64 @@ CANDIDATE, or whether the walk-forward result itself fails to
 corroborate the raw Signal IC (a real, live possibility this update
 does not prejudge).
 
+**Fifth update -- real walk-forward result: `leverage` does not clear
+the CANDIDATE fold-consistency bar; a real TEST-1-lock gap found and
+fixed in the same round.** The user ran
+`run_long_horizon_validation.py` with `--fundamentals-db-path` against
+the real 39-symbol fundamentals catalog and the real price catalog:
+
+```
+buy_and_hold:              42% positive folds (64 folds) -- below 60% bar. TEST net cumret=+11.21% sharpe=0.27
+long_term_momentum:        55% positive folds -- below 60% bar. TEST net cumret=+1.78% sharpe=0.20
+risk_controlled_momentum:  55% positive folds -- below 60% bar. TEST net cumret=-6.91% sharpe=0.09
+trend_volatility:          61% positive folds -- clears the bar, but DSR=0.9376 < 0.95 (FAILED). TEST net cumret=+4.78% sharpe=0.22
+leverage:                  56% positive folds -- below 60% bar. TEST net cumret=+0.70% sharpe=0.27, DSR=0.9787
+PBO: 21.43% across 70 CSCV splits (5 candidates)
+```
+
+**OBSERVED: `leverage` does NOT clear the CANDIDATE fold-consistency
+bar** (56% positive folds vs. the required 60%) -- the same failure
+mode as `buy_and_hold`, `long_term_momentum`, and
+`risk_controlled_momentum`, never reaching the point where its
+individually-computed DSR (0.9787, which would itself pass the >=0.95
+bar on its own) is even evaluated against that threshold. **This is
+exactly the outcome the multiple-testing caution above existed to
+warn against**: a promising raw Signal IC (mean_ic=+0.0782) did not
+translate into a robust edge once built into an actual walk-forward
+strategy and evaluated fold-by-fold. 56% is the closest of the three
+failing candidates to the 60% bar, and `leverage`'s held-out TEST
+Sharpe (0.27) ties `buy_and_hold`'s for the best of the 5 on that one
+metric alone -- but per this project's own discipline, a near-miss on
+a bar fixed before this result is reported as a miss, not rounded up,
+and no single held-out-TEST metric is sufficient evidence on its own
+(see "Held-out TEST vs benchmark" above). `REAL_VALIDATION_NOT_
+COMPLETED`/no-CANDIDATE remains the correct classification for all 5
+candidates, `leverage` now included.
+
+**A second, real incident, found in this same round**: the `--end
+2023-12-29` value this session's own instructions gave the user was a
+mistake -- `[2010-01-01, 2023-12-29]` overlaps the locked `TEST-1`
+window (2023-04-28..2026-08-27), which the original 4 strategies
+already observed once. `run_long_horizon_validation.py` had never
+called `overlaps_any_locked_window` at all, unlike the three
+Signal-IC CLI scripts, which all refuse an overlapping range outright
+-- a gap ADR-0041 explicitly noted and assumed away ("none currently
+builds a new split that could conflict"), an assumption this exact run
+falsified. **What is and isn't compromised, precisely**: the
+walk-forward folds driving the fold-consistency/PBO/DSR evidence above
+are computed over TRAIN+VALIDATION = [2010-01-01, 2021-03-12),
+entirely *before* TEST-1's start -- that evidence, and `leverage`'s
+failure to clear the CANDIDATE bar, is NOT contaminated. Only the
+"held-out TEST" cumret/sharpe/trades figures quoted above (window
+[2021-03-12, 2023-12-29]) partially overlap TEST-1 for their final ~8
+months and should not be read as a clean, never-before-seen
+comparison. Fixed: `run_long_horizon_validation.py` now refuses (exit
+1, no partial output, no override flag) any `[--start, --end]`
+overlapping a locked window, mirroring the three existing Signal-IC
+scripts exactly -- verified both directions against a fresh synthetic
+catalog, 3 new regression tests, full suite 1989 passed. See
+`ADR-0042` Decision 14 for the full account.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the
@@ -1702,11 +1760,15 @@ answer.
 
 **Resolved -- the user chose (c)** ("3번 으로"): validate `leverage`
 first, before either more fundamentals-factor search or ML. See the
-"Fourth update" in Section G above for what was built
+"Fourth"/"Fifth" updates in Section G above for what was built
 (`LeverageStrategy`, wired into `run_long_horizon_validation.py` behind
-`--fundamentals-db-path`) and its current status (built and tested,
-not yet run against real data). (a) and (b) remain open, not
-abandoned, pending that real run's result.
+`--fundamentals-db-path`) and the real result: `leverage` does NOT
+clear the CANDIDATE fold-consistency bar (56% positive folds vs. the
+required 60%) -- the multiple-testing caution's warning was borne out,
+not merely a hypothetical risk. (a) and (b) remain open, and this
+result is a data point for choosing between them: 4 of 5 rule-based/
+fundamentals candidates now fail even the fold-consistency bar, only
+`trend_volatility` gets as far as failing DSR alone.
 
 ### Status after this addendum
 
@@ -1719,5 +1781,7 @@ reason none of these 4 candidates should be traded with real capital
 yet: none, including `trend_volatility` (the closest to CANDIDATE),
 comes close to matching a passive SPY position over the one out-of-
 sample window this project has ever evaluated them against. `leverage`,
-the project's 5th candidate, is built and tested but not yet evaluated
-against real data at all -- its classification is not yet determined.
+the project's 5th candidate, has now been evaluated against real data
+(Section G's "Fifth update") and does not clear the CANDIDATE
+fold-consistency bar either -- `REAL_VALIDATION_NOT_COMPLETED` now
+applies to all 5 candidates.

@@ -108,6 +108,47 @@ class TestDataStatusWiring:
         assert found, "compute_data_version's payload for experiment_id must include args.data_status"
 
 
+class TestTest1LockEnforced:
+    """Regression test for a real incident: a run with `--end` inside
+    `strategy_research.locked_windows.TEST_1` produced a "held-out
+    TEST" partially overlapping that already-observed window, since
+    this script -- unlike compute_signal_ic_from_catalog.py,
+    compute_fundamentals_ic_from_catalog.py, and
+    compute_filter_bucket_returns_from_catalog.py -- never called
+    `overlaps_any_locked_window` at all (ADR-0041's own stated
+    assumption, "none currently builds a new split that could
+    conflict," was falsified by this exact run). Fixed by adding the
+    same override-free refusal those three scripts already use."""
+
+    def test_overlaps_any_locked_window_is_imported(self) -> None:
+        source = _source()
+        assert "from strategy_research.locked_windows import overlaps_any_locked_window" in source
+
+    def test_locked_window_check_happens_before_any_repository_is_opened(self) -> None:
+        source = _source()
+        check_idx = source.index("overlaps_any_locked_window(args.start, args.end)")
+        storage_engine_idx = source.index("StorageEngine(StorageConfig(root_dir=args.db_path))")
+        assert check_idx < storage_engine_idx, (
+            "the locked-window check must happen before opening any repository "
+            "-- refusing after already querying/writing data is not a real refusal"
+        )
+
+    def test_overlap_returns_nonzero_without_an_override_flag(self) -> None:
+        tree = _tree()
+        add_argument_calls = _find_calls(tree, "add_argument")
+        override_flags = [
+            c for c in add_argument_calls
+            if c.args and isinstance(c.args[0], ast.Constant)
+            and "override" in str(c.args[0].value).lower()
+        ]
+        assert not override_flags, "no override flag must exist for the TEST-1 lock refusal"
+        source = _source()
+        locked_idx = source.index("locked = overlaps_any_locked_window(args.start, args.end)")
+        tail = source[locked_idx:locked_idx + 1200]
+        assert "if locked:" in tail
+        assert "return 1" in tail
+
+
 class TestChronologicalBoundaryWiring:
     """Category B: the walk-forward region and the held-out TEST region
     must never overlap at the CLI's own call-site level (not just at

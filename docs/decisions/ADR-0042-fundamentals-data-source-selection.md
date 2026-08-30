@@ -623,6 +623,85 @@ Computing PBO/DSR itself (as opposed to merely its applicability) for
 per this script's own DECISION REQUIRED framing around PBO/DSR
 adoption.
 
+## Decision 14 -- real walk-forward result: `leverage` does not clear the CANDIDATE fold-consistency bar; a real TEST-1-lock gap found and fixed in the same run
+
+The user ran `run_long_horizon_validation.py --universe RESEARCH_UNIVERSE
+--start 2010-01-01 --end 2023-12-29 --db-path ./data/real_2010_latest
+--fundamentals-db-path ./data/fundamentals_data --data-status REAL`
+(the `--end` value came from this session's own instructions -- see
+the incident below) and relayed the real result:
+
+```
+Chronological split: TRAIN [2010-01-01..2018-05-25) VALIDATION [2018-05-25..2021-03-12) TEST [2021-03-12..2023-12-29]
+PBO (Probability of Backtest Overfitting): 21.43% across 70 CSCV splits
+
+buy_and_hold:              42% positive folds (64 folds) -- below 60% bar. TEST net cumret=+11.21% sharpe=0.27
+long_term_momentum:        55% positive folds -- below 60% bar. TEST net cumret=+1.78% sharpe=0.20
+risk_controlled_momentum:  55% positive folds -- below 60% bar. TEST net cumret=-6.91% sharpe=0.09
+trend_volatility:          61% positive folds -- clears the bar, but DSR=0.9376 < 0.95 (FAILED). TEST net cumret=+4.78% sharpe=0.22
+leverage:                  56% positive folds -- below 60% bar. TEST net cumret=+0.70% sharpe=0.27, DSR=0.9787
+```
+
+**`leverage` does NOT clear the CANDIDATE fold-consistency bar (56%
+positive folds, versus the required 60%)** -- the same failure mode as
+`buy_and_hold`, `long_term_momentum`, and `risk_controlled_momentum`,
+never even reaching the point where its individually-computed
+DSR=0.9787 (which would itself pass the >=0.95 bar) gets evaluated
+against that threshold. **This is exactly the outcome the multiple-
+testing caution in Decision 12 existed to warn against**: `leverage`'s
+promising raw Signal IC (mean_ic=+0.0782, positive_ic_ratio=61.25%)
+did not translate into a robust edge once actually built into a full
+walk-forward strategy and evaluated fold-by-fold. 56% is the closest
+of the three failing candidates to the 60% bar, and its held-out TEST
+Sharpe (0.27) ties `buy_and_hold`'s for the best of the 5 on that one
+metric alone -- but per this project's own discipline, a near-miss on
+a pre-registered bar is reported as a miss, not rounded up, and a
+single held-out-TEST metric is not sufficient evidence on its own (see
+the "40-Symbol Re-Validation" section's identical point about PBO vs.
+investability). `REAL_VALIDATION_NOT_COMPLETED`/no-CANDIDATE remains
+the correct classification for all 5 candidates now, `leverage`
+included.
+
+**A second, real incident, found in this same round**: the `--end
+2023-12-29` value in the command this session gave the user was a
+mistake -- `[2010-01-01, 2023-12-29]` overlaps
+`strategy_research.locked_windows.TEST_1` (2023-04-28..2026-08-27),
+which the original 4 strategies already observed once (Decision-era
+"40-Symbol Re-Validation" section). `run_long_horizon_validation.py`
+had never called `overlaps_any_locked_window` at all -- unlike
+`compute_signal_ic_from_catalog.py`, `compute_fundamentals_ic_from_
+catalog.py`, and `compute_filter_bucket_returns_from_catalog.py`,
+which all refuse an overlapping range outright. ADR-0041 had
+explicitly noted this gap and assumed it away ("none currently builds
+a new split that could conflict") -- an assumption this exact run
+falsified. **What is and isn't compromised, precisely**: the walk-
+forward folds driving the fold-consistency/PBO/DSR evidence above are
+computed over TRAIN+VALIDATION = [2010-01-01, 2021-03-12), entirely
+*before* TEST_1's start -- that evidence, and `leverage`'s failure to
+clear the CANDIDATE bar, is NOT contaminated. Only the accompanying
+"held-out TEST net cumret/sharpe/trades" figures (window
+[2021-03-12, 2023-12-29]) partially overlap TEST_1 for their final
+~8 months and should not be quoted as a clean, never-before-seen
+comparison.
+
+Fixed by adding the identical override-free refusal to
+`run_long_horizon_validation.py`: any `[--start, --end]` overlapping a
+locked window now exits 1 before any repository is opened, no partial
+output, no override flag -- verified both directions (an overlapping
+range refuses; a non-overlapping range succeeds unchanged) against a
+fresh synthetic catalog. 3 new regression tests
+(`TestTest1LockEnforced`). Full suite: 1989 passed.
+
+A fresh, uncontaminated held-out TEST comparison (as opposed to just
+the fold-consistency evidence, which already answers the CANDIDATE
+question) would need either `--end` at or before `TEST_1.start`
+(2023-04-28) -- reusing part of the *original run's own* TRAIN/
+VALIDATION region as a new TEST, which the lock does not forbid, only
+worth being aware of methodologically -- or waiting for real future
+data beyond `TEST_1.end` (2026-08-27) to open a genuinely new window
+(ADR-0041's Option A), not yet meaningfully available as of this
+result.
+
 ## What's still not built
 
 A systematic per-symbol identity-continuity check (the general version

@@ -125,6 +125,7 @@ from strategy_research.classification import (  # noqa: E402
 from strategy_research.evidence import assess_pbo_dsr_applicability, classify_evidence_level  # noqa: E402
 from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
 from strategy_research.leverage_strategy import LeverageParameters, LeverageStrategy  # noqa: E402
+from strategy_research.locked_windows import overlaps_any_locked_window  # noqa: E402
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy  # noqa: E402
 from strategy_research.research_log import ResearchLog  # noqa: E402
 from strategy_research.risk_controlled_momentum import (  # noqa: E402
@@ -230,6 +231,31 @@ def main() -> int:
     )
     args = parser.parse_args()
     is_real_data = args.data_status == "REAL"
+
+    # TEST-1 protection, not a suggestion (mirrors compute_signal_ic_
+    # from_catalog.py / compute_fundamentals_ic_from_catalog.py /
+    # compute_filter_bucket_returns_from_catalog.py's identical,
+    # override-free refusal -- a real incident, not a hypothetical one:
+    # a run with --end inside strategy_research.locked_windows.TEST_1
+    # produced a "held-out TEST" partially overlapping that
+    # already-observed window, discovered only after the fact). Any
+    # [--start, --end] range overlapping a locked window is refused
+    # outright, before any repository is opened -- this script builds a
+    # NEW chronological split from that exact range every run, so it
+    # can conflict with TEST-1 exactly like the Signal-IC scripts can.
+    locked = overlaps_any_locked_window(args.start, args.end)
+    if locked:
+        names = ", ".join(w.name for w in locked)
+        print(
+            f"ERROR: requested range [{args.start.date()}, {args.end.date()}] overlaps LOCKED "
+            f"window(s): {names}. Refusing to build a TRAIN/VALIDATION/TEST split (or evaluate any "
+            "strategy, including a newly-added one) against an already-observed held-out TEST "
+            "window -- see strategy_research/locked_windows.py and ADR-0041. No override flag "
+            "exists for this. Use an --end at or before the locked window's start (or wait for "
+            "real data beyond the locked window's end) to get a genuinely not-yet-observed range.",
+            file=sys.stderr,
+        )
+        return 1
 
     universe = _UNIVERSES[args.universe]
     security_ids = list(universe.symbol_ids)

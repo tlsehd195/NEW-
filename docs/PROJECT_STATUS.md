@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 35 — Phase 33: `LeverageStrategy` built and wired into the walk-forward/PBO/DSR pipeline; not yet run against real data)
+**Updated By:** Claude Code (Session 35 — Phase 33: real walk-forward result — `leverage` fails the CANDIDATE fold-consistency bar; TEST-1 lock gap found and fixed in `run_long_horizon_validation.py`)
 
 ---
 
@@ -441,6 +441,37 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   - `ADR-0042` Decision 13, `STRATEGY-VALIDATION-REPORT.md` Section G
     "Fourth update"에 상세 기록. **아직 실제 39종목 펀더멘털 카탈로그
     + 실제 가격 카탈로그로 실행 전** — 이게 다음 단계.
+- **실제 walk-forward 결과 수신 — `leverage`는 CANDIDATE fold-consistency
+  기준선 통과 못 함; 같은 라운드에서 TEST-1 락 관련 실제 버그도 발견·수정**:
+  - `leverage`: 64개 fold 중 56%만 양의 수익 — CANDIDATE 기준(60%)
+    미달. `buy_and_hold`(42%)/`long_term_momentum`(55%)/
+    `risk_controlled_momentum`(55%)와 같은 실패 유형. 개별 DSR=0.9787
+    (기준 0.95는 통과하는 값이지만 fold-consistency에서 이미 걸려서
+    평가되지도 못함). **이게 정확히 Decision 12의 다중검정 경고가
+    실제로 맞아떨어진 사례** — 유망해 보였던 raw Signal IC가 실제
+    전략으로 만들어 walk-forward 검증하니 견고한 엣지로 이어지지
+    않음. `trend_volatility`만 fold-consistency(61%)는 통과했지만
+    DSR=0.9376(기준 0.95 미달)로 실패 — 여전히 5개 후보 전부
+    CANDIDATE 없음, `REAL_VALIDATION_NOT_COMPLETED` 유지.
+  - **같은 라운드에서 실제 버그 하나 더 발견**: 이 세션이 사용자에게
+    준 실행 명령의 `--end 2023-12-29`가 실수 — `[2010-01-01,
+    2023-12-29]` 범위가 잠긴 `TEST-1` 구간(2023-04-28~2026-08-27,
+    원래 4개 전략이 이미 한 번 관찰한 구간)과 겹침.
+    `run_long_horizon_validation.py`는 지금까지 `overlaps_any_
+    locked_window`를 전혀 호출하지 않았음 — Signal IC 3개 CLI
+    스크립트는 이미 이걸 하고 있는데 이 스크립트만 빠져 있었음
+    (`ADR-0041`이 "이런 충돌 낼 스크립트 없음"이라 가정했던 부분이
+    실제로 깨진 것). **다행히 오염 범위는 제한적**: fold-consistency/
+    PBO/DSR 근거는 TRAIN+VALIDATION 구간(2010-01-01~2021-03-12, TEST-1
+    시작 전)에서만 계산되어 오염 없음 — `leverage`가 기준선 통과 못한
+    결론은 그대로 유효. 오염된 건 함께 출력된 "held-out TEST"
+    성과 수치(2021-03-12~2023-12-29 구간, 마지막 8개월 정도가
+    TEST-1과 겹침)뿐 — 이 수치는 "완전히 새로운 구간"으로 인용하면
+    안 됨. 수정: 다른 3개 스크립트와 동일하게 override 없는 즉시 거부
+    로직 추가 (겹치면 exit 1, 부분 출력 없음). 직접 실행으로 양방향
+    확인, 회귀 테스트 3개 추가, 전체 스위트 1989개 통과.
+  - `ADR-0042` Decision 14, `STRATEGY-VALIDATION-REPORT.md` Section G
+    "Fifth update"에 상세 기록.
 
 ### Completed (Session 33 — Phase 31 continued)
 
