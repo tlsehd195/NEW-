@@ -1774,8 +1774,41 @@ CANDIDATE, the user delegated the next direction to the assistant, who
 recommended and began the ML Track -- see `ADR-0043-ml-first-model.md`
 and `ML-RESEARCH-PROTOCOL.md` section 14 for what was built (a first
 plain-OLS model combining all 6 factor scores, `src/ml/`,
-`scripts/train_ml_model_from_catalog.py`). Not yet run against the
-real catalog.
+`scripts/train_ml_model_from_catalog.py`).
+
+**Real VALIDATION result received -- the strongest raw metric yet, but
+built on far too little to trust alone.** The user ran it against the
+real catalog:
+
+```
+VALIDATION observations=11
+VALIDATION mean_ic=0.1055
+VALIDATION ic_information_ratio=0.41036483171008087
+VALIDATION positive_ic_ratio=81.82%
+```
+
+Stronger on every metric than `leverage_score`'s own raw IC
+(mean_ic=+0.0782). **Read with at least as much caution, for
+additional reasons**: only 11 observations (far fewer than
+`leverage_score`'s 80), a VALIDATION window dominated by the COVID
+crash/recovery (an extreme, unusual regime), and a sign flip on the
+fitted `leverage` coefficient (negative here, despite a positive raw
+univariate IC) suggesting multicollinearity among the correlated
+profitability features. It is the first, single, pre-registered
+experiment (not cherry-picked), which is a genuine point in its favor.
+
+Consistent with how `leverage_score`'s own lead was handled: built
+`MLStrategy` (`src/ml/ml_strategy.py`), a 6th strategy candidate wired
+into `run_long_horizon_validation.py` behind the same
+`--fundamentals-db-path` gate as `leverage`, to put this raw number
+through the same walk-forward + PBO/DSR pipeline rather than trust it
+directly. Building this surfaced and required fixing a real
+performance problem (refitting per fold is expensive at real
+walk-forward fold counts -- see ADR-0043 Decision 3 for the full
+account and the fix). Not yet run against the real catalog through
+this full pipeline -- that real run, and whether `ml_ols` clears the
+same CANDIDATE fold-consistency bar `leverage` itself just missed, is
+the immediate next step.
 
 ### Status after this addendum
 

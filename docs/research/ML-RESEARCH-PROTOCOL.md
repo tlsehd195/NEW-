@@ -281,17 +281,23 @@ concrete need.
 
 ## 14. Status
 
-**Updated -- first model built (ADR-0043).** `src/ml/` now implements
-the feature/target schemas (section 8), a leakage-safe dataset builder
-(section 4), a first model family (plain OLS, no new dependency per
-section 13), and `scripts/train_ml_model_from_catalog.py` (TEST-1-
-guarded per section 3, no TEST region touched per section 5, full
-experiment-governance record printed per section 6). Not yet run
-against the real catalog -- that real run, and its VALIDATION IC
-result, are the immediate next step. Still not built: any
-feature/target/model registry PERSISTENCE layer (schemas exist, no
-`MLExperimentRepository`), a second candidate model family (so no
-model-selection multiple-comparisons procedure has been exercised
-yet), any TEST-region evaluation, and any risk-control implementation
-(section 10) -- this model produces a research-only IC diagnostic,
-never an order.
+**Updated -- first model built AND run against real data (ADR-0043).**
+`src/ml/` implements the feature/target schemas (section 8), a
+leakage-safe dataset builder (section 4), a first model family (plain
+OLS, no new dependency per section 13), and `scripts/train_ml_model_
+from_catalog.py` (TEST-1-guarded per section 3, no TEST region touched
+per section 5, full experiment-governance record printed per section
+6). The real VALIDATION result (mean_ic=+0.1055, IR=0.41, only 11
+observations over a COVID-era window) is the strongest raw signal
+metric this project has produced, but per this project's own
+discipline was not trusted on its own -- `MLStrategy` (`src/ml/
+ml_strategy.py`) now puts it through the same walk-forward + PBO/DSR
+pipeline `leverage_score`'s own raw IC lead went through (ADR-0043
+Decision 3), including a real per-fold-refit performance problem found
+and fixed along the way. Not yet run against the real catalog through
+that full pipeline -- that real run is the immediate next step. Still
+not built: any feature/target/model registry PERSISTENCE layer
+(schemas exist, no `MLExperimentRepository`), a second candidate model
+family (so no model-selection multiple-comparisons procedure has been
+exercised yet), any TEST-region evaluation, and any risk-control
+implementation (section 10).

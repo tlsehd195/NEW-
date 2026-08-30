@@ -107,6 +107,114 @@ correct), and CLI wiring (TEST-1 refusal, end-to-end fit+evaluate
 against synthetic catalogs, honest failure on zero usable TRAIN
 samples). Full suite: 2010 passed.
 
+## Decision 3 -- real VALIDATION result received; built into a strategy through the same rigor `leverage` went through; a real performance issue found and fixed along the way
+
+The user ran `scripts/train_ml_model_from_catalog.py` against the real
+39-symbol catalogs and relayed:
+
+```
+training_window=[2010-01-04, 2019-12-23) train_samples=810 (real run: 805, PILOT_UNIVERSE smoke test: 810)
+validation_window=[2019-12-29, 2021-08-28)
+VALIDATION observations=11
+VALIDATION mean_ic=0.1055
+VALIDATION ic_information_ratio=0.41036483171008087
+VALIDATION positive_ic_ratio=81.82%
+```
+
+This is the strongest raw signal-quality metric this project has
+produced across every hypothesis tested to date (mean_ic, IR, and
+positive-ratio all exceed `leverage_score`'s own raw IC). **It must be
+read with at least as much caution as that earlier result, for
+additional reasons specific to this one**:
+
+1. **Only 11 VALIDATION observations** -- far fewer than any prior IC
+   result here (`leverage_score`'s own 80 observations, for
+   comparison). With this few, non-independent (overlapping 60-day
+   forward-return windows), dates, both the point estimate and its
+   apparent stability (IR) carry very little statistical weight.
+2. **The VALIDATION window (2019-12-29..2021-08-28) is dominated by
+   the COVID crash and recovery** -- an extreme, historically unusual
+   regime. A correlation this strong here could reflect that one
+   macro event rather than a persistent structural relationship.
+3. **This is genuinely the first, single, pre-registered experiment**
+   (favorable point, unlike a result found after trying many models)
+   -- but the fitted coefficients contain a sign flip worth flagging:
+   `leverage`'s own raw univariate IC is positive, yet its coefficient
+   in the fitted model is slightly negative, plausibly a multicollinearity
+   artifact among the profitability-related features (`roe`/`roa`/
+   `net_margin`/`leverage` all move together to some degree) rather
+   than a real, opposite-signed effect once the other 5 features are
+   held fixed.
+
+**Consistent with how `leverage_score`'s own raw IC lead was handled**
+(ADR-0042 Decisions 13/14): this must go through the same walk-forward
++ PBO/DSR pipeline before being trusted, not accepted on the raw
+VALIDATION number alone. Built `src/ml/ml_strategy.py` --
+`MLStrategy`, a 6th strategy candidate, wired into
+`run_long_horizon_validation.py`'s `strategy_specs` behind the same
+`--fundamentals-db-path` gate as `leverage` (no new CLI argument).
+
+**The one genuinely new architectural problem this required solving**:
+`run_walk_forward_evaluation` calls a zero-argument
+`strategy_factory: Callable[[], Strategy]` once per fold and never
+tells the returned instance that fold's own train/test boundaries --
+every existing strategy tolerates this because none of them fit
+anything. `MLStrategy` fits itself LAZILY, on its first
+`generate_orders` call within a fold, walking backward from that
+call's own `as_of_time` (which IS the fold's `test_start`) by
+`train_window_months` -- reconstructing exactly that fold's own TRAIN
+region with zero fold-boundary plumbing added to `walk_forward_
+evaluation.py`, mirroring how `LongTermMomentumStrategy`'s own 12-month
+lookback already "automatically sees genuine train-period history the
+moment the test window's first checkpoint fires" (that module's own
+docstring). Leakage safety: every training sample's target must be
+fully realized by the live `as_of_time` the fit runs at
+(`training_date + horizon_days <= as_of_time`), so every query the fit
+issues has `end <= as_of_time` -- strictly narrower than what
+`AsOfDataView` already guarantees, not a new or separate guard. Target
+computation duplicates (does not call) `strategy_research.signal_ic.
+forward_return`'s few lines of math against `AsOfDataView`'s narrower
+interface instead of the raw `DataRepository` that function expects --
+reusing it directly would require `MLStrategy` to hold a raw repository
+reference, which would itself violate `AsOfDataView`'s own stated
+central invariant ("no method, override, or parameter through which a
+well-behaved Strategy implementation could request data beyond the
+clock's current checkpoint").
+
+**A real performance problem, found by actually running it, not
+assumed**: a first manual smoke test against a small synthetic
+catalog (5 symbols, 84 walk-forward folds) did not complete within 240
+seconds -- `MLStrategy` refits from scratch at every fold's first
+checkpoint, and walk-forward evaluations routinely have 70-100+ folds.
+Profiled directly: one fit cost ~2.05s for 5 symbols at the original
+design (`train_window_months=60`, training-sample cadence tied to
+`rebalance_months=3`). Fixed by (1) decoupling the internal
+training-sample cadence from the live rebalance cadence into a fixed
+`TRAIN_SAMPLE_STEP_MONTHS=6` (fundamentals are FY-only -- sampling
+every 3 months recomputes the same annual fundamentals value 4x over
+for no new information) and (2) reducing `train_window_months` from 60
+to 36 (3 years still covers 3 distinct fiscal-year snapshots). Re-profiled
+after both changes: ~0.86s/fit for 5 symbols (2.4x faster); the same
+84-fold, 5-symbol, 6-candidate smoke test then completed in 1m46s. Also
+added per-strategy progress printing (`Evaluating strategy: {name}
+...`, `flush=True`) to `run_long_horizon_validation.py`'s main loop --
+`ml_ols` is now measurably the slowest candidate to evaluate, and a
+long silent wait would repeat the exact "looks hung" UX problem this
+project already hit once with `ingest_fundamentals_data.py`.
+
+8 new tests (`tests/ml/test_ml_strategy.py`): fits and correctly ranks
+the stronger synthetic uptrend security, rebalance cadence, deterministic
+replay, and two honesty checks (no fundamentals data to fit on; backtest
+starts too early in history to fit) both return zero orders rather than
+a fabricated fallback. 2 new wiring tests
+(`TestMLStrategyOptionallyIncluded`) confirm the same fundamentals-gated
+inclusion pattern as `leverage`. Full suite: 2020 passed.
+
+Not yet run against the real 39-symbol catalog through the full
+walk-forward + PBO/DSR pipeline -- that real run, and whether `ml_ols`
+clears the CANDIDATE fold-consistency bar `leverage` itself just
+missed, is the immediate next step.
+
 ## What this does NOT do
 
 No model-selection procedure exists yet (only one candidate model
@@ -119,5 +227,8 @@ only, per protocol section 8, matching the "not built until a model
 exists to register" framing -- a persistence layer is a legitimate
 next step, not built here to keep this ADR's footprint to exactly what
 the first model needed). No risk controls (section 10) are implemented
--- this model produces a research-only IC diagnostic, never an
-`OrderIntent`, and nothing in `broker/` or `risk/` is touched.
+-- `MLStrategy` (Decision 3) produces `OrderIntent`s only inside this
+project's existing research backtest engine (`backtest.engine`), the
+same as every rule-based strategy candidate; nothing in `broker/live/`
+approval or `risk/` is touched, and no path from this model reaches a
+real order.

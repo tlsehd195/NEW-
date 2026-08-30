@@ -124,6 +124,7 @@ from strategy_research.classification import (  # noqa: E402
 )
 from strategy_research.evidence import assess_pbo_dsr_applicability, classify_evidence_level  # noqa: E402
 from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
+from ml.ml_strategy import MLStrategy, MLStrategyParameters  # noqa: E402
 from strategy_research.leverage_strategy import LeverageParameters, LeverageStrategy  # noqa: E402
 from strategy_research.locked_windows import overlaps_any_locked_window  # noqa: E402
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy  # noqa: E402
@@ -420,6 +421,19 @@ def main() -> int:
                 "low-leverage quality/safety factor, fundamentals-based (see src/strategy_research/leverage_strategy.py)",
                 lambda: LeverageStrategy(security_ids, fundamentals_repository, LeverageParameters()),
             ))
+            # ML Research Track's first model (ADR-0043) -- puts the
+            # first ML VALIDATION result (mean_ic=+0.1055 over only 11
+            # observations, an atypical COVID-era window) through this
+            # same walk-forward/PBO/DSR rigor before trusting it, the
+            # identical discipline just applied to `leverage` above.
+            # `MLStrategy` fits itself lazily per fold -- see
+            # src/ml/ml_strategy.py's own docstring for why that needs
+            # no extra plumbing here.
+            strategy_specs.append((
+                "ml_ols",
+                "OLS combining all 6 factor scores, fundamentals-based (see src/ml/ml_strategy.py, ADR-0043)",
+                lambda: MLStrategy(security_ids, fundamentals_repository, MLStrategyParameters()),
+            ))
 
         report = {
             "note": (
@@ -492,6 +506,13 @@ def main() -> int:
         # found -- every real run's evidence was silently capped at
         # ROBUSTNESS_PENDING even when the trigger condition had fired).
         for name, hypothesis, factory in strategy_specs:
+            # `ml_ols` (ADR-0043) refits itself from scratch at every
+            # fold's first checkpoint -- a real, measured multi-minute
+            # cost on a real-sized universe, unlike every rule-based
+            # candidate here. Printed with flush=True so a long-running
+            # ml_ols pass never looks like a hang the way a prior
+            # phase's silent multi-minute ingestion once did.
+            print(f"Evaluating strategy: {name} ...", flush=True)
             aggregate = run_walk_forward_evaluation(
                 repository, factory, security_ids,
                 overall_start=split.train_start, overall_end=split.validation_end,

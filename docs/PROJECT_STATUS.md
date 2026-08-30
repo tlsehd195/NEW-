@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 35 — Phase 33: ML Research Track first model built (`src/ml/`, ADR-0043) — plain OLS combining all 6 factor scores; not yet run against real data)
+**Updated By:** Claude Code (Session 35 — Phase 33: real ML VALIDATION result received (strongest raw metric yet, but only 11 observations over a COVID-era window); `MLStrategy` built as 6th candidate to validate it properly; not yet run through the full walk-forward pipeline)
 
 ---
 
@@ -493,7 +493,38 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     즉시 거부.
   - 신규 테스트 37개(`tests/ml/`), 전체 스위트 2010개 통과.
   - `ADR-0043-ml-first-model.md`, `ML-RESEARCH-PROTOCOL.md` section 14
-    갱신. **아직 실제 카탈로그로 실행 전** — 이게 다음 단계.
+    갱신.
+- **실제 VALIDATION 결과 수신 — 지금까지 가장 강한 raw 지표, 하지만
+  신뢰하기엔 관측치가 너무 적음**: 사용자가 실제 카탈로그로
+  `train_ml_model_from_catalog.py` 실행 → `mean_ic=+0.1055`,
+  `IR=0.41`, `positive_ic_ratio=81.82%` — leverage의 raw IC(+0.0782)
+  보다도 모든 지표에서 강함. **하지만 leverage 때보다 더 조심해야
+  하는 이유들**: (1) 관측치가 겨우 11개(leverage는 80개) — 통계적
+  근거가 훨씬 약함, (2) VALIDATION 구간(2019-12-29~2021-08-28)이
+  코로나 폭락+회복이라는 극단적/이례적인 구간, (3) 적합된 leverage
+  계수가 raw IC와 반대로 음수 — 다른 수익성 관련 피처들과의
+  다중공선성 의심. 유리한 점: 사전에 정해둔 첫 단일 실험이라 사후
+  선택은 아님.
+  - **leverage 때와 동일하게 처리**: raw 숫자를 그대로 믿지 않고
+    `src/ml/ml_strategy.py`(`MLStrategy`) 신규 구축 — 6번째 전략
+    후보로 `run_long_horizon_validation.py`에 `leverage`와 동일한
+    `--fundamentals-db-path` 게이트로 연결.
+  - **빌드 중 실제 성능 문제 발견·수정**: 이 전략은 매 walk-forward
+    fold 시작 시점마다 처음부터 다시 fit해야 함(rule-based 전략들은
+    fit이 필요 없어서 문제 없었음) — 5종목·84fold 합성 데이터로
+    스모크 테스트했더니 240초 안에 안 끝남. 프로파일링으로 fold당
+    fit 비용 확인(~2.05초/5종목) 후: (1) 학습 샘플 간격을 실제
+    리밸런싱 주기(3개월)에서 분리해 고정 6개월로(펀더멘털이 연간
+    갱신이라 3개월 간격은 중복 계산), (2) 학습 lookback을 60개월→
+    36개월로 축소. 결과: ~0.86초/5종목(2.4배 개선), 5종목·84fold·
+    6후보 전체 스모크 테스트 1분46초에 완료. 진행 상황 출력도 추가
+    (`Evaluating strategy: {name} ...`) — ml_ols가 눈에 띄게 가장
+    느린 후보라, 예전 ingestion 스크립트처럼 "멈춘 것처럼 보이는"
+    문제 재발 방지.
+  - 신규 테스트 10개(전략 8 + wiring 2), 전체 스위트 2020개 통과.
+  - `ADR-0043` Decision 3, `STRATEGY-VALIDATION-REPORT.md` Section G에
+    상세 기록. **아직 실제 카탈로그로 전체 walk-forward+PBO/DSR
+    파이프라인 실행 전** — 이게 다음 단계.
 
 ### Completed (Session 33 — Phase 31 continued)
 

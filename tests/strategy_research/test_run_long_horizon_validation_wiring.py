@@ -464,6 +464,29 @@ class TestLeverageStrategyOptionallyIncluded:
         assert "if fundamentals_engine is not None:" in tail
 
 
+class TestMLStrategyOptionallyIncluded:
+    """ADR-0043: the ML Research Track's first model (`ml_ols`) is a
+    6th candidate, gated on the SAME `--fundamentals-db-path` flag as
+    `leverage` -- no new CLI argument, since `MLStrategy` also needs a
+    fundamentals repository (see src/ml/ml_strategy.py)."""
+
+    def test_ml_ols_candidate_is_gated_on_fundamentals_repository_being_set(self) -> None:
+        source = _source()
+        append_idx = source.index('"ml_ols",')
+        guard_positions = [
+            i for i in range(len(source))
+            if source.startswith("if fundamentals_repository is not None:", i)
+        ]
+        preceding_guards = [i for i in guard_positions if i < append_idx]
+        assert preceding_guards, "no 'if fundamentals_repository is not None:' guard precedes the ml_ols append"
+        nearest_guard_idx = max(preceding_guards)
+        assert nearest_guard_idx < append_idx < nearest_guard_idx + 2000  # same guarded block
+
+    def test_ml_strategy_import_present(self) -> None:
+        source = _source()
+        assert "from ml.ml_strategy import MLStrategy, MLStrategyParameters" in source
+
+
 class TestExperimentIdReflectsFundamentalsInclusion:
     """Regression test for a real bug found in a pre-ship manual smoke
     test: a run WITH --fundamentals-db-path (5 candidates, including
