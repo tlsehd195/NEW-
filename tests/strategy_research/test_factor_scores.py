@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
+import pytest
+
 from research_helpers import synthetic_multi_year_repository
 from storage_helpers import new_engine
 
@@ -20,6 +22,7 @@ from data_infra.models import Provenance
 from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
 from strategy_research.factor_scores import (
+    asset_growth_score,
     leverage_score,
     low_volatility_score,
     net_margin_score,
@@ -292,3 +295,70 @@ class TestLeverageScore:
         repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=-10.0, period_end=_utc(2022, 12, 31)))
 
         assert leverage_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestAssetGrowthScore:
+    """Session 36 -- ADR-0043 Decision 8: the asset growth anomaly
+    (Cooper, Gulen & Schill 2008). The only factor in this module that
+    is a year-over-year CHANGE rather than a single-period ratio, so it
+    needs its own dedicated point-in-time/insufficient-history coverage
+    beyond what `TestRoeScore`'s shared `_fy_ratio` tests already give
+    the level-based factors."""
+
+    def test_score_is_the_negative_of_yoy_asset_growth(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=120.0, period_end=_utc(2022, 12, 31)))
+
+        # (120/100 - 1) = 0.20 growth -> score is its negative
+        assert asset_growth_score("AAA", _utc(2023, 6, 1), repo) == pytest.approx(-0.20)
+
+    def test_shrinking_assets_produce_a_positive_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=90.0, period_end=_utc(2022, 12, 31)))
+
+        score = asset_growth_score("AAA", _utc(2023, 6, 1), repo)
+        assert score is not None and score > 0  # negative growth -> positive (more attractive) score
+
+    def test_faster_growth_scores_lower_matching_the_lower_is_more_attractive_convention(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("SLOW", "SLOW:assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("SLOW", "SLOW:assets_2022", concept="Assets", value=105.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("FAST", "FAST:assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("FAST", "FAST:assets_2022", concept="Assets", value=150.0, period_end=_utc(2022, 12, 31)))
+
+        slow_score = asset_growth_score("SLOW", _utc(2023, 6, 1), repo)
+        fast_score = asset_growth_score("FAST", _utc(2023, 6, 1), repo)
+        assert slow_score > fast_score  # slower asset growth -> higher (more attractive) score
+
+    def test_only_one_fiscal_year_known_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=120.0, period_end=_utc(2022, 12, 31)))
+
+        assert asset_growth_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_prior_year_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=0.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=120.0, period_end=_utc(2022, 12, 31)))
+
+        assert asset_growth_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_a_score_at_an_early_date_ignores_a_not_yet_filed_third_fiscal_year(self, tmp_path) -> None:
+        # Point-in-time correctness: a FY2023 figure filed in 2024 must
+        # not make this look like a 2-year-old comparison (2021 vs 2023)
+        # once it exists -- as of mid-2023 only 2021/2022 are known.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31), available_time=_utc(2022, 2, 1)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=120.0, period_end=_utc(2022, 12, 31), available_time=_utc(2023, 2, 1)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2023", concept="Assets", value=300.0, period_end=_utc(2023, 12, 31), available_time=_utc(2024, 2, 1)))
+
+        score = asset_growth_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(-0.20)  # still 2021 vs 2022 -- 2023's figure is not yet filed

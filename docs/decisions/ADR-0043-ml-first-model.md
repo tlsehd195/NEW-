@@ -496,6 +496,88 @@ is a defined statistical threshold, not a claim that a validated,
 deployable edge has been found; the TEST result attached to that same
 candidate argues directly against treating it as one.
 
+## Decision 8 -- an externally-researched candidate, `asset_growth_score`, added via literature search rather than found by trying every combination of what this project already had
+
+Asked how to speed up finding a validated strategy, the user proposed
+combining traits from famous investors' philosophies and picking
+"whatever looks good" -- the assistant flagged this as exactly the
+sequential/post-hoc-selection bias RULE 0.8 exists to prevent (choosing
+rules because they already look attractive is indistinguishable from
+data-mining after the fact), and instead proposed searching published,
+independently-replicated academic/practitioner research for a rule that
+can be fixed BEFORE any result is seen, same as every other candidate
+in this project. The user agreed and asked for broad research (12
+candidate strategies researched and verified via web search: Piotroski
+F-Score, Quality Minus Junk, O'Shaughnessy Trending Value, Altman
+Z-Score, Graham NCAV, Dividend Growth, Sloan Accruals, Asset Growth
+Anomaly, PEAD, Value+Momentum combination, Shareholder Yield, 52-week
+High Momentum), each checked for (a) independent academic replication,
+not just the original publication, (b) whether it is genuinely
+different information from what this project has already tested
+(ROE/ROA/net_margin/leverage are all single-period LEVEL ratios), and
+(c) whether it is feasible against this project's actual current data
+(most need new SEC XBRL concepts or a data source -- consensus earnings
+estimates for PEAD -- this project does not have and would require new
+real ingestion to obtain).
+
+**`asset_growth_score` (Cooper, Gulen & Schill 2008, "The Asset Growth
+Effect in Stock Returns," Journal of Finance) was chosen to build
+first, specifically because it needs zero new data**: the finding is a
+strong, negative relationship between a company's YoY total-assets
+growth rate and its subsequent returns (reported ~20%/year premium for
+low- over high-growth firms across a 40-year US sample, holding even
+within large-cap stocks specifically), and `Assets` is already one of
+the 5 default XBRL concepts this project's real ingestion has been
+collecting since ADR-0042 -- unlike every other researched candidate,
+this one required no new ingestion round in the user's environment to
+test. It is also the first factor in `strategy_research.factor_scores`
+that is a year-over-year CHANGE rather than a single fiscal year's
+ratio, needing a new code path (`_fy_records`, refactored out of the
+existing `_latest_fiscal_year_value` so both share the same
+point-in-time FY-filtering discipline) rather than reusing `_fy_ratio`.
+
+**Explicitly NOT wired into `run_long_horizon_validation.py`'s 8-candidate
+walk-forward pool yet**, per the user's own instruction ("바로 넣으면
+문제 생길 수도 있으니까 테스트 후 넣을지 말지 정함" -- don't add it
+directly, decide after testing) -- mirrors exactly how `leverage_score`
+itself was first validated via cheap raw Signal IC
+(`compute_fundamentals_ic_from_catalog.py`, now accepting `--score
+asset_growth`) before ever being built into a full `Strategy` and
+added to the walk-forward candidate pool (ADR-0042 Decision 12,
+`leverage_strategy.py`). Only once a real IC result is relayed and
+judged worth the additional multiple-testing burden of a 9th walk-forward
+candidate does building `AssetGrowthStrategy` become the next step --
+not decided here.
+
+**Other researched candidates, deliberately not pursued this round,
+with the specific reason**:
+- Piotroski F-Score, Shareholder Yield -- credible, strong replication,
+  but need new SEC XBRL concepts (cash flow, debt, shares outstanding,
+  etc.) not yet ingested; real next steps once `asset_growth`'s own
+  result comes back.
+- Quality Minus Junk, O'Shaughnessy Trending Value, Magic Formula --
+  credible but substantially more construction complexity (multi-metric
+  composites, enterprise-value calculations combining price and
+  fundamentals data) for a first try.
+- PEAD -- needs consensus earnings-estimate data this project has no
+  source for at all; not feasible without a new data source, not just
+  new ingestion.
+- Altman Z-Score, Graham NCAV -- researched and explicitly rejected:
+  Z-Score's own backtest evidence shows it does not work as a
+  standalone return-predicting signal (only as a bankruptcy-risk
+  filter); NCAV's modern-era evidence is mixed-to-negative in the US
+  specifically, and structurally cannot apply to this project's
+  large/mid-cap-only universe (NCAV requires trading below net current
+  asset value, essentially never true for a blue-chip company).
+- 52-week High Momentum -- original effect confirmed but recent
+  backtests show it decays to near-cash after realistic costs; also
+  redundant with this project's existing price-momentum candidates.
+
+7 new tests (6 in `tests/strategy_research/test_factor_scores.py::
+TestAssetGrowthScore`, 1 CLI end-to-end wiring test in `tests/
+strategy_research/test_compute_fundamentals_ic_from_catalog_cli.py`).
+Full suite: 2063 passed (up from 2056).
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true

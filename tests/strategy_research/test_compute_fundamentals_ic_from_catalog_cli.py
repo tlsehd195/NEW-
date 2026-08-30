@@ -174,3 +174,41 @@ class TestEndToEndAgainstSyntheticCatalogs:
             ])
             assert exit_code == 0
             assert f"Fundamentals Signal IC: {score}" in capsys.readouterr().out
+
+    def test_asset_growth_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 8. Needs its own fixture
+        (unlike the loop above): `asset_growth_score` is a YoY change,
+        so it needs two distinct fiscal years of `Assets`, not the one
+        period the other three scores' shared fixture supplies."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+
+        price_engine = new_engine(tmp_path, name="price3")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbols[0], days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals3")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        fundamentals_repo.add_fundamental(
+            _fy_record(symbols[0], f"{symbols[0]}:assets_2016", concept="Assets", value=180.0, period_end=datetime(2016, 12, 31, tzinfo=timezone.utc))
+        )
+        fundamentals_repo.add_fundamental(
+            _fy_record(symbols[0], f"{symbols[0]}:assets_2017", concept="Assets", value=200.0, period_end=datetime(2017, 12, 31, tzinfo=timezone.utc))
+        )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price3"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals3"),
+            "--universe", "PILOT_UNIVERSE",
+            "--score", "asset_growth",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Fundamentals Signal IC: asset_growth" in capsys.readouterr().out

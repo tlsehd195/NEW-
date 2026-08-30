@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Computes real-data Signal IC for a fundamentals-based factor --
-`roe`, `roa`, `net_margin`, or `leverage` (all in
-`strategy_research.factor_scores`, sharing the same `_fy_ratio`
-plumbing) -- using
+`roe`, `roa`, `net_margin`, `leverage` (all in `strategy_research.
+factor_scores`, sharing the same `_fy_ratio` plumbing), or
+`asset_growth` (a year-over-year change rather than a single-period
+ratio -- Cooper, Gulen & Schill 2008's asset growth anomaly, ADR-0043
+Decision 8) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` against
 two live DuckDB catalogs: the fundamentals catalog (ADR-0042,
 `ingest_fundamentals_data.py`'s output) and the price catalog
@@ -43,7 +45,13 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
-from strategy_research.factor_scores import leverage_score, net_margin_score, roa_score, roe_score  # noqa: E402
+from strategy_research.factor_scores import (  # noqa: E402
+    asset_growth_score,
+    leverage_score,
+    net_margin_score,
+    roa_score,
+    roe_score,
+)
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
 from strategy_research.signal_ic import compute_fundamentals_ic_series  # noqa: E402
 
@@ -54,6 +62,7 @@ _SCORES = {
     "roa": roa_score,
     "net_margin": net_margin_score,
     "leverage": leverage_score,
+    "asset_growth": asset_growth_score,
 }
 
 

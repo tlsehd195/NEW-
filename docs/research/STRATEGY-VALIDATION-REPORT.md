@@ -1674,6 +1674,28 @@ of a validated, deployable edge, and this candidate's own TEST result
 argues directly against treating it as one. Full account: ADR-0043
 Decision 7.
 
+**Eleventh update -- an externally-researched candidate added via
+literature search, not by data-mining this project's own results.**
+Asked to speed up finding a validated strategy by combining traits
+from famous investors, the assistant flagged the sequential-selection
+bias risk and proposed literature search instead -- pick a rule from
+independently-replicated academic/practitioner research, fixed before
+any result is seen, same discipline as every other candidate here. 12
+candidates were researched and verified (Piotroski F-Score, Quality
+Minus Junk, O'Shaughnessy Trending Value, Altman Z-Score, Graham NCAV,
+Dividend Growth, Sloan Accruals, Asset Growth Anomaly, PEAD,
+Value+Momentum, Shareholder Yield, 52-week High Momentum);
+`asset_growth_score` (Cooper, Gulen & Schill 2008) was built first
+because it is the only one testable with zero new real ingestion --
+`Assets` is already one of the 5 default XBRL concepts this project
+collects. Wired into `compute_fundamentals_ic_from_catalog.py` (`--score
+asset_growth`) for a cheap raw-IC check first, per the user's own
+explicit instruction not to add it straight into the 8-candidate
+walk-forward pool until a result justifies the added multiple-testing
+burden -- mirrors exactly how `leverage_score` itself graduated from
+raw IC to a full `Strategy`. Full account, including why the other 11
+candidates were not pursued this round: ADR-0043 Decision 8.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

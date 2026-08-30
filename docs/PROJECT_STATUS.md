@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리 — max_turnover Option B 확장, kill switch cancel-on-kill-switch 자동화, Live 활성화 전 CANDIDATE 증거 검토 필수화(ADR-0045))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 asset_growth_score 추가(ADR-0043 Decision 8, 추가 데이터 불필요))
 
 ---
 
@@ -744,6 +744,39 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   - 실제 리스크 한도 숫자(얼마로 정할지)는 여전히 미결 — 이번 세션은
     "None이면 차단하는가"만 정한 것이지 구체적 숫자는 초기 Live 자본
     규모가 정해져야 결정 가능.
+- **"유명 투자자 특징 짬뽕" 대신 문헌 조사 기반 신규 팩터 추가
+  (`ADR-0043` Decision 8)**:
+  - 사용자가 워렌버핏 등 유명 투자자들 특징을 조합해서 쓰자고 제안 →
+    "결과 보고 좋아 보이는 것만 고르는 것"과 같은 사후선택 편향
+    위험이라고 지적, 대신 재현성 확인된 학술/실무 문헌에서 규칙을
+    가져오는 걸 제안, 사용자 동의.
+  - 12개 전략 조사·검증(Piotroski F-Score, Quality Minus Junk,
+    O'Shaughnessy Trending Value, Altman Z-Score, Graham NCAV, 배당성장,
+    Sloan Accruals, **Asset Growth Anomaly**, PEAD, Value+Momentum 결합,
+    Shareholder Yield, 52주 신고가 모멘텀) — 각각 재현성/우리 데이터로
+    구현 가능한지/기존에 이미 테스트한 정보와 겹치는지 확인.
+  - **Asset Growth Anomaly(Cooper/Gulen/Schill 2008)부터 먼저 구현** —
+    이유: **추가 데이터 ingestion 전혀 필요 없음**(Assets는 이미
+    기본 5개 항목 중 하나). `factor_scores.py`에 `asset_growth_score`
+    추가 (전년 대비 자산 증가율의 음수 — 이 모듈에서 처음으로 "레벨"이
+    아니라 "변화량"을 쓰는 팩터). `compute_fundamentals_ic_from_
+    catalog.py`에 `--score asset_growth` 옵션으로 배선.
+  - **사용자 지시대로 8후보 walk-forward 풀에 바로 안 넣음** — "테스트
+    후 넣을지 말지 정함"이라는 지시에 맞춰, leverage_score가 처음에
+    그랬듯 먼저 저렴한 raw IC 체크부터 (신규 후보 추가는 다중검정
+    부담이 늘어나는 일이라 결과 보고 결정).
+  - 나머지 11개 전략은 각각 이유 있게 보류: Piotroski/Shareholder
+    Yield는 새 XBRL 항목 필요, QMJ/O'Shaughnessy/Magic Formula는
+    구현 복잡도 높음, PEAD는 애널리스트 컨센서스 데이터 소스 자체가
+    없어서 불가능, Altman Z-Score/Graham NCAV는 조사해보니 실제로
+    안 맞음(Z-Score는 단독 알파 신호로 검증 안 됨, NCAV는 우리
+    대형주 유니버스에 구조적으로 안 맞음), 52주 신고가는 최근
+    증거가 약하고 기존 모멘텀 후보와 겹침.
+  - 신규 테스트 7개(factor_scores 6 + CLI wiring 1), 전체 스위트
+    2063개 통과(기존 2056 + 7).
+  - 다음 단계: 사용자가 실제 환경에서 `compute_fundamentals_ic_from_
+    catalog.py --score asset_growth` 실행 → 결과 보고 8후보 풀에
+    추가할지 결정.
 
 ### Completed (Session 33 — Phase 31 continued)
 

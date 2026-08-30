@@ -59,25 +59,32 @@ def low_volatility_score(
     return -vol
 
 
-def _latest_fiscal_year_value(repository, security_id: str, concept: str, as_of_time: datetime):
-    """The most recent annual (`fiscal_period == "FY"`) `FundamentalRecord`
-    for `(security_id, concept)` already knowable `as_of_time`. Restricted
-    to `"FY"` rather than using `repository.latest_known_value` directly
-    (which does not distinguish fiscal periods): `NetIncomeLoss` is
-    reported at both quarterly and annual granularity under the same
-    XBRL tag, and mixing a single quarter's net income against a full
-    fiscal year's `StockholdersEquity` would understate ROE by roughly
-    4x with no warning -- an honest but genuinely mismatched-period bug
-    this restriction avoids entirely, at the cost of `roe_score` only
-    updating once per fiscal year rather than every quarter. `Assets`/
-    `Liabilities`/`StockholdersEquity` (instant/balance-sheet concepts)
-    are also reported at each period's end including `"FY"`, so this
-    same filter anchors both sides of a ratio on the same fiscal
-    year-end date."""
+def _fy_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:
+    """Every annual (`fiscal_period == "FY"`) `FundamentalRecord` for
+    `(security_id, concept)` already knowable `as_of_time`, oldest
+    first. Restricted to `"FY"` rather than using `repository.
+    latest_known_value` directly (which does not distinguish fiscal
+    periods): `NetIncomeLoss` is reported at both quarterly and annual
+    granularity under the same XBRL tag, and mixing a single quarter's
+    net income against a full fiscal year's `StockholdersEquity` would
+    understate ROE by roughly 4x with no warning -- an honest but
+    genuinely mismatched-period bug this restriction avoids entirely, at
+    the cost of these scores only updating once per fiscal year rather
+    than every quarter. `Assets`/`Liabilities`/`StockholdersEquity`
+    (instant/balance-sheet concepts) are also reported at each period's
+    end including `"FY"`, so this same filter anchors both sides of a
+    ratio (or, for `asset_growth_score`, both years of a YoY comparison)
+    on the same fiscal year-end date."""
     records = [r for r in repository.get_fundamentals(security_id, concept, as_of_time) if r.fiscal_period == "FY"]
+    records.sort(key=lambda r: (r.period_end, r.available_time))
+    return records
+
+
+def _latest_fiscal_year_value(repository, security_id: str, concept: str, as_of_time: datetime):
+    """The most recent of `_fy_records`, or `None` if there is none yet."""
+    records = _fy_records(repository, security_id, concept, as_of_time)
     if not records:
         return None
-    records.sort(key=lambda r: (r.period_end, r.available_time))
     return records[-1]
 
 
@@ -171,3 +178,41 @@ def leverage_score(security_id: str, as_of_time: datetime, repository: object) -
     if ratio is None:
         return None
     return -ratio
+
+
+def asset_growth_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the "asset growth anomaly" (Cooper, Gulen & Schill
+    2008, "The Asset Growth Effect in Stock Returns," Journal of
+    Finance): companies whose total assets grew fastest over the prior
+    fiscal year tend to have LOWER subsequent returns than slower-
+    growing peers, hypothesized to reflect investor over-extrapolation
+    of past growth rather than a risk-based explanation -- and reported
+    to hold even within large-cap stocks specifically, not just small
+    caps, over a 40-year US sample.
+
+    Distinct in kind from every other factor in this module: `roe_score`/
+    `roa_score`/`net_margin_score`/`leverage_score` are all LEVELS at a
+    single fiscal year-end, while this is a CHANGE across two consecutive
+    fiscal years -- the first factor this project has built that needs
+    more than one period's data. Needs no new data beyond what ADR-0042's
+    ingestion already collects (`Assets`, one of the 5 default XBRL
+    concepts, already ingested for `roa_score`/`leverage_score`) --
+    chosen as this round's first candidate specifically because it is
+    the only one of several externally-researched candidates testable
+    with zero new real ingestion.
+
+    Score is the NEGATIVE of `(current FY Assets / prior FY Assets) - 1`,
+    so a higher score means LOWER (hypothesized more attractive) asset
+    growth -- matches this module's convention (see `low_volatility_
+    score`/`leverage_score`) that a higher score always ranks a security
+    as more attractive. `None` (never a fabricated growth rate) unless
+    at least two distinct fiscal years' `Assets` are both already known
+    as of `as_of_time`, or the prior year's value is non-positive."""
+    records = _fy_records(repository, security_id, "Assets", as_of_time)
+    if len(records) < 2:
+        return None
+    current, prior = records[-1], records[-2]
+    if prior.value <= 0:
+        return None
+    growth = current.value / prior.value - 1.0
+    return -growth
