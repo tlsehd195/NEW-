@@ -1645,6 +1645,35 @@ price and fundamentals ingestion for the new symbols must run in the
 user's own network-enabled environment before any Stage 3 result
 exists.
 
+**Tenth update -- real Stage 3 (64-symbol) result received: first-ever
+CANDIDATE, immediately undercut by its own held-out TEST result; pool
+PBO rose rather than fell.** The user completed real ingestion for the
+24 new symbols and ran `run_long_horizon_validation.py --universe
+RESEARCH_UNIVERSE --data-status REAL` against the real 64-symbol
+catalog (2010-01-01..2023-04-28). `leverage` reached
+`evidence=CANDIDATE` -- the first candidate in this project's history
+to clear all three walk-forward gates (60% positive folds, PBO=0.39<0.5,
+DSR=0.9674>=0.95) -- but its held-out TEST result is -26.43% net, the
+WORST TEST result this project has ever recorded for any candidate
+(surpassing `rank_average_ensemble`'s prior -23.04% record). This is
+the starkest instance yet of the "PBO/DSR vs. held-out TEST
+divergence" pattern this report has tracked since `risk_controlled_
+momentum`'s own case: the one candidate that cleared every robustness
+gate produced the single worst TEST outcome in the pool. Separately,
+`ml_ols` produced this project's best-ever TEST result (+109.10% net)
+while its own fold-consistency (50%) is worse than its Stage 2 number
+(53%) -- the same divergence in the opposite direction. Pool-level
+PBO rose from 20.00% (Stage 2, same 8 candidates) to 38.57% (Stage 3)
+-- real evidence against, not for, the hypothesis that universe
+breadth alone would reduce overfitting risk (though several things
+changed between the two runs at once, including fold count 76->60, so
+this is not proof of causation). `REAL_VALIDATION_NOT_COMPLETED`
+remains the correct overall classification -- reaching the CANDIDATE
+evidence-level label is a defined statistical threshold, not a claim
+of a validated, deployable edge, and this candidate's own TEST result
+argues directly against treating it as one. Full account: ADR-0043
+Decision 7.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

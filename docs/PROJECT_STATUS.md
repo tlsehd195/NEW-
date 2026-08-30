@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: RESEARCH_UNIVERSE Stage 3 — 24 hand-curated symbols added (40→64) to close confirmed Real Estate/Materials/Utilities sector gaps, per user's direction to proceed toward completion)
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 — 역대 최초 CANDIDATE 등급(leverage) 통과했으나 held-out TEST가 이 프로젝트 사상 최악(-26.43%); 전체 PBO는 오히려 20%→38.57%로 악화)
 
 ---
 
@@ -672,6 +672,42 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   - **이번 세션에서 실제 데이터 ingestion은 하지 않음** — 유니버스
     정의만 고정. 새 24종목의 실제 가격/펀더멘털 ingestion과 Stage 3
     재검증 실행은 사용자의 네트워크 가능 환경에서 다음 단계로 남음.
+- **사용자가 실제 환경에서 신규 24종목 ingestion 완료 후 Stage 3
+  실제 검증 결과 수신 — 역대 최초 CANDIDATE 통과, 그런데 held-out
+  TEST는 역대 최악**:
+  - ingestion 과정에서 실제로 겪은 문제 2개 먼저 해결: (1) 사용자가
+    예전 코드로 돌려서 39종목만 나온 것 → git pull로 최신 코드 받아서
+    해결. (2) `MARKET_DATA_API_KEY` 환경변수가 터미널에 안 잡혀 있어서
+    Tiingo+Stooq 둘 다 실패(`Ingestion status: FAILED`) → 환경변수
+    재설정 후 신규 24종목만 `--symbols`로 다시 받아서 해결(`Missing
+    symbols: []` 확인). 품질 체크에서 ERROR 1건(ABT의 2013-01-02
+    배당액이 주가보다 커서 이상 탐지 — 2013년 Abbott/AbbVie 스핀오프
+    관련 provider 데이터 특이 케이스로 추정, 백테스트 실행 자체는
+    막지 않음) 발견, 기록만 해둠.
+  - **실제 8후보 결과**:
+    ```
+    PBO: 38.57% (Stage 2 때 20.00%에서 거의 2배 악화)
+    leverage: 60% positive folds — CANDIDATE 등급 최초 통과
+              (PBO=0.39<0.5, DSR=0.9674>=0.95)
+              TEST net cumret=-26.43% (이 프로젝트 사상 최악 TEST 기록)
+    ml_ols:   50% — 미달(Stage2 53%보다 더 나빠짐)
+              TEST net cumret=+109.10% (이 프로젝트 사상 최고 TEST 기록)
+    나머지 6개: 전부 60% 미달
+    ```
+  - **CANDIDATE 통과가 "찾았다"를 의미하지 않음** — 하필 유일하게
+    관문(fold-consistency+PBO+DSR)을 통과한 `leverage`의 TEST 결과가
+    전체 8개 중 최악. "PBO/DSR과 held-out TEST가 답하는 질문이 다르다"
+    원칙이 이번엔 가장 극단적인 형태로 확인됨. 스크립트 자체 출력에도
+    "Still not VALIDATED: that requires explicit human review this
+    function does not perform" 명시. RULE 0.8에 따라 이 TEST 결과로
+    leverage나 다른 후보를 재튜닝하는 것도 금지.
+  - **종목 수 확장의 원래 기대(과적합 위험 감소)와 반대 결과**: PBO가
+    개선이 아니라 악화됐음. fold 수(76→60)도 같이 바뀌어서 순수하게
+    "종목 수 때문"이라고 단정할 순 없지만, 최소한 "종목 늘리면
+    개선된다"는 가설을 지지하는 증거는 아님 — 있는 그대로 기록.
+  - `REAL_VALIDATION_NOT_COMPLETED` 8개 후보 전부 유지.
+  - `ADR-0043` Decision 7, `STRATEGY-VALIDATION-REPORT.md` Section G
+    "Tenth update"에 상세 기록.
 
 ### Completed (Session 33 — Phase 31 continued)
 

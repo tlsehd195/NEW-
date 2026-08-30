@@ -422,6 +422,80 @@ this script, and building one is out of scope here. This is recorded
 as a real, known, deliberately unresolved gap, not silently left
 undocumented. 2 new regression tests. Full suite: 2040 passed.
 
+## Decision 7 -- real Stage 3 (64-symbol) result: first-ever CANDIDATE (`leverage`), but its held-out TEST result is the worst this project has ever recorded; pool-level PBO got worse, not better
+
+The user ran the real ingestion (`ingest_real_market_data.py --universe
+RESEARCH_UNIVERSE`, `ingest_fundamentals_data.py --universe
+RESEARCH_UNIVERSE`) for ADR-0044's 24 new symbols, then
+`run_long_horizon_validation.py --universe RESEARCH_UNIVERSE --start
+2010-01-01 --end 2023-04-28 --fundamentals-db-path ... --data-status
+REAL` against the real 64-symbol catalog. Real result:
+
+```
+PBO: 38.57% across 70 CSCV splits (8 candidates)
+
+buy_and_hold:              38% positive folds -- below 60% bar. TEST net cumret=+21.67% sharpe=0.41
+long_term_momentum:        53% positive folds -- below 60% bar. TEST net cumret=+24.75% sharpe=0.40
+trend_volatility:          53% positive folds -- below 60% bar. TEST net cumret=-2.69% sharpe=0.16
+risk_controlled_momentum:  53% positive folds -- below 60% bar. TEST net cumret=+20.51% sharpe=0.37
+leverage:                  60% positive folds -- CLEARS the bar. PBO=0.39<0.5, DSR=0.9674>=0.95.
+                            evidence=CANDIDATE. TEST net cumret=-26.43% sharpe=0.52 (7 trades)
+ml_ols:                    50% positive folds -- below 60% bar. TEST net cumret=+109.10% sharpe=0.75
+ml_ridge:                  47% positive folds -- below 60% bar. TEST net cumret=+75.91% sharpe=0.64
+rank_average_ensemble:     57% positive folds -- below 60% bar. TEST net cumret=+5.56% sharpe=0.43
+```
+
+**`leverage` is the first candidate in this project's entire history to
+reach `evidence=CANDIDATE`** -- 60% positive folds (exactly at the
+bar), PBO=0.39<0.5, Deflated Sharpe=0.9674>=0.95, all three gates
+cleared. **This must not be read as validation, or even as encouraging
+evidence, for the reason stated in the tool's own output**
+(`"Still not VALIDATED: that requires explicit human review this
+function does not perform"`): `leverage`'s held-out TEST result is
+**-26.43% net -- the single worst TEST result this project has ever
+recorded for any candidate**, surpassing the previous record
+(`rank_average_ensemble`'s -23.04%, ADR-0043 Decision 6). Per this
+project's own established "PBO/DSR vs. held-out TEST divergence"
+framing, this is the starkest instance of that divergence yet: the
+ONE candidate that cleared every walk-forward robustness gate produced
+the worst single-window outcome of the entire pool. Clearing
+CANDIDATE's statistical bar answers "was this consistent across
+resampled historical folds," not "would this have made money just
+now" -- those are different questions, and this result is the clearest
+demonstration to date of why neither substitutes for the other.
+
+**A second, opposite-direction divergence, more extreme than any
+prior instance**: `ml_ols` produced this project's best-ever TEST
+result (+109.10% net, sharpe=0.75) while its fold-consistency (50%)
+is actually WORSE than its own Stage 2 number (53%, ADR-0043 Decision
+4). `ml_ridge` shows the same pattern less starkly (+75.91% TEST vs.
+47% fold-consistency, down from Stage 2's 58%).
+
+**A finding that runs counter to this round's own motivating
+hypothesis**: universe expansion (ADR-0044) was pursued specifically
+because a wider cross-section was expected to reduce the multiple-
+testing/overfitting risk visible in the 39-symbol results. Instead,
+**pool-level PBO rose from 20.00% (Stage 2, same 8 candidates,
+ADR-0043 Decision 6) to 38.57% (Stage 3)** -- roughly double. This is
+not proof that widening the universe caused more overfitting risk
+(the fold count also changed, 76 -> 60, from a different chronological
+split under the same `--train-fraction`/`--validation-fraction`
+defaults applied to a data range whose actually-available bars differ
+slightly by symbol; multiple things changed at once, not isolated by
+this run), but it is real evidence against the hypothesis that
+breadth alone would improve robustness, and it must be stated plainly
+rather than downplayed because it cuts against this round's own
+motivating rationale.
+
+**Per RULE 0.8**: none of these real TEST observations may be used to
+retune `leverage`, `ml_ols`, `ml_ridge`, the universe, or any other
+parameter now that they have been seen. `REAL_VALIDATION_NOT_COMPLETED`
+remains the correct overall classification for this project's real
+progress -- one candidate reaching the `CANDIDATE` evidence-level label
+is a defined statistical threshold, not a claim that a validated,
+deployable edge has been found; the TEST result attached to that same
+candidate argues directly against treating it as one.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true
