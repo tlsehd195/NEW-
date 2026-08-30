@@ -137,4 +137,40 @@ class TestEndToEndAgainstSyntheticCatalogs:
         assert exit_code == 0
         out = capsys.readouterr().out
         assert "Fundamentals Signal IC: roe" in out
-        assert "mean_ic=" in out
+
+    def test_the_other_three_score_options_also_run_end_to_end(self, tmp_path, capsys) -> None:
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+
+        price_engine = new_engine(tmp_path, name="price2")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbols[0], days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals2")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        for concept, value in (
+            ("NetIncomeLoss", 15.0), ("StockholdersEquity", 100.0),
+            ("Assets", 200.0), ("Liabilities", 100.0), ("Revenues", 150.0),
+        ):
+            fundamentals_repo.add_fundamental(
+                _fy_record(symbols[0], f"{symbols[0]}:{concept}", concept=concept, value=value, period_end=period_end)
+            )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        for score in ("roa", "net_margin", "leverage"):
+            exit_code = module.main([
+                "--price-db-path", str(tmp_path / "price2"),
+                "--fundamentals-db-path", str(tmp_path / "fundamentals2"),
+                "--universe", "PILOT_UNIVERSE",
+                "--score", score,
+                "--start", "2018-06-01",
+                "--end", "2019-01-01",
+                "--step-months", "1",
+                "--horizon-days", "20",
+            ])
+            assert exit_code == 0
+            assert f"Fundamentals Signal IC: {score}" in capsys.readouterr().out

@@ -19,7 +19,13 @@ from data_infra.models import Provenance
 
 from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
-from strategy_research.factor_scores import low_volatility_score, roe_score
+from strategy_research.factor_scores import (
+    leverage_score,
+    low_volatility_score,
+    net_margin_score,
+    roa_score,
+    roe_score,
+)
 
 
 def _utc(y, m, d):
@@ -199,3 +205,90 @@ class TestRoeScore:
 
         score = roe_score("AAA", _utc(2023, 6, 1), repo)
         assert score == 0.2  # still the 2022 figures -- 2023's are not yet filed as of this date
+
+
+class TestRoaScore:
+    """`_fy_ratio`'s missing-value/zero-denominator/point-in-time
+    behavior is already thoroughly covered by `TestRoeScore` above
+    (shared helper) -- these tests only cover what is specific to
+    `roa_score` itself: which concepts it divides."""
+
+    def test_computes_net_income_over_assets(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=10.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        assert roa_score("AAA", _utc(2023, 6, 1), repo) == 0.05
+
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=10.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=0.0, period_end=_utc(2022, 12, 31)))
+
+        assert roa_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestNetMarginScore:
+    def test_computes_net_income_over_revenues(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=15.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        assert net_margin_score("AAA", _utc(2023, 6, 1), repo) == 0.15
+
+    def test_a_net_loss_produces_a_negative_margin_not_none(self, tmp_path) -> None:
+        # Unlike a non-positive DENOMINATOR (rejected), a negative
+        # NUMERATOR (a real net loss against positive revenue) is a
+        # perfectly meaningful, real negative margin -- must not be
+        # rejected.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=-5.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        assert net_margin_score("AAA", _utc(2023, 6, 1), repo) == -0.05
+
+    def test_zero_or_negative_revenue_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=15.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=0.0, period_end=_utc(2022, 12, 31)))
+
+        assert net_margin_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestLeverageScore:
+    def test_score_is_the_negative_of_liabilities_over_equity(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "liab", concept="Liabilities", value=50.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        assert leverage_score("AAA", _utc(2023, 6, 1), repo) == -0.5
+
+    def test_higher_leverage_scores_lower_matching_the_lower_is_more_attractive_convention(self, tmp_path) -> None:
+        # record_id must be unique across ALL records in the repository
+        # (it is the DB's own primary key, not scoped per security) --
+        # prefixed with security_id here to avoid an accidental
+        # cross-security collision silently dropping one security's row.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("LOW_LEVERAGE", "LOW_LEVERAGE:liab", concept="Liabilities", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW_LEVERAGE", "LOW_LEVERAGE:eq", concept="StockholdersEquity", value=100.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH_LEVERAGE", "HIGH_LEVERAGE:liab", concept="Liabilities", value=80.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH_LEVERAGE", "HIGH_LEVERAGE:eq", concept="StockholdersEquity", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        low_score = leverage_score("LOW_LEVERAGE", _utc(2023, 6, 1), repo)
+        high_score = leverage_score("HIGH_LEVERAGE", _utc(2023, 6, 1), repo)
+        assert low_score > high_score  # lower leverage -> higher (more attractive) score
+
+    def test_zero_or_negative_equity_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "liab", concept="Liabilities", value=50.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=-10.0, period_end=_utc(2022, 12, 31)))
+
+        assert leverage_score("AAA", _utc(2023, 6, 1), repo) is None

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Computes real-data Signal IC for a fundamentals-based factor --
-currently `roe` (`strategy_research.factor_scores.roe_score`) -- using
+`roe`, `roa`, `net_margin`, or `leverage` (all in
+`strategy_research.factor_scores`, sharing the same `_fy_ratio`
+plumbing) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` against
 two live DuckDB catalogs: the fundamentals catalog (ADR-0042,
 `ingest_fundamentals_data.py`'s output) and the price catalog
@@ -41,13 +43,18 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
-from strategy_research.factor_scores import roe_score  # noqa: E402
+from strategy_research.factor_scores import leverage_score, net_margin_score, roa_score, roe_score  # noqa: E402
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
 from strategy_research.signal_ic import compute_fundamentals_ic_series  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE2}
 
-_SCORES = {"roe": roe_score}
+_SCORES = {
+    "roe": roe_score,
+    "roa": roa_score,
+    "net_margin": net_margin_score,
+    "leverage": leverage_score,
+}
 
 
 def _rebalance_dates(start: datetime, end: datetime, step_months: int) -> list[datetime]:

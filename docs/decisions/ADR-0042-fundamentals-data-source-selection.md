@@ -484,6 +484,35 @@ work" is not yet as well-evidenced as "these three price-based rules
 don't work" was. Both remain legitimate next options, deliberately
 left as an open decision rather than resolved here.
 
+## Decision 11 -- pursue both: 3 more fundamentals factors, then ML
+
+The user chose both remaining options rather than one ("둘 다 하자" --
+"let's do both"). Sequenced the fast, low-cost one first: 3 more
+fundamentals factors, all computable from data already ingested (no
+new SEC EDGAR fetch needed), before starting the much larger ML
+implementation effort.
+
+- `strategy_research.factor_scores.roa_score` -- Return on Assets
+  (`NetIncomeLoss / Assets`), unlevered profitability, distinct from
+  ROE (which leverage alone can inflate).
+- `net_margin_score` -- net profit margin (`NetIncomeLoss / Revenues`),
+  a pure profitability-per-sales-dollar factor with neither assets nor
+  equity entering it.
+- `leverage_score` -- negative of `Liabilities / StockholdersEquity`
+  (the "low-leverage" quality/safety factor, e.g. one pillar of Asness/
+  Frazzini/Pedersen 2013's quality-minus-junk construction).
+
+All three share `roe_score`'s existing `_fy_ratio` plumbing (extracted
+from `roe_score` in this same change, behavior-preserving) -- same
+annual-only restriction, same zero/negative-denominator rejection,
+same point-in-time guarantees, none of which needed re-deriving.
+`compute_fundamentals_ic_from_catalog.py --score` now accepts `roa`/
+`net_margin`/`leverage` alongside `roe`. 9 new tests (correctness,
+negative-numerator-is-valid-but-negative-denominator-is-not
+distinction for `net_margin_score`, the low-leverage-scores-higher
+convention for `leverage_score`, CLI wiring for all three). Full
+suite: 1976 passed. Not yet run against the real catalog.
+
 ## What's still not built
 
 A systematic per-symbol identity-continuity check (the general version

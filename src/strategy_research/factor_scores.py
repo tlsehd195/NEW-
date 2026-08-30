@@ -81,6 +81,30 @@ def _latest_fiscal_year_value(repository, security_id: str, concept: str, as_of_
     return records[-1]
 
 
+def _fy_ratio(
+    repository: object, security_id: str, as_of_time: datetime, numerator_concept: str, denominator_concept: str,
+) -> Optional[float]:
+    """Shared plumbing for every ratio-shaped fundamentals factor below
+    -- both figures restricted to the same fiscal year-end via
+    `_latest_fiscal_year_value` (so numerator and denominator are always
+    period-matched), `None` (never a fabricated ratio) when either
+    figure is missing or the denominator is zero/negative. A
+    zero/negative denominator is rejected uniformly across every caller
+    below (equity, assets, revenue) since none of `roe_score`/
+    `roa_score`/`net_margin_score`/`leverage_score` can produce a
+    financially meaningful ratio against a non-positive base -- a
+    company with negative equity or revenue makes the ratio
+    uninterpretable as the "quality" signal it is meant to be, not
+    merely differently signed."""
+    numerator = _latest_fiscal_year_value(repository, security_id, numerator_concept, as_of_time)
+    denominator = _latest_fiscal_year_value(repository, security_id, denominator_concept, as_of_time)
+    if numerator is None or denominator is None:
+        return None
+    if denominator.value <= 0:
+        return None
+    return numerator.value / denominator.value
+
+
 def roe_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
     """HYPOTHESIS -- Return on Equity (net income / stockholders'
     equity) as a "quality" factor: companies that generate more profit
@@ -99,17 +123,51 @@ def roe_score(security_id: str, as_of_time: datetime, repository: object) -> Opt
     DuckDBFundamentalsRepository`'s shape (`get_fundamentals`) --
     not imported by type here, matching `strategy_research.signal_ic.
     compute_fundamentals_ic_series`'s identical choice to keep this
-    package free of a new dependency on `storage.*`.
+    package free of a new dependency on `storage.*`."""
+    return _fy_ratio(repository, security_id, as_of_time, "NetIncomeLoss", "StockholdersEquity")
 
-    Returns `None` (never a fabricated ratio) when either figure is
-    missing, or when equity is zero or negative -- a company with
-    negative shareholders' equity makes ROE uninterpretable as a
-    "quality" signal (a small loss against negative equity would
-    otherwise produce a spuriously large POSITIVE ratio)."""
-    net_income = _latest_fiscal_year_value(repository, security_id, "NetIncomeLoss", as_of_time)
-    equity = _latest_fiscal_year_value(repository, security_id, "StockholdersEquity", as_of_time)
-    if net_income is None or equity is None:
+
+def roa_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Return on Assets (net income / total assets), a
+    profitability factor distinct from `roe_score`: ROE can be inflated
+    by leverage alone (two companies with identical operating
+    profitability but different debt loads have different ROE, since
+    equity -- assets minus liabilities -- shrinks as leverage rises),
+    while ROA is unlevered and measures how efficiently a company's
+    total asset base (however financed) generates profit. Added
+    alongside `roe_score` specifically to give the fundamentals domain
+    a second, independently-motivated try after ROE's own null real
+    result (`docs/research/STRATEGY-VALIDATION-REPORT.md` Section G),
+    since one factor from a new data domain was too small a sample to
+    conclude much from on its own."""
+    return _fy_ratio(repository, security_id, as_of_time, "NetIncomeLoss", "Assets")
+
+
+def net_margin_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Net profit margin (net income / revenue): a pure
+    profitability-per-dollar-of-sales factor, related to but distinct
+    from ROE/ROA (neither assets nor equity enter it at all -- a
+    capital-light, high-margin business and a capital-intensive,
+    high-margin business score identically here, unlike ROA). Part of
+    the same quality-factor family (e.g. gross-profitability research
+    such as Novy-Marx 2013 uses a closely related profit-over-sales-or-
+    assets construction)."""
+    return _fy_ratio(repository, security_id, as_of_time, "NetIncomeLoss", "Revenues")
+
+
+def leverage_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the "low-leverage" anomaly: companies with LESS
+    debt relative to equity are hypothesized to have relatively better
+    risk-adjusted forward returns, part of the same broader "quality/
+    safety" factor family the low-volatility anomaly belongs to (e.g.
+    "low leverage" is one of the explicit pillars of Asness, Frazzini &
+    Pedersen 2013's quality-minus-junk "safety" component).
+
+    Score is the NEGATIVE of `Liabilities / StockholdersEquity`, so a
+    higher score means LOWER (hypothesized more attractive) leverage --
+    matches this module's convention (see `low_volatility_score`) that
+    a higher score always ranks a security as more attractive."""
+    ratio = _fy_ratio(repository, security_id, as_of_time, "Liabilities", "StockholdersEquity")
+    if ratio is None:
         return None
-    if equity.value <= 0:
-        return None
-    return net_income.value / equity.value
+    return -ratio

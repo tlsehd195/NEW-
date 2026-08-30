@@ -385,6 +385,18 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   다른 펀더멘털 팩터(발행주식수 확보 후 밸류 팩터, 또는 지금 데이터로
   바로 가능한 다른 quality/leverage 비율) 추가 시도 둘 다 여전히
   유효한 옵션.
+- **"둘 다 하자" — 펀더멘털 팩터 3개 추가 + ML은 다음 단계로**:
+  사용자가 ML 착수와 펀더멘털 팩터 확장 둘 다 하자고 결정 — 빠르고
+  저비용인 쪽(팩터 확장, 신규 데이터 수집 불필요)부터 먼저 처리:
+  - `roa_score`(ROA, 자산 대비 수익성 — 레버리지 영향 안 받음),
+    `net_margin_score`(순이익률), `leverage_score`(부채비율의 음수 —
+    낮은 레버리지가 유리하다는 가설). 전부 `roe_score`에서 뽑아낸
+    공통 헬퍼(`_fy_ratio`)로 구현 — 로직 중복 없음.
+  - `compute_fundamentals_ic_from_catalog.py --score`에 `roa`/
+    `net_margin`/`leverage` 옵션 추가.
+  - 신규 테스트 9개. 전체 1976개 통과. 아직 실제 카탈로그 실행 전.
+  - ML은 규모가 커서(신규 subsystem 수준) 이번엔 안 건드림 — 팩터
+    3개 결과 받은 뒤 첫 구체적인 ML 스텝을 제안할 예정.
 
 ### Completed (Session 33 — Phase 31 continued)
 
