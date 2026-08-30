@@ -37,7 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE2  # noqa: E402
+from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE3  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
@@ -47,7 +47,7 @@ from strategy_research.factor_scores import leverage_score, net_margin_score, ro
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
 from strategy_research.signal_ic import compute_fundamentals_ic_series  # noqa: E402
 
-_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE2}
+_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE3}
 
 _SCORES = {
     "roe": roe_score,

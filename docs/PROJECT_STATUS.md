@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 35 — Phase 33: real 8-candidate result — ml_ridge/ensemble modestly better fold-consistency than ml_ols but still no CANDIDATE; second real experiment_id collision found and fixed)
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: RESEARCH_UNIVERSE Stage 3 — 24 hand-curated symbols added (40→64) to close confirmed Real Estate/Materials/Utilities sector gaps, per user's direction to proceed toward completion)
 
 ---
 
@@ -626,6 +626,52 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   - `REAL_VALIDATION_NOT_COMPLETED` 8개 후보 전부 유지.
   - `ADR-0043` Decision 6, `STRATEGY-VALIDATION-REPORT.md` Section G
     "Eighth update"에 상세 기록.
+
+### Completed (Session 36 — Phase 33 continued: 종목 수 확장 Stage 3)
+
+- **사용자가 "너가 프로젝트 완성에 더 가까운 방향으로 진행해줘"라고
+  직접 위임 → 이전에 추천했던 5개 개선 중 아직 안 만든 "종목 수 확장"을
+  이번 세션에서 진행**.
+- **종목 수 확장(Stage 3): 24개 종목 추가(40→64종목)** —
+  `RESEARCH_UNIVERSE_STAGE3` (`src/data_infra/universe.py`). 선정
+  기준은 임의 선택이 아니라, 기존 40종목(PILOT 16 + Stage2 24)의
+  실제 GICS 섹터 커버리지를 감사해서 나온 결과: **Real Estate 0종목,
+  Materials 0종목(둘 다 완전 공백), Utilities 1종목(NEE만, 가장 얇음)**
+  — 이 세 gap을 채우는 걸 최우선으로 24종목을 골랐음 (Real Estate:
+  PLD/AMT/EQIX/SPG, Materials: LIN/APD/ECL/NEM, Utilities: DUK/SO/D,
+  나머지 14종목은 이미 있는 섹터에 분산).
+  - **Stage 1/2와 동일한 정직성 원칙 유지**: hand-curated 목록이지
+    실제 인덱스 구성종목 검증도 아니고 survivorship bias 완화도
+    아님 — 모든 항목 `source="manual_curation"`,
+    `listed_from=listed_to=None` 그대로. 이번 세션도 네트워크 접근이
+    없어서 재확인 불가.
+  - **RULE 0.8 준수**: 이 종목 리스트는 Stage 3로 어떤 백테스트도
+    실행되기 전에 먼저 고정·커밋됨. `locked_windows.py`의 TEST_1 관련
+    주석은 "실제로 Stage 2를 대상으로 관측됐다"는 역사적 사실 기록이라
+    Stage 3로 바꾸지 않고 그대로 둠(고의).
+  - **요청 예산 계산은 Stage 2 때 이미 확인한 Tiingo 무료 티어 한도
+    재사용** (이번 세션도 네트워크 없어서 재확인 안 함): 50 req/hour
+    확인됨, `ingest_real_market_data.py`는 종목당 2 request(가격+
+    기업행동)이고 자체 rate-limit/pacing 로직이 없음(grep 확인) —
+    그래서 24종목 × 2 = 48 requests로 한 시간 윈도우 안에 딱 맞게
+    사이즈를 Stage 2와 동일한 형태로 맞춤.
+  - CLI 스크립트 9개(`compute_filter_bucket_returns_from_catalog.py`,
+    `compute_fundamentals_ic_from_catalog.py`,
+    `compute_signal_ic_from_catalog.py`,
+    `import_external_market_data.py`, `ingest_fundamentals_data.py`,
+    `ingest_real_market_data.py`, `run_first_real_strategy_evaluation.py`,
+    `run_long_horizon_validation.py`, `train_ml_model_from_catalog.py`)의
+    `_UNIVERSES["RESEARCH_UNIVERSE"]` 별칭을 전부 Stage2→Stage3로
+    갱신 — `--universe RESEARCH_UNIVERSE`가 이제 64종목을 가리킴.
+    `--universe PILOT_UNIVERSE`는 영향 없음.
+  - 신규 테스트 7개(`tests/data_infra/test_universe.py`,
+    `TestResearchUniverseStage3`, Stage 2 클래스 구조 그대로 미러링).
+    전체 스위트 2047개 통과(기존 2040 + 신규 7).
+  - `ADR-0044-research-universe-stage3.md` 신규 작성,
+    `STRATEGY-VALIDATION-REPORT.md` Section G "Ninth update"에 기록.
+  - **이번 세션에서 실제 데이터 ingestion은 하지 않음** — 유니버스
+    정의만 고정. 새 24종목의 실제 가격/펀더멘털 ingestion과 Stage 3
+    재검증 실행은 사용자의 네트워크 가능 환경에서 다음 단계로 남음.
 
 ### Completed (Session 33 — Phase 31 continued)
 

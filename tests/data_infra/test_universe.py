@@ -16,6 +16,7 @@ from data_infra.universe import (
     PILOT_UNIVERSE_V1,
     RESEARCH_UNIVERSE_STAGE1,
     RESEARCH_UNIVERSE_STAGE2,
+    RESEARCH_UNIVERSE_STAGE3,
     SymbolMetadata,
     UniverseDefinition,
     build_security_masters,
@@ -85,6 +86,48 @@ class TestResearchUniverseStage2:
         actions, `scripts/ingest_real_market_data.py`) must fit under
         the confirmed 50-requests/hour Tiingo free-tier cap."""
         new_symbol_count = len(set(RESEARCH_UNIVERSE_STAGE2.symbol_ids) - set(PILOT_UNIVERSE_V1.symbol_ids))
+        assert new_symbol_count * 2 <= 50
+
+
+class TestResearchUniverseStage3:
+    """Stage 3 -- built per the user's explicit direction after 9
+    hypotheses tested against Stage 2's 40 symbols all failed to reach
+    CANDIDATE. Addresses cross-sectional breadth, deliberately NOT
+    survivorship bias -- same discipline as Stage 2."""
+
+    def test_stage3_contains_all_of_stage2(self) -> None:
+        assert set(RESEARCH_UNIVERSE_STAGE2.symbol_ids) <= set(RESEARCH_UNIVERSE_STAGE3.symbol_ids)
+
+    def test_stage3_adds_exactly_24_new_symbols(self) -> None:
+        new_symbols = set(RESEARCH_UNIVERSE_STAGE3.symbol_ids) - set(RESEARCH_UNIVERSE_STAGE2.symbol_ids)
+        assert len(new_symbols) == 24
+
+    def test_stage3_has_no_duplicate_symbols(self) -> None:
+        ids = RESEARCH_UNIVERSE_STAGE3.symbol_ids
+        assert len(ids) == len(set(ids))
+
+    def test_stage3_benchmark_symbol_never_a_member(self) -> None:
+        assert BENCHMARK_SYMBOL not in RESEARCH_UNIVERSE_STAGE3.symbol_ids
+
+    def test_stage3_is_distinct_version_from_stage2(self) -> None:
+        assert RESEARCH_UNIVERSE_STAGE3.version != RESEARCH_UNIVERSE_STAGE2.version
+        assert RESEARCH_UNIVERSE_STAGE3.name == RESEARCH_UNIVERSE_STAGE2.name  # same named universe, later stage
+
+    def test_stage3_symbols_carry_no_provider_confirmed_dates(self) -> None:
+        """Stage 3 is a wider hand-curated list, not survivorship-bias
+        mitigation -- every entry must still leave listed_from/
+        listed_to unconfirmed, same honesty discipline as every prior
+        stage."""
+        for entry in RESEARCH_UNIVERSE_STAGE3.symbols:
+            assert entry.listed_from is None
+            assert entry.listed_to is None
+            assert entry.source == "manual_curation"
+
+    def test_stage3_request_budget_fits_one_hourly_window(self) -> None:
+        """24 new symbols x 2 requests/symbol must fit under the
+        confirmed 50-requests/hour Tiingo free-tier cap, same margin as
+        Stage 2's own addition."""
+        new_symbol_count = len(set(RESEARCH_UNIVERSE_STAGE3.symbol_ids) - set(RESEARCH_UNIVERSE_STAGE2.symbol_ids))
         assert new_symbol_count * 2 <= 50
 
 

@@ -248,6 +248,86 @@ RESEARCH_UNIVERSE_STAGE2 = UniverseDefinition(
 )
 
 
+# -- RESEARCH_UNIVERSE Stage 3 -- built per the user's own explicit
+# direction ("네가 프로젝트 완성에 더 가까운 방향으로 진행해줘" --
+# proceed in whichever direction brings the project closer to
+# completion), after 9 independently-motivated hypotheses tested
+# against Stage 2's 40 symbols all failed to reach CANDIDATE (see
+# docs/decisions/ADR-0043-ml-first-model.md, docs/research/
+# STRATEGY-VALIDATION-REPORT.md Section G). Universe breadth was
+# identified as the highest-expected-impact remaining lever: every
+# cross-sectional Signal IC/walk-forward result to date has been
+# computed over a 39-40-symbol universe, a real, structural limit on
+# statistical power distinct from "which model combines the signals" --
+# the four levers already tried (regularization, ensembling, caching,
+# a longer training window) only ever squeeze more out of that same
+# small cross-section.
+#
+# Same discipline as Stage 2, unchanged: hand-curated
+# (`source="manual_curation"`), deliberately NOT presented as "the
+# current S&P 500" or any other verified live index membership -- this
+# session still has no network access to confirm real index
+# constituents, and stating one from training-data recall as if
+# verified would violate this module's own honesty discipline (module
+# docstring). Selection criterion, fixed BEFORE any Stage 3 backtest is
+# ever run (RULE 0.8): 24 additional real, long-established, liquid
+# US large/mid-cap companies chosen specifically to cover the two GICS
+# sectors Stage 2 has ZERO representation in (Real Estate, Materials)
+# and to add depth to its thinnest sector (Utilities, 1 symbol before
+# this addition) -- not an arbitrary or convenience list, and not
+# re-adjusted after seeing any result from it.
+#
+# Request-budget arithmetic (reuses Stage 2's own confirmed Tiingo
+# free-tier numbers -- 50 requests/hour, 1,000 requests/day, 2.00
+# GB/month -- this session cannot re-verify them independently; if the
+# user's actual account limits have since changed, re-check before
+# running ingestion): 24 new symbols x 2 requests/symbol (price +
+# corporate actions, scripts/ingest_real_market_data.py, unmodified)
+# = 48 requests, fitting inside the confirmed 50-requests/hour cap in a
+# SINGLE hourly window (2-request margin) -- the identical arithmetic
+# shape as Stage 2's own addition, deliberately sized to match it
+# rather than push past a window boundary this project has not
+# verified the ingestion script paces around.
+RESEARCH_UNIVERSE_STAGE3 = UniverseDefinition(
+    name="RESEARCH_UNIVERSE",
+    version="stage3",
+    role="RESEARCH",
+    description=(
+        "Stage 3 of the research universe: Stage 2's 40 symbols plus 24 additional "
+        "hand-curated large/mid-cap US companies chosen to add Real Estate and Materials "
+        "coverage (both absent from Stage 2) and deepen Utilities (1 symbol before this "
+        "addition). Selection was fixed before any Stage 3 backtest was run (RULE 0.8). "
+        "Addresses cross-sectional breadth/concentration risk only -- NOT survivorship "
+        "bias (every symbol still has listed_from=listed_to=None, same as every prior "
+        "stage; see this definition's own module-level comment)."
+    ),
+    symbols=RESEARCH_UNIVERSE_STAGE2.symbols
+    + tuple(
+        SymbolMetadata(symbol=s)
+        for s in (
+            # Real Estate (absent from Stage 2)
+            "PLD", "AMT", "EQIX", "SPG",
+            # Materials (absent from Stage 2)
+            "LIN", "APD", "ECL", "NEM",
+            # Utilities (1 symbol in Stage 2 -- thinnest sector)
+            "DUK", "SO", "D",
+            # Energy (2 symbols in Stage 2)
+            "SLB", "COP",
+            # Financials
+            "MS", "WFC", "AXP",
+            # Health Care
+            "LLY", "TMO", "ABT",
+            # Information Technology
+            "ADBE", "CRM", "QCOM",
+            # Consumer Discretionary
+            "LOW",
+            # Consumer Staples
+            "PM",
+        )
+    ),
+)
+
+
 def build_universe_memberships(universe: UniverseDefinition, *, valid_from: datetime) -> list[UniverseMembership]:
     """Converts a `UniverseDefinition` into the `UniverseMembership`
     records `DataRepository.add_universe_membership`/`get_universe`

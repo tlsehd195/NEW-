@@ -1623,6 +1623,28 @@ ADR-0042 Decision 7 already fixed once) and real ingestion in the
 user's own network-enabled environment, not something buildable inside
 this session alone.
 
+**Ninth update -- universe breadth (Stage 3) built, per the user's own
+explicit direction to proceed toward completion; not yet observed
+against real data.** `RESEARCH_UNIVERSE_STAGE3` (`data_infra/universe.py`)
+adds 24 hand-curated symbols to Stage 2's 40, selected by a documented,
+non-cherry-picked rule: closing this project's own confirmed GICS
+sector gaps (Real Estate and Materials were completely absent from
+Stage 2; Utilities had only 1 symbol). Every CLI script's `--universe
+RESEARCH_UNIVERSE` alias now resolves to Stage 3 (64 symbols) by
+default. Same hand-curation honesty discipline as every prior stage:
+NOT verified real index membership, NOT survivorship-bias mitigation
+-- see ADR-0044 for the full symbol list, sector rationale, and request-
+budget arithmetic (24 x 2 = 48 requests, fits the confirmed 50/hour
+Tiingo free-tier cap in one window). `strategy_research.locked_
+windows.TEST_1`'s own comments continue to name Stage 2 specifically,
+as an accurate record of what that already-observed TEST result was
+actually run against -- deliberately left unchanged. **No real
+ingestion for the 24 new symbols, and no backtest against Stage 3, has
+happened yet** -- this update only fixes the universe definition; real
+price and fundamentals ingestion for the new symbols must run in the
+user's own network-enabled environment before any Stage 3 result
+exists.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the
