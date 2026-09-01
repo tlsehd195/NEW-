@@ -1696,6 +1696,28 @@ burden -- mirrors exactly how `leverage_score` itself graduated from
 raw IC to a full `Strategy`. Full account, including why the other 11
 candidates were not pursued this round: ADR-0043 Decision 8.
 
+**Twelfth update -- a second literature-researched candidate,
+`piotroski_f_score`, built the same session.** Asked to build as many
+of the 12 researched candidates as feasible, Piotroski's F-Score
+(2000, JAR) was chosen next as the strongest-replicated remaining one
+(re-confirmed via an independent 2004-2024 out-of-sample re-test).
+Unlike `asset_growth_score`, this needed real new ingestion -- 6 new
+XBRL concepts (`NetCashProvidedByUsedInOperatingActivities`,
+`LongTermDebtNoncurrent`, `AssetsCurrent`, `LiabilitiesCurrent`,
+`CommonStockSharesOutstanding`, `CostOfGoodsAndServicesSold`), now in
+`ingest_fundamentals_data.py`'s `_DEFAULT_CONCEPTS` -- verified this
+costs zero additional real requests, since SEC EDGAR's company-facts
+endpoint returns one company's entire filing history per request
+regardless of concept count. A 0-9 composite of nine YoY quality-
+improvement signals, all-or-nothing on missing data; a real,
+foreseeable coverage gap is documented up front rather than found
+silently later -- financial-sector filers (banks/insurers/broker-
+dealers) typically report an unclassified balance sheet and will most
+likely score `None` for lack of `AssetsCurrent`/`LiabilitiesCurrent`.
+Wired into `compute_fundamentals_ic_from_catalog.py` (`--score
+piotroski`), also deliberately NOT added to the walk-forward pool yet.
+Full account: ADR-0043 Decision 9.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

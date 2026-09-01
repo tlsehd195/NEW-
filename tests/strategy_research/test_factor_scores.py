@@ -26,6 +26,7 @@ from strategy_research.factor_scores import (
     leverage_score,
     low_volatility_score,
     net_margin_score,
+    piotroski_f_score,
     roa_score,
     roe_score,
 )
@@ -362,3 +363,155 @@ class TestAssetGrowthScore:
 
         score = asset_growth_score("AAA", _utc(2023, 6, 1), repo)
         assert score == pytest.approx(-0.20)  # still 2021 vs 2022 -- 2023's figure is not yet filed
+
+
+_PIOTROSKI_TWO_YEAR_CONCEPTS = (
+    "NetIncomeLoss", "Assets", "LongTermDebtNoncurrent", "AssetsCurrent",
+    "LiabilitiesCurrent", "CommonStockSharesOutstanding", "Revenues",
+    "CostOfGoodsAndServicesSold",
+)
+
+_PIOTROSKI_ALL_IMPROVING = {
+    "prior": {
+        "NetIncomeLoss": 10.0, "Assets": 100.0, "LongTermDebtNoncurrent": 40.0,
+        "AssetsCurrent": 50.0, "LiabilitiesCurrent": 40.0, "CommonStockSharesOutstanding": 100.0,
+        "Revenues": 200.0, "CostOfGoodsAndServicesSold": 140.0,
+    },
+    "current": {
+        "NetIncomeLoss": 20.0, "Assets": 120.0, "LongTermDebtNoncurrent": 20.0,
+        "AssetsCurrent": 90.0, "LiabilitiesCurrent": 60.0, "CommonStockSharesOutstanding": 100.0,
+        "Revenues": 300.0, "CostOfGoodsAndServicesSold": 180.0,
+    },
+    "cfo": 25.0,
+}
+
+_PIOTROSKI_ALL_WORSENING = {
+    "prior": {
+        "NetIncomeLoss": 20.0, "Assets": 100.0, "LongTermDebtNoncurrent": 20.0,
+        "AssetsCurrent": 90.0, "LiabilitiesCurrent": 60.0, "CommonStockSharesOutstanding": 100.0,
+        "Revenues": 300.0, "CostOfGoodsAndServicesSold": 180.0,
+    },
+    "current": {
+        "NetIncomeLoss": -5.0, "Assets": 150.0, "LongTermDebtNoncurrent": 40.0,
+        "AssetsCurrent": 50.0, "LiabilitiesCurrent": 80.0, "CommonStockSharesOutstanding": 120.0,
+        "Revenues": 200.0, "CostOfGoodsAndServicesSold": 160.0,
+    },
+    "cfo": -10.0,
+}
+
+
+def _add_piotroski_fixture(
+    repo, security_id, fixture, *, prior_period_end=_utc(2021, 12, 31), current_period_end=_utc(2022, 12, 31),
+    include_cfo=True, omit_concepts=(), only_current_year_concepts=(),
+) -> None:
+    for concept in _PIOTROSKI_TWO_YEAR_CONCEPTS:
+        if concept in omit_concepts:
+            continue
+        if concept not in only_current_year_concepts:
+            repo.add_fundamental(_fy_record(
+                security_id, f"{security_id}:{concept}:prior", concept=concept,
+                value=fixture["prior"][concept], period_end=prior_period_end,
+            ))
+        repo.add_fundamental(_fy_record(
+            security_id, f"{security_id}:{concept}:current", concept=concept,
+            value=fixture["current"][concept], period_end=current_period_end,
+        ))
+    if include_cfo:
+        repo.add_fundamental(_fy_record(
+            security_id, f"{security_id}:cfo:current",
+            concept="NetCashProvidedByUsedInOperatingActivities",
+            value=fixture["cfo"], period_end=current_period_end,
+        ))
+
+
+class TestPiotroskiFScore:
+    """Session 36 -- ADR-0043 Decision 9: Piotroski 2000's F-Score, the
+    strongest-replicated candidate from the 12-strategy literature
+    search. A 0-9 composite, all-or-nothing on missing data (matching
+    this module's existing honesty discipline) -- these tests cover
+    the full-9/full-0 extremes, the missing-data cases specific to a
+    9-input composite (not covered by any single-ratio factor's own
+    tests), and point-in-time correctness."""
+
+    def test_all_nine_signals_improving_scores_nine(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_piotroski_fixture(repo, "AAA", _PIOTROSKI_ALL_IMPROVING)
+
+        assert piotroski_f_score("AAA", _utc(2023, 6, 1), repo) == 9.0
+
+    def test_all_nine_signals_worsening_scores_zero(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_piotroski_fixture(repo, "AAA", _PIOTROSKI_ALL_WORSENING)
+
+        assert piotroski_f_score("AAA", _utc(2023, 6, 1), repo) == 0.0
+
+    def test_higher_score_scores_higher_matching_the_higher_is_more_attractive_convention(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_piotroski_fixture(repo, "GOOD", _PIOTROSKI_ALL_IMPROVING)
+        _add_piotroski_fixture(repo, "BAD", _PIOTROSKI_ALL_WORSENING)
+
+        good_score = piotroski_f_score("GOOD", _utc(2023, 6, 1), repo)
+        bad_score = piotroski_f_score("BAD", _utc(2023, 6, 1), repo)
+        assert good_score > bad_score
+
+    def test_missing_cash_flow_from_operations_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_piotroski_fixture(repo, "AAA", _PIOTROSKI_ALL_IMPROVING, include_cfo=False)
+
+        assert piotroski_f_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_current_assets_returns_none(self, tmp_path) -> None:
+        """The documented, foreseeable coverage gap for financial-sector
+        filers (unclassified balance sheets don't report AssetsCurrent)
+        -- simulated directly here rather than only asserted in prose."""
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_piotroski_fixture(repo, "BANK", _PIOTROSKI_ALL_IMPROVING, omit_concepts=("AssetsCurrent",))
+
+        assert piotroski_f_score("BANK", _utc(2023, 6, 1), repo) is None
+
+    def test_only_one_fiscal_year_of_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_piotroski_fixture(
+            repo, "AAA", _PIOTROSKI_ALL_IMPROVING,
+            only_current_year_concepts=("CommonStockSharesOutstanding",),
+        )
+
+        assert piotroski_f_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_current_liabilities_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        fixture = {
+            "prior": dict(_PIOTROSKI_ALL_IMPROVING["prior"]),
+            "current": dict(_PIOTROSKI_ALL_IMPROVING["current"]),
+            "cfo": _PIOTROSKI_ALL_IMPROVING["cfo"],
+        }
+        fixture["current"]["LiabilitiesCurrent"] = 0.0
+        _add_piotroski_fixture(repo, "AAA", fixture)
+
+        assert piotroski_f_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_a_score_at_an_early_date_ignores_a_not_yet_filed_third_fiscal_year(self, tmp_path) -> None:
+        # Point-in-time correctness, same discipline as roe_score/
+        # asset_growth_score's own tests: a FY2023 figure filed in 2024
+        # must not be visible to a score computed mid-2023.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_piotroski_fixture(
+            repo, "AAA", _PIOTROSKI_ALL_IMPROVING,
+            prior_period_end=_utc(2021, 12, 31), current_period_end=_utc(2022, 12, 31),
+        )
+        # A much stronger, not-yet-filed FY2023 that would change the
+        # score if it leaked in.
+        repo.add_fundamental(_fy_record(
+            "AAA", "AAA:NetIncomeLoss:future", concept="NetIncomeLoss", value=-999.0,
+            period_end=_utc(2023, 12, 31), available_time=_utc(2024, 2, 1),
+        ))
+
+        assert piotroski_f_score("AAA", _utc(2023, 6, 1), repo) == 9.0  # unchanged -- FY2023 not yet filed

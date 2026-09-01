@@ -212,3 +212,55 @@ class TestEndToEndAgainstSyntheticCatalogs:
         ])
         assert exit_code == 0
         assert "Fundamentals Signal IC: asset_growth" in capsys.readouterr().out
+
+    def test_piotroski_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 9. Needs its own fixture:
+        9 concepts (8 of them across 2 fiscal years) rather than the
+        single-period fixture the other scores share."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+        symbol = symbols[0]
+
+        price_engine = new_engine(tmp_path, name="price4")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals4")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        prior_end = datetime(2016, 12, 31, tzinfo=timezone.utc)
+        current_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        two_year_values = {
+            "NetIncomeLoss": (10.0, 20.0), "Assets": (100.0, 120.0), "LongTermDebtNoncurrent": (40.0, 20.0),
+            "AssetsCurrent": (50.0, 90.0), "LiabilitiesCurrent": (40.0, 60.0), "CommonStockSharesOutstanding": (100.0, 100.0),
+            "Revenues": (200.0, 300.0), "CostOfGoodsAndServicesSold": (140.0, 180.0),
+        }
+        for concept, (prior_value, current_value) in two_year_values.items():
+            fundamentals_repo.add_fundamental(
+                _fy_record(symbol, f"{symbol}:{concept}:prior", concept=concept, value=prior_value, period_end=prior_end)
+            )
+            fundamentals_repo.add_fundamental(
+                _fy_record(symbol, f"{symbol}:{concept}:current", concept=concept, value=current_value, period_end=current_end)
+            )
+        fundamentals_repo.add_fundamental(
+            _fy_record(
+                symbol, f"{symbol}:cfo:current", concept="NetCashProvidedByUsedInOperatingActivities",
+                value=25.0, period_end=current_end,
+            )
+        )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price4"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals4"),
+            "--universe", "PILOT_UNIVERSE",
+            "--score", "piotroski",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Fundamentals Signal IC: piotroski" in capsys.readouterr().out

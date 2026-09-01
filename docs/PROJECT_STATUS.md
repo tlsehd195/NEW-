@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 asset_growth_score 추가(ADR-0043 Decision 8, 추가 데이터 불필요))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 2개 추가 — asset_growth_score(Decision 8, 추가 데이터 불필요), piotroski_f_score(Decision 9, XBRL 6개 신규 항목 필요))
 
 ---
 
@@ -777,6 +777,33 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   - 다음 단계: 사용자가 실제 환경에서 `compute_fundamentals_ic_from_
     catalog.py --score asset_growth` 실행 → 결과 보고 8후보 풀에
     추가할지 결정.
+- **"후보 최대한 많이 만들어봐" 요청으로 두 번째 전략 Piotroski
+  F-Score 구현 (`ADR-0043` Decision 9)**:
+  - 12개 조사 목록 중 재현성이 제일 강한 걸로 선택 (2000년 논문 +
+    2004~2024 독립 재현 백테스트).
+  - **asset_growth와 달리 실제 새 데이터 필요** — XBRL 6개 항목
+    추가(영업현금흐름, 장기부채, 유동자산/부채, 발행주식수, 매출원가).
+    `ingest_fundamentals_data.py`의 기본 항목 목록에 추가해둠 —
+    **추가 요청 비용은 0**이라는 것도 확인함(SEC EDGAR가 기업당 전체
+    재무데이터를 한 번에 다 주는 구조라, 항목 늘려도 요청 횟수 그대로).
+  - 9개 이진 신호(전년 대비 개선 여부)를 합산한 0~9점 등급 — 하나라도
+    데이터 없으면 부분 점수 없이 전체 None 반환(이 프로젝트 기존
+    정직성 원칙 그대로).
+  - **미리 밝혀두는 실제 한계**: 은행/보험/증권사 같은 금융업종은
+    회계상 유동자산/유동부채를 구분 안 해서 이 점수가 아마 None으로
+    나올 것 — 우리 유니버스의 JPM/GS/MS/WFC/AXP/BAC 등. 버그 아니고
+    실제 데이터 특성.
+  - `compute_fundamentals_ic_from_catalog.py --score piotroski`로 배선,
+    이것도 8후보 풀엔 아직 안 넣음(같은 원칙).
+  - 신규 테스트 9개(factor_scores 8 + CLI wiring 1), 전체 스위트
+    2072개 통과(기존 2063 + 9).
+  - 다음 단계: asset_growth와 마찬가지로 실제 ingestion 재실행 후
+    raw IC 체크.
+  - **다음으로 만들 만한 후보(Shareholder Yield)는 구조가 더 복잡함** —
+    가격 데이터(시가총액 계산용)와 펀더멘털을 동시에 써야 하는데, 지금
+    `compute_fundamentals_ic_from_catalog.py`의 score 함수 시그니처가
+    펀더멘털 하나만 받게 설계돼 있어서 새 배선이 필요함. 이번 라운드는
+    여기까지 하고 다음 라운드로 넘김.
 
 ### Completed (Session 33 — Phase 31 continued)
 

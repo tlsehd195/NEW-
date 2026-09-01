@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Computes real-data Signal IC for a fundamentals-based factor --
 `roe`, `roa`, `net_margin`, `leverage` (all in `strategy_research.
-factor_scores`, sharing the same `_fy_ratio` plumbing), or
-`asset_growth` (a year-over-year change rather than a single-period
-ratio -- Cooper, Gulen & Schill 2008's asset growth anomaly, ADR-0043
-Decision 8) -- using
+factor_scores`, sharing the same `_fy_ratio` plumbing), `asset_growth`
+(a year-over-year change rather than a single-period ratio -- Cooper,
+Gulen & Schill 2008's asset growth anomaly, ADR-0043 Decision 8), or
+`piotroski` (a 0-9 composite of nine YoY quality-improvement signals --
+Piotroski 2000's F-Score, ADR-0043 Decision 9; needs 6 new XBRL
+concepts beyond what earlier scores needed) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` against
 two live DuckDB catalogs: the fundamentals catalog (ADR-0042,
 `ingest_fundamentals_data.py`'s output) and the price catalog
@@ -49,6 +51,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     asset_growth_score,
     leverage_score,
     net_margin_score,
+    piotroski_f_score,
     roa_score,
     roe_score,
 )
@@ -63,6 +66,7 @@ _SCORES = {
     "net_margin": net_margin_score,
     "leverage": leverage_score,
     "asset_growth": asset_growth_score,
+    "piotroski": piotroski_f_score,
 }
 
 

@@ -216,3 +216,119 @@ def asset_growth_score(security_id: str, as_of_time: datetime, repository: objec
         return None
     growth = current.value / prior.value - 1.0
     return -growth
+
+
+# The 8 concepts (beyond `NetCashProvidedByUsedInOperatingActivities`,
+# which only ever needs the current fiscal year) `piotroski_f_score`
+# needs BOTH the current and prior fiscal year's value for.
+_PIOTROSKI_TWO_YEAR_CONCEPTS = (
+    "NetIncomeLoss", "Assets", "LongTermDebtNoncurrent", "AssetsCurrent",
+    "LiabilitiesCurrent", "CommonStockSharesOutstanding", "Revenues",
+    "CostOfGoodsAndServicesSold",
+)
+
+
+def piotroski_f_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the Piotroski F-Score (Piotroski 2000, "Value
+    Investing: The Use of Historical Financial Statement Information to
+    Separate Winners from Losers," Journal of Accounting Research): a
+    0-9 composite of nine binary year-over-year QUALITY-IMPROVEMENT
+    signals (profitability, leverage/liquidity, operating efficiency),
+    each worth 1 point if the company improved on that dimension versus
+    the prior fiscal year. Firms scoring 8-9 outperformed low scorers
+    (0-1) by a wide, independently-replicated margin in the original
+    1976-1996 sample and again in a 2004-2024 out-of-sample re-test --
+    the strongest, most-replicated candidate from this project's
+    12-strategy literature search (ADR-0043 Decision 8), built second
+    (after `asset_growth_score`) specifically because it needs new real
+    data this project did not previously ingest.
+
+    Distinct from `asset_growth_score` too: this is a COMPOSITE of nine
+    signals, several of them themselves year-over-year changes -- not a
+    single ratio or a single change. Needs 6 XBRL concepts beyond the 5
+    ADR-0042 already ingests (`NetCashProvidedByUsedInOperatingActivities`,
+    `LongTermDebtNoncurrent`, `AssetsCurrent`, `LiabilitiesCurrent`,
+    `CommonStockSharesOutstanding`, `CostOfGoodsAndServicesSold`) -- a
+    real new ingestion round in the user's own environment is required
+    before this can be computed against real data (see
+    `ingest_fundamentals_data.py`'s now-extended `_DEFAULT_CONCEPTS`).
+
+    The nine signals (1 point each, higher score = more attractive,
+    matching this module's convention):
+    1. ROA (NetIncomeLoss/Assets) > 0
+    2. Operating cash flow > 0
+    3. ROA improved versus the prior fiscal year
+    4. Operating cash flow > net income (accrual/earnings-quality check
+       -- cash generation exceeds reported accounting profit)
+    5. Long-term-debt-to-assets ratio decreased (less leverage)
+    6. Current ratio (current assets / current liabilities) improved
+    7. Shares outstanding did not increase (no dilutive new issuance)
+    8. Gross margin ((Revenues - COGS) / Revenues) improved
+    9. Asset turnover (Revenues / Assets) improved
+
+    **Deliberately all-or-nothing, matching this module's existing
+    honesty discipline (`_fy_ratio`'s missing-value handling)**: `None`
+    (never a partial or fabricated score) unless every one of the 9
+    concept-years above is actually known as of `as_of_time`. **A real,
+    foreseeable coverage gap, stated here rather than discovered
+    silently**: financial-sector filers (banks, insurers, broker-
+    dealers) typically use an unclassified balance sheet under US GAAP
+    and do not report `AssetsCurrent`/`LiabilitiesCurrent` at all --
+    this score will likely return `None` for every financial-sector
+    security in this project's universe (e.g. `JPM`/`GS`/`MS`/`WFC`/
+    `AXP`/`BAC`), not a bug, an accurate reflection of what a bank's
+    real filings actually report."""
+    two_year: dict[str, tuple[float, float]] = {}
+    for concept in _PIOTROSKI_TWO_YEAR_CONCEPTS:
+        records = _fy_records(repository, security_id, concept, as_of_time)
+        if len(records) < 2:
+            return None
+        two_year[concept] = (records[-2].value, records[-1].value)
+
+    cfo_record = _latest_fiscal_year_value(
+        repository, security_id, "NetCashProvidedByUsedInOperatingActivities", as_of_time,
+    )
+    if cfo_record is None:
+        return None
+    cfo = cfo_record.value
+
+    prior_ni, current_ni = two_year["NetIncomeLoss"]
+    prior_assets, current_assets = two_year["Assets"]
+    prior_ltd, current_ltd = two_year["LongTermDebtNoncurrent"]
+    prior_ca, current_ca = two_year["AssetsCurrent"]
+    prior_cl, current_cl = two_year["LiabilitiesCurrent"]
+    prior_shares, current_shares = two_year["CommonStockSharesOutstanding"]
+    prior_rev, current_rev = two_year["Revenues"]
+    prior_cogs, current_cogs = two_year["CostOfGoodsAndServicesSold"]
+
+    # Every ratio below needs a positive denominator to be financially
+    # meaningful -- same rejection discipline as `_fy_ratio`.
+    if current_assets <= 0 or prior_assets <= 0:
+        return None
+    if current_cl <= 0 or prior_cl <= 0:
+        return None
+    if current_rev <= 0 or prior_rev <= 0:
+        return None
+
+    current_roa = current_ni / current_assets
+    prior_roa = prior_ni / prior_assets
+    current_leverage = current_ltd / current_assets
+    prior_leverage = prior_ltd / prior_assets
+    current_current_ratio = current_ca / current_cl
+    prior_current_ratio = prior_ca / prior_cl
+    current_gross_margin = (current_rev - current_cogs) / current_rev
+    prior_gross_margin = (prior_rev - prior_cogs) / prior_rev
+    current_asset_turnover = current_rev / current_assets
+    prior_asset_turnover = prior_rev / prior_assets
+
+    score = 0
+    score += 1 if current_roa > 0 else 0
+    score += 1 if cfo > 0 else 0
+    score += 1 if current_roa > prior_roa else 0
+    score += 1 if cfo > current_ni else 0
+    score += 1 if current_leverage < prior_leverage else 0
+    score += 1 if current_current_ratio > prior_current_ratio else 0
+    score += 1 if current_shares <= prior_shares else 0
+    score += 1 if current_gross_margin > prior_gross_margin else 0
+    score += 1 if current_asset_turnover > prior_asset_turnover else 0
+    return float(score)

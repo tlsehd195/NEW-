@@ -79,7 +79,19 @@ _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH
 # not exhaustive, not fixed for all time; --concepts overrides it.
 # Core income-statement/balance-sheet line items with broad us-gaap
 # reporting coverage across most large-cap filers.
-_DEFAULT_CONCEPTS = ("Revenues", "NetIncomeLoss", "Assets", "Liabilities", "StockholdersEquity")
+_DEFAULT_CONCEPTS = (
+    "Revenues", "NetIncomeLoss", "Assets", "Liabilities", "StockholdersEquity",
+    # Session 36 addition (ADR-0043 Decision 9) -- the 6 concepts
+    # `strategy_research.factor_scores.piotroski_f_score` needs beyond
+    # the original 5. `SecEdgarFundamentalsProvider.fetch_company_facts`
+    # fetches one company's ENTIRE company-facts JSON per request
+    # regardless of how many concepts are requested here -- extending
+    # this default costs zero additional real requests, only more local
+    # parsing of a response already being fetched.
+    "NetCashProvidedByUsedInOperatingActivities", "LongTermDebtNoncurrent",
+    "AssetsCurrent", "LiabilitiesCurrent", "CommonStockSharesOutstanding",
+    "CostOfGoodsAndServicesSold",
+)
 
 _REQUEST_DELAY_SECONDS = 0.3
 _TICKER_MAP_HOST = "https://www.sec.gov"

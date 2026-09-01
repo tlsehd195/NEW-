@@ -578,6 +578,67 @@ TestAssetGrowthScore`, 1 CLI end-to-end wiring test in `tests/
 strategy_research/test_compute_fundamentals_ic_from_catalog_cli.py`).
 Full suite: 2063 passed (up from 2056).
 
+## Decision 9 -- the second externally-researched candidate, `piotroski_f_score`, built the same session per the user's request for as many verified candidates as possible
+
+Asked to build as many of the literature-researched candidates as
+possible (`asset_growth_score` alone was judged not enough), the
+Piotroski F-Score (Piotroski 2000, "Value Investing: The Use of
+Historical Financial Statement Information to Separate Winners from
+Losers," Journal of Accounting Research) was chosen next -- the
+strongest-replicated of the remaining candidates from ADR-0043 Decision
+8's 12-strategy literature search (re-confirmed via the original
+1976-1996 sample AND an independent 2004-2024 out-of-sample re-test).
+
+**What it is**: a 0-9 composite score, one point for each of nine
+binary year-over-year QUALITY-IMPROVEMENT signals across profitability,
+leverage/liquidity, and operating efficiency -- distinct in kind from
+both `asset_growth_score` (a single YoY change) and the earlier
+LEVEL-ratio factors (`roe_score`/`roa_score`/`net_margin_score`/
+`leverage_score`): this is the first COMPOSITE of multiple signals in
+`strategy_research.factor_scores`.
+
+**Real new ingestion required, unlike `asset_growth_score`**: needs 6
+XBRL concepts beyond ADR-0042's original 5 --
+`NetCashProvidedByUsedInOperatingActivities`, `LongTermDebtNoncurrent`,
+`AssetsCurrent`, `LiabilitiesCurrent`, `CommonStockSharesOutstanding`,
+`CostOfGoodsAndServicesSold`. `ingest_fundamentals_data.py`'s
+`_DEFAULT_CONCEPTS` was extended to include all 6 -- verified this
+costs **zero additional real requests**: `SecEdgarFundamentalsProvider.
+fetch_company_facts` already fetches one company's entire
+company-facts JSON per request regardless of how many concepts are
+subsequently parsed out of it, so a plain re-run of
+`ingest_fundamentals_data.py` (no `--concepts` override) now persists
+6 more concepts per symbol at the same request cost as before.
+
+**All-or-nothing on missing data, matching this module's existing
+honesty discipline**: `None` unless every one of the 9 concept-years
+is actually known -- no partial/fabricated scoring invented for this
+composite. **A real, foreseeable coverage gap, stated here rather than
+found silently later**: financial-sector filers (banks, insurers,
+broker-dealers) typically use an unclassified balance sheet under US
+GAAP and do not report `AssetsCurrent`/`LiabilitiesCurrent` at all --
+this score will most likely return `None` for every financial-sector
+security in this project's universe (`JPM`/`GS`/`MS`/`WFC`/`AXP`/`BAC`
+in `RESEARCH_UNIVERSE_STAGE3`), a real, accurate reflection of what
+those filings contain, not a bug to fix.
+
+Wired into `compute_fundamentals_ic_from_catalog.py` (`--score
+piotroski`) for the same cheap raw-IC-first check as `asset_growth`,
+**also NOT wired into the 8-candidate walk-forward pool** -- same
+reasoning as Decision 8: decide after a real result, not before.
+
+9 new tests (8 in `tests/strategy_research/test_factor_scores.py::
+TestPiotroskiFScore`: full-9/full-0 extremes, higher-score-ranks-higher,
+missing-CFO, missing-`AssetsCurrent` [the financial-sector gap,
+exercised directly rather than only asserted], missing-second-fiscal-
+year, non-positive-denominator, point-in-time correctness; 1 CLI
+end-to-end wiring test). Full suite: 2072 passed (up from 2063).
+
+**Both `asset_growth`/`piotroski` results still pending from the
+user's own real-data environment** -- neither has been observed
+against real data yet; both remain hypotheses fixed before any result
+is seen, per RULE 0.8.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true
