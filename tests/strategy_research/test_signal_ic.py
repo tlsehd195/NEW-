@@ -28,6 +28,7 @@ from strategy_research.signal_ic import (
     rank_average,
     bucket_return_analysis,
     compute_fundamentals_ic_series,
+    compute_hybrid_ic_series,
     compute_ic_series,
     spearman_ic,
 )
@@ -350,3 +351,84 @@ class TestComputeFundamentalsIcSeries:
         score_with_later = roe_score("TRENDUP", early_date, repo_with_later_record)
         assert score_without is None
         assert score_with_later is None  # the later-filed record is correctly invisible at early_date
+
+
+class TestComputeHybridIcSeries:
+    """`compute_hybrid_ic_series` -- added for `shareholder_yield_score`
+    (ADR-0043 Decision 10), the first factor needing BOTH repositories
+    to compute its score itself (not just fundamentals for the score
+    and price only for forward returns, like `compute_fundamentals_
+    ic_series`'s factors). Mirrors `TestComputeFundamentalsIcSeries`'s
+    own test structure -- the underlying aggregation math is identical
+    and already covered there; these tests exist to prove the extra
+    plumbing (passing `price_repository` into `score_fn` too) works."""
+
+    def test_wiring_a_hand_rolled_score_fn_produces_ic_of_one(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+
+        def _fixed_score_fn(security_id, as_of_time, fundamentals_repo, price_repository):
+            return {"TRENDUP": 1.0, "TRENDDOWN": 0.0}[security_id]
+
+        summary = compute_hybrid_ic_series(
+            list(universe), [_utc(2021, m, 1) for m in (3, 6, 9)], _fixed_score_fn,
+            fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
+        )
+        assert summary.mean_ic == 1.0
+
+    def test_score_fn_actually_receives_the_price_repository(self) -> None:
+        # Regression guard for the one thing this function adds beyond
+        # compute_fundamentals_ic_series: score_fn must be called with
+        # the real price_repository object, not None/a placeholder.
+        universe = ("TRENDUP",)
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        received = []
+
+        def _recording_score_fn(security_id, as_of_time, fundamentals_repo, price_repository):
+            received.append(price_repository)
+            return 1.0
+
+        compute_hybrid_ic_series(
+            list(universe), [_utc(2021, 3, 1)], _recording_score_fn,
+            fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
+        )
+        assert received == [price_repo]
+
+    def test_end_to_end_with_the_real_shareholder_yield_score_against_real_repositories(self, tmp_path) -> None:
+        from strategy_research.factor_scores import shareholder_yield_score
+
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        for security_id, dividends in (("TRENDUP", 50.0), ("TRENDDOWN", 0.0)):
+            fundamentals_repo.add_fundamental(
+                _fundamental_record(
+                    security_id, f"{security_id}:shares", value=1000.0,
+                    available_time=_utc(2020, 3, 1), concept="CommonStockSharesOutstanding",
+                )
+            )
+            if dividends:
+                fundamentals_repo.add_fundamental(
+                    _fundamental_record(
+                        security_id, f"{security_id}:div", value=dividends,
+                        available_time=_utc(2020, 3, 1), concept="PaymentsOfDividends",
+                    )
+                )
+
+        summary = compute_hybrid_ic_series(
+            list(universe), [_utc(2021, m, 1) for m in (3, 6, 9)], shareholder_yield_score,
+            fundamentals_repository=fundamentals_repo, price_repository=price_repo, horizon_days=30,
+        )
+        assert summary.observations  # at least one date produced a real observation
+
+    def test_no_rebalance_dates_produces_empty_summary_not_a_fabricated_zero(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2021, 1, 3), symbols=universe)
+        summary = compute_hybrid_ic_series(
+            list(universe), [], lambda sid, t, fr, pr: 1.0,
+            fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
+        )
+        assert summary.observations == ()
+        assert summary.mean_ic is None

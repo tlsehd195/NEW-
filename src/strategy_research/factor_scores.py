@@ -332,3 +332,123 @@ def piotroski_f_score(security_id: str, as_of_time: datetime, repository: object
     score += 1 if current_gross_margin > prior_gross_margin else 0
     score += 1 if current_asset_turnover > prior_asset_turnover else 0
     return float(score)
+
+
+def _latest_price(price_repository, security_id: str, as_of_time: datetime, *, lookback_days: int = 10) -> Optional[float]:
+    """The most recent RAW (unadjusted) `close` at or before `as_of_time`,
+    read directly from `price_repository.get_bars` with `as_of_time` as
+    its own look-ahead guard (Phase 1 spec section 15) -- deliberately
+    `close`, never `adjusted_close`: `adjusted_close` is back-adjusted
+    for corporate actions that occur AFTER a bar's date, using a
+    provider-dependent, mutable "adjust from present" convention (spec
+    section 5.2), and is explicitly NOT the price that actually traded
+    on that historical date. A market-cap calculation needs the actual
+    contemporaneous traded price times the actual contemporaneous share
+    count -- mixing a back-adjusted price with a raw share count would
+    silently produce a wrong market cap with no error, which is exactly
+    the kind of mistake this module's other factors avoid by using
+    `adjusted_close or close` (correct for a RETURN calculation, wrong
+    for this one)."""
+    bars = price_repository.get_bars(
+        security_id, as_of_time - timedelta(days=lookback_days), as_of_time, as_of_time=as_of_time,
+    )
+    if not bars:
+        return None
+    price = bars[-1].close
+    if price is None or price <= 0:
+        return None
+    return price
+
+
+def _fy_flow_or_zero(repository: object, security_id: str, concept: str, as_of_time: datetime) -> float:
+    """`_latest_fiscal_year_value`, but a genuinely absent concept reads
+    as `0.0` rather than `None` -- unlike every other missing-data case
+    in this module. These three cash-flow line items
+    (`shareholder_yield_score`'s numerator) are only ever tagged by a
+    filer WHEN that activity actually happened, the standard SEC
+    EDGAR/XBRL convention: a company that paid no dividends this fiscal
+    year does not file a `PaymentsOfDividends` fact worth `$0`, it
+    simply omits the tag entirely. Reading that omission as "no cash
+    was returned this way" is the financially correct interpretation,
+    not a fabrication in the sense this module otherwise guards against
+    -- that guard is about inventing a value for data that IS meant to
+    always exist but happens to be unknown (e.g. `roe_score` returning
+    `None` rather than guessing at a missing `NetIncomeLoss`, which
+    every filer reports every year)."""
+    record = _latest_fiscal_year_value(repository, security_id, concept, as_of_time)
+    return record.value if record is not None else 0.0
+
+
+def shareholder_yield_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> Optional[float]:
+    """HYPOTHESIS -- Shareholder Yield (O'Shaughnessy, "What Works on
+    Wall Street"; related academic support: Boudoukh, Michaely,
+    Richardson & Roberts 2007, "On the Importance of Measuring Payout
+    Yield: Forecasting Stock Returns"): total cash RETURNED to
+    shareholders (dividends paid, plus NET share buybacks -- buybacks
+    minus new issuance) as a fraction of market capitalization,
+    hypothesized to predict forward returns better than dividend yield
+    alone, since dividend yield alone misclassifies a heavy-buyback,
+    low-dividend firm as a low-payout firm -- buybacks have been the
+    dominant payout channel for many large US firms since the 1980s-90s.
+
+    The first factor in this module that needs price data at all
+    (`price_repository`, for market capitalization) -- distinct in kind
+    from every other fundamentals score here (`roe_score` through
+    `piotroski_f_score`), all of which are ratios or changes entirely
+    within the fundamentals repository. `signal_ic.compute_fundamentals_
+    ic_series`'s `FundamentalsScoreFn` only ever passes `score_fn` the
+    fundamentals repository, so this factor is wired through the new,
+    separate `signal_ic.compute_hybrid_ic_series` instead (see that
+    function's own docstring for why a new function rather than
+    widening the existing one).
+
+    Numerator = dividends paid + buybacks paid - proceeds from new share
+    issuance, each the latest known fiscal year's `PaymentsOfDividends`/
+    `PaymentsForRepurchaseOfCommonStock`/
+    `ProceedsFromIssuanceOfCommonStock` -- each read as `0.0`, not
+    `None`, when the concept is simply absent (see `_fy_flow_or_zero`'s
+    own docstring for why that is the financially correct reading here,
+    unlike every other missing-data case in this module). Denominator =
+    market capitalization = latest known raw `close` price
+    (`_latest_price`; deliberately never `adjusted_close` -- see that
+    helper's docstring) times the latest known fiscal-year-end
+    `CommonStockSharesOutstanding`. `None` (never a fabricated yield) if
+    either the price or the share count is unknown, or market cap is
+    non-positive.
+
+    **A real, foreseeable limitation, stated here rather than discovered
+    silently**: `CommonStockSharesOutstanding` only updates once per
+    fiscal year in this project's data (the same `_fy_records`/`"FY"`-
+    only restriction every other factor in this module uses), so the
+    share count used can be up to ~1 year stale relative to `as_of_time`
+    -- the same limitation `piotroski_f_score`'s leverage/liquidity
+    ratios already carry, not new to this factor. Needs 3 new XBRL
+    concepts beyond what `piotroski_f_score` already ingests
+    (`PaymentsOfDividends`, `PaymentsForRepurchaseOfCommonStock`,
+    `ProceedsFromIssuanceOfCommonStock`) -- a real new ingestion round
+    in the user's own environment is required before this can be
+    computed against real data (see `ingest_fundamentals_data.py`'s
+    now-extended `_DEFAULT_CONCEPTS`)."""
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    market_cap = price * shares_record.value
+    if market_cap <= 0:
+        return None
+
+    dividends = _fy_flow_or_zero(fundamentals_repository, security_id, "PaymentsOfDividends", as_of_time)
+    buybacks = _fy_flow_or_zero(
+        fundamentals_repository, security_id, "PaymentsForRepurchaseOfCommonStock", as_of_time,
+    )
+    issuance = _fy_flow_or_zero(
+        fundamentals_repository, security_id, "ProceedsFromIssuanceOfCommonStock", as_of_time,
+    )
+
+    return (dividends + buybacks - issuance) / market_cap

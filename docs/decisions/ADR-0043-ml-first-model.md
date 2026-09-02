@@ -639,6 +639,91 @@ user's own real-data environment** -- neither has been observed
 against real data yet; both remain hypotheses fixed before any result
 is seen, per RULE 0.8.
 
+## Decision 10 -- a third externally-researched candidate, `shareholder_yield_score`, requiring new IC-computation plumbing (`compute_hybrid_ic_series`)
+
+Continuing the same "build as many verified candidates as possible"
+request, Shareholder Yield (O'Shaughnessy, "What Works on Wall Street";
+academic support: Boudoukh, Michaely, Richardson & Roberts 2007, "On
+the Importance of Measuring Payout Yield: Forecasting Stock Returns")
+was built next -- total cash returned to shareholders (dividends paid
+plus NET share buybacks) as a fraction of market capitalization,
+hypothesized to predict forward returns better than dividend yield
+alone since buybacks have been the dominant payout channel for many
+large US firms since the 1980s-90s (dividend yield alone misclassifies
+a heavy-buyback, low-dividend firm as low-payout).
+
+**Structurally different from every prior factor in this module**:
+this is the first score that needs PRICE data (for market cap), not
+just fundamentals. `strategy_research.signal_ic.compute_fundamentals_
+ic_series`'s `FundamentalsScoreFn` only ever passes `score_fn` the
+fundamentals repository -- widening that signature would silently give
+every existing single-repository score an unused extra argument, so
+this was built as a new, separate function instead:
+`compute_hybrid_ic_series` (identical aggregation logic, but calls
+`score_fn(security_id, as_of_time, fundamentals_repository,
+price_repository)`), matching this module's own precedent
+(`compute_ic_series` vs `compute_fundamentals_ic_series`) of adding a
+parallel function rather than changing an existing one's contract.
+`scripts/compute_fundamentals_ic_from_catalog.py` now branches on a
+new `_HYBRID_SCORES` dict (currently just `shareholder_yield`) to pick
+`compute_hybrid_ic_series` over `compute_fundamentals_ic_series` --
+both DuckDB catalogs (price + fundamentals) were already loaded by that
+script for every other score's forward-return computation, so no new
+CLI argument was needed.
+
+**A real design decision, stated here rather than left implicit**:
+unlike every other missing-data case in this module (which returns
+`None`), a company with NO `PaymentsOfDividends`/
+`PaymentsForRepurchaseOfCommonStock`/`ProceedsFromIssuanceOfCommonStock`
+concept filed at all scores `0.0`, not `None`. This is deliberate, not
+a relaxation of the project's honesty discipline: these three cash-flow
+line items are only ever tagged by a filer WHEN that activity actually
+happened (standard SEC EDGAR/XBRL convention) -- a company that paid no
+dividends this fiscal year does not file a `PaymentsOfDividends` fact
+worth `$0`, it omits the tag entirely. Reading that omission as "no
+cash was returned this way" is the financially correct interpretation.
+Market cap itself (the denominator) still follows the strict
+`None`-on-missing rule: no score at all without a known price AND a
+known share count.
+
+**Correctness detail worth flagging explicitly**: market cap uses the
+RAW `close` price, never `adjusted_close` -- `adjusted_close` is
+back-adjusted for corporate actions that occur AFTER a bar's date
+(Phase 1 spec section 5.2) and is not the price that actually traded on
+that historical date. Mixing a back-adjusted price with the actual
+contemporaneous share count would silently produce a wrong market cap
+with no error; a dedicated regression test
+(`test_uses_raw_close_not_adjusted_close_for_market_cap`) proves this
+directly with a bar whose `adjusted_close` differs from its `close`.
+
+**Real new ingestion required**: 3 more XBRL concepts beyond what
+`piotroski_f_score` already needs -- `PaymentsOfDividends`,
+`PaymentsForRepurchaseOfCommonStock`, `ProceedsFromIssuanceOfCommonStock`
+-- added to `ingest_fundamentals_data.py`'s `_DEFAULT_CONCEPTS` with
+the same zero-extra-request justification as Decision 9's addition.
+
+**Still NOT wired into the 8-candidate walk-forward pool** -- same
+reasoning as Decisions 8 and 9: decide after a real raw-IC result, not
+before.
+
+14 new tests: 9 in `tests/strategy_research/test_factor_scores.py::
+TestShareholderYieldScore` (hand-computable numerator/denominator,
+zero-not-None for a no-payout company, missing/zero shares or price,
+the raw-vs-adjusted-close regression, ranking, point-in-time
+correctness), 4 in `tests/strategy_research/test_signal_ic.py::
+TestComputeHybridIcSeries` (wiring, a regression guard that `score_fn`
+actually receives the real `price_repository` object, an end-to-end
+run against the real `shareholder_yield_score`, and the empty-input
+case), and 1 CLI end-to-end wiring test proving the new
+`_HYBRID_SCORES` branch in `compute_fundamentals_ic_from_catalog.py`
+actually runs. Full suite: 2086 passed (up from 2072).
+
+All three externally-researched candidates' (`asset_growth`,
+`piotroski`, `shareholder_yield`) real raw-IC results remain pending
+from the user's own real-data environment -- none has been observed
+against real data yet; all three remain hypotheses fixed before any
+result is seen, per RULE 0.8.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true

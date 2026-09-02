@@ -6,13 +6,18 @@ factor_scores`, sharing the same `_fy_ratio` plumbing), `asset_growth`
 Gulen & Schill 2008's asset growth anomaly, ADR-0043 Decision 8), or
 `piotroski` (a 0-9 composite of nine YoY quality-improvement signals --
 Piotroski 2000's F-Score, ADR-0043 Decision 9; needs 6 new XBRL
-concepts beyond what earlier scores needed) -- using
-`strategy_research.signal_ic.compute_fundamentals_ic_series` against
-two live DuckDB catalogs: the fundamentals catalog (ADR-0042,
+concepts beyond what earlier scores needed), or `shareholder_yield`
+(dividends + net buybacks over market cap -- ADR-0043 Decision 10; the
+first score here that also needs price data, wired through the new
+`compute_hybrid_ic_series` instead of `compute_fundamentals_ic_series`)
+-- using `strategy_research.signal_ic.compute_fundamentals_ic_series`
+(or, for `shareholder_yield`, `compute_hybrid_ic_series`) against two
+live DuckDB catalogs: the fundamentals catalog (ADR-0042,
 `ingest_fundamentals_data.py`'s output) and the price catalog
-(`ingest_real_market_data.py`'s output, needed for forward returns).
-Mirrors `compute_signal_ic_from_catalog.py`'s structure and TEST-1
-guard exactly, adapted for two repositories instead of one -- see that
+(`ingest_real_market_data.py`'s output, needed for forward returns,
+and for `shareholder_yield`'s market-cap calculation too). Mirrors
+`compute_signal_ic_from_catalog.py`'s structure and TEST-1 guard
+exactly, adapted for two repositories instead of one -- see that
 script's own module docstring for the full "why a live catalog, why
 TEST-1 is refused with no override" reasoning, which applies here
 unchanged.
@@ -54,9 +59,10 @@ from strategy_research.factor_scores import (  # noqa: E402
     piotroski_f_score,
     roa_score,
     roe_score,
+    shareholder_yield_score,
 )
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
-from strategy_research.signal_ic import compute_fundamentals_ic_series  # noqa: E402
+from strategy_research.signal_ic import compute_fundamentals_ic_series, compute_hybrid_ic_series  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE3}
 
@@ -67,6 +73,16 @@ _SCORES = {
     "leverage": leverage_score,
     "asset_growth": asset_growth_score,
     "piotroski": piotroski_f_score,
+}
+
+# Session 36 addition (ADR-0043 Decision 10) -- scores whose score_fn
+# needs BOTH repositories (not just fundamentals_repository), wired
+# through compute_hybrid_ic_series instead of compute_fundamentals_
+# ic_series. Kept as a separate dict rather than merged into _SCORES
+# since the two score_fn signatures differ (3 args vs 4) and main()
+# needs to know which call path to use.
+_HYBRID_SCORES = {
+    "shareholder_yield": shareholder_yield_score,
 }
 
 
@@ -84,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--price-db-path", required=True, type=Path, help="DuckDB catalog from ingest_real_market_data.py (forward returns)")
     parser.add_argument("--fundamentals-db-path", required=True, type=Path, help="DuckDB catalog from ingest_fundamentals_data.py (scores)")
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE")
-    parser.add_argument("--score", choices=sorted(_SCORES), default="roe")
+    parser.add_argument("--score", choices=sorted(set(_SCORES) | set(_HYBRID_SCORES)), default="roe")
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
     parser.add_argument(
         "--end", type=str, default=None,
@@ -119,14 +135,20 @@ def main(argv: list[str] | None = None) -> int:
     price_repository = DuckDBDataRepository(price_engine)
     fundamentals_repository = DuckDBFundamentalsRepository(fundamentals_engine)
 
-    score_fn = _SCORES[args.score]
     rebalance_dates = _rebalance_dates(start, end, args.step_months)
 
-    summary = compute_fundamentals_ic_series(
-        list(universe.symbol_ids), rebalance_dates, score_fn,
-        fundamentals_repository=fundamentals_repository, price_repository=price_repository,
-        horizon_days=args.horizon_days,
-    )
+    if args.score in _HYBRID_SCORES:
+        summary = compute_hybrid_ic_series(
+            list(universe.symbol_ids), rebalance_dates, _HYBRID_SCORES[args.score],
+            fundamentals_repository=fundamentals_repository, price_repository=price_repository,
+            horizon_days=args.horizon_days,
+        )
+    else:
+        summary = compute_fundamentals_ic_series(
+            list(universe.symbol_ids), rebalance_dates, _SCORES[args.score],
+            fundamentals_repository=fundamentals_repository, price_repository=price_repository,
+            horizon_days=args.horizon_days,
+        )
 
     print(f"Fundamentals Signal IC: {args.score} over [{start.date()}, {end.date()}) ({len(rebalance_dates)} rebalance dates)")
     print(f"  observations={len(summary.observations)}")

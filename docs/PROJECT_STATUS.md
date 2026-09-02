@@ -4,8 +4,50 @@
 > 진행되었는지 파악할 수 있어야 한다. 이 파일은 각 세션 종료 시 반드시
 > 최신 상태로 갱신한다.
 
-**Last Updated:** 2026-08-30
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 2개 추가 — asset_growth_score(Decision 8, 추가 데이터 불필요), piotroski_f_score(Decision 9, XBRL 6개 신규 항목 필요))
+**Last Updated:** 2026-09-02
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 3개 추가 — asset_growth_score(Decision 8, 추가 데이터 불필요), piotroski_f_score(Decision 9, XBRL 6개 신규 항목 필요), shareholder_yield_score(Decision 10, 가격+펀더멘털 이중 저장소 새 배선 `compute_hybrid_ic_series` 필요))
+
+---
+
+## 사용자가 코드스페이스(실제 환경)에서 직접 해야 할 일 (Session 36 기준, 2026-09-02)
+
+세션 도중 사용자가 폰이라 코드스페이스 사용이 불편하다고 해서, 이 세션에서
+직접 실행 가능한 코드/테스트 작업은 전부 끝내놓고 실제 데이터가 필요한
+작업만 아래에 모아둔다. 순서대로 실행하면 됨:
+
+1. **최신 코드 받기**: `git pull origin main` (Piotroski F-Score +
+   Shareholder Yield 커밋이 이미 main에 병합돼 있음).
+2. **펀더멘털 재-ingestion** (XBRL 신규 항목 9개 반영 — Piotroski용 6개 +
+   Shareholder Yield용 3개, `--concepts` 옵션 없이 그냥 재실행하면 자동으로
+   전부 받아옴, SEC EDGAR가 기업당 전체 데이터를 한 번에 주는 구조라
+   추가 요청 비용 없음):
+   ```
+   python3 scripts/ingest_fundamentals_data.py --universe RESEARCH_UNIVERSE \
+     --user-agent "..." --as-of <오늘 날짜> --db-path ./data/fundamentals_data
+   ```
+3. **raw IC 체크 3개 실행** (8후보 풀엔 아직 안 넣었음 — 아래 3개 결과를
+   보고 나서 넣을지 결정):
+   ```
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score asset_growth --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score piotroski --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score shareholder_yield --start 2010-01-01
+   ```
+4. **결과를 그대로 붙여넣어 보고** — `mean_ic`/`ic_information_ratio`/
+   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 8후보 풀에
+   추가할지, 어떤 걸 우선할지 판단함. Piotroski는 은행/증권사
+   (JPM/GS/MS/WFC/AXP/BAC)에서 `None`이 다수 나올 수 있음 — 버그 아님,
+   문서화된 데이터 특성.
 
 ---
 
@@ -799,11 +841,39 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     2072개 통과(기존 2063 + 9).
   - 다음 단계: asset_growth와 마찬가지로 실제 ingestion 재실행 후
     raw IC 체크.
-  - **다음으로 만들 만한 후보(Shareholder Yield)는 구조가 더 복잡함** —
-    가격 데이터(시가총액 계산용)와 펀더멘털을 동시에 써야 하는데, 지금
-    `compute_fundamentals_ic_from_catalog.py`의 score 함수 시그니처가
-    펀더멘털 하나만 받게 설계돼 있어서 새 배선이 필요함. 이번 라운드는
-    여기까지 하고 다음 라운드로 넘김.
+- **사용자가 폰이라 코드스페이스 사용이 불편한 동안, 세 번째 전략
+  Shareholder Yield 구현 (`ADR-0043` Decision 10)** — "최대한 많이"
+  요청 계속 이어감. 가격 데이터(시가총액)와 펀더멘털을 동시에 써야
+  하는 첫 팩터라 새 배선이 필요했음:
+  - `signal_ic.py`에 `compute_hybrid_ic_series` 신규 함수 추가 —
+    기존 `compute_fundamentals_ic_series`는 score 함수에 펀더멘털
+    저장소만 넘기게 설계돼 있어서(시그니처 변경은 회귀 위험), 별도
+    함수로 분리(`compute_ic_series` vs `compute_fundamentals_ic_series`
+    사이의 기존 관례와 동일). `compute_fundamentals_ic_from_catalog.py`는
+    `--score shareholder_yield`일 때 이 새 경로로 분기 — 가격/펀더멘털
+    카탈로그 둘 다 이미 로드하고 있었어서 CLI 인자 추가는 불필요.
+  - 배당금 + 순buyback(자사주매입 - 신주발행) / 시가총액. XBRL 3개
+    신규 항목 필요(`PaymentsOfDividends`,
+    `PaymentsForRepurchaseOfCommonStock`,
+    `ProceedsFromIssuanceOfCommonStock`) — piotroski와 같은 이유로
+    추가 요청 비용 0.
+  - **다른 팩터들과 다른 설계 결정 하나**: 배당/자사주매입/신주발행
+    항목이 아예 신고 안 되어 있으면 `None`이 아니라 `0.0`으로 처리 —
+    이 3개 현금흐름 항목은 XBRL 관례상 "그 활동이 실제 있었을 때만"
+    태깅되므로, 없다는 건 진짜 데이터 결측이 아니라 진짜 0이라는
+    뜻(정직성 원칙 완화 아님). 단 시가총액(가격 × 발행주식수)은 둘 중
+    하나라도 모르면 여전히 엄격하게 `None`.
+  - 시가총액 계산에 `close`(원시 가격)만 쓰고 `adjusted_close`는
+    절대 안 씀 — adjusted_close는 미래 시점 기준으로 역산된 가격이라
+    실제 그 날 거래된 가격이 아님(스펙 5.2절), 실제 발행주식수와
+    잘못 곱하면 시가총액이 조용히 틀어짐. 전용 회귀 테스트로 직접
+    검증.
+  - `compute_fundamentals_ic_from_catalog.py --score shareholder_yield`로
+    배선, 이것도 8후보 풀엔 아직 안 넣음(같은 원칙).
+  - 신규 테스트 14개(factor_scores 9 + signal_ic 4 + CLI wiring 1),
+    전체 스위트 2086개 통과(기존 2072 + 14).
+  - 다음 단계: asset_growth/piotroski와 마찬가지로 실제 ingestion
+    재실행 후 raw IC 체크.
 
 ### Completed (Session 33 — Phase 31 continued)
 

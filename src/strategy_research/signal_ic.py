@@ -246,6 +246,65 @@ def compute_fundamentals_ic_series(
     return summarize_ic_observations(observations)
 
 
+HybridScoreFn = Callable[[str, datetime, object, DataRepository], Optional[float]]
+
+
+def compute_hybrid_ic_series(
+    security_ids: Sequence[str],
+    rebalance_dates: Sequence[datetime],
+    score_fn: HybridScoreFn,
+    fundamentals_repository: object,
+    price_repository: DataRepository,
+    *,
+    horizon_days: int,
+) -> IcSummary:
+    """Analog of `compute_fundamentals_ic_series` for a factor that needs
+    BOTH data sources to compute its score itself, not just for forward
+    returns -- e.g. a market-cap-dependent factor like shareholder
+    yield, which needs `price_repository` for the current price and
+    `fundamentals_repository` for shares outstanding and cash-flow
+    figures. `compute_fundamentals_ic_series`'s `FundamentalsScoreFn`
+    only ever passes `fundamentals_repository` to `score_fn` --
+    widening that signature would silently give every existing single-
+    repository score an unused extra argument for no reason, so this is
+    a new, separate function instead, matching this module's own
+    precedent (`compute_ic_series` vs `compute_fundamentals_ic_series`)
+    of adding a parallel function rather than changing an existing
+    one's contract.
+
+    `score_fn` is called directly against both repositories, with no
+    `AsOfDataView` wrapper on either side -- `DataRepository.get_bars`
+    already takes `as_of_time` and applies its own look-ahead guard at
+    the repository layer (Phase 1 spec section 15), the exact property
+    `AsOfDataView` exists to enforce, just already present on the
+    interface itself, identical to `compute_fundamentals_ic_series`'s
+    reasoning for why `fundamentals_repository` needs no wrapper either.
+    Forward returns still come from `price_repository` via the same
+    `forward_return` helper, deliberately not point-in-time-limited
+    (module docstring)."""
+    observations: list[IcObservation] = []
+    for as_of_time in rebalance_dates:
+        scores = {}
+        for sid in security_ids:
+            score = score_fn(sid, as_of_time, fundamentals_repository, price_repository)
+            if score is not None:
+                scores[sid] = score
+
+        forward_returns = {}
+        for sid in scores:
+            fr = forward_return(price_repository, sid, as_of_time, horizon_days)
+            if fr is not None:
+                forward_returns[sid] = fr
+
+        ic = spearman_ic(scores, forward_returns)
+        if ic is not None:
+            observations.append(
+                IcObservation(as_of_time=as_of_time, ic=ic, num_securities=len(forward_returns))
+            )
+
+    return summarize_ic_observations(observations)
+
+
 @dataclass(frozen=True)
 class BucketObservation:
     as_of_time: datetime

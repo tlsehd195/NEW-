@@ -264,3 +264,45 @@ class TestEndToEndAgainstSyntheticCatalogs:
         ])
         assert exit_code == 0
         assert "Fundamentals Signal IC: piotroski" in capsys.readouterr().out
+
+    def test_shareholder_yield_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 10. The first score routed
+        through `compute_hybrid_ic_series` instead of `compute_
+        fundamentals_ic_series` (main()'s `_HYBRID_SCORES` branch) --
+        this is the regression guard that the CLI's branching actually
+        wires that path correctly end to end, not just that the two
+        functions are individually correct in isolation."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+        symbol = symbols[0]
+
+        price_engine = new_engine(tmp_path, name="price5")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals5")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        fundamentals_repo.add_fundamental(
+            _fy_record(symbol, f"{symbol}:shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=period_end)
+        )
+        fundamentals_repo.add_fundamental(
+            _fy_record(symbol, f"{symbol}:div", concept="PaymentsOfDividends", value=500_000.0, period_end=period_end)
+        )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price5"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals5"),
+            "--universe", "PILOT_UNIVERSE",
+            "--score", "shareholder_yield",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Fundamentals Signal IC: shareholder_yield" in capsys.readouterr().out

@@ -17,7 +17,8 @@ from backtest.asof import AsOfDataView
 from backtest.clock import BacktestClock
 
 from data_infra.fundamentals_models import FundamentalRecord
-from data_infra.models import Provenance
+from data_infra.models import Provenance, PriceBar
+from data_infra.repository import InMemoryDataRepository
 
 from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
@@ -29,6 +30,7 @@ from strategy_research.factor_scores import (
     piotroski_f_score,
     roa_score,
     roe_score,
+    shareholder_yield_score,
 )
 
 
@@ -515,3 +517,131 @@ class TestPiotroskiFScore:
         ))
 
         assert piotroski_f_score("AAA", _utc(2023, 6, 1), repo) == 9.0  # unchanged -- FY2023 not yet filed
+
+
+def _price_bar(security_id, record_id, *, close, timestamp, adjusted_close=None):
+    return PriceBar(
+        security_id=security_id, timestamp=timestamp, open=close, high=close, low=close, close=close,
+        volume=1000.0, available_time=timestamp, ingestion_time=timestamp,
+        provenance=Provenance(
+            source="test_provider", source_dataset=f"test_{security_id}",
+            source_record_id=record_id, retrieved_at=timestamp, data_version="v1",
+        ),
+        adjusted_close=adjusted_close,
+    )
+
+
+class TestShareholderYieldScore:
+    """Session 36 -- ADR-0043 Decision 10: Shareholder Yield
+    (O'Shaughnessy; Boudoukh, Michaely, Richardson & Roberts 2007). The
+    first factor in this module that needs price data at all (for
+    market capitalization), so its signature and its tests both take a
+    second, price repository beyond `fundamentals_repository` -- see
+    `shareholder_yield_score`'s own docstring for why."""
+
+    def test_computes_dividends_plus_buybacks_minus_issuance_over_market_cap(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "div", concept="PaymentsOfDividends", value=200.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "buyback", concept="PaymentsForRepurchaseOfCommonStock", value=300.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "issuance", concept="ProceedsFromIssuanceOfCommonStock", value=100.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = shareholder_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        # market_cap = 10.0 * 1000 = 10000; numerator = 200 + 300 - 100 = 400
+        assert score == pytest.approx(0.04)
+
+    def test_a_company_with_no_dividends_buybacks_or_issuance_scores_zero_not_none(self, tmp_path) -> None:
+        # These three cash-flow concepts are only tagged by a filer WHEN
+        # the activity happened -- their total absence is a genuine
+        # zero, not missing data (see _fy_flow_or_zero's own docstring).
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = shareholder_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == 0.0
+
+    def test_missing_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "div", concept="PaymentsOfDividends", value=200.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert shareholder_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_zero_or_negative_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=0.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert shareholder_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_missing_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[])
+
+        assert shareholder_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_zero_or_negative_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=0.0, timestamp=_utc(2023, 5, 25))])
+
+        assert shareholder_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_uses_raw_close_not_adjusted_close_for_market_cap(self, tmp_path) -> None:
+        # adjusted_close is back-adjusted for corporate actions that
+        # happen AFTER this bar's date (spec section 5.2) -- using it
+        # here would silently pair a rescaled price with the actual
+        # contemporaneous share count, producing a wrong market cap.
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "div", concept="PaymentsOfDividends", value=200.0, period_end=_utc(2022, 12, 31)))
+        # A later 2:1 split has back-adjusted this bar's adjusted_close
+        # to half the raw close -- market cap must still use the raw 10.0.
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, adjusted_close=5.0, timestamp=_utc(2023, 5, 25))])
+
+        score = shareholder_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(200.0 / (10.0 * 1000.0))  # not 200.0 / (5.0 * 1000.0)
+
+    def test_higher_shareholder_yield_scores_higher_matching_the_higher_is_more_attractive_convention(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        for security_id, dividends in (("HIGH", 500.0), ("LOW", 50.0)):
+            fundamentals_repo.add_fundamental(_fy_record(security_id, f"{security_id}:shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+            fundamentals_repo.add_fundamental(_fy_record(security_id, f"{security_id}:div", concept="PaymentsOfDividends", value=dividends, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[
+            _price_bar("HIGH", "p1", close=10.0, timestamp=_utc(2023, 5, 25)),
+            _price_bar("LOW", "p2", close=10.0, timestamp=_utc(2023, 5, 25)),
+        ])
+
+        high_score = shareholder_yield_score("HIGH", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        low_score = shareholder_yield_score("LOW", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert high_score > low_score
+
+    def test_a_score_at_an_early_date_ignores_a_not_yet_filed_dividend_record(self, tmp_path) -> None:
+        # Point-in-time correctness, same discipline as every other
+        # factor in this module: a dividend record filed AFTER the
+        # as_of_time must not affect the score.
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "div_2022", concept="PaymentsOfDividends", value=200.0, period_end=_utc(2022, 12, 31)))
+        # A much larger FY2023 dividend, filed only in 2024 -- must not
+        # be visible to a score computed mid-2023.
+        fundamentals_repo.add_fundamental(_fy_record(
+            "AAA", "div_2023", concept="PaymentsOfDividends", value=9000.0,
+            period_end=_utc(2023, 12, 31), available_time=_utc(2024, 2, 1),
+        ))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = shareholder_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(200.0 / 10000.0)  # still the 2022 dividend, not the future 9000.0

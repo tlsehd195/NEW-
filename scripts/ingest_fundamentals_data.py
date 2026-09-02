@@ -91,6 +91,12 @@ _DEFAULT_CONCEPTS = (
     "NetCashProvidedByUsedInOperatingActivities", "LongTermDebtNoncurrent",
     "AssetsCurrent", "LiabilitiesCurrent", "CommonStockSharesOutstanding",
     "CostOfGoodsAndServicesSold",
+    # Session 36 addition (ADR-0043 Decision 10) -- the 3 concepts
+    # `strategy_research.factor_scores.shareholder_yield_score` needs
+    # beyond what piotroski_f_score already ingests. Same zero-extra-
+    # request justification as the Piotroski addition above.
+    "PaymentsOfDividends", "PaymentsForRepurchaseOfCommonStock",
+    "ProceedsFromIssuanceOfCommonStock",
 )
 
 _REQUEST_DELAY_SECONDS = 0.3

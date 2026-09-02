@@ -1718,6 +1718,31 @@ Wired into `compute_fundamentals_ic_from_catalog.py` (`--score
 piotroski`), also deliberately NOT added to the walk-forward pool yet.
 Full account: ADR-0043 Decision 9.
 
+**Thirteenth update -- a third literature-researched candidate,
+`shareholder_yield_score`, needing new IC-computation plumbing.**
+Continuing the same "build as many as feasible" request, Shareholder
+Yield (O'Shaughnessy; Boudoukh, Michaely, Richardson & Roberts 2007) --
+dividends paid plus NET buybacks over market cap -- was built next.
+Unlike every prior fundamentals factor, this needs price data too (for
+market cap), which `compute_fundamentals_ic_series` structurally cannot
+supply to a score function -- a new, separate function,
+`compute_hybrid_ic_series`, was added instead of widening the existing
+one's contract, and `compute_fundamentals_ic_from_catalog.py` now
+branches to it for `--score shareholder_yield`. A deliberate design
+choice, distinct from every other factor's missing-data handling: a
+company with no dividends/buybacks/issuance concept filed at all scores
+`0.0` (a genuine zero-payout year), not `None` -- these cash-flow line
+items are only ever tagged by a filer when the activity happened, so
+their total absence is not "unknown data" the way a missing
+`NetIncomeLoss` would be. Market cap itself still requires both a known
+price and a known share count, or the whole score is `None`. Also uses
+the RAW (never `adjusted_close`) price for market cap, with a dedicated
+regression test proving the distinction matters. Needs 3 more XBRL
+concepts (`PaymentsOfDividends`, `PaymentsForRepurchaseOfCommonStock`,
+`ProceedsFromIssuanceOfCommonStock`), same zero-extra-request
+ingestion cost as Piotroski's addition. Also deliberately NOT added to
+the walk-forward pool yet. Full account: ADR-0043 Decision 10.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the
