@@ -1062,6 +1062,33 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
       진짜 예측력 있는 신호인지 문헌 검증 먼저, (b) 지금은 검증된
       전략이 0개라 신규 데이터 소스 확장 자체가 후순위라는 점은
       동일하게 적용됨. 착수는 안 함, 후보로만 기록.
+  - **5라운드 ("최대한 많이 자세하게" — 우리 문서에 남아있는 구체적
+    미해결 항목 2개를 정조준: PEAD 재검토, value_composite의 빠진
+    EV/EBITDA 다리)**:
+    - **PEAD(실적 발표 후 표류 효과) — 여전히 불가능, 재확인만 됨**:
+      컨센서스 실적 추정치를 제공하는 진짜 무료·오픈소스 소스는 여전히
+      없음 — FMP/Finnworlds/Zacks(Nasdaq Data Link)/Estimize 전부
+      유료(Estimize는 크라우드소싱이지만 API 자체는 유료). ADR-0043
+      Decision 8의 "PEAD는 데이터 소스 자체가 없어서 불가능" 결론이
+      그대로 재확인됨 — 새로 열린 문이 없음.
+    - **`value_composite_score`의 빠진 EV/EBITDA 다리 — 이건 외부
+      프로젝트가 아니라 우리 자체 ingestion만 확장하면 닫을 수 있는
+      갭이라는 걸 확인함**: PEAD와 달리 EV/EBITDA는 새 외부 데이터
+      소스가 필요한 게 아니라, 이미 쓰고 있는 SEC us-gaap XBRL
+      택소노미 안에 표준 개념(`CashAndCashEquivalentsAtCarryingValue`,
+      `ShortTermBorrowings`, `DepreciationDepletionAndAmortization`)이
+      실제로 존재함 — Piotroski/Shareholder Yield 때처럼 `ingest_
+      fundamentals_data.py`의 `_DEFAULT_CONCEPTS`에 몇 개 더 추가하는
+      것만으로 원리적으론 가능. **다만 정직하게 밝혀둘 리스크**: XBRL
+      개념 태그가 회사마다 제각각인 경우가 흔함(감가상각을
+      `Depreciation`으로 태깅하는 회사도 있고
+      `DepreciationDepletionAndAmortization`/
+      `DepreciationAmortizationAndAccretionNet`로 태깅하는 회사도
+      있음) — 이 프로젝트의 all-or-nothing 정직성 원칙상 이런 태그
+      불일치는 커버리지 구멍(`None`)으로 그대로 드러날 것이고, 실제로
+      해보기 전까진 데이터가 얼마나 성기게 나올지 알 수 없음. 착수는
+      안 함, 다음에 후보 늘릴 때 최우선(PEAD와 달리 진짜 시도 가능한
+      항목).
 
 ### Completed (Session 33 — Phase 31 continued)
 
