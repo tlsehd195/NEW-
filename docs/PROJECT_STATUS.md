@@ -9,19 +9,12 @@
 
 ---
 
-## 사용자가 코드스페이스(실제 환경)에서 직접 해야 할 일 (Session 36 기준, 2026-09-03 재갱신)
+## raw IC 스크리닝 20개 전체 완료 (Session 36, 2026-09-03) — 편입 판단은 아래 "다음 결정" 섹션 참고
 
-**2026-09-03 재갱신: XOM 재실행 완료, 정상 확인됨.** `[15/63] XOM (CIK
-0000034088, source=override): -> 1712 record(s) persisted` — `ADR-0050`의
-`_KNOWN_CIK_OVERRIDES` 기본값이 실제로 작동해서 플래그 없이 자동으로
-올바른 CIK가 적용됨(다른 62종목과 비슷한 규모의 레코드 수, 이전의 30개
-오염 데이터 아님). 이 catalog로 재계산한 13개 펀더멘털 raw IC도 정상
-수신 — **아래 19개는 전부 확정치로 기록.** 단, 재실행 명령을 정리하며
-**`sales_yield` 하나를 실수로 목록에서 빠뜨림** — 14개여야 할 펀더멘털
-체크가 13개만 실행됨, 이거 하나만 추가로 실행 필요(아래 6번).
-
-**raw IC 19개 확정 결과 (17후보 풀 편입 여부는 아래 6번의 `sales_yield`
-결과까지 받은 뒤 판단 — RULE 0.8대로 지금 성급하게 결정하지 않음):**
+**20개 raw IC 전부 확정 수신 완료.** XOM CIK 버그(ADR-0050) 수정 검증
+완료, `sales_yield` 누락분도 수신 완료. 이 이상 사용자가 코드스페이스에서
+직접 실행할 일은 없음 — 다음 단계(어떤 후보를 walk-forward 풀에 넣을지,
+그리고 그 이후 실제 wiring)는 판단/설계 작업이라 이 세션이 진행함.
 
 | strategy | 종류 | observations | mean_ic | ic_information_ratio | positive_ic_ratio |
 |---|---|---|---|---|---|
@@ -43,6 +36,7 @@
 | gross_profitability | 펀더멘털 | 79 | -0.0710 | -0.1440 | 44.30% |
 | altman_z | 펀더멘털 | 79 | 0.0072 | 0.0221 | 44.30% |
 | book_to_market | 펀더멘털 | 79 | -0.0486 | -0.2207 | 45.57% |
+| sales_yield | 펀더멘털 | 79 | -0.0502 | -0.1912 | 45.57% |
 | cashflow_yield | 펀더멘털 | 79 | -0.0132 | -0.0548 | 51.90% |
 
 (피벗 참고: `piotroski`가 observations=49로 유독 낮은 건 은행/증권사
@@ -50,21 +44,44 @@
 데이터 특성. `dividend_growth`도 무배당 종목에서 구조적으로 `None`이
 많이 나올 수 있음.)
 
-아래 순서대로 진행하면 됨:
+**부호 기반 해석 (사후 크기 비교가 아니라, 문헌이 사전에 예측한 방향과
+일치하는지만 봄 — 모든 factor_scores 구현이 "점수가 높을수록 미래
+수익률도 높을 것"으로 부호를 미리 맞춰뒀으므로, 문헌이 맞다면 20개 전부
+양의 mean_ic가 나와야 함):**
+- **문헌 예측과 일치(양의 IC), 9개**: short_term_reversal(+0.0106),
+  illiquidity(+0.0512, 20개 중 가장 강한 양의 IR=0.28), piotroski(+0.0766,
+  n=49로 더 작음), shareholder_yield(+0.0027, 사실상 0), sloan_accruals
+  (+0.0265), dividend_growth(+0.0630), quality_minus_junk(+0.0330),
+  size(+0.0320), altman_z(+0.0072, 사실상 0).
+- **문헌 예측과 불일치(음의 IC) 또는 사실상 0, 11개**: long_term_reversal
+  (-0.0007, 사실상 0), low_beta(-0.0261), fifty_two_week_high(-0.0075),
+  max_effect(-0.0217), asset_growth(-0.0157), earnings_yield(-0.0301),
+  value_composite(-0.0220), gross_profitability(-0.0710, 20개 중
+  절댓값이 가장 큼), book_to_market(-0.0486), sales_yield(-0.0502),
+  cashflow_yield(-0.0132).
+- **주목할 패턴 (노이즈가 아니라 일관된 신호로 보임)**: `value_composite`의
+  독립적인 다리 4개(book_to_market/sales_yield/cashflow_yield/
+  earnings_yield)가 **전부** 음의 IC — 이 63종목·2010~2023 대형주
+  표본에서는 전통적 가치 팩터가 구조적으로 안 통한다는 일관된 신호로
+  보임(우연이라기엔 4개가 독립적으로 같은 방향). `gross_profitability`는
+  절댓값 기준 가장 강한 신호인데 문헌과 반대 부호 — 원인 불명(표본이
+  이미 초대형주라 수익성이 다들 높아서 변별력이 약했거나, 구현 자체를
+  재검토할 필요가 있거나). **지금 이 신호들의 부호를 뒤집거나 조정하지
+  않음** — 그건 결과 보고 사후에 조정하는 것이라 RULE 0.8 위반.
+- **선행 사례 (leverage/ml_ols, 위 Session 34-35 기록 참고)**: raw
+  IC의 크기·부호가 실제 walk-forward 견고성(fold-consistency/PBO/DSR)을
+  신뢰성 있게 예측하지 못한다는 게 이미 이 프로젝트에서 실측으로
+  확인됨 — ml_ols는 raw IC가 가장 강했는데도 fold-consistency 기준
+  미달, leverage는 raw IC가 그보다 약했는데 fold-consistency는
+  통과. **그래서 raw IC 부호/크기만으로 17개 후보 중 일부를 걸러내는
+  건 사후선택 편향 위험이 있고, 과거에도 그렇게 하지 않았음.**
 
-1. **최신 코드 받기**: `git pull origin main`.
-2. (완료됨 — 위 확정 결과가 이미 이 catalog 기준. 재실행 불필요.)
-3. (완료됨 — 위 표 19개 값이 확정치. 재실행 불필요.)
-4. (완료됨 — 결과 이미 relay됨.)
-5. (완료됨 — 위 표에 정리됨.)
-6. **`sales_yield` raw IC 1개만 추가 실행** (내가 목록에서 실수로 빠뜨린 것):
-   ```
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score sales_yield --start 2010-01-01
-   ```
-   결과를 그대로 붙여넣어 주면 위 표에 20번째 행으로 추가하고, 17후보
-   풀 편입 여부(어떤 걸 넣을지, 우선순위는 뭘로 할지) 판단함.
+**다음 결정 (사용자 확인 필요)**: 20개(중복 제외 17개 독립 팩터) 전부를
+walk-forward/PBO/DSR 풀에 넣을지, 아니면 이번엔 문헌과 부호가 일치하는
+9개만 먼저 넣을지는 순수 리서치 방법론 판단이라 사용자 확인 없이
+진행하지 않음 — 채팅에서 직접 질문함.
 
-7. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
+1. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
    것들 — 전부 실제 데이터/네트워크가 필요해서 사용자 환경에서만 가능,
    위 1~4번 다 끝난 뒤 여유 있을 때만**:
    - **`survivorship-free-spy` 최신성 확인**: `teddykoker/survivorship-free-spy`
