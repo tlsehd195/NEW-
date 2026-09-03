@@ -819,6 +819,105 @@ to the 8-candidate walk-forward pool, none yet observed against real
 data -- all six remain hypotheses fixed before any result is seen, per
 RULE 0.8.
 
+## Decision 12 -- the last two non-rejected candidates (`quality_minus_junk_score`, `value_composite_score`), unblocked by new cross-sectional IC architecture (`compute_universe_ic_series`)
+
+Asked to build the two remaining ADR-0043 Decision 8 candidates that
+were deferred as "too complex" rather than rejected on evidence
+(Quality Minus Junk, O'Shaughnessy Trending Value), investigating what
+"too complex" actually meant found a single, precise, shared cause:
+both need to combine several raw metrics into one composite by
+CROSS-SECTIONALLY RANKING or z-scoring them against the rest of the
+investable universe at each rebalance date -- something no per-security
+`ScoreFn`/`FundamentalsScoreFn`/`HybridScoreFn` can express, since each
+is called once per security with zero visibility into the rest of the
+universe at that moment. This is the exact same architectural gap
+Decision 11 already identified and declined to build new plumbing for
+regarding Value+Momentum's literal rank-combination -- except here, with
+two candidates needing it rather than one, building the plumbing once
+became worth doing.
+
+**New architecture**: `signal_ic.UniverseScoreFn`/`compute_universe_
+ic_series` -- `score_fn` is called ONCE PER REBALANCE DATE with the
+full `security_ids` list (not once per security), and returns a
+`dict[security_id, score]` already computed cross-sectionally for
+every scorable security that date, reusing `rank_average` (the same
+tie-robust ranking `spearman_ic` itself already uses) rather than
+z-scoring, which needs no distributional assumptions. One function
+serves both a fundamentals-only composite and a price-dependent one
+(matching `compute_hybrid_ic_series`'s own precedent of a fixed
+2-repository signature regardless of whether a given score needs both).
+
+**`quality_minus_junk_score`** (Asness, Frazzini & Pedersen 2013/2019,
+"Quality Minus Junk," Review of Accounting Studies): a deliberate
+3-component simplification of the published ~20-submetric,
+3-pillar-plus-growth methodology, reusing this project's own
+already-built and already-tested functions rather than new ones --
+Profitability (`roe_score`), Safety (`leverage_score`), earnings
+Quality (`sloan_accruals_score`). The Growth pillar is omitted entirely
+(this project's fundamentals history is not deep enough for a reliable
+5-year trend). Each raw value is rank-averaged across every security
+with all 3 components available that date, then the 3 ranks are
+averaged into the final score. Needs zero new real ingestion.
+
+**`value_composite_score`** (O'Shaughnessy, "What Works on Wall
+Street"): deliberately 5 of the original 6 legs, and deliberately NOT
+"Trending" (no momentum overlay) -- two separate, precisely-stated
+limitations, not one vague "simplified" label:
+1. EV/EBITDA needs enterprise value (market cap + total debt - cash)
+   and EBITDA (needs depreciation & amortization) -- this project has
+   never ingested a cash concept, short-term debt, or any D&A concept.
+   A genuine MISSING-DATA blocker (like PEAD's), not a complexity one
+   -- investigating this candidate found 5 of 6 legs were entirely
+   buildable with data already ingested for earlier candidates, only
+   this one leg is a real data gap.
+2. The momentum overlay is deliberately not rebuilt, identical
+   reasoning to Decision 11's earnings_yield_score: this project
+   already has a real, observed null IC result for the shared momentum
+   score used elsewhere (mean_ic = -0.0078).
+
+Built 3 new supporting "yield" legs to make the other 5 possible --
+`book_to_market_score` (Fama & French 1992's HML basis, arguably the
+single most canonical value factor in the literature, independently
+testable via `compute_hybrid_ic_series` on its own too), `sales_yield_
+score` (O'Shaughnessy/Senchack & Martin 1987), `cashflow_yield_score`
+(O'Shaughnessy) -- combined with the already-built `earnings_yield_
+score`/`shareholder_yield_score` for the 5-leg composite. All 3 need
+zero new real ingestion.
+
+Both composites wired into `compute_fundamentals_ic_from_catalog.py`
+via a third dict, `_UNIVERSE_SCORES` (`--score quality_minus_junk` /
+`value_composite`), also deliberately NOT added to the walk-forward
+pool yet.
+
+22 new tests: 5 in `tests/strategy_research/test_signal_ic.py::
+TestComputeUniverseIcSeries` (wiring, once-per-date-not-per-security
+call discipline, a security omitted from the returned dict is simply
+unscored not zero-scored, an end-to-end run against the real
+`quality_minus_junk_score`, the empty-input case); 13 in `tests/
+strategy_research/test_factor_scores.py` across
+`TestBookToMarketScore`/`TestSalesYieldScore`/`TestCashflowYieldScore`
+(hand-computable values, missing/non-positive-input None cases, and a
+regression proving a negative book value/CFO produces a directionally-
+meaningful negative score rather than being rejected); 3 in
+`TestQualityMinusJunkScore` and 3 in `TestValueCompositeScore`
+(higher-quality/cheaper ranks higher, a security missing any one
+component is excluded from that date's entire cross-section rather
+than partially scored, fewer-than-2-scorable-securities returns `{}`
+rather than a fabricated ranking); 1 CLI end-to-end wiring test proving
+the new `_UNIVERSE_SCORES` branch actually runs (needing >= 2 real
+symbols, unlike every earlier single-symbol CLI fixture, since both
+composites need a real cross-section to produce anything). Full suite:
+2131 passed (up from 2109).
+
+All 8 externally-researched candidates now built (`asset_growth`,
+`piotroski`, `shareholder_yield`, `sloan_accruals`, `dividend_growth`,
+`earnings_yield`, `quality_minus_junk`, `value_composite`) and wired
+for cheap raw IC checks -- this closes out every non-rejected candidate
+from the original ADR-0043 Decision 8 12-strategy literature search.
+None yet added to the 8-candidate walk-forward pool, none yet observed
+against real data -- all remain hypotheses fixed before any result is
+seen, per RULE 0.8.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true

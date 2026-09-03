@@ -24,16 +24,21 @@ from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
 from strategy_research.factor_scores import (
     asset_growth_score,
+    book_to_market_score,
+    cashflow_yield_score,
     dividend_growth_score,
     earnings_yield_score,
     leverage_score,
     low_volatility_score,
     net_margin_score,
     piotroski_f_score,
+    quality_minus_junk_score,
     roa_score,
     roe_score,
+    sales_yield_score,
     shareholder_yield_score,
     sloan_accruals_score,
+    value_composite_score,
 )
 
 
@@ -897,3 +902,229 @@ class TestEarningsYieldScore:
 
         score = earnings_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
         assert score == pytest.approx(0.005)  # still the 2022 net income, not the future 9000.0
+
+
+class TestBookToMarketScore:
+    """Session 36 -- ADR-0043 Decision 12: Fama & French (1992)'s
+    book-to-market, computed identically to earnings_yield_score with
+    StockholdersEquity in place of NetIncomeLoss."""
+
+    def test_computes_stockholders_equity_over_market_cap(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=500.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = book_to_market_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(0.05)  # 500 / (10*1000)
+
+    def test_negative_equity_produces_a_negative_directionally_correct_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=-50.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = book_to_market_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score is not None and score < 0  # not rejected as None -- negative is meaningful here
+
+    def test_missing_equity_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert book_to_market_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_missing_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=500.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[])
+
+        assert book_to_market_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+class TestSalesYieldScore:
+    """Session 36 -- ADR-0043 Decision 12: O'Shaughnessy's price-to-sales
+    leg, inverted to a "yield". Unlike book value, non-positive revenue
+    is rejected (None), not left to produce a meaningful negative score."""
+
+    def test_computes_revenues_over_market_cap(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=200.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = sales_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(0.02)  # 200 / (10*1000)
+
+    def test_zero_or_negative_revenue_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=0.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert sales_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_missing_revenue_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert sales_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+class TestCashflowYieldScore:
+    """Session 36 -- ADR-0043 Decision 12: O'Shaughnessy's price-to-
+    cash-flow leg, inverted to a "yield". Negative CFO is directionally
+    meaningful (not rejected), same as book_to_market_score's negative
+    equity."""
+
+    def test_computes_cfo_over_market_cap(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "cfo", concept="NetCashProvidedByUsedInOperatingActivities", value=300.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = cashflow_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(0.03)  # 300 / (10*1000)
+
+    def test_negative_cfo_produces_a_negative_directionally_correct_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "cfo", concept="NetCashProvidedByUsedInOperatingActivities", value=-50.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = cashflow_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score is not None and score < 0
+
+    def test_missing_cfo_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert cashflow_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+def _add_quality_fixture(repo, security_id, *, roe_income=50.0, roe_equity=100.0, leverage_liabilities=100.0, accruals_cfo=60.0, accruals_ni=None) -> None:
+    """Populates every concept quality_minus_junk_score's 3 components
+    (roe_score/leverage_score/sloan_accruals_score) need for one
+    security at a single fiscal year-end, defaulting to "high quality"
+    values (high ROE, low leverage, low accruals) unless overridden."""
+    ni = accruals_ni if accruals_ni is not None else roe_income
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:ni", concept="NetIncomeLoss", value=ni, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:eq", concept="StockholdersEquity", value=roe_equity, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:liab", concept="Liabilities", value=leverage_liabilities, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:cfo", concept="NetCashProvidedByUsedInOperatingActivities", value=accruals_cfo, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:assets_prior", concept="Assets", value=500.0, period_end=_utc(2021, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:assets_current", concept="Assets", value=500.0, period_end=_utc(2022, 12, 31)))
+
+
+class TestQualityMinusJunkScore:
+    """Session 36 -- ADR-0043 Decision 12: Asness, Frazzini & Pedersen's
+    quality composite, deferred at ADR-0043 Decision 8 as "too complex"
+    -- the real reason was the cross-sectional combination step, now
+    unblocked by `compute_universe_ic_series`. A deliberate 3-component
+    simplification (profitability/safety/quality only, no growth pillar)
+    reusing roe_score/leverage_score/sloan_accruals_score directly."""
+
+    def test_higher_quality_security_scores_higher(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_quality_fixture(repo, "GOOD")  # high ROE, low leverage, low accruals (defaults)
+        _add_quality_fixture(repo, "JUNK", roe_income=5.0, leverage_liabilities=800.0, accruals_ni=5.0, accruals_cfo=0.0)
+
+        scores = quality_minus_junk_score(["GOOD", "JUNK"], _utc(2023, 6, 1), repo, price_repository=None)
+
+        assert scores["GOOD"] > scores["JUNK"]
+
+    def test_a_security_missing_any_component_is_excluded_from_the_cross_section(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_quality_fixture(repo, "COMPLETE_A")
+        _add_quality_fixture(repo, "COMPLETE_B")
+        # "INCOMPLETE" has ROE inputs but no Liabilities at all -> leverage_score is None.
+        repo.add_fundamental(_fy_record("INCOMPLETE", "ni", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("INCOMPLETE", "eq", concept="StockholdersEquity", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        scores = quality_minus_junk_score(
+            ["COMPLETE_A", "COMPLETE_B", "INCOMPLETE"], _utc(2023, 6, 1), repo, price_repository=None,
+        )
+
+        assert "COMPLETE_A" in scores and "COMPLETE_B" in scores
+        assert "INCOMPLETE" not in scores
+
+    def test_fewer_than_two_scorable_securities_returns_an_empty_dict_not_a_fabricated_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_quality_fixture(repo, "ONLY_ONE")
+
+        scores = quality_minus_junk_score(["ONLY_ONE"], _utc(2023, 6, 1), repo, price_repository=None)
+
+        assert scores == {}
+
+
+def _add_value_fixture(repo, security_id, price_repo, *, ni=50.0, equity=500.0, revenue=200.0, cfo=300.0, dividends=100.0, price=10.0, shares=1000.0) -> None:
+    """Populates every concept value_composite_score's 5 legs need for
+    one security, plus a matching price bar."""
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:ni", concept="NetIncomeLoss", value=ni, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:eq", concept="StockholdersEquity", value=equity, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:rev", concept="Revenues", value=revenue, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:cfo", concept="NetCashProvidedByUsedInOperatingActivities", value=cfo, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:div", concept="PaymentsOfDividends", value=dividends, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:shares", concept="CommonStockSharesOutstanding", value=shares, period_end=_utc(2022, 12, 31)))
+    price_repo.append_bars([_price_bar(security_id, f"{security_id}:p1", close=price, timestamp=_utc(2023, 5, 25))])
+
+
+class TestValueCompositeScore:
+    """Session 36 -- ADR-0043 Decision 12: O'Shaughnessy's Value
+    Composite -- 5 of the original 6 legs (EV/EBITDA excluded, a real
+    missing-data gap), no "Trending" momentum overlay (deliberately not
+    rebuilt, ADR-0043 Decision 11's same reasoning)."""
+
+    def test_cheaper_security_scores_higher_on_every_leg(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        price_repo = InMemoryDataRepository(bars=[])
+        _add_value_fixture(repo, "CHEAP", price_repo, ni=500.0, equity=5000.0, revenue=2000.0, cfo=3000.0, dividends=1000.0)
+        _add_value_fixture(repo, "EXPENSIVE", price_repo, ni=5.0, equity=50.0, revenue=20.0, cfo=30.0, dividends=0.0)
+
+        scores = value_composite_score(["CHEAP", "EXPENSIVE"], _utc(2023, 6, 1), repo, price_repo)
+
+        assert scores["CHEAP"] > scores["EXPENSIVE"]
+
+    def test_a_security_missing_any_leg_is_excluded_from_the_cross_section(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        price_repo = InMemoryDataRepository(bars=[])
+        _add_value_fixture(repo, "COMPLETE_A", price_repo)
+        _add_value_fixture(repo, "COMPLETE_B", price_repo)
+        # "PARTIAL" has a price and net income but is missing every
+        # other leg's inputs (including CommonStockSharesOutstanding,
+        # which every leg needs for market cap).
+        repo.add_fundamental(_fy_record("PARTIAL", "ni", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+        price_repo.append_bars([_price_bar("PARTIAL", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        scores = value_composite_score(["COMPLETE_A", "COMPLETE_B", "PARTIAL"], _utc(2023, 6, 1), repo, price_repo)
+
+        assert "COMPLETE_A" in scores and "COMPLETE_B" in scores
+        assert "PARTIAL" not in scores
+
+    def test_fewer_than_two_scorable_securities_returns_an_empty_dict_not_a_fabricated_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        price_repo = InMemoryDataRepository(bars=[])
+        _add_value_fixture(repo, "ONLY_ONE", price_repo)
+
+        scores = value_composite_score(["ONLY_ONE"], _utc(2023, 6, 1), repo, price_repo)
+
+        assert scores == {}

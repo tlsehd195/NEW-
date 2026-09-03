@@ -12,17 +12,23 @@ first score here that also needs price data, wired through the new
 `compute_hybrid_ic_series` instead of `compute_fundamentals_ic_series`),
 `sloan_accruals` (Sloan 1996's accruals anomaly -- ADR-0043 Decision
 11), `dividend_growth` (a YoY change in dividends paid, ADR-0043
-Decision 11), or `earnings_yield` (Basu 1977's net-income/market-cap
+Decision 11), `earnings_yield` (Basu 1977's net-income/market-cap
 value anomaly, ADR-0043 Decision 11 -- also wired through
-`compute_hybrid_ic_series`, since it needs price too) -- using
+`compute_hybrid_ic_series`, since it needs price too), `quality_minus_junk`
+(Asness, Frazzini & Pedersen's quality composite, ADR-0043 Decision 12
+-- a CROSS-SECTIONAL score computed for the whole universe at once via
+the new `compute_universe_ic_series`, not per-security), or
+`value_composite` (O'Shaughnessy's multi-ratio value composite, ADR-0043
+Decision 12 -- also cross-sectional, and also needs price) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` (or, for
-`shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`)
+`shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`; or,
+for `quality_minus_junk`/`value_composite`, `compute_universe_ic_series`)
 against two live DuckDB catalogs: the fundamentals catalog (ADR-0042,
 `ingest_fundamentals_data.py`'s output) and the price catalog
 (`ingest_real_market_data.py`'s output, needed for forward returns,
-and for the two hybrid scores' market-cap calculation too). Mirrors
-`compute_signal_ic_from_catalog.py`'s structure and TEST-1 guard
-exactly, adapted for two repositories instead of one -- see that
+and for the price-dependent scores' market-cap calculation too).
+Mirrors `compute_signal_ic_from_catalog.py`'s structure and TEST-1
+guard exactly, adapted for two repositories instead of one -- see that
 script's own module docstring for the full "why a live catalog, why
 TEST-1 is refused with no override" reasoning, which applies here
 unchanged.
@@ -64,13 +70,19 @@ from strategy_research.factor_scores import (  # noqa: E402
     leverage_score,
     net_margin_score,
     piotroski_f_score,
+    quality_minus_junk_score,
     roa_score,
     roe_score,
     shareholder_yield_score,
     sloan_accruals_score,
+    value_composite_score,
 )
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
-from strategy_research.signal_ic import compute_fundamentals_ic_series, compute_hybrid_ic_series  # noqa: E402
+from strategy_research.signal_ic import (  # noqa: E402
+    compute_fundamentals_ic_series,
+    compute_hybrid_ic_series,
+    compute_universe_ic_series,
+)
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE3}
 
@@ -96,6 +108,19 @@ _HYBRID_SCORES = {
     "earnings_yield": earnings_yield_score,
 }
 
+# Session 36 addition (ADR-0043 Decision 12) -- scores whose score_fn is
+# CROSS-SECTIONAL (computes every security's score for the whole
+# universe at once per rebalance date, typically via cross-sectional
+# rank-averaging), wired through compute_universe_ic_series instead of
+# either function above. A third dict, not merged into _HYBRID_SCORES,
+# since the call shape differs again (one call per rebalance date with
+# the full security_ids list, returning a dict, vs one call per
+# security returning a single score).
+_UNIVERSE_SCORES = {
+    "quality_minus_junk": quality_minus_junk_score,
+    "value_composite": value_composite_score,
+}
+
 
 def _rebalance_dates(start: datetime, end: datetime, step_months: int) -> list[datetime]:
     dates = []
@@ -111,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--price-db-path", required=True, type=Path, help="DuckDB catalog from ingest_real_market_data.py (forward returns)")
     parser.add_argument("--fundamentals-db-path", required=True, type=Path, help="DuckDB catalog from ingest_fundamentals_data.py (scores)")
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE")
-    parser.add_argument("--score", choices=sorted(set(_SCORES) | set(_HYBRID_SCORES)), default="roe")
+    parser.add_argument("--score", choices=sorted(set(_SCORES) | set(_HYBRID_SCORES) | set(_UNIVERSE_SCORES)), default="roe")
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
     parser.add_argument(
         "--end", type=str, default=None,
@@ -148,7 +173,13 @@ def main(argv: list[str] | None = None) -> int:
 
     rebalance_dates = _rebalance_dates(start, end, args.step_months)
 
-    if args.score in _HYBRID_SCORES:
+    if args.score in _UNIVERSE_SCORES:
+        summary = compute_universe_ic_series(
+            list(universe.symbol_ids), rebalance_dates, _UNIVERSE_SCORES[args.score],
+            fundamentals_repository=fundamentals_repository, price_repository=price_repository,
+            horizon_days=args.horizon_days,
+        )
+    elif args.score in _HYBRID_SCORES:
         summary = compute_hybrid_ic_series(
             list(universe.symbol_ids), rebalance_dates, _HYBRID_SCORES[args.score],
             fundamentals_repository=fundamentals_repository, price_repository=price_repository,

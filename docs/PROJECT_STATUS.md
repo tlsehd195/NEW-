@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-02
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 6개 추가 — asset_growth_score(Decision 8, 추가 데이터 불필요), piotroski_f_score(Decision 9, XBRL 6개 신규 항목 필요), shareholder_yield_score(Decision 10, 가격+펀더멘털 이중 저장소 새 배선 `compute_hybrid_ic_series` 필요), sloan_accruals_score/dividend_growth_score/earnings_yield_score(Decision 11, 셋 다 추가 데이터 불필요))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 8개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료 — asset_growth_score(Decision 8), piotroski_f_score(Decision 9), shareholder_yield_score(Decision 10, `compute_hybrid_ic_series` 신규 배선), sloan_accruals_score/dividend_growth_score/earnings_yield_score(Decision 11), quality_minus_junk_score/value_composite_score(Decision 12, `compute_universe_ic_series` 신규 교차단면 배선))
 
 ---
 
@@ -25,10 +25,10 @@
    python3 scripts/ingest_fundamentals_data.py --universe RESEARCH_UNIVERSE \
      --user-agent "..." --as-of <오늘 날짜> --db-path ./data/fundamentals_data
    ```
-3. **raw IC 체크 6개 실행** (8후보 풀엔 아직 하나도 안 넣었음 — 아래 6개
-   결과를 보고 나서 넣을지 결정. 뒤 3개(`sloan_accruals`/
-   `dividend_growth`/`earnings_yield`)도 XBRL 추가 항목 없이 위 ingestion
-   한 번으로 다 커버됨):
+3. **raw IC 체크 8개 실행** (8후보 풀엔 아직 하나도 안 넣었음 — 아래 8개
+   결과를 보고 나서 넣을지 결정. 8개 전부 XBRL 추가 항목 없이 위
+   ingestion 한 번으로 다 커버됨 — 원래 문헌 조사 12개 후보 중 기각
+   안 된 건 이제 이 8개가 전부):
    ```
    python3 scripts/compute_fundamentals_ic_from_catalog.py \
      --price-db-path ./data/real_2010_latest \
@@ -59,6 +59,16 @@
      --price-db-path ./data/real_2010_latest \
      --fundamentals-db-path ./data/fundamentals_data \
      --score earnings_yield --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score quality_minus_junk --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score value_composite --start 2010-01-01
    ```
 4. **결과를 그대로 붙여넣어 보고** — `mean_ic`/`ic_information_ratio`/
    `positive_ic_ratio`/`observations` 값을 그대로 전달하면 8후보 풀에
@@ -925,6 +935,39 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     2109개 통과(기존 2086 + 23).
   - 다음 단계: 나머지 5개와 마찬가지로 실제 ingestion 후 raw IC 체크
     (총 6개 후보 결과를 한번에 볼 수 있음).
+- **"기각 안한거 만들어" 요청으로 마지막 남은 2개 후보 구현
+  (`ADR-0043` Decision 12)** — 12개 리스트 중 "복잡해서 미룸"이라고
+  적어뒀던 Quality Minus Junk/O'Shaughnessy Trending Value 처리.
+  파봤더니 둘 다 진짜 이유는 같았음: **여러 지표를 전체 유니버스
+  기준으로 순위/표준화해서 하나로 합쳐야 하는데, 지금 아키텍처(종목별
+  독립 계산)로는 이게 원천적으로 불가능**했음 — Decision 11에서
+  Value+Momentum 결합 못 만든 이유와 정확히 같은 문제.
+  - **새 아키텍처 추가**: `signal_ic.py`에 `compute_universe_ic_series`
+    신규 함수 — 종목 하나씩이 아니라 **리밸런스 날짜 하나당 한 번,
+    전체 종목 리스트를 통째로 받아서** 그 안에서 순위 매기고 dict로
+    반환하는 방식(`rank_average` 재사용). 이걸로 두 후보 다 한번에
+    풀림.
+  - `quality_minus_junk_score`: 원 논문은 ~20개 세부지표를 3~4개
+    필러로 묶는데, 우리는 이미 만든 3개(ROE=수익성,
+    leverage=안전성, accruals=이익의 질)만 단순화해서 재사용 —
+    성장성 필러는 뺌(5년 추세 계산할 만큼 데이터 이력이 깊지 않음).
+  - `value_composite_score`: 원래 6개 지표 중 5개만 만듦
+    (EV/EBITDA는 현금·단기부채·감가상각 데이터가 아예 없어서
+    진짜 데이터 부족, 복잡함의 문제 아님) + 모멘텀 오버레이("Trending")
+    없음(이유는 Decision 11의 earnings_yield와 동일 — 모멘텀은
+    이미 실측 null). 5개 지표 중 3개(book_to_market/sales_yield/
+    cashflow_yield)는 이번에 새로 만든 단독 후보이기도 함
+    (book_to_market은 Fama-French HML의 기반, 사실상 가치 팩터
+    중 가장 정통적인 것).
+  - `compute_fundamentals_ic_from_catalog.py`에 `--score
+    quality_minus_junk`/`value_composite` 배선, 이것도 8후보
+    풀엔 아직 안 넣음.
+  - 신규 테스트 22개(signal_ic 5 + factor_scores 16 + CLI wiring 1),
+    전체 스위트 2131개 통과(기존 2109 + 22).
+  - **이걸로 원래 12개 문헌 후보 중 기각 안 한 건 전부 완료** — 총
+    8개 후보(asset_growth/piotroski/shareholder_yield/sloan_accruals/
+    dividend_growth/earnings_yield/quality_minus_junk/value_composite)
+    가 raw IC 결과 대기중.
 
 ### Completed (Session 33 — Phase 31 continued)
 

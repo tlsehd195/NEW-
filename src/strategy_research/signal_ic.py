@@ -305,6 +305,69 @@ def compute_hybrid_ic_series(
     return summarize_ic_observations(observations)
 
 
+UniverseScoreFn = Callable[[Sequence[str], datetime, object, object], dict]
+
+
+def compute_universe_ic_series(
+    security_ids: Sequence[str],
+    rebalance_dates: Sequence[datetime],
+    score_fn: UniverseScoreFn,
+    fundamentals_repository: object,
+    price_repository: DataRepository,
+    *,
+    horizon_days: int,
+) -> IcSummary:
+    """Analog of `compute_hybrid_ic_series` for a factor whose score
+    computation needs CROSS-SECTIONAL information -- the whole
+    universe's values at once, not just one security's -- something no
+    per-security `ScoreFn`/`FundamentalsScoreFn`/`HybridScoreFn` can
+    express (each is called once per security, with zero visibility
+    into the rest of the universe at that moment). Built specifically
+    to unblock `factor_scores.quality_minus_junk_score`/
+    `value_composite_score` (ADR-0043 Decision 12), both of which
+    ADR-0043 Decision 8 originally deferred as "too complex" -- the
+    real reason turned out to be this exact architectural gap, not
+    complexity for its own sake: both need to cross-sectionally RANK
+    several raw metrics across the whole universe before averaging
+    them into one composite, which a per-security score_fn structurally
+    cannot do.
+
+    Unlike `compute_ic_series`/`compute_fundamentals_ic_series`/
+    `compute_hybrid_ic_series`, `score_fn` here is called ONCE PER
+    REBALANCE DATE with the full `security_ids` sequence, and returns a
+    `dict[security_id, score]` already computed for every security that
+    could be scored that date (typically via `rank_average`, the same
+    tie-robust cross-sectional ranking `spearman_ic` itself already
+    uses) -- not a per-security callback. `fundamentals_repository` is
+    always passed even to a fundamentals-only `score_fn` (matching
+    `compute_hybrid_ic_series`'s own convention of a fixed 2-repository
+    signature regardless of whether a given score actually needs both),
+    so a single `UniverseScoreFn` shape serves both fundamentals-only
+    composites (`quality_minus_junk_score`) and price-dependent ones
+    (`value_composite_score`) without two near-duplicate IC functions.
+
+    Forward returns still come from `price_repository` via the same
+    `forward_return` helper every other function in this module uses,
+    deliberately not point-in-time-limited (module docstring)."""
+    observations: list[IcObservation] = []
+    for as_of_time in rebalance_dates:
+        scores = score_fn(security_ids, as_of_time, fundamentals_repository, price_repository)
+
+        forward_returns = {}
+        for sid in scores:
+            fr = forward_return(price_repository, sid, as_of_time, horizon_days)
+            if fr is not None:
+                forward_returns[sid] = fr
+
+        ic = spearman_ic(scores, forward_returns)
+        if ic is not None:
+            observations.append(
+                IcObservation(as_of_time=as_of_time, ic=ic, num_securities=len(forward_returns))
+            )
+
+    return summarize_ic_observations(observations)
+
+
 @dataclass(frozen=True)
 class BucketObservation:
     as_of_time: datetime

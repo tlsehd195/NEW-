@@ -16,12 +16,13 @@ untested ones.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Sequence
 
 from backtest.asof import AsOfDataView
 from backtest.metrics import annualized_volatility, compute_returns
 
 from strategy_research._dates import trim_to_lookback
+from strategy_research.signal_ic import rank_average
 
 
 def low_volatility_score(
@@ -625,3 +626,269 @@ def earnings_yield_score(
 # new IC-series layer analogous to `compute_hybrid_ic_series`). Revisit
 # only if `earnings_yield_score`'s own real IC result is promising
 # enough to justify that additional architecture.
+
+
+def book_to_market_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> Optional[float]:
+    """HYPOTHESIS -- book-to-market (Fama & French 1992, "The
+    Cross-Section of Expected Stock Returns," The Journal of Finance;
+    the anomaly itself traces to Rosenberg, Reid & Lanstein 1985): the
+    single most canonical value factor in the academic literature and
+    the basis of the Fama-French three-factor model's HML factor --
+    companies with a HIGHER book value of equity relative to market
+    value tend to have relatively better forward returns. Fama & French
+    (1992) themselves found book-to-market has more discriminatory
+    power than earnings yield for separating value from growth stocks
+    in their sample -- `earnings_yield_score`'s own docstring already
+    flagged this as the natural next candidate, needing zero new data.
+
+    Score = `StockholdersEquity / market_cap`, computed identically to
+    `earnings_yield_score` (same market-cap denominator, same
+    `_latest_price`/raw-close discipline), substituting
+    `StockholdersEquity` for `NetIncomeLoss` in the numerator. A
+    negative book value (rare but real) produces a negative score under
+    this module's higher-is-better convention -- directionally correct
+    (a negative-book-value company is not a "cheap value" situation),
+    so unlike `_fy_ratio`'s denominator guard, no extra guard is needed
+    on the numerator's sign here. One of the 5 (of the original 6) legs
+    of `value_composite_score` below (ADR-0043 Decision 12) -- also
+    independently testable on its own via `compute_hybrid_ic_series`.
+    Needs zero new real ingestion: `StockholdersEquity` is one of the 5
+    original ADR-0042 concepts."""
+    equity_record = _latest_fiscal_year_value(fundamentals_repository, security_id, "StockholdersEquity", as_of_time)
+    if equity_record is None:
+        return None
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    market_cap = price * shares_record.value
+    if market_cap <= 0:
+        return None
+    return equity_record.value / market_cap
+
+
+def sales_yield_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> Optional[float]:
+    """HYPOTHESIS -- price-to-sales inverted to a "yield" (O'Shaughnessy,
+    "What Works on Wall Street"; independently examined by Senchack &
+    Martin 1987, "The Relative Performance of the PSR and PER Investment
+    Strategies," Financial Analysts Journal): revenue relative to market
+    cap as a value proxy, argued to be more stable than earnings-based
+    ratios since revenue is far less prone to accounting manipulation or
+    one-time items than net income.
+
+    Score = `Revenues / market_cap`, same construction as
+    `earnings_yield_score`/`book_to_market_score`. Unlike book value,
+    revenue non-positive is rejected (`None`) rather than left to
+    produce a directionally-meaningful negative score -- a
+    non-positive-revenue "value" ratio is not interpretable the way a
+    negative book value still is. One of the 5 legs of
+    `value_composite_score` below. Needs zero new real ingestion:
+    `Revenues` is one of the 5 original ADR-0042 concepts."""
+    revenue_record = _latest_fiscal_year_value(fundamentals_repository, security_id, "Revenues", as_of_time)
+    if revenue_record is None or revenue_record.value <= 0:
+        return None
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    market_cap = price * shares_record.value
+    if market_cap <= 0:
+        return None
+    return revenue_record.value / market_cap
+
+
+def cashflow_yield_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> Optional[float]:
+    """HYPOTHESIS -- price-to-cash-flow inverted to a "yield"
+    (O'Shaughnessy, "What Works on Wall Street"): operating cash flow
+    relative to market cap, argued to be a value proxy less distorted
+    by accrual-based earnings management than an earnings-yield ratio
+    -- the same accrual-quality concern `sloan_accruals_score` tests
+    directly, here applied to a valuation ratio instead of a
+    stock-selection signal in its own right.
+
+    Score = `CFO / market_cap`. A negative CFO (real for early-stage or
+    cash-burning companies) produces a negative score, directionally
+    correct under this module's convention -- no extra guard needed
+    beyond the missing-data checks. One of the 5 legs of
+    `value_composite_score` below. Needs zero new real ingestion:
+    `NetCashProvidedByUsedInOperatingActivities` is already ingested
+    for `piotroski_f_score`/`sloan_accruals_score`."""
+    cfo_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "NetCashProvidedByUsedInOperatingActivities", as_of_time,
+    )
+    if cfo_record is None:
+        return None
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    market_cap = price * shares_record.value
+    if market_cap <= 0:
+        return None
+    return cfo_record.value / market_cap
+
+
+def _quality_component_values(
+    security_ids: Sequence[str], as_of_time: datetime, repository: object,
+) -> dict:
+    """(profitability, safety, quality) raw values for every security
+    that has ALL THREE already-tested building blocks
+    (`roe_score`/`leverage_score`/`sloan_accruals_score`) available at
+    `as_of_time`. Shared helper for `quality_minus_junk_score`."""
+    values = {}
+    for sid in security_ids:
+        profitability = roe_score(sid, as_of_time, repository)
+        safety = leverage_score(sid, as_of_time, repository)
+        quality = sloan_accruals_score(sid, as_of_time, repository)
+        if profitability is None or safety is None or quality is None:
+            continue
+        values[sid] = (profitability, safety, quality)
+    return values
+
+
+def quality_minus_junk_score(
+    security_ids: Sequence[str], as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> dict:
+    """HYPOTHESIS -- Quality Minus Junk (Asness, Frazzini & Pedersen
+    2013/2019, "Quality Minus Junk," Review of Accounting Studies):
+    high-"quality" stocks (safe, profitable, high-quality earnings)
+    outperform "junk" stocks -- one of the most widely-cited quality
+    factor papers, part of the same broader quality/safety literature
+    `leverage_score`/`low_volatility_score` already belong to.
+
+    **The real reason ADR-0043 Decision 8 deferred this as "too
+    complex," now understood precisely and unblocked**: the published
+    methodology z-scores each of roughly 20 underlying sub-metrics
+    across the investable universe at every rebalance date, then
+    averages into 3 pillars (Profitability/Growth/Safety) and finally
+    into one composite. That cross-sectional step cannot be expressed
+    by a per-security `ScoreFn`/`FundamentalsScoreFn`/`HybridScoreFn`
+    (each sees exactly one security_id at a time) -- it needs the new
+    `signal_ic.compute_universe_ic_series`/`UniverseScoreFn` shape
+    (ADR-0043 Decision 12), built specifically to unblock this
+    candidate and `value_composite_score` below.
+
+    **A deliberate, documented simplification of the published
+    methodology, not the literal ~20-submetric version**: 3 components
+    only, one metric each, reusing this project's own already-built and
+    already-tested functions rather than new ones -- Profitability
+    (`roe_score`), Safety (`leverage_score`, already negated so higher
+    is safer), and earnings Quality (`sloan_accruals_score`, already
+    negated so higher is lower-accrual/higher-quality). The Growth
+    pillar (5-year trailing profitability growth in the original paper)
+    is omitted entirely -- this project's fundamentals history is not
+    yet deep enough to compute a reliable 5-year trend. Each of the 3
+    raw values is rank-averaged (`signal_ic.rank_average`, the same
+    tie-robust ranking `spearman_ic` itself already uses) across every
+    security that has ALL THREE available at `as_of_time`, then the 3
+    per-security ranks are averaged into the final score.
+    `price_repository` is accepted but unused -- kept only so this
+    function's signature matches `value_composite_score`'s exactly,
+    letting `compute_universe_ic_series` call either interchangeably.
+
+    A security missing ANY of the 3 components is excluded from that
+    date's entire cross-section (never given a partial score) -- the
+    same all-or-nothing discipline `piotroski_f_score` established for
+    a per-security composite, extended here to a universe-level one.
+    Returns `{}` (never a fabricated ranking) if fewer than 2 securities
+    have all 3 components on a given date, matching
+    `rank_average`/`spearman_ic`'s own minimum-2-item requirement."""
+    component_values = _quality_component_values(security_ids, as_of_time, fundamentals_repository)
+    if len(component_values) < 2:
+        return {}
+    ids = list(component_values)
+    profitability_ranks = rank_average([component_values[sid][0] for sid in ids])
+    safety_ranks = rank_average([component_values[sid][1] for sid in ids])
+    quality_ranks = rank_average([component_values[sid][2] for sid in ids])
+    return {
+        sid: (profitability_ranks[i] + safety_ranks[i] + quality_ranks[i]) / 3.0
+        for i, sid in enumerate(ids)
+    }
+
+
+def _value_component_values(
+    security_ids: Sequence[str], as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> dict:
+    """5-tuple of raw value-leg scores for every security that has ALL
+    FIVE available at `as_of_time`. Shared helper for
+    `value_composite_score`."""
+    values = {}
+    for sid in security_ids:
+        e_yield = earnings_yield_score(sid, as_of_time, fundamentals_repository, price_repository)
+        b_to_m = book_to_market_score(sid, as_of_time, fundamentals_repository, price_repository)
+        s_yield = sales_yield_score(sid, as_of_time, fundamentals_repository, price_repository)
+        cf_yield = cashflow_yield_score(sid, as_of_time, fundamentals_repository, price_repository)
+        sh_yield = shareholder_yield_score(sid, as_of_time, fundamentals_repository, price_repository)
+        if any(v is None for v in (e_yield, b_to_m, s_yield, cf_yield, sh_yield)):
+            continue
+        values[sid] = (e_yield, b_to_m, s_yield, cf_yield, sh_yield)
+    return values
+
+
+def value_composite_score(
+    security_ids: Sequence[str], as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> dict:
+    """HYPOTHESIS -- O'Shaughnessy's "Value Composite" (What Works on
+    Wall Street): combining several independent value ratios into one
+    composite outperforms any single value ratio alone, since each
+    individual ratio (P/E, P/B, P/S, P/CF, EV/EBITDA, shareholder
+    yield) can be distorted by a company-specific accounting or
+    capital-structure quirk that a multi-metric average washes out.
+
+    **Deliberately 5 of the original 6 legs, and deliberately NOT
+    "Trending" (no momentum overlay) -- both limitations stated here
+    rather than discovered silently**:
+    1. EV/EBITDA needs enterprise value (market cap + total debt -
+       cash) and EBITDA (needs depreciation & amortization) -- this
+       project has never ingested a cash concept, short-term debt, or
+       any D&A concept. A genuine MISSING-DATA blocker, not a
+       complexity one, unlike ADR-0043 Decision 8's original "too
+       complex" framing for this whole candidate -- 5 of 6 legs turned
+       out to be entirely buildable with data already ingested for
+       earlier candidates; only this one leg is a real data gap.
+    2. The "Trending" momentum overlay is deliberately not rebuilt, for
+       the identical reason ADR-0043 Decision 11 gave for not
+       rebuilding a fresh momentum leg for "Value+Momentum": this
+       project already has a real, observed null IC result for the
+       shared momentum score used elsewhere (mean_ic = -0.0078,
+       `docs/research/STRATEGY-VALIDATION-REPORT.md` Section G) --
+       layering an already-null signal onto this composite would
+       confound testing the value composite's own merits cleanly.
+
+    The 5 legs -- `earnings_yield_score`, `book_to_market_score`,
+    `sales_yield_score`, `cashflow_yield_score`, `shareholder_yield_score`
+    -- are each independently a candidate in their own right, combined
+    here via the same cross-sectional rank-averaging
+    `quality_minus_junk_score` uses (see that function's own docstring
+    for why rank-averaging via `signal_ic.compute_universe_ic_series`
+    rather than z-scoring inside an ordinary per-security score_fn).
+    All-or-nothing on missing data: a security is excluded from a
+    date's entire cross-section if ANY of the 5 legs is `None`. Returns
+    `{}` if fewer than 2 securities have all 5."""
+    component_values = _value_component_values(security_ids, as_of_time, fundamentals_repository, price_repository)
+    if len(component_values) < 2:
+        return {}
+    ids = list(component_values)
+    leg_ranks = [rank_average([component_values[sid][leg] for sid in ids]) for leg in range(5)]
+    return {
+        sid: sum(leg_ranks[leg][i] for leg in range(5)) / 5.0
+        for i, sid in enumerate(ids)
+    }

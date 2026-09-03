@@ -1769,6 +1769,34 @@ genuinely new information. All 3 wired into
 `dividend_growth` / `earnings_yield`), also deliberately NOT added to
 the walk-forward pool yet. Full account: ADR-0043 Decision 11.
 
+**Fifteenth update -- the last two non-rejected candidates, unblocked
+by new cross-sectional architecture.** Asked to build the 2 candidates
+that ADR-0043 Decision 8 deferred as "too complex" (Quality Minus Junk,
+O'Shaughnessy Trending Value) rather than rejecting them, the precise
+cause turned out to be identical for both: each needs to
+cross-sectionally rank/z-score several raw metrics against the whole
+universe at once, which no per-security score function can express.
+Built `signal_ic.compute_universe_ic_series`/`UniverseScoreFn` once to
+unblock both (`score_fn` called once per rebalance date with the full
+security list, returning a dict already computed via rank-averaging).
+`quality_minus_junk_score`: a deliberate 3-component simplification
+(Profitability=ROE, Safety=leverage, Quality=accruals; Growth pillar
+omitted) reusing already-built functions. `value_composite_score`:
+5 of O'Shaughnessy's original 6 legs (EV/EBITDA excluded -- a genuine
+missing-data gap, needs Cash/short-term-debt/D&A concepts never
+ingested), no momentum "Trending" overlay (same reasoning as the
+Fourteenth update's earnings_yield_score: momentum already has a real
+null IC result on this project's data). Built 3 new supporting legs
+(`book_to_market_score` -- Fama & French 1992's HML basis, arguably the
+most canonical value factor in the literature; `sales_yield_score`;
+`cashflow_yield_score`) alongside the already-built earnings_yield/
+shareholder_yield legs. All need zero new real ingestion. Wired via a
+third CLI dict (`--score quality_minus_junk` / `value_composite`),
+also deliberately NOT added to the walk-forward pool yet. This closes
+out every non-rejected candidate from the original 12-strategy
+literature search -- 8 externally-researched candidates now built and
+awaiting real raw-IC results. Full account: ADR-0043 Decision 12.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

@@ -30,6 +30,7 @@ from strategy_research.signal_ic import (
     compute_fundamentals_ic_series,
     compute_hybrid_ic_series,
     compute_ic_series,
+    compute_universe_ic_series,
     spearman_ic,
 )
 from strategy_research.trend_volatility import TrendVolatilityParameters, TrendVolatilityStrategy
@@ -428,6 +429,111 @@ class TestComputeHybridIcSeries:
         price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2021, 1, 3), symbols=universe)
         summary = compute_hybrid_ic_series(
             list(universe), [], lambda sid, t, fr, pr: 1.0,
+            fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
+        )
+        assert summary.observations == ()
+        assert summary.mean_ic is None
+
+
+class TestComputeUniverseIcSeries:
+    """`compute_universe_ic_series` -- added for `quality_minus_junk_
+    score`/`value_composite_score` (ADR-0043 Decision 12), the first
+    factors needing CROSS-SECTIONAL information (the whole universe's
+    values at once) rather than one security at a time. `score_fn`
+    here is called ONCE PER REBALANCE DATE with the full security_ids
+    list, returning a dict already computed for every scorable
+    security -- structurally different from every earlier ScoreFn/
+    FundamentalsScoreFn/HybridScoreFn shape in this module."""
+
+    def test_wiring_a_hand_rolled_score_fn_produces_ic_of_one(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+
+        def _fixed_score_fn(security_ids, as_of_time, fundamentals_repo, price_repository):
+            return {"TRENDUP": 1.0, "TRENDDOWN": 0.0}
+
+        summary = compute_universe_ic_series(
+            list(universe), [_utc(2021, m, 1) for m in (3, 6, 9)], _fixed_score_fn,
+            fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
+        )
+        assert summary.mean_ic == 1.0
+
+    def test_score_fn_is_called_once_per_date_with_the_full_security_list(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        received = []
+
+        def _recording_score_fn(security_ids, as_of_time, fundamentals_repo, price_repository):
+            received.append(tuple(security_ids))
+            return {"TRENDUP": 1.0, "TRENDDOWN": 0.0}
+
+        rebalance_dates = [_utc(2021, 3, 1), _utc(2021, 6, 1)]
+        compute_universe_ic_series(
+            list(universe), rebalance_dates, _recording_score_fn,
+            fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
+        )
+        assert received == [tuple(universe), tuple(universe)]  # once per date, not once per security
+
+    def test_a_security_omitted_from_the_returned_dict_is_simply_not_scored_that_date(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+
+        def _partial_score_fn(security_ids, as_of_time, fundamentals_repo, price_repository):
+            return {"TRENDUP": 1.0}  # TRENDDOWN excluded entirely, not scored 0
+
+        summary = compute_universe_ic_series(
+            list(universe), [_utc(2021, 3, 1)], _partial_score_fn,
+            fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
+        )
+        # fewer than 2 scored securities on the only date -> no IC observation at all
+        assert summary.observations == ()
+        assert summary.mean_ic is None
+
+    def test_end_to_end_with_the_real_quality_minus_junk_score_against_a_real_fundamentals_repository(self, tmp_path) -> None:
+        from strategy_research.factor_scores import quality_minus_junk_score
+
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        # TRENDUP: high ROE, low leverage, low accruals (all "quality").
+        # TRENDDOWN: the opposite on all three.
+        for security_id, (income, liabilities, cfo) in (
+            ("TRENDUP", (50.0, 20.0, 60.0)), ("TRENDDOWN", (5.0, 200.0, 5.0)),
+        ):
+            for concept, value in (
+                ("NetIncomeLoss", income), ("StockholdersEquity", 100.0), ("Liabilities", liabilities),
+                ("NetCashProvidedByUsedInOperatingActivities", cfo),
+            ):
+                fundamentals_repo.add_fundamental(
+                    _fundamental_record(security_id, f"{security_id}:{concept}", value=value, available_time=_utc(2020, 3, 1), concept=concept)
+                )
+            for period_end, assets in ((_utc(2019, 3, 1), 300.0), (_utc(2020, 3, 1), 300.0)):
+                fundamentals_repo.add_fundamental(
+                    FundamentalRecord(
+                        security_id=security_id, concept="Assets", period_end=period_end, fiscal_year=period_end.year,
+                        fiscal_period="FY", form_type="10-K", value=assets, unit="USD",
+                        available_time=period_end, ingestion_time=period_end,
+                        provenance=Provenance(
+                            source="sec_edgar", source_dataset=f"sec_edgar_companyfacts_{security_id}",
+                            source_record_id=f"{security_id}:assets:{period_end.isoformat()}",
+                            retrieved_at=period_end, data_version="v1",
+                        ),
+                    )
+                )
+
+        summary = compute_universe_ic_series(
+            list(universe), [_utc(2021, m, 1) for m in (3, 6, 9)], quality_minus_junk_score,
+            fundamentals_repository=fundamentals_repo, price_repository=price_repo, horizon_days=30,
+        )
+        assert summary.observations  # at least one date produced a real observation
+
+    def test_no_rebalance_dates_produces_empty_summary_not_a_fabricated_zero(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2021, 1, 3), symbols=universe)
+        summary = compute_universe_ic_series(
+            list(universe), [], lambda sids, t, fr, pr: {sid: 1.0 for sid in sids},
             fundamentals_repository=None, price_repository=price_repo, horizon_days=30,
         )
         assert summary.observations == ()
