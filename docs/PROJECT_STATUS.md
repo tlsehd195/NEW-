@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 20개(sales_yield 포함) 전부 확정 수신, 부호 기반 해석 기록 + 사용자가 "17개 전부 walk-forward 풀에 편입" 선택 → 20개 raw-IC-screened candidate 전부를 `run_long_horizon_validation.py`에 배선(ADR-0051): 4개 범용 Strategy 래퍼(`factor_strategy.py`) 신설, 후보 테이블+factory 함수로 루프 기반 배선의 late-binding 클로저 버그를 실제 import 테스트로 검증, 전체 스위트 2213개 통과 + 실제 28개 후보 walk-forward/PBO/DSR 결과 수신, size/altman_z가 CANDIDATE 달성했으나 size는 concentration 리포트로 SLB 단일 종목 몰빵(76.3%) 발견, altman_z는 TEST 저조 → 둘 다 VALIDATED 보류 + top_n=5 기본값이 이 프로젝트 자체의 Live 리스크 정책(max_position_weight=10%)과 2배 불일치하는 구조적 갭 발견, 다음 세션 우선순위 1로 기록)
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 20개(sales_yield 포함) 전부 확정 수신, 부호 기반 해석 기록 + 사용자가 "17개 전부 walk-forward 풀에 편입" 선택 → 20개 raw-IC-screened candidate 전부를 `run_long_horizon_validation.py`에 배선(ADR-0051): 4개 범용 Strategy 래퍼(`factor_strategy.py`) 신설, 후보 테이블+factory 함수로 루프 기반 배선의 late-binding 클로저 버그를 실제 import 테스트로 검증, 전체 스위트 2213개 통과 + 실제 28개 후보 walk-forward/PBO/DSR 결과 수신, size/altman_z가 CANDIDATE 달성했으나 size는 concentration 리포트로 SLB 단일 종목 몰빵(76.3%) 발견, altman_z는 TEST 저조 → 둘 다 VALIDATED 보류 + top_n=5 기본값이 통계적 breadth 부족(Live 리스크 정책과의 불일치라는 최초 프레이밍은 지침 section 17 위반으로 정정)을 유발한다는 걸 발견, top_n=10으로 통일해 28개 후보 재실행(ADR-0052) → 재실행 결과 size는 CANDIDATE 탈락(가설 확인), altman_z/rank_average_ensemble은 CANDIDATE 등급이지만 TEST 마이너스라 둘 다 보류 → Session 36 전체 결론: 문헌 후보 20개 중 VALIDATED 승격 가능한 후보 없음, RULE 0.8/PBO/DSR 규율이 오탐 방지에 실제로 작동한 사례)
 
 ---
 
@@ -176,29 +176,40 @@ walk-forward 결과에 공통되는 통계적 폭(breadth) 부족 문제.
 하려는 게 아니라, 결과가 어느 방향으로 나올지 모른 채로 모든 후보에
 똑같이 적용한 사전 결정(RULE 0.8). `ADR-0052` 신규 작성.
 
-**다음 진행할 일 (우선순위순)**:
-1. **완료(이 세션) — top_n=10으로 통일, 코드 배선 완료.** 다음은
-   사용자가 코드스페이스에서 재실행:
-   ```
-   git pull origin main
-   python3 scripts/run_long_horizon_validation.py \
-     --universe RESEARCH_UNIVERSE \
-     --start 2010-01-01 --end 2023-04-28 \
-     --db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --data-status REAL
-   ```
-   결과를 relay하면 `size`/`altman_z`가 여전히 CANDIDATE인지, 몰빵
-   문제가 완화됐는지 다시 확인함.
-2. 재실행 결과가 나올 때까지 26개 후보(`leverage` + ROBUSTNESS_PENDING
-   25개) 전부 보류 상태 유지.
-3. (선택, 급하지 않음) 아래 항목의 sandboxed 환경 제약 목록.
+**top_n=10 재실행 결과 수신 완료 (2026-09-03) — 가설 확인됨**:
+`size`가 **더 이상 CANDIDATE가 아님**(fold 57%<60% 미달) — top_n=5
+때의 CANDIDATE 판정이 SLB 몰빵 덕분이었다는 게 이걸로 사실상 증명됨.
+대신 새로 2개가 CANDIDATE 등급을 받았지만 **둘 다 held-out TEST가
+마이너스**:
+- `altman_z`: fold 63%, DSR=1.00, PBO=0.14 통과. **TEST=-25.80%
+  (Sharpe 0.12)** — top_n=5 때도 TEST가 -28.29%로 나빴는데 breadth를
+  늘려도 똑같이 나쁨 → 몰빵 문제가 아니라 walk-forward 구간과 TEST
+  구간에서 실제로 반대로 작동하는 것으로 보임.
+- `rank_average_ensemble`(신규): fold 60%, DSR=0.99, PBO=0.14 통과.
+  **TEST=-15.19%(Sharpe 0.41)**.
 
-**결론(정직하게)**: 이 세션에서 문헌 기반 후보 20개를 전부 실제
-walk-forward/PBO/DSR에 태웠지만, 진짜로 신뢰할 만한 VALIDATED 후보는
-아직 하나도 없음. `size`는 유망해 보였다가 몰빵으로 판명, `altman_z`는
-TEST 저조, `leverage`는 다중검정 보정으로 탈락. top_n 정합성 수정
-후 재실행이 다음 세션의 시작점.
+**둘 다 VALIDATED 보류** — "PBO/DSR 통과 ≠ TEST 좋음"이라는 이
+프로젝트의 기존 해석 원칙에 정확히 해당하는 사례. `leverage`는 이번에도
+fold 57%로 CANDIDATE 기준(60%) 미달.
+
+**최종 결론(정직하게, 이 세션 전체)**: 문헌 기반 후보 20개를 raw IC →
+walk-forward/PBO/DSR(top_n=5) → breadth 수정 후 재검증(top_n=10)까지
+전부 거쳤지만, **VALIDATED로 승격할 만한 후보는 끝내 하나도 없었음.**
+`size`는 유망해 보였다가 몰빵으로 판명 후 실제로 탈락, `altman_z`/
+`rank_average_ensemble`은 통계 기준은 통과했지만 TEST 저조로 보류,
+`leverage`는 다중검정 보정으로 탈락. 이건 실패가 아니라 이 세션이
+실제로 하려던 일(사후선택 편향 없이, 문헌 후보를 정직하게 검증하는
+파이프라인 자체를 완성하고 실제로 돌려보는 것)이 정상적으로 끝난
+결과 — RULE 0.8/PBO/DSR 규율이 없었다면 `size`나 `altman_z` 중
+하나를 "알파를 찾았다"고 오판했을 수 있는 상황이었음.
+
+**다음 세션 시작점 (우선순위 없음, 전부 선택)**:
+- 새 문헌 후보를 더 찾을지 (지금까지 재현 성공률이 낮아서 수확체감 우려)
+- 리스크 레이어(섹터 집중도 등, `docs/operations/LIVE-RISK-POLICY.md`
+  #5 BLOCKING 항목)를 먼저 메울지
+- 이 20개 결과를 그대로 두고 다른 방향(Learning Engine, 인프라 등)으로
+  넘어갈지
+- 아래 sandboxed 환경 제약 때문에 미뤄둔 선택 항목들
 
 1. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
    것들 — 전부 실제 데이터/네트워크가 필요해서 사용자 환경에서만 가능,
