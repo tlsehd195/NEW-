@@ -155,36 +155,50 @@ TEST=-28.29%, Sharpe=0.18** — walk-forward fold들은 통과했는데 정작
 Approval → Deployment`(`PROJECT_MASTER_PLAN.md` §11.5) 중 Validation
 단계에서 사람이 반려한 것으로 기록.
 
-**구조적으로 발견한, `size`에 국한되지 않는 진짜 갭**: 이 프로젝트의
-모든 walk-forward 후보(이번 28개 포함, `long_term_momentum` 등
-과거 후보 전부)가 기본값 `top_n=5`를 씀 — 즉 종목당 약 20% 비중.
-그런데 이미 Phase 8부터 확정된 이 프로젝트 자체의 Live 리스크 정책
-(`docs/operations/LIVE-RISK-POLICY.md` #3, `RiskConfig.
-max_position_weight=0.10`)은 종목당 최대 10%로 못박혀 있음 —
-**리서치/백테스트 레이어가 처음부터 실제 Live 리스크 한도의 2배
-집중도로 시뮬레이션해왔다는 뜻**. `size`의 SLB 몰빵이 이번에 우연히
-드러났을 뿐, 구조적으로는 모든 후보의 walk-forward 결과에 다
-해당되는 문제. 이건 `size`를 봐주려고 지금 만든 기준이 아니라 이미
-Phase 8부터 있던 규칙과의 불일치를 이번에 실제로 발견한 것 — 다음
-섹션에 우선순위 1로 기록.
+**구조적으로 발견한, `size`에 국한되지 않는 진짜 갭 (ADR-0052) — 단,
+최초 프레이밍은 틀렸었고 바로잡음**: 이 프로젝트의 모든 walk-forward
+후보(이번 28개 포함, `long_term_momentum` 등 과거 후보 전부)가
+기본값 `top_n=5`를 씀. 처음엔 "이걸 Live 리스크 정책
+(`max_position_weight=0.10`)에 맞추자"고 판단했는데, 이건 틀린
+프레이밍이었음 — `risk_controlled_momentum.py` 자체 docstring이 이미
+지침 section 17을 인용해 **"연구 전략 내부의 position allocation과
+production risk limit을 혼동하지 않는다"**고 명시하고 있었음(발견
+후 즉시 정정). 진짜 문제는 Live 리스크 정합성이 아니라 순수
+리서치 방법론: **63종목 중 5개만 들면, 신호 하나의 검증 결과가 한
+종목의 우연(이번의 SLB 유가 몰빵처럼)에 너무 쉽게 휘둘림.** 이건
+`size`에만 해당하는 문제가 아니라 이 프로젝트가 만든 모든 후보의
+walk-forward 결과에 공통되는 통계적 폭(breadth) 부족 문제.
+
+**적용한 수정**: `run_long_horizon_validation.py`에만 새 상수
+`_TOP_N_FOR_EVALUATION = 10`을 추가해서 이 스크립트가 만드는 28개
+후보 전부에 동일하게 적용(각 전략 파일 자체의 클래스 기본값 `top_n=5`는
+안 건드림 — 다른 호출자/테스트엔 영향 없음). `size`가 잘 나오게
+하려는 게 아니라, 결과가 어느 방향으로 나올지 모른 채로 모든 후보에
+똑같이 적용한 사전 결정(RULE 0.8). `ADR-0052` 신규 작성.
 
 **다음 진행할 일 (우선순위순)**:
-1. **[핵심, 권장] top_n 기본값을 실제 Live 리스크 한도(10%)에 맞게
-   조정하고 28개 후보 전체 재실행** — `top_n=5`(종목당 20%)를
-   `top_n=10`(종목당 10%) 근처로 바꿔서 이 프로젝트 자체의 이미
-   정해진 리스크 정책과 일치시킴. **주의**: 이건 "size가 잘 나오게"
-   바꾸는 게 아니라 모든 28개 후보에 동일하게 적용하는 구조적 정합성
-   수정 — 결과가 어느 방향으로 나올지 미리 알 수 없고, 실제로 재실행
-   전엔 어떤 후보가 이득/손해를 볼지 모름(RULE 0.8 그대로 유지).
-2. 나머지 26개 후보(ROBUSTNESS_PENDING 25개 + `leverage`)는 지금은
-   전부 보류 상태 유지 — 위 1번 재실행 후 다시 판단.
-3. (선택, 급하지 않음) 아래 4번 항목의 sandboxed 환경 제약 목록.
+1. **완료(이 세션) — top_n=10으로 통일, 코드 배선 완료.** 다음은
+   사용자가 코드스페이스에서 재실행:
+   ```
+   git pull origin main
+   python3 scripts/run_long_horizon_validation.py \
+     --universe RESEARCH_UNIVERSE \
+     --start 2010-01-01 --end 2023-04-28 \
+     --db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --data-status REAL
+   ```
+   결과를 relay하면 `size`/`altman_z`가 여전히 CANDIDATE인지, 몰빵
+   문제가 완화됐는지 다시 확인함.
+2. 재실행 결과가 나올 때까지 26개 후보(`leverage` + ROBUSTNESS_PENDING
+   25개) 전부 보류 상태 유지.
+3. (선택, 급하지 않음) 아래 항목의 sandboxed 환경 제약 목록.
 
 **결론(정직하게)**: 이 세션에서 문헌 기반 후보 20개를 전부 실제
 walk-forward/PBO/DSR에 태웠지만, 진짜로 신뢰할 만한 VALIDATED 후보는
 아직 하나도 없음. `size`는 유망해 보였다가 몰빵으로 판명, `altman_z`는
-TEST 저조, `leverage`는 다중검정 보정으로 탈락. 다음 세션은 위 1번
-(포지션 비중 정합성 수정 + 재실행)부터 시작하면 됨.
+TEST 저조, `leverage`는 다중검정 보정으로 탈락. top_n 정합성 수정
+후 재실행이 다음 세션의 시작점.
 
 1. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
    것들 — 전부 실제 데이터/네트워크가 필요해서 사용자 환경에서만 가능,

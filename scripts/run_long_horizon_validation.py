@@ -155,6 +155,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     value_composite_score,
 )
 from strategy_research.factor_strategy import (  # noqa: E402
+    FactorStrategyParameters,
     FundamentalsFactorStrategy,
     HybridFactorStrategy,
     PriceFactorStrategy,
@@ -182,6 +183,31 @@ _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH
 # REAL-provenance-plausibility check below.
 _KNOWN_REAL_PROVIDER_SOURCES = {"tiingo", "stooq"}
 _BENCHMARK_ID = "SPY_TOTAL_RETURN_REAL"
+
+# ADR-0052: portfolio-construction breadth for this evaluation run,
+# applied identically to EVERY top_n-based candidate below -- decided
+# once, before looking at how it changes any specific candidate's
+# result (RULE 0.8), never tuned per-candidate. Session 36's 28-candidate
+# real run found `size`'s strong held-out TEST return (+85.26%) was
+# almost entirely one security's idiosyncratic outcome (SLB, 76.3% of
+# TEST PnL, during a real oil-price-supercycle window) -- with only 5
+# of 63 names held at a time (every strategy here's prior default),
+# there is too little breadth for a cross-sectional ranking signal's
+# OWN research evidence to average out a single name's luck. This is
+# NOT the same concern as Production's separate `risk.config.
+# RiskConfig.max_position_weight` (10%, Phase 8) -- instruction section
+# 17 explicitly warns against conflating a research strategy's own
+# position-construction breadth with a production risk limit (see
+# risk_controlled_momentum.py's own docstring, which already states
+# this for its internal `max_position_weight`). This constant changes
+# ONLY how many names this evaluation script's OWN candidates hold at
+# once, overriding each Parameters dataclass's smaller class-level
+# default (5) -- those defaults are untouched for any other caller
+# (e.g. this script's own unit tests, or a smaller ad-hoc run). 10 of
+# 63 (~1/6) is chosen as a fixed, round, pre-committed breadth -- twice
+# the prior default, still a genuinely selective cross-sectional
+# portfolio rather than diluting into the whole universe.
+_TOP_N_FOR_EVALUATION = 10
 
 # ADR-0051: the 20 raw-IC-screened candidates from Session 36 (see
 # PROJECT_STATUS.md's "raw IC 스크리닝 20개" table). RULE 0.8 --
@@ -224,19 +250,23 @@ _UNIVERSE_FACTOR_CANDIDATES = (
 
 
 def _price_factor_factory(security_ids, score_fn, version):
-    return lambda: PriceFactorStrategy(security_ids, score_fn, version=version)
+    params = FactorStrategyParameters(top_n=_TOP_N_FOR_EVALUATION)
+    return lambda: PriceFactorStrategy(security_ids, score_fn, version=version, params=params)
 
 
 def _fundamentals_factor_factory(security_ids, fundamentals_repository, score_fn, version):
-    return lambda: FundamentalsFactorStrategy(security_ids, fundamentals_repository, score_fn, version=version)
+    params = FactorStrategyParameters(top_n=_TOP_N_FOR_EVALUATION)
+    return lambda: FundamentalsFactorStrategy(security_ids, fundamentals_repository, score_fn, version=version, params=params)
 
 
 def _hybrid_factor_factory(security_ids, fundamentals_repository, price_repository, score_fn, version):
-    return lambda: HybridFactorStrategy(security_ids, fundamentals_repository, price_repository, score_fn, version=version)
+    params = FactorStrategyParameters(top_n=_TOP_N_FOR_EVALUATION)
+    return lambda: HybridFactorStrategy(security_ids, fundamentals_repository, price_repository, score_fn, version=version, params=params)
 
 
 def _universe_factor_factory(security_ids, fundamentals_repository, price_repository, score_fn, version):
-    return lambda: UniverseFactorStrategy(security_ids, fundamentals_repository, price_repository, score_fn, version=version)
+    params = FactorStrategyParameters(top_n=_TOP_N_FOR_EVALUATION)
+    return lambda: UniverseFactorStrategy(security_ids, fundamentals_repository, price_repository, score_fn, version=version, params=params)
 
 
 def _parse_date(value: str) -> datetime:
@@ -467,9 +497,9 @@ def main() -> int:
 
         strategy_specs = [
             ("buy_and_hold", "reference baseline, not alpha (Phase 22)", lambda: BuyAndHoldStrategy(security_ids)),
-            ("long_term_momentum", "cross-sectional trailing-return momentum (see src/strategy_research/long_term_momentum.py)", lambda: LongTermMomentumStrategy(security_ids, LongTermMomentumParameters())),
+            ("long_term_momentum", "cross-sectional trailing-return momentum (see src/strategy_research/long_term_momentum.py)", lambda: LongTermMomentumStrategy(security_ids, LongTermMomentumParameters(top_n=_TOP_N_FOR_EVALUATION))),
             ("trend_volatility", "trend + realized-volatility filter (see src/strategy_research/trend_volatility.py)", lambda: TrendVolatilityStrategy(security_ids, TrendVolatilityParameters())),
-            ("risk_controlled_momentum", "momentum + inverse-vol sizing + position cap (see src/strategy_research/risk_controlled_momentum.py)", lambda: RiskControlledMomentumStrategy(security_ids, RiskControlledMomentumParameters())),
+            ("risk_controlled_momentum", "momentum + inverse-vol sizing + position cap (see src/strategy_research/risk_controlled_momentum.py)", lambda: RiskControlledMomentumStrategy(security_ids, RiskControlledMomentumParameters(top_n=_TOP_N_FOR_EVALUATION))),
         ]
         # ADR-0051: the 6 price/volume-only raw-IC-screened candidates
         # need no fundamentals catalog at all -- included unconditionally,
@@ -490,7 +520,7 @@ def main() -> int:
             strategy_specs.append((
                 "leverage",
                 "low-leverage quality/safety factor, fundamentals-based (see src/strategy_research/leverage_strategy.py)",
-                lambda: LeverageStrategy(security_ids, fundamentals_repository, LeverageParameters()),
+                lambda: LeverageStrategy(security_ids, fundamentals_repository, LeverageParameters(top_n=_TOP_N_FOR_EVALUATION)),
             ))
             # ML Research Track's first model (ADR-0043) -- puts the
             # first ML VALIDATION result (mean_ic=+0.1055 over only 11
@@ -519,7 +549,7 @@ def main() -> int:
                 "ml_ols",
                 "OLS combining all 6 factor scores, fundamentals-based (see src/ml/ml_strategy.py, ADR-0043)",
                 lambda: MLStrategy(
-                    security_ids, fundamentals_repository, MLStrategyParameters(),
+                    security_ids, fundamentals_repository, MLStrategyParameters(top_n=_TOP_N_FOR_EVALUATION),
                     feature_cache=ml_feature_cache, target_cache=ml_target_cache,
                 ),
             ))
@@ -535,7 +565,7 @@ def main() -> int:
                 "ml_ridge",
                 "ridge-regularized combination of all 6 factor scores, regularization chosen by chronological CV on TRAIN (see src/ml/linear_model.py, ADR-0043 Decision 5)",
                 lambda: MLStrategy(
-                    security_ids, fundamentals_repository, MLStrategyParameters(),
+                    security_ids, fundamentals_repository, MLStrategyParameters(top_n=_TOP_N_FOR_EVALUATION),
                     feature_cache=ml_feature_cache, target_cache=ml_target_cache,
                     model_builder=ridge_cv_builder, version="ml_ridge_cv_v1",
                 ),
@@ -550,7 +580,7 @@ def main() -> int:
             strategy_specs.append((
                 "rank_average_ensemble",
                 "rank-average of leverage_score and net_margin_score, fundamentals-based (see src/strategy_research/ensemble_strategy.py, ADR-0043 Decision 5)",
-                lambda: RankAverageEnsembleStrategy(security_ids, fundamentals_repository, RankAverageEnsembleParameters()),
+                lambda: RankAverageEnsembleStrategy(security_ids, fundamentals_repository, RankAverageEnsembleParameters(top_n=_TOP_N_FOR_EVALUATION)),
             ))
             # ADR-0051: the remaining 14 raw-IC-screened candidates that
             # need a fundamentals catalog -- 5 fundamentals-only, 7
