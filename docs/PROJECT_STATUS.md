@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049))
 
 ---
 
@@ -1405,6 +1405,34 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     어떤 기존 전략도 아직 `features`를 실제로 채우지는 않음 — "무엇을
     근거로 넣을지"는 검증된 전략이 나온 뒤 결정할 문제라 이번엔 배관만
     뚫어둠. 신규 테스트 3개, 전체 스위트 2174 passed (2171 → 2174).
+- **사용자가 "일단 재학습 그거 다 끝내봐" — 실제로 학습하는 첫 번째
+  `CandidateTrainer` 구현 (`ADR-0049`)**:
+  - 배관을 마저 추적하다가 세 번째 갭 발견: `LabeledSample`(트레이너가
+    실제로 받는 타입)에도 `features` 필드가 없었고,
+    `learning.labeling.Labeler`가 `ExperienceRecord.state["features"]`를
+    거기로 복사하지도 않았음 — `ADR-0048`을 고쳐도 트레이너 입장에선
+    여전히 학습할 게 없었던 것. `LabeledSample.features` 필드 추가 +
+    `Labeler` 수정으로 마무리.
+  - `LinearRegressionTrainer` 신규 구현 — OLS(선택적 ridge), 새 수학
+    구현 안 하고 이미 검증된 `ml.linear_model.LinearRegressionModel`
+    (ADR-0043, ML Research Track용으로 이미 만들어져 있던 순수 stdlib
+    Gauss-Jordan 구현) 재사용. `feature_ids`는 기본값 없이 호출자가
+    명시(어떤 Strategy가 어떤 이름으로 features를 채울지는 정해진 바
+    없어서 추론 불가). 학습 데이터 부족/특이행렬이면 `fitted=False`로
+    정직하게 실패(가짜 fit 없음), `predict()`도 필요한 feature가 없는
+    샘플엔 `None` 반환(가짜 예측 없음).
+  - `Evaluator`도 확장 — 기존엔 한 split 전체에 상수 하나(`predicted_value`)로만
+    채점 가능했는데, 이제 `predict_fn` 옵션으로 샘플별로 다른 예측값을
+    채점 가능. `predict_fn` 생략 시(기존 `MeanRewardBaselineTrainer`
+    포함 모든 기존 호출) 동작 100% 그대로 — 기존 테스트 전부 무수정
+    통과로 확인. `run_learning_pipeline`이 트레이너에 `predict` 메서드가
+    있으면 자동 감지해서 넘겨줌.
+  - 합성(비실제) 데이터로만 테스트 — 정확한 선형관계를 미리 정해두고
+    학습된 계수가 그 값과 일치하는지 확인하는 방식이라, 이번 것도
+    "재학습 기능이 실제로 동작한다"는 배관 증명이지 실제 예측력 주장이
+    아님. 어떤 기존 Strategy도 여전히 `features`를 안 채움 — RULE 0.8대로
+    검증된 전략 나온 뒤 결정. 신규 테스트 15개, 전체 스위트 2189 passed
+    (2174 → 2189).
   - 신규 테스트 14개(factor_scores 11개 + CLI 엔드투엔드 3개). 문헌
     기반 후보 이제 총 17개 완료, 전부 raw IC 확인만 남음.
 

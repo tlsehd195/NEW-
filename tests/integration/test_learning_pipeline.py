@@ -7,8 +7,10 @@ section 23).
 
 from __future__ import annotations
 
+import pytest
 from learning_helpers import build_journal_with_closed_trades, utc
 
+from learning.linear_trainer import LinearRegressionTrainer
 from learning.pipeline import run_learning_pipeline
 
 from storage.config import StorageConfig
@@ -126,3 +128,57 @@ class TestFullPipelineIntegration:
         assert stored_cand1.candidate_id != stored_cand2.candidate_id
         assert len(cand_repo.list_all()) == 2
         engine.close()
+
+
+class TestRealTrainerThroughTheFullPipeline:
+    """Session 36 (ADR-0048/0049): the full OrderIntent.features ->
+    DecisionSnapshot.features -> ExperienceRecord.state["features"] ->
+    LabeledSample.features -> LinearRegressionTrainer -> Evaluator
+    chain, driven through run_learning_pipeline exactly the way a real
+    caller would, not just via the lower-level helpers each earlier
+    unit test file exercises separately."""
+
+    def test_a_real_trainer_produces_non_trivial_per_sample_evaluation(self) -> None:
+        def features_fn(i: int) -> dict:
+            return {"momentum_score": i * 0.1}
+
+        def realized_return_fn(i: int) -> float:
+            return 3.0 * (i * 0.1) - 0.5  # exact linear relationship, no noise
+
+        journal, records = build_journal_with_closed_trades(
+            30, features_fn=features_fn, realized_return_fn=realized_return_fn,
+        )
+        trainer = LinearRegressionTrainer(["momentum_score"])
+
+        result = run_learning_pipeline(
+            journal, records, provenance=TradeProvenance.HISTORICAL_SIMULATION,
+            trainer=trainer, run_at=utc(2024, 3, 1), seed=1,
+        )
+
+        assert result.candidate.trainer_version == "linear_regression_trainer_v1"
+        assert result.candidate.parameters["fitted"] is True
+        assert result.candidate.parameters["coefficients"]["momentum_score"] == pytest.approx(3.0, abs=1e-3)
+        assert result.candidate.parameters["intercept"] == pytest.approx(-0.5, abs=1e-3)
+        # The per-sample predict_fn path (not the constant fallback) was
+        # actually used -- MAE on data following the fitted relationship
+        # exactly is near zero, unlike MeanRewardBaselineTrainer's own
+        # much larger error against the same non-constant data.
+        assert result.evaluation.test_metrics.mean_absolute_error == pytest.approx(0.0, abs=1e-3)
+        assert result.evaluation.train_metrics.mean_absolute_error == pytest.approx(0.0, abs=1e-3)
+
+    def test_default_trainer_is_unaffected_when_no_strategy_populates_features(self) -> None:
+        """The realistic case today: every existing Strategy leaves
+        OrderIntent.features unset, so features is None on every
+        sample. Passing LinearRegressionTrainer in that situation must
+        not crash the pipeline -- it degrades to an unfit candidate,
+        the same honest "no signal" outcome test_linear_trainer.py's
+        TestNeverFabricates already covers at the unit level."""
+        journal, records = build_journal_with_closed_trades(20)  # no features_fn -> features stay None
+        trainer = LinearRegressionTrainer(["momentum_score"])
+
+        result = run_learning_pipeline(
+            journal, records, provenance=TradeProvenance.HISTORICAL_SIMULATION,
+            trainer=trainer, run_at=utc(2024, 3, 1),
+        )
+        assert result.candidate.parameters["fitted"] is False
+        assert result.evaluation.test_metrics.sample_count == 0  # nothing could be scored, honestly reported as such

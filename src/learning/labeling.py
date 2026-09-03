@@ -74,6 +74,7 @@ class Labeler:
                 provenance=result.provenance,
                 feature_version=None,  # Phase 3's ExperienceRecord.state has no feature_version field to copy from
                 data_version=record.data_version or (),
+                features=record.state.get("features"),  # ADR-0048/0049 -- None unless a Strategy set OrderIntent.features
             ))
 
         return samples

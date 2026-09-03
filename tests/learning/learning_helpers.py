@@ -16,12 +16,19 @@ from trade_journal.repository import InMemoryTradeJournalRepository, TradeJourna
 
 def build_journal_with_closed_trades(
     count: int, *, start: datetime = utc(2024, 1, 2), realized_return_fn=None,
+    features_fn: Optional[object] = None,
     provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
 ) -> tuple[TradeJournalRepository, list[ExperienceRecord]]:
     """Builds a journal with `count` fully-closed (SELL) trades, one per
     day starting at `start`, each with a distinct, deterministic
     realized_return -- a clean chronological series for temporal-split
-    and leakage tests."""
+    and leakage tests.
+
+    `features_fn`, if given, is called as `features_fn(i) -> dict` for
+    each trade and threaded through as `DecisionSnapshot.features`
+    (ADR-0048) -- used by tests exercising `learning.linear_trainer.
+    LinearRegressionTrainer`, which needs a real feature vector per
+    sample to fit against, unlike `MeanRewardBaselineTrainer`."""
     journal = InMemoryTradeJournalRepository()
     realized_return_fn = realized_return_fn or (lambda i: 0.01 * ((i % 5) - 2))
     for i in range(count):
@@ -30,6 +37,7 @@ def build_journal_with_closed_trades(
         decision = journal.record_decision(
             decision_time=day, security_id="AAA", decision=DecisionAction.SELL,
             order=make_order(oid, side=OrderSide.SELL, decision_time=day), provenance=provenance,
+            features=features_fn(i) if features_fn is not None else None,
         )
         journal.record_trade(
             decision_id=decision.snapshot_id,

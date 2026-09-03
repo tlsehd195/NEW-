@@ -62,7 +62,17 @@ def run_learning_pipeline(
     candidate = trainer.train(
         dataset_result.dataset, dataset_result.labeled_samples, trained_at=run_at, seed=seed,
     )
-    evaluation = evaluator.evaluate(candidate, dataset_result.dataset, dataset_result.labeled_samples, evaluated_at=run_at)
+    # ADR-0049: a trainer MAY optionally implement `predict(candidate,
+    # sample) -> Optional[float]` for genuine per-sample-varying
+    # evaluation (e.g. learning.linear_trainer.LinearRegressionTrainer)
+    # -- not part of the CandidateTrainer Protocol itself, since
+    # MeanRewardBaselineTrainer has no need for one and every existing
+    # caller/test predates this. Detected via getattr, never required.
+    predict_fn = getattr(trainer, "predict", None)
+    evaluation = evaluator.evaluate(
+        candidate, dataset_result.dataset, dataset_result.labeled_samples, evaluated_at=run_at,
+        predict_fn=predict_fn,
+    )
 
     status = "COMPLETED" if dataset_result.dataset.quality_status == "OK" else "FAILED"
     experiment = tracker.record(

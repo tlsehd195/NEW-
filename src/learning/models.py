@@ -70,6 +70,14 @@ class LabeledSample:
     provenance: TradeProvenance
     feature_version: Optional[str]
     data_version: tuple[str, ...]
+    # Session 36 (ADR-0048/0049): copied from ExperienceRecord.state
+    # ["features"] by learning.labeling.Labeler -- None whenever the
+    # originating DecisionSnapshot never had OrderIntent.features set
+    # (every existing Strategy, today). A real Trainer (e.g.
+    # learning.linear_trainer.LinearRegressionTrainer) reads this to
+    # fit against; MeanRewardBaselineTrainer ignores it entirely, the
+    # same as it always has.
+    features: Optional[dict] = None
 
     def __post_init__(self) -> None:
         _require_aware("LabeledSample.sample_as_of_time", self.sample_as_of_time)
