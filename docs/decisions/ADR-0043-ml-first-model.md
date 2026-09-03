@@ -724,6 +724,101 @@ from the user's own real-data environment -- none has been observed
 against real data yet; all three remain hypotheses fixed before any
 result is seen, per RULE 0.8.
 
+## Decision 11 -- three more externally-researched candidates (`sloan_accruals_score`, `dividend_growth_score`, `earnings_yield_score`), all buildable with zero new real ingestion given what Decisions 9-10 already added
+
+The user explicitly asked to build the 3 remaining candidates from
+ADR-0043 Decision 8's original 12-strategy list that had no documented
+reason recorded for being deferred (Sloan Accruals, Dividend Growth,
+Value+Momentum combination), then to search for still more beyond that
+original 12. Each of the first three was independently re-verified via
+web search before building (same discipline as Decisions 8-10):
+
+- **Sloan Accruals** (Sloan 1996, "Do Stock Prices Fully Reflect
+  Information in Accruals and Cash Flows About Future Earnings?", The
+  Accounting Review) -- one of the most-replicated anomalies in the
+  literature, confirmed internationally (Australia, Canada, UK) and as
+  one of only two anomalies (with momentum) whose magnitude the
+  Fama-French five-factor model does not shrink in a 2020 447-anomaly
+  replication study. Built via the Hribar & Collins (2002) cash-flow-
+  statement definition (`NetIncomeLoss - CFO`, scaled by average total
+  assets) rather than Sloan's original balance-sheet definition, both
+  because it is less prone to one-time-event measurement error and
+  because it needs zero new real ingestion (`NetIncomeLoss`, CFO, and
+  `Assets` are already ingested for `roa_score`/`piotroski_f_score`/
+  `asset_growth_score`).
+- **Dividend Growth** -- academic evidence on dividend GROWTH
+  predictability specifically (distinct from the more contested
+  aggregate-market dividend-yield return-predictability literature) is
+  comparatively consistent across the US, UK, Canada, Germany, France
+  and Japan. Structurally the mirror of `asset_growth_score` (a single
+  YoY change via `_fy_records`) but on `PaymentsOfDividends` and NOT
+  negated. Zero new ingestion: `PaymentsOfDividends` is already one of
+  `shareholder_yield_score`'s 3 concepts (Decision 10). A real,
+  documented coverage gap: a company with no dividend in the prior
+  fiscal year (non-payer or newly-initiated) has no computable growth
+  rate from a zero base -- `None` there by design, not a bug.
+- **Value+Momentum combination** -- built as ONE standalone new
+  factor, `earnings_yield_score` (Basu 1977, "Investment Performance of
+  Common Stocks in Relation to Their Price-Earnings Ratios," The
+  Journal of Finance -- the original, most-replicated value anomaly:
+  `NetIncomeLoss / market_cap`), rather than the literal Asness,
+  Moskowitz & Pedersen (2013) equal-weight-rank combination of a value
+  leg and a momentum leg. Two independent reasons, both stated in a
+  module-level note in `factor_scores.py` directly above
+  `earnings_yield_score`: (1) this project already has a real, observed
+  IC result for the exact shared `_momentum_score` `long_term_momentum`/
+  `risk_controlled_momentum` use (`docs/research/
+  STRATEGY-VALIDATION-REPORT.md` Section G's evidence table: mean_ic =
+  -0.0078, read as "null") -- rebuilding a fresh momentum factor now
+  would re-test an already-null signal under a cosmetically different
+  name, exactly what `compute_signal_ic_from_catalog.py`'s own module
+  docstring says this project avoids doing; (2) the literal rank-average
+  combination needs new cross-sectional architecture this project does
+  not have -- every `ScoreFn`/`FundamentalsScoreFn`/`HybridScoreFn`
+  scores ONE security at a time with no visibility into the rest of the
+  universe at that moment, so a rank-average-across-the-universe
+  combining step cannot be expressed as an ordinary `score_fn`. This is
+  the first genuine PRICE-based valuation ratio this project has
+  tested (every earlier fundamentals factor is a ratio or change
+  entirely within financial-statement figures); needs price data, so is
+  wired through `compute_hybrid_ic_series` like `shareholder_yield_score`.
+  Zero new ingestion: `NetIncomeLoss` and `CommonStockSharesOutstanding`
+  are already ingested, and the price catalog already exists.
+
+**Additional literature search beyond the original 12, per the user's
+follow-up request**: no additional genuinely new candidate was found
+worth adding this round. The most concrete alternative surfaced --
+"net stock issuance" / composite equity issuance (Daniel & Titman 2006)
+-- was deliberately NOT built: its numerator (buybacks minus new share
+issuance) is a strict subset of `shareholder_yield_score`'s own
+numerator (dividends + buybacks - issuance), so it would be highly
+correlated with, not "genuinely different information from," a
+candidate already built (Decision 8's own feasibility criterion (b)).
+Broader 2023-2024 replication-crisis literature (Novy-Marx & Velikov
+2023; a 2024 Management Science 469-anomaly Chinese A-share replication
+finding 83.37% of variables insignificant) was also reviewed and is
+consistent with, not contradictory to, this project's own finding so
+far that 6 of 7 real-data-tested hypotheses have been null --
+reinforcing rather than undermining the existing literature-search-then-
+verify discipline, not a reason to lower the bar for what counts as a
+credible candidate.
+
+23 new tests (21 in `tests/strategy_research/test_factor_scores.py`
+across `TestSloanAccrualsScore`/`TestDividendGrowthScore`/
+`TestEarningsYieldScore`; 2 CLI end-to-end wiring tests in `tests/
+strategy_research/test_compute_fundamentals_ic_from_catalog_cli.py`).
+No changes needed to `signal_ic.py` or `ingest_fundamentals_data.py` --
+both new factor kinds (single/YoY-change fundamentals-only, and
+hybrid-with-price) already had plumbing and default XBRL concepts from
+Decisions 8-10. Full suite: 2109 passed (up from 2086).
+
+Six externally-researched candidates now built and wired for cheap raw
+IC checks (`asset_growth`, `piotroski`, `shareholder_yield`,
+`sloan_accruals`, `dividend_growth`, `earnings_yield`), none yet added
+to the 8-candidate walk-forward pool, none yet observed against real
+data -- all six remain hypotheses fixed before any result is seen, per
+RULE 0.8.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true

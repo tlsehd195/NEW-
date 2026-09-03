@@ -24,6 +24,8 @@ from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
 from strategy_research.factor_scores import (
     asset_growth_score,
+    dividend_growth_score,
+    earnings_yield_score,
     leverage_score,
     low_volatility_score,
     net_margin_score,
@@ -31,6 +33,7 @@ from strategy_research.factor_scores import (
     roa_score,
     roe_score,
     shareholder_yield_score,
+    sloan_accruals_score,
 )
 
 
@@ -645,3 +648,252 @@ class TestShareholderYieldScore:
 
         score = shareholder_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
         assert score == pytest.approx(200.0 / 10000.0)  # still the 2022 dividend, not the future 9000.0
+
+
+class TestSloanAccrualsScore:
+    """Session 36 -- ADR-0043 Decision 11: Sloan (1996)'s accruals
+    anomaly. Uses the Hribar & Collins (2002) cash-flow-statement
+    definition (NetIncomeLoss - CFO, scaled by average total assets),
+    needing zero new data beyond what roa_score/piotroski_f_score
+    already ingest."""
+
+    def test_computes_negative_of_accruals_over_average_assets(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cfo", concept="NetCashProvidedByUsedInOperatingActivities", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_prior", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_current", concept="Assets", value=120.0, period_end=_utc(2022, 12, 31)))
+
+        score = sloan_accruals_score("AAA", _utc(2023, 6, 1), repo)
+        # accruals = (20 - 30) / avg(100, 120) = -10 / 110; score = +10/110
+        assert score == pytest.approx(10.0 / 110.0)
+
+    def test_missing_net_income_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cfo", concept="NetCashProvidedByUsedInOperatingActivities", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_prior", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_current", concept="Assets", value=120.0, period_end=_utc(2022, 12, 31)))
+
+        assert sloan_accruals_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_cfo_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_prior", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_current", concept="Assets", value=120.0, period_end=_utc(2022, 12, 31)))
+
+        assert sloan_accruals_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_only_one_fiscal_year_of_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cfo", concept="NetCashProvidedByUsedInOperatingActivities", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_current", concept="Assets", value=120.0, period_end=_utc(2022, 12, 31)))
+
+        assert sloan_accruals_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_average_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cfo", concept="NetCashProvidedByUsedInOperatingActivities", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_prior", concept="Assets", value=-10.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_current", concept="Assets", value=10.0, period_end=_utc(2022, 12, 31)))
+
+        assert sloan_accruals_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_lower_accruals_scores_higher_matching_the_higher_is_more_attractive_convention(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for security_id, cfo in (("LOW_ACCRUAL", 90.0), ("HIGH_ACCRUAL", 20.0)):
+            repo.add_fundamental(_fy_record(security_id, f"{security_id}:ni", concept="NetIncomeLoss", value=100.0, period_end=_utc(2022, 12, 31)))
+            repo.add_fundamental(_fy_record(security_id, f"{security_id}:cfo", concept="NetCashProvidedByUsedInOperatingActivities", value=cfo, period_end=_utc(2022, 12, 31)))
+            repo.add_fundamental(_fy_record(security_id, f"{security_id}:assets_prior", concept="Assets", value=500.0, period_end=_utc(2021, 12, 31)))
+            repo.add_fundamental(_fy_record(security_id, f"{security_id}:assets_current", concept="Assets", value=500.0, period_end=_utc(2022, 12, 31)))
+
+        low_score = sloan_accruals_score("LOW_ACCRUAL", _utc(2023, 6, 1), repo)
+        high_score = sloan_accruals_score("HIGH_ACCRUAL", _utc(2023, 6, 1), repo)
+        assert low_score > high_score
+
+    def test_a_score_at_an_early_date_ignores_a_not_yet_filed_later_fiscal_year(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "ni_2022", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cfo_2022", concept="NetCashProvidedByUsedInOperatingActivities", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=120.0, period_end=_utc(2022, 12, 31)))
+        # A much larger, not-yet-filed FY2023 net income that would
+        # change the score if it leaked in.
+        repo.add_fundamental(_fy_record(
+            "AAA", "ni_2023_future", concept="NetIncomeLoss", value=-999.0,
+            period_end=_utc(2023, 12, 31), available_time=_utc(2024, 2, 1),
+        ))
+
+        score = sloan_accruals_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(10.0 / 110.0)  # unchanged -- FY2023 not yet filed
+
+
+class TestDividendGrowthScore:
+    """Session 36 -- ADR-0043 Decision 11: a dividend-growth factor,
+    structurally the mirror image of asset_growth_score (same
+    _fy_records-based YoY-change shape) but NOT negated, since dividend
+    growth is hypothesized positively related to forward returns."""
+
+    def test_computes_yoy_dividend_growth_rate(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "div_prior", concept="PaymentsOfDividends", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "div_current", concept="PaymentsOfDividends", value=150.0, period_end=_utc(2022, 12, 31)))
+
+        score = dividend_growth_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(0.5)
+
+    def test_only_one_fiscal_year_of_dividends_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "div_current", concept="PaymentsOfDividends", value=150.0, period_end=_utc(2022, 12, 31)))
+
+        assert dividend_growth_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_no_dividend_at_all_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        # A company with no PaymentsOfDividends concept filed at all --
+        # unlike shareholder_yield_score, this has no "genuine zero"
+        # reading here: a growth RATE from a zero/absent base is
+        # structurally undefined, not a payout level.
+        repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=20.0, period_end=_utc(2022, 12, 31)))
+
+        assert dividend_growth_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_prior_dividend_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "div_prior", concept="PaymentsOfDividends", value=0.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "div_current", concept="PaymentsOfDividends", value=50.0, period_end=_utc(2022, 12, 31)))
+
+        # A newly-initiated dividend has no computable growth RATE from
+        # a zero base -- would compute to a spurious infinite/undefined
+        # growth if divided through.
+        assert dividend_growth_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_higher_growth_scores_higher_matching_the_higher_is_more_attractive_convention(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for security_id, current in (("FAST_GROWER", 200.0), ("SLOW_GROWER", 105.0)):
+            repo.add_fundamental(_fy_record(security_id, f"{security_id}:prior", concept="PaymentsOfDividends", value=100.0, period_end=_utc(2021, 12, 31)))
+            repo.add_fundamental(_fy_record(security_id, f"{security_id}:current", concept="PaymentsOfDividends", value=current, period_end=_utc(2022, 12, 31)))
+
+        fast_score = dividend_growth_score("FAST_GROWER", _utc(2023, 6, 1), repo)
+        slow_score = dividend_growth_score("SLOW_GROWER", _utc(2023, 6, 1), repo)
+        assert fast_score > slow_score
+
+    def test_a_score_at_an_early_date_ignores_a_not_yet_filed_third_fiscal_year(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "div_2021", concept="PaymentsOfDividends", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "div_2022", concept="PaymentsOfDividends", value=150.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record(
+            "AAA", "div_2023_future", concept="PaymentsOfDividends", value=9000.0,
+            period_end=_utc(2023, 12, 31), available_time=_utc(2024, 2, 1),
+        ))
+
+        score = dividend_growth_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(0.5)  # unchanged -- FY2023 not yet filed
+
+
+class TestEarningsYieldScore:
+    """Session 36 -- ADR-0043 Decision 11: Basu (1977)'s earnings-yield
+    value anomaly (NetIncomeLoss / market cap), the value leg of
+    Decision 8's "Value+Momentum combination" candidate -- see
+    factor_scores.py's module-level note (above this function) for why
+    the momentum leg was not rebuilt (already has a real, null IC
+    result on this project's own data)."""
+
+    def test_computes_net_income_over_market_cap(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = earnings_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        # market_cap = 10.0 * 1000 = 10000; score = 50 / 10000
+        assert score == pytest.approx(0.005)
+
+    def test_missing_net_income_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert earnings_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_missing_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert earnings_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_zero_or_negative_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=0.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert earnings_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_missing_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[])
+
+        assert earnings_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_uses_raw_close_not_adjusted_close_for_market_cap(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "ni", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, adjusted_close=5.0, timestamp=_utc(2023, 5, 25))])
+
+        score = earnings_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(50.0 / (10.0 * 1000.0))  # not 50.0 / (5.0 * 1000.0)
+
+    def test_higher_earnings_yield_scores_higher_matching_the_higher_is_more_attractive_convention(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        for security_id, ni in (("CHEAP", 500.0), ("EXPENSIVE", 50.0)):
+            fundamentals_repo.add_fundamental(_fy_record(security_id, f"{security_id}:ni", concept="NetIncomeLoss", value=ni, period_end=_utc(2022, 12, 31)))
+            fundamentals_repo.add_fundamental(_fy_record(security_id, f"{security_id}:shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[
+            _price_bar("CHEAP", "p1", close=10.0, timestamp=_utc(2023, 5, 25)),
+            _price_bar("EXPENSIVE", "p2", close=10.0, timestamp=_utc(2023, 5, 25)),
+        ])
+
+        cheap_score = earnings_yield_score("CHEAP", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        expensive_score = earnings_yield_score("EXPENSIVE", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert cheap_score > expensive_score
+
+    def test_a_score_at_an_early_date_ignores_a_not_yet_filed_net_income_record(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "ni_2022", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record(
+            "AAA", "ni_2023_future", concept="NetIncomeLoss", value=9000.0,
+            period_end=_utc(2023, 12, 31), available_time=_utc(2024, 2, 1),
+        ))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = earnings_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(0.005)  # still the 2022 net income, not the future 9000.0

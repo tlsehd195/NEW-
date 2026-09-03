@@ -452,3 +452,176 @@ def shareholder_yield_score(
     )
 
     return (dividends + buybacks - issuance) / market_cap
+
+
+def sloan_accruals_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the Sloan (1996) accruals anomaly ("Do Stock Prices
+    Fully Reflect Information in Accruals and Cash Flows About Future
+    Earnings?", The Accounting Review): companies whose earnings are
+    made up more of ACCRUALS (the non-cash portion of net income) and
+    less of actual operating CASH FLOW tend to have LOWER subsequent
+    returns, hypothesized because investors overweight the persistence
+    of accruals relative to cash flows (accruals reverse; cash flows
+    are more persistent), and correct only once that overweighting
+    becomes visible in later earnings. Independently replicated
+    repeatedly, including internationally (Australia, Canada, UK) and
+    as one of only two anomalies (alongside momentum) whose magnitude
+    the Fama-French five-factor model does NOT shrink in the broad
+    2020 "Replicating Anomalies" 447-factor study -- one of this
+    project's stronger-replicated remaining candidates.
+
+    Uses the Hribar & Collins (2002) cash-flow-statement definition
+    (`NetIncomeLoss - CFO`, scaled by average total assets) rather than
+    Sloan's original balance-sheet definition (change in non-cash
+    working capital minus depreciation): the cash-flow version is less
+    prone to measurement error from one-time events (M&A, discontinued
+    operations) and, more concretely for this project, needs only
+    concepts already ingested for `roa_score`/`piotroski_f_score`
+    (`NetIncomeLoss`, `NetCashProvidedByUsedInOperatingActivities`,
+    `Assets`) -- zero new real ingestion required, same as
+    `asset_growth_score`.
+
+    Score is the NEGATIVE of the accruals ratio, so a higher score
+    means LOWER (hypothesized more attractive) accruals -- matches this
+    module's convention (see `leverage_score`/`asset_growth_score`)
+    that a higher score always ranks a security as more attractive.
+    `None` (never a fabricated ratio) unless `NetIncomeLoss` and CFO are
+    both known for the latest fiscal year and at least two distinct
+    fiscal years' `Assets` are known, or average assets is
+    non-positive."""
+    ni_record = _latest_fiscal_year_value(repository, security_id, "NetIncomeLoss", as_of_time)
+    cfo_record = _latest_fiscal_year_value(
+        repository, security_id, "NetCashProvidedByUsedInOperatingActivities", as_of_time,
+    )
+    if ni_record is None or cfo_record is None:
+        return None
+    asset_records = _fy_records(repository, security_id, "Assets", as_of_time)
+    if len(asset_records) < 2:
+        return None
+    avg_assets = (asset_records[-2].value + asset_records[-1].value) / 2.0
+    if avg_assets <= 0:
+        return None
+    accruals = (ni_record.value - cfo_record.value) / avg_assets
+    return -accruals
+
+
+def dividend_growth_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- a dividend growth factor: companies growing their
+    dividend payouts fastest year-over-year are hypothesized to have
+    relatively better forward returns, read as a quality/confidence
+    signal (a company raising its payout is implicitly signaling
+    management's confidence in sustained future earnings) distinct from
+    a static dividend-YIELD level. Academic evidence on dividend GROWTH
+    predictability specifically (as opposed to aggregate market return
+    predictability from the dividend-price ratio, a separate and more
+    contested literature) is comparatively consistent across the US,
+    UK, Canada, Germany, France and Japan, and high-dividend-growth
+    stocks show a documented monotonic relation with higher risk-
+    adjusted mean returns even after three/four-factor model
+    adjustment.
+
+    Structurally the same shape as `asset_growth_score` (a single
+    year-over-year change, reusing `_fy_records`), but on
+    `PaymentsOfDividends` instead of `Assets`, and NOT negated -- growth
+    is hypothesized POSITIVELY related here, the opposite sign
+    relationship from asset growth. Needs zero new real ingestion:
+    `PaymentsOfDividends` is already one of `shareholder_yield_score`'s
+    3 XBRL concepts (ADR-0043 Decision 10).
+
+    **A real, foreseeable coverage gap, stated here rather than found
+    silently later**: a company with no dividend paid in the prior
+    fiscal year (either a non-payer, or one that just initiated a
+    dividend) has no computable growth RATE from a zero base -- `None`
+    in that case, same discipline as `asset_growth_score`'s
+    non-positive-prior-value guard. This means the score is structurally
+    only ever defined for companies that were ALREADY paying a dividend
+    in the prior fiscal year, not a bug, an accurate reflection of what
+    a growth rate from zero means."""
+    records = _fy_records(repository, security_id, "PaymentsOfDividends", as_of_time)
+    if len(records) < 2:
+        return None
+    prior, current = records[-2].value, records[-1].value
+    if prior <= 0:
+        return None
+    return current / prior - 1.0
+
+
+def earnings_yield_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> Optional[float]:
+    """HYPOTHESIS -- earnings yield (Basu 1977, "Investment Performance
+    of Common Stocks in Relation to Their Price-Earnings Ratios: A Test
+    of the Efficient Market Hypothesis," The Journal of Finance): the
+    original, most-replicated value anomaly -- companies with a LOWER
+    price relative to earnings (equivalently, a HIGHER earnings-to-price
+    ratio) tend to have relatively better forward returns. The value leg
+    of ADR-0043 Decision 8's "Value+Momentum combination" candidate,
+    built standalone rather than as the literal published combination --
+    see the module-level note below this function for why.
+
+    The first genuine PRICE-based valuation ratio this project has
+    tested: every earlier fundamentals factor here (`roe_score` through
+    `sloan_accruals_score`) is a ratio or change entirely within
+    financial-statement figures, never comparing a fundamental to the
+    market's OWN pricing of the company the way a P/E-style ratio does.
+    Needs price data (market capitalization), so -- like
+    `shareholder_yield_score` -- is wired through `signal_ic.
+    compute_hybrid_ic_series` rather than `compute_fundamentals_ic_series`.
+
+    Score = `NetIncomeLoss / market_cap` (market cap computed exactly as
+    `shareholder_yield_score` does: latest known RAW `close`, never
+    `adjusted_close`, times latest known fiscal-year-end
+    `CommonStockSharesOutstanding` -- see `_latest_price`'s own
+    docstring for why raw, not adjusted). `None` (never a fabricated
+    yield) if net income, price, or share count is unknown, or market
+    cap is non-positive. Needs zero new real ingestion: `NetIncomeLoss`
+    and `CommonStockSharesOutstanding` are already ingested for
+    `roe_score`/`piotroski_f_score`, and the price catalog already
+    exists for `shareholder_yield_score`.
+
+    **Fama & French (1992) found book-to-market has more discriminatory
+    power than earnings yield for separating value from growth stocks in
+    their specific sample, and the two are correlated but distinct value
+    proxies** -- stated here rather than left implicit, since this
+    project has no book-value-per-share data ingested and cannot test a
+    book-to-market variant without a new XBRL concept
+    (`StockholdersEquity` is already ingested for `roe_score`, so a
+    future `book_to_market_score` would actually need zero new data too
+    -- a natural next candidate, not built this round)."""
+    ni_record = _latest_fiscal_year_value(fundamentals_repository, security_id, "NetIncomeLoss", as_of_time)
+    if ni_record is None:
+        return None
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    market_cap = price * shares_record.value
+    if market_cap <= 0:
+        return None
+    return ni_record.value / market_cap
+
+
+# Session 36 -- the "momentum" half of Decision 8's "Value+Momentum
+# combination" candidate is deliberately NOT built here: this project
+# already has a real, observed IC result for the exact shared
+# `_momentum_score` used by `long_term_momentum`/
+# `risk_controlled_momentum` (`docs/research/STRATEGY-VALIDATION-REPORT.md`
+# Section G's evidence table -- mean_ic = -0.0078, read as "null"), so
+# building a fresh standalone momentum factor now would re-test an
+# already-null signal under a cosmetically different name, exactly what
+# `compute_signal_ic_from_catalog.py`'s own module docstring says this
+# project avoids doing. `earnings_yield_score` above is therefore built
+# and tested alone, not as the literal equal-weight rank-combination
+# Asness, Moskowitz & Pedersen (2013) publish -- that combination step
+# would also need new cross-sectional architecture this project does
+# not have (every `ScoreFn`/`FundamentalsScoreFn`/`HybridScoreFn` scores
+# ONE security at a time with no visibility into the rest of the
+# universe at that moment, so a rank-average-across-the-universe
+# combining step cannot be expressed as an ordinary score_fn without a
+# new IC-series layer analogous to `compute_hybrid_ic_series`). Revisit
+# only if `earnings_yield_score`'s own real IC result is promising
+# enough to justify that additional architecture.

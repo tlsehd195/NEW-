@@ -1743,6 +1743,32 @@ concepts (`PaymentsOfDividends`, `PaymentsForRepurchaseOfCommonStock`,
 ingestion cost as Piotroski's addition. Also deliberately NOT added to
 the walk-forward pool yet. Full account: ADR-0043 Decision 10.
 
+**Fourteenth update -- three more literature-researched candidates,
+all buildable with zero new real ingestion.** `sloan_accruals_score`
+(Sloan 1996 -- `NetIncomeLoss - CFO`, scaled by average assets; one of
+the most-replicated anomalies in the literature, unshrunk by the
+Fama-French five-factor model in a 447-anomaly replication study) and
+`dividend_growth_score` (a YoY change in `PaymentsOfDividends`,
+structurally the mirror of `asset_growth_score` but not negated) both
+need only concepts already ingested for earlier candidates. The
+originally-listed "Value+Momentum combination" was built as ONE
+standalone factor, `earnings_yield_score` (Basu 1977's `NetIncomeLoss /
+market_cap`, the first genuine price-based valuation ratio this project
+has tested), rather than the literal published rank-combination --
+the momentum leg already has a real, observed null IC result on this
+project's own data (mean_ic = -0.0078, Section G's own table above),
+so rebuilding it now would re-test an already-null signal, and the
+literal combination step needs new cross-sectional architecture this
+project's per-security `score_fn` contract does not have. A follow-up
+literature search beyond the original 12 candidates found nothing
+worth adding: the one concrete alternative (net stock issuance /
+composite equity issuance, Daniel & Titman 2006) would be highly
+correlated with `shareholder_yield_score`'s own numerator, not
+genuinely new information. All 3 wired into
+`compute_fundamentals_ic_from_catalog.py` (`--score sloan_accruals` /
+`dividend_growth` / `earnings_yield`), also deliberately NOT added to
+the walk-forward pool yet. Full account: ADR-0043 Decision 11.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

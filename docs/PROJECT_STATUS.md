@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-02
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 3개 추가 — asset_growth_score(Decision 8, 추가 데이터 불필요), piotroski_f_score(Decision 9, XBRL 6개 신규 항목 필요), shareholder_yield_score(Decision 10, 가격+펀더멘털 이중 저장소 새 배선 `compute_hybrid_ic_series` 필요))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 6개 추가 — asset_growth_score(Decision 8, 추가 데이터 불필요), piotroski_f_score(Decision 9, XBRL 6개 신규 항목 필요), shareholder_yield_score(Decision 10, 가격+펀더멘털 이중 저장소 새 배선 `compute_hybrid_ic_series` 필요), sloan_accruals_score/dividend_growth_score/earnings_yield_score(Decision 11, 셋 다 추가 데이터 불필요))
 
 ---
 
@@ -25,8 +25,10 @@
    python3 scripts/ingest_fundamentals_data.py --universe RESEARCH_UNIVERSE \
      --user-agent "..." --as-of <오늘 날짜> --db-path ./data/fundamentals_data
    ```
-3. **raw IC 체크 3개 실행** (8후보 풀엔 아직 안 넣었음 — 아래 3개 결과를
-   보고 나서 넣을지 결정):
+3. **raw IC 체크 6개 실행** (8후보 풀엔 아직 하나도 안 넣었음 — 아래 6개
+   결과를 보고 나서 넣을지 결정. 뒤 3개(`sloan_accruals`/
+   `dividend_growth`/`earnings_yield`)도 XBRL 추가 항목 없이 위 ingestion
+   한 번으로 다 커버됨):
    ```
    python3 scripts/compute_fundamentals_ic_from_catalog.py \
      --price-db-path ./data/real_2010_latest \
@@ -42,12 +44,29 @@
      --price-db-path ./data/real_2010_latest \
      --fundamentals-db-path ./data/fundamentals_data \
      --score shareholder_yield --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score sloan_accruals --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score dividend_growth --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score earnings_yield --start 2010-01-01
    ```
 4. **결과를 그대로 붙여넣어 보고** — `mean_ic`/`ic_information_ratio`/
    `positive_ic_ratio`/`observations` 값을 그대로 전달하면 8후보 풀에
    추가할지, 어떤 걸 우선할지 판단함. Piotroski는 은행/증권사
    (JPM/GS/MS/WFC/AXP/BAC)에서 `None`이 다수 나올 수 있음 — 버그 아님,
-   문서화된 데이터 특성.
+   문서화된 데이터 특성. `dividend_growth`는 무배당 종목에서 구조적으로
+   `None`이 많이 나올 수 있음(전년도 배당 0이면 성장률 계산 불가) —
+   마찬가지로 버그 아님.
 
 ---
 
@@ -874,6 +893,38 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     전체 스위트 2086개 통과(기존 2072 + 14).
   - 다음 단계: asset_growth/piotroski와 마찬가지로 실제 ingestion
     재실행 후 raw IC 체크.
+- **"3개 진행 후에 다른거 더 있으면 가져와" 요청으로 문헌 후보 3개 더
+  구현 (`ADR-0043` Decision 11)** — 12개 리스트 중 이유 미기록이던
+  Sloan Accruals/Dividend Growth/Value+Momentum combination 전부
+  처리. 셋 다 웹서치로 재검증 완료, **셋 다 추가 데이터 불필요**
+  (Piotroski/Shareholder Yield 때 이미 추가한 XBRL 항목으로 전부 커버):
+  - `sloan_accruals_score`: (NetIncomeLoss - 영업현금흐름) / 평균
+    총자산의 음수(발생액 낮을수록 유리) — Sloan 1996, 가장 많이
+    재현된 이상현상 중 하나.
+  - `dividend_growth_score`: 배당금 YoY 증가율(asset_growth와 구조는
+    같은데 부호는 반대 — 성장이 유리한 방향). 전년도 무배당이면
+    `None`(성장률 계산 불가, 버그 아님).
+  - `earnings_yield_score`: NetIncomeLoss / 시가총액 (Basu 1977,
+    최초이자 가장 많이 재현된 가치 이상현상) — 원래 "Value+Momentum
+    combination" 후보였는데, **모멘텀 다리는 다시 안 만듦**: 우리가
+    이미 실제 데이터로 momentum IC를 측정한 적 있고(mean_ic=-0.0078,
+    null) 같은 걸 이름만 바꿔 재검증하는 셈이라 의미 없음. 게다가
+    Asness 논문의 순위평균 결합 방식 자체가 지금 우리 아키텍처(종목별
+    독립 계산, 전체 유니버스 동시 참조 불가)로는 못 만듦 — 새 교차
+    단면 아키텍처가 따로 필요해서 이번엔 안 만듦. value 다리만 단독
+    후보로 만듦.
+  - **12개 밖의 새 후보도 찾아봤는데** 마땅한 게 없었음 — Net Stock
+    Issuance(자사주매입-신주발행)는 이미 shareholder_yield 분자의
+    부분집합이라 "다른 정보"가 아니라서 제외. 2023~2024년 리플리케이션
+    연구들도 "대부분의 이상현상은 재현 안 됨"이라는 우리 프로젝트의
+    기존 태도(7개 중 6개 null)를 재확인해줄 뿐이었음.
+  - `compute_fundamentals_ic_from_catalog.py`에 `--score
+    sloan_accruals`/`dividend_growth`/`earnings_yield` 3개 배선,
+    8후보 풀엔 아직도 안 넣음(같은 원칙).
+  - 신규 테스트 23개(factor_scores 21 + CLI wiring 2), 전체 스위트
+    2109개 통과(기존 2086 + 23).
+  - 다음 단계: 나머지 5개와 마찬가지로 실제 ingestion 후 raw IC 체크
+    (총 6개 후보 결과를 한번에 볼 수 있음).
 
 ### Completed (Session 33 — Phase 31 continued)
 

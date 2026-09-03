@@ -6,16 +6,21 @@ factor_scores`, sharing the same `_fy_ratio` plumbing), `asset_growth`
 Gulen & Schill 2008's asset growth anomaly, ADR-0043 Decision 8), or
 `piotroski` (a 0-9 composite of nine YoY quality-improvement signals --
 Piotroski 2000's F-Score, ADR-0043 Decision 9; needs 6 new XBRL
-concepts beyond what earlier scores needed), or `shareholder_yield`
+concepts beyond what earlier scores needed), `shareholder_yield`
 (dividends + net buybacks over market cap -- ADR-0043 Decision 10; the
 first score here that also needs price data, wired through the new
-`compute_hybrid_ic_series` instead of `compute_fundamentals_ic_series`)
--- using `strategy_research.signal_ic.compute_fundamentals_ic_series`
-(or, for `shareholder_yield`, `compute_hybrid_ic_series`) against two
-live DuckDB catalogs: the fundamentals catalog (ADR-0042,
+`compute_hybrid_ic_series` instead of `compute_fundamentals_ic_series`),
+`sloan_accruals` (Sloan 1996's accruals anomaly -- ADR-0043 Decision
+11), `dividend_growth` (a YoY change in dividends paid, ADR-0043
+Decision 11), or `earnings_yield` (Basu 1977's net-income/market-cap
+value anomaly, ADR-0043 Decision 11 -- also wired through
+`compute_hybrid_ic_series`, since it needs price too) -- using
+`strategy_research.signal_ic.compute_fundamentals_ic_series` (or, for
+`shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`)
+against two live DuckDB catalogs: the fundamentals catalog (ADR-0042,
 `ingest_fundamentals_data.py`'s output) and the price catalog
 (`ingest_real_market_data.py`'s output, needed for forward returns,
-and for `shareholder_yield`'s market-cap calculation too). Mirrors
+and for the two hybrid scores' market-cap calculation too). Mirrors
 `compute_signal_ic_from_catalog.py`'s structure and TEST-1 guard
 exactly, adapted for two repositories instead of one -- see that
 script's own module docstring for the full "why a live catalog, why
@@ -54,12 +59,15 @@ from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
     asset_growth_score,
+    dividend_growth_score,
+    earnings_yield_score,
     leverage_score,
     net_margin_score,
     piotroski_f_score,
     roa_score,
     roe_score,
     shareholder_yield_score,
+    sloan_accruals_score,
 )
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
 from strategy_research.signal_ic import compute_fundamentals_ic_series, compute_hybrid_ic_series  # noqa: E402
@@ -73,6 +81,8 @@ _SCORES = {
     "leverage": leverage_score,
     "asset_growth": asset_growth_score,
     "piotroski": piotroski_f_score,
+    "sloan_accruals": sloan_accruals_score,
+    "dividend_growth": dividend_growth_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 10) -- scores whose score_fn
@@ -83,6 +93,7 @@ _SCORES = {
 # needs to know which call path to use.
 _HYBRID_SCORES = {
     "shareholder_yield": shareholder_yield_score,
+    "earnings_yield": earnings_yield_score,
 }
 
 

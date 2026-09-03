@@ -306,3 +306,91 @@ class TestEndToEndAgainstSyntheticCatalogs:
         ])
         assert exit_code == 0
         assert "Fundamentals Signal IC: shareholder_yield" in capsys.readouterr().out
+
+    def test_sloan_accruals_and_dividend_growth_options_run_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 11. Both share the shared
+        two-fiscal-year-fixture shape asset_growth_score's own CLI test
+        uses (they need zero new XBRL concepts beyond what earlier
+        scores already ingest), so one fixture serves both."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+        symbol = symbols[0]
+
+        price_engine = new_engine(tmp_path, name="price6")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals6")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        prior_end = datetime(2016, 12, 31, tzinfo=timezone.utc)
+        current_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        for concept, (prior_value, current_value) in {
+            "NetIncomeLoss": (10.0, 20.0), "Assets": (180.0, 200.0), "PaymentsOfDividends": (30.0, 40.0),
+        }.items():
+            fundamentals_repo.add_fundamental(
+                _fy_record(symbol, f"{symbol}:{concept}:prior", concept=concept, value=prior_value, period_end=prior_end)
+            )
+            fundamentals_repo.add_fundamental(
+                _fy_record(symbol, f"{symbol}:{concept}:current", concept=concept, value=current_value, period_end=current_end)
+            )
+        fundamentals_repo.add_fundamental(
+            _fy_record(symbol, f"{symbol}:cfo:current", concept="NetCashProvidedByUsedInOperatingActivities", value=25.0, period_end=current_end)
+        )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        for score in ("sloan_accruals", "dividend_growth"):
+            exit_code = module.main([
+                "--price-db-path", str(tmp_path / "price6"),
+                "--fundamentals-db-path", str(tmp_path / "fundamentals6"),
+                "--universe", "PILOT_UNIVERSE",
+                "--score", score,
+                "--start", "2018-06-01",
+                "--end", "2019-01-01",
+                "--step-months", "1",
+                "--horizon-days", "20",
+            ])
+            assert exit_code == 0
+            assert f"Fundamentals Signal IC: {score}" in capsys.readouterr().out
+
+    def test_earnings_yield_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 11. The second score routed
+        through compute_hybrid_ic_series (after shareholder_yield) --
+        regression guard that the CLI actually wires this path for
+        earnings_yield too, not just shareholder_yield."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+        symbol = symbols[0]
+
+        price_engine = new_engine(tmp_path, name="price7")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals7")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        fundamentals_repo.add_fundamental(
+            _fy_record(symbol, f"{symbol}:ni", concept="NetIncomeLoss", value=5_000_000.0, period_end=period_end)
+        )
+        fundamentals_repo.add_fundamental(
+            _fy_record(symbol, f"{symbol}:shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=period_end)
+        )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price7"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals7"),
+            "--universe", "PILOT_UNIVERSE",
+            "--score", "earnings_yield",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Fundamentals Signal IC: earnings_yield" in capsys.readouterr().out
