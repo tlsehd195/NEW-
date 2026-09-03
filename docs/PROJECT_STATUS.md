@@ -110,25 +110,46 @@
   wiring 파일에 배치 검증 3). 전체 스위트 2213개 통과(기존 2192 + 21).
 - `ADR-0051` 신규 작성.
 
-**다음 단계 (사용자가 코드스페이스에서 실행)**: 아래 명령으로 실제
-30개 후보 walk-forward/PBO/DSR 결과를 받아서 relay하면 됨. **주의:
-이번 배치는 후보 수가 기존 8개 → 28개로 늘어서, 실행 시간이 꽤 길어질
-수 있음** — `ml_ols`/`ml_ridge` 2개만으로도 이전에 5종목 기준 최적화가
-필요했었는데, 이번엔 63종목 기준으로 22개 규칙 기반 후보가 추가됨.
-규칙 기반 후보들은 `ml_ols`처럼 매 fold마다 다시 fit하지 않으므로
-`ml_ols` 만큼 느리진 않을 것으로 예상되지만, 실행이 오래 걸리면 터미널을
-닫지 말고 기다리거나 `nohup`/`&`로 백그라운드 실행 권장:
-```
-python3 scripts/run_long_horizon_validation.py \
-  --universe RESEARCH_UNIVERSE \
-  --start 2010-01-01 --end 2023-04-28 \
-  --db-path ./data/real_2010_latest \
-  --fundamentals-db-path ./data/fundamentals_data \
-  --data-status REAL
-```
-(`--end 2023-04-28`는 `TEST_1` 잠긴 구간 시작 직전 — 이 범위를 넘기면
-스크립트가 자동으로 거부함. 결과는 `--report-out` 안 주면
-`./data/real_2010_latest/long_horizon_validation.json`에 저장됨.)
+**실제 28개 후보 walk-forward/PBO/DSR 결과 수신 완료 (2026-09-03)**:
+사용자가 최신 코드 pull 후 재실행, 28개 후보 전부 정상 평가됨(60
+real fold, TRAIN [2010-01-01..2017-12-29) VALIDATION
+[2017-12-29..2020-08-28) TEST [2020-08-28..2023-04-28], PBO=12.86%
+across 70 CSCV splits).
+
+**CANDIDATE 등급 달성 2개 (신규)**: `size`(DSR=0.99, PBO=0.13,
+fold 60%, walk-forward median net cumret=+0.50%, **held-out
+TEST=+85.26%, Sharpe=0.67** — 28개 중 median 수익률 1위이자 TEST도
+강함, 지금까지 이 프로젝트에서 나온 후보 중 walk-forward와 TEST가
+같은 방향으로 가장 일관된 사례), `altman_z`(DSR=0.96, PBO=0.13,
+fold 60%, walk-forward median net cumret=+0.27%, **하지만 held-out
+TEST=-28.29%, Sharpe=0.18** — walk-forward fold들은 통과했는데 정작
+한 번만 보는 held-out TEST에서 크게 저조 — `risk_controlled_momentum`/
+`ml_ols` 때 이미 세운 해석 원칙과 동일하게 "PBO/DSR 통과가 TEST
+좋음을 보장하지 않는다"는 정확한 반례로 기록, 사후에 유리하게
+해석하지 않음).
+
+**중요한 발견 — `leverage`가 8개 풀에서는 CANDIDATE였는데 28개
+풀에서는 탈락함**: fold 통과율은 60%로 동일한데, Deflated Sharpe가
+0.9674(8개 풀) → 0.8099(28개 풀)로 떨어져서 CANDIDATE 기준(≥0.95)
+미달로 바뀜. **이건 버그가 아니라 DSR 공식 자체의 정확한 동작** —
+후보 수(시행 횟수)가 늘어날수록 "우연히 나올 수 있는 최대 Sharpe"
+보정치가 커져서, 같은 raw 성과도 더 엄격하게 평가됨. RULE 0.8과
+다중검정 경고가 숫자로 실제 증명된 사례.
+
+**나머지 25개는 ROBUSTNESS_PENDING** (fold 통과율 60% 미만이거나,
+통과해도 PBO/DSR 기준 미달) — 상세 수치는 실제 리포트
+(`data/real_2010_latest/long_horizon_validation.json`)에 있음.
+
+**다음 단계 — 이건 사용자 판단 영역, 자동 진행 안 함**: `size`/
+`altman_z` 둘 다 `CandidateModelStatus`/`EvidenceLevel` 체계상
+"CANDIDATE"일 뿐 "VALIDATED"가 아님 — VALIDATED는 이 프로젝트
+설계상 자동화된 스크립트가 아니라 **명시적인 사람의 review**가
+필요(`classify_evidence_level` 자체 docstring/`strategy_research.
+evidence` 모듈에 이미 하드코딩된 원칙). `altman_z`는 TEST 저조 때문에
+개인적으로도 신뢰도가 낮다고 판단됨. `size`는 지금까지 나온 결과 중
+가장 설득력 있어 보이지만, 이것도 "다음에 뭘 할지"(실제 사람 review
+절차를 밟을지, paper trading 후보로 고려할지 등)는 사용자가 정할
+일이라 먼저 여쭤봄 — 채팅에서 이어감.
 
 1. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
    것들 — 전부 실제 데이터/네트워크가 필요해서 사용자 환경에서만 가능,
