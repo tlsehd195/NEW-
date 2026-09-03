@@ -167,6 +167,60 @@ deferred to a later Validation-focused phase (`PROJECT_MASTER_PLAN.md`
 §13.5) -- this phase's split only needs to not leak, not to implement
 the full validation protocol.
 
+## Related literature (added Session 36, in response to a direct
+   question -- documentation only, no behavior changed)
+
+The user asked directly whether academic literature exists for
+"record a trade's rationale, then retrain from it" -- this ADR's
+`Experience → Data Cleaning → Labeling → Training Dataset →
+Candidate Training → Evaluation` pipeline was designed before this
+session without citing any, so this section grounds it retroactively
+rather than claiming it was literature-driven from the start.
+
+- **`trade_journal.models.ExperienceRecord`'s own shape** (`state`,
+  `action`, `actual_outcome`, `reward`) is, structurally, the classic
+  reinforcement-learning experience tuple. The specific technique this
+  project's pipeline implements -- persist past experience records,
+  then later replay/retrain a model from the stored pool rather than
+  learning only from the single most recent trade -- is "experience
+  replay," introduced by **Lin (1992)**, "Self-Improving Reactive
+  Agents Based on Reinforcement Learning, Planning and Teaching,"
+  Machine Learning 8(3-4): 293-321 (verified real via web search this
+  session), and made famous at scale by **Mnih et al. (2015)**,
+  "Human-level control through deep reinforcement learning," Nature
+  518(7540) (the DQN paper -- one of the most cited papers in deep RL;
+  disabling experience replay was shown to severely degrade
+  performance, evidence the mechanism itself, not just the specific
+  network architecture, is what matters).
+- **The finance-specific match**: **López de Prado (2018)**, *Advances
+  in Financial Machine Learning*, Chapter 3, "meta-labeling" -- record
+  each bet's/trade's realized outcome, then train a model from those
+  outcomes to decide whether to act on (and how to size) future
+  signals. The same author already trusted in this project for
+  PBO/Deflated Sharpe Ratio (`strategy_research.pbo_dsr`, ADR-0035).
+  Honest note on fit: meta-labeling's secondary model specifically
+  predicts hit/miss on a PRIMARY model's existing signal (a
+  classification problem used for filtering/sizing); this project's
+  `Labeler` instead regresses directly on `TradeRecord.realized_return`
+  itself (Decision 7 above) -- the same "learn from realized outcomes"
+  principle, but a different specific target, not a literal
+  implementation of meta-labeling's two-model architecture.
+- Two more distant but relevant references, not specifically
+  implemented by anything in this ADR: **Moody & Saffell (2001)**,
+  "Learning to Trade via Direct Reinforcement," IEEE Transactions on
+  Neural Networks 12(4): 875-889 (framing trading as a direct RL
+  policy-optimization problem); **Gama et al. (2014)**, "A Survey on
+  Concept Drift Adaptation," ACM Computing Surveys 46(4) (why
+  periodic retraining from fresh experience matters at all -- market
+  relationships are non-stationary, the general ML justification for
+  this pipeline's "as more experience accumulates, retrain" premise).
+
+None of this changes what Phase 9 built or how it behaves -- no
+formula, threshold, or architecture decision above was altered. It
+answers "is there a real citation for this design," the same standard
+already applied to `strategy_research.factor_scores` (ADR-0047), which
+this ADR's design had never been checked against until now.
+
 ## Alternatives Considered
 
 - **Reusing `backtest.experiment.ExperimentRecord` for training runs**:
