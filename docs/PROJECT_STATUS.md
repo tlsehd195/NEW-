@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-02
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 8개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료 — asset_growth_score(Decision 8), piotroski_f_score(Decision 9), shareholder_yield_score(Decision 10, `compute_hybrid_ic_series` 신규 배선), sloan_accruals_score/dividend_growth_score/earnings_yield_score(Decision 11), quality_minus_junk_score/value_composite_score(Decision 12, `compute_universe_ic_series` 신규 교차단면 배선))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 8개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음))
 
 ---
 
@@ -77,6 +77,27 @@
    문서화된 데이터 특성. `dividend_growth`는 무배당 종목에서 구조적으로
    `None`이 많이 나올 수 있음(전년도 배당 0이면 성장률 계산 불가) —
    마찬가지로 버그 아님.
+
+5. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
+   것들 — 전부 실제 데이터/네트워크가 필요해서 사용자 환경에서만 가능,
+   위 1~4번 다 끝난 뒤 여유 있을 때만**:
+   - **`survivorship-free-spy` 최신성 확인**: `teddykoker/survivorship-free-spy`
+     (무료 survivorship-bias-free S&P 500 구성종목 이력)를 실제로 열어서
+     유지보수 상태·데이터 최신성 확인 — 우리 ADR-0033/0034의
+     EXTERNAL_DATASET_REQUIRED 갭을 메울 후보인지 실제로 판단.
+   - **8-K 공시 이벤트 프로토타입**: `data.sec.gov`에서 실제 8-K
+     제출 이력을 몇 종목 가져와서, Item 코드 커버리지·업데이트 빈도가
+     실제로 쓸 만한지 확인 (지금은 이론적으로만 가능하다고 기록된
+     상태 — 실제로 가져와봐야 얼마나 성긴지 앎).
+   - **`value_composite_score`의 EV/EBITDA 다리**: `ingest_fundamentals_data.py`에
+     `CashAndCashEquivalentsAtCarryingValue`/`ShortTermBorrowings`/
+     `DepreciationDepletionAndAmortization` 추가해서 실제로 얼마나
+     커버리지가 나오는지(XBRL 태그 불일치로 성길 수 있음, ADR-0043
+     Decision 12 참고) 실제 데이터로 확인.
+   - **참고만 (지금 할 일은 아님)**: `skfolio`는 검증된 전략이 나온
+     뒤, `EdgarTools`/`quantstats`는 필요해지면, `PEAD`는 데이터
+     소스 자체가 없어서 영구 보류. 이 4개는 "집 도착 후 할 일"이
+     아니라 그냥 전제조건이 안 갖춰진 것들이라 액션 아이템은 아님.
 
 ---
 
@@ -1111,8 +1132,44 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
       로직 교차검증 도구 4개, (2) 조건부 나중 도구 3개, (3) 이 세션
       문서상 실제 갭 4개(survivorship 데이터/8-K/PEAD/EV-EBITDA, 전부
       착수는 안 하고 우선순위만 기록), (4) 이번 라운드의 테스트
-      강화 도구 2개까지 총 13개 항목을 조사·기록함. 전부 미착수
-      상태로, 다음에 실제로 뭔가 시작할 때 참고할 카탈로그로만 존재.
+      강화 도구 2개까지 총 13개 항목을 조사·기록함.
+- **"지금 가능한것들은 진행" 요청으로, 13개 중 실제 데이터 없이
+  가능했던 5개를 이번 세션에서 실행 완료 (`ADR-0046`)** — 나머지
+  (survivorship-free-spy/8-K/EV-EBITDA/PEAD/skfolio/EdgarTools 등)는
+  전부 실제 데이터·전제조건 필요라서 위 체크리스트 5번 항목으로
+  옮겨서 "집 도착 후" 목록에 통합함:
+  - **핵심 원칙 먼저**: 이 프로젝트는 `pyproject.toml` 의존성이
+    `duckdb`+`pyarrow`+`pytest`뿐인 stdlib-only 프로젝트라, 검증용
+    라이브러리 5개(purgedcv/empyrical-reloaded/scipy/hypothesis/pandera)를
+    `/tmp` 격리 venv에만 설치하고 프로젝트 의존성 파일은 전혀
+    건드리지 않음. 코드 변경 없음, 검증 결과만 `ADR-0046`에 기록.
+  - **PBO/DSR(`purgedcv`)**: sr0(귀무가설 하 기대 최대 샤프) 공식은
+    `5.55e-17` 오차로 완전 일치 — DSR 수식에서 제일 까다로운 부분이
+    정확했다는 강한 확인. 다만 진짜 불일치 2개를 정확히 찾아서 기록함
+    (버그 아니고 관례 차이): (1) **PBO**: 우리는 로짓 `<=0`을
+    "실패"로 세는데(IS-winner가 OOS 중앙값과 정확히 동률인 경우
+    포함) purgedcv는 `<0`만 세서 5후보/32폴드 합성 데이터로 0.214
+    vs 0.143 차이남 — 홀수 후보 개수일 때 중앙값 정확 동률(로짓=0)
+    경계 처리 관례 차이. (2) **PSR/DSR**: 왜도/첨도 추정 방식 차이
+    (우리는 편향(plug-in) 추정량, purgedcv는 scipy의 편향보정
+    추정량) 때문에 최대 0.2%p 차이. 둘 다 코드 안 고침 — 원 논문이
+    어느 쪽 관례를 쓰라고 못박지 않아서, 이해하고 있는 게 중요하지
+    "고쳐야 할 버그"가 아님.
+  - **Sharpe/max drawdown(`empyrical-reloaded`)**: 완전 일치(오차
+    6.66e-16 이하).
+  - **Spearman IC(`scipy.stats.spearmanr`, alphalens와 같은 방식)**:
+    동률(tie) 케이스 포함 완전 일치.
+  - **룩어헤드 가드(`Hypothesis`)**: `InMemoryDataRepository.get_bars`에
+    무작위 생성 바 500개 시나리오를 property-based 테스트로 던져봤는데
+    한 건도 미래 데이터 누출 없음. 이건 정식 테스트 스위트에는 안
+    넣음 — 넣으려면 `hypothesis`가 진짜 dev 의존성이 돼야 해서, 그건
+    이 검증용 ADR과 별개로 사용자가 명시적으로 원할 때 결정할 문제로
+    남겨둠.
+  - **`DataQualityFramework` vs `pandera`**: 우리 프레임워크의 15개
+    체크(중복/단조성/OHLC정합성/분할·배당 정합성/ingestion이
+    availability보다 먼저 와야 함 등)를 훑어보니 `pandera`는 범용
+    스키마 검증이라 이런 금융 도메인 특화 체크를 기본으로 못 줌 —
+    갭 없음, 도입 불필요.
 
 ### Completed (Session 33 — Phase 31 continued)
 
