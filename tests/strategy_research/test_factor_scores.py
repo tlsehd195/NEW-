@@ -6,10 +6,12 @@ low-vol/high-vol pair, built for exactly this kind of check."""
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timezone
 
 import pytest
 
+from backtest_helpers import make_bars, trading_days
 from research_helpers import synthetic_multi_year_repository
 from storage_helpers import new_engine
 
@@ -19,6 +21,7 @@ from backtest.clock import BacktestClock
 from data_infra.fundamentals_models import FundamentalRecord
 from data_infra.models import Provenance, PriceBar
 from data_infra.repository import InMemoryDataRepository
+from data_infra.universe import BENCHMARK_SYMBOL
 
 from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
@@ -29,6 +32,8 @@ from strategy_research.factor_scores import (
     dividend_growth_score,
     earnings_yield_score,
     leverage_score,
+    long_term_reversal_score,
+    low_beta_score,
     low_volatility_score,
     net_margin_score,
     piotroski_f_score,
@@ -37,6 +42,7 @@ from strategy_research.factor_scores import (
     roe_score,
     sales_yield_score,
     shareholder_yield_score,
+    short_term_reversal_score,
     size_score,
     sloan_accruals_score,
     value_composite_score,
@@ -105,6 +111,149 @@ class TestLowVolatilityScore:
         score_full = low_volatility_score("FLATLOW", as_of_time, _view(full_repo, as_of_time))
 
         assert score_early == score_full
+
+
+class TestLongTermReversalScore:
+    """Session 36 -- ADR-0043 Decision 14: De Bondt & Thaler (1985)'s
+    long-term reversal. A past LOSER should score higher (more
+    attractive) than a past WINNER -- the opposite sign relationship
+    from momentum, not a re-test of the already-null momentum result."""
+
+    def test_past_loser_scores_higher_than_past_winner(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        repo = synthetic_multi_year_repository(date(2016, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        winner_score = long_term_reversal_score("TRENDUP", as_of_time, data)
+        loser_score = long_term_reversal_score("TRENDDOWN", as_of_time, data)
+
+        assert winner_score is not None and loser_score is not None
+        assert loser_score > winner_score  # worse past return -> higher (more attractive) score
+
+    def test_score_is_the_negative_of_cumulative_return(self) -> None:
+        universe = ("TRENDDOWN",)
+        repo = synthetic_multi_year_repository(date(2016, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        score = long_term_reversal_score("TRENDDOWN", as_of_time, data)
+
+        assert score is not None
+        assert score > 0  # TRENDDOWN's cumulative return over the lookback is negative
+
+    def test_insufficient_history_returns_none(self) -> None:
+        universe = ("TRENDUP",)
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2020, 1, 10), symbols=universe)
+        as_of_time = _utc(2020, 1, 3)
+        data = _view(repo, as_of_time)
+
+        assert long_term_reversal_score("TRENDUP", as_of_time, data, lookback_months=36) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        universe = ("TRENDUP",)
+        repo = synthetic_multi_year_repository(date(2016, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert long_term_reversal_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestShortTermReversalScore:
+    """Session 36 -- ADR-0043 Decision 14: Jegadeesh (1990)'s short-term
+    (1-month) reversal -- same construction as long_term_reversal_score,
+    a much shorter window."""
+
+    def test_past_loser_scores_higher_than_past_winner(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        winner_score = short_term_reversal_score("TRENDUP", as_of_time, data)
+        loser_score = short_term_reversal_score("TRENDDOWN", as_of_time, data)
+
+        assert winner_score is not None and loser_score is not None
+        assert loser_score > winner_score
+
+    def test_insufficient_history_returns_none(self) -> None:
+        universe = ("TRENDUP",)
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2020, 1, 3), symbols=universe)
+        as_of_time = _utc(2020, 1, 2)
+        data = _view(repo, as_of_time)
+
+        assert short_term_reversal_score("TRENDUP", as_of_time, data, lookback_months=1) is None
+
+
+def _spy_repo(start: date, end: date, spy_closes_fn, *, extra_bars=()):
+    """Builds an `InMemoryDataRepository` with a `BENCHMARK_SYMBOL`
+    ("SPY") `PriceBar` series (the same regular price-bar pipeline
+    real ingestion uses per `data_infra.universe`'s own module comment
+    -- not the separate `BenchmarkPoint`/`get_benchmark` path
+    `synthetic_multi_year_repository` populates, which `low_beta_score`
+    does not read), plus any `extra_bars` for the security(ies) under
+    test."""
+    days = trading_days(start, end)
+    spy_closes = [spy_closes_fn(i) for i in range(len(days))]
+    bars = list(make_bars(BENCHMARK_SYMBOL, days, spy_closes)) + list(extra_bars)
+    return InMemoryDataRepository(bars=bars)
+
+
+class TestLowBetaScore:
+    """Session 36 -- ADR-0043 Decision 14: Frazzini & Pedersen (2014)'s
+    Betting Against Beta. A distinct construct from
+    `low_volatility_score` -- market beta (covariance with SPY, divided
+    by SPY's own variance), not total trailing volatility."""
+
+    def test_low_beta_security_scores_higher_than_high_beta_security(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        # HIGHBETA amplifies SPY's own moves (2x); LOWBETA dampens them (0.2x) -- both derived
+        # directly from the same SPY path so their true betas are unambiguous by construction.
+        high_beta_closes = [100.0 * (1.0 + 2.0 * (c / spy_closes[0] - 1.0)) for c in spy_closes]
+        low_beta_closes = [100.0 * (1.0 + 0.2 * (c / spy_closes[0] - 1.0)) for c in spy_closes]
+        extra_bars = list(make_bars("HIGHBETA", days, high_beta_closes)) + list(make_bars("LOWBETA", days, low_beta_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        high_score = low_beta_score("HIGHBETA", as_of_time, data)
+        low_score = low_beta_score("LOWBETA", as_of_time, data)
+
+        assert high_score is not None and low_score is not None
+        assert low_score > high_score  # lower beta -> higher (more attractive) score
+
+    def test_beta_of_the_benchmark_against_itself_is_approximately_one(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        same_as_spy = list(make_bars("TWIN", days, spy_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=same_as_spy)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        score = low_beta_score("TWIN", as_of_time, data)
+
+        assert score is not None
+        assert score == pytest.approx(-1.0, abs=1e-6)  # beta of a security identical to the benchmark is 1
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 15))  # far fewer than the 20-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 1, 15), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 14)
+        data = _view(repo, as_of_time)
+
+        assert low_beta_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert low_beta_score("NOBENCH", as_of_time, data) is None
 
 
 def _fy_record(security_id, record_id, *, concept, value, period_end, available_time=None):

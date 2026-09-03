@@ -980,6 +980,102 @@ other 8. Not yet added to the 8-candidate walk-forward pool, not yet
 observed against real data -- fixed before any result is seen, per
 RULE 0.8.
 
+## Decision 14 -- three more S/A-tier candidates the user asked for by name (`long_term_reversal_score`, `short_term_reversal_score`, `low_beta_score`), found the same way Decision 13 found `size_score`
+
+The user asked again, after Decision 13's `size_score`, whether there
+were more S-tier/A-tier papers worth checking. Rather than repeat the
+same narrow grep, checked directly against the canonical "big six"
+anomaly list ADR-0047's correction named as the lesson from missing
+Size: momentum (have it), value (have it), quality (have it),
+low-vol (have it), size (have it, Decision 13) -- profitability is
+really a quality-family sub-case already covered. That check itself
+surfaced three more foundational, independently famous papers this
+project had never checked by name: `Betting Against Beta` (low-beta,
+distinct from low-vol), and the two reversal anomalies (long- and
+short-term) that sit alongside momentum as the other half of the
+"return autocorrelation" literature. All three verified real via web
+search before being built (RULE 0.8):
+
+- **De Bondt & Thaler (1985)**, "Does the Stock Market Overreact?,"
+  The Journal of Finance 40(3): 793-805 -- one of the founding papers
+  of behavioral finance (7,900+ citations). Long-term (3-5 year)
+  losers subsequently outperform long-term winners. A genuinely
+  different hypothesis from this project's already-tested
+  `_momentum_score` (real IC = -0.0078, Section G), not a re-test:
+  De Bondt & Thaler's own formation window (3-5 years) is far longer
+  than momentum's 6-18 month range, and the resulting score has the
+  OPPOSITE sign relationship to momentum's.
+- **Jegadeesh (1990)**, "Evidence of Predictable Behavior of Security
+  Returns," The Journal of Finance 45(3): 881-898 -- significant
+  negative serial correlation in individual stock returns at the
+  1-month horizon (this is exactly why academic momentum studies,
+  including this project's own, skip the most recent month when
+  forming a momentum signal -- this factor tests the skipped month's
+  own effect directly). Built with an explicit, honestly-flagged
+  caveat not needed for this module's other factors: short-term
+  reversal is the anomaly most associated with market microstructure
+  noise (bid-ask bounce) rather than genuine mispricing, especially at
+  this project's daily-close-only (no intraday, no bid/ask) data
+  resolution -- built anyway, per literature, before any result is
+  seen, but a null result here would be less surprising than for this
+  module's other factors and should not be read the same way
+  `_momentum_score`'s own null result was.
+- **Frazzini & Pedersen (2014)**, "Betting Against Beta," Journal of
+  Financial Economics 111(1): 1-25 -- one of the most cited and
+  highest-Sharpe (0.78, 1926-2012 US sample per the original paper)
+  anomalies in the low-risk family. Genuinely distinct from this
+  project's existing `low_volatility_score`: that factor is negative
+  TOTAL trailing volatility (a security's own return variability in
+  isolation); this one is negative market BETA (covariance with a
+  benchmark, divided by the benchmark's own variance) -- a low-vol
+  stock can have a high beta if nearly all its variance is systematic,
+  and vice versa, so the two scores can and do disagree on individual
+  securities. Needed genuinely new machinery, not just a parameter
+  variation: beta estimation requires a SECOND security's (the
+  benchmark's) return series paired by calendar date, not list
+  position, so a data gap in either series cannot silently misalign
+  the pairing. Uses `data_infra.universe.BENCHMARK_SYMBOL` ("SPY"),
+  already ingested per ADR-0029 through the same regular `PriceBar`
+  pipeline as any tradeable symbol (confirmed by reading that module's
+  own comment, and distinct from the separate `BenchmarkPoint`/
+  `get_benchmark` path `BenchmarkEngine` uses for backtest reporting --
+  the two coexist for SPY specifically). A deliberate simplification of
+  Frazzini & Pedersen's own estimator, flagged the same way
+  `low_volatility_score` flags its own simplification versus Ang et
+  al: one uniform 1-year window and no shrinkage-toward-the-mean,
+  versus the paper's blended 1-year-vol/5-year-correlation estimate
+  with shrinkage.
+
+All three are price-only (`ScoreFn`-shaped, same signature as
+`low_volatility_score`), wired into `compute_signal_ic_from_catalog.py`
+(the OTHER CLI script, not `compute_fundamentals_ic_from_catalog.py`
+that Decisions 8-13 used, since these three need no fundamentals data
+at all) via a new `_PRICE_ONLY_SCORES` dict (`--strategy
+long_term_reversal` / `short_term_reversal` / `low_beta`). Needs zero
+new real ingestion for `long_term_reversal_score`/
+`short_term_reversal_score`; `low_beta_score` needs SPY price bars,
+already ingested per ADR-0029 (not new).
+
+12 new tests: 10 in `tests/strategy_research/test_factor_scores.py`
+(`TestLongTermReversalScore` -- 4, `TestShortTermReversalScore` -- 2:
+past loser scores higher than past winner, sign checks, insufficient-
+history/unknown-security `None` cases; `TestLowBetaScore` -- 4: a
+2x-amplified-SPY security scores lower than a 0.2x-dampened one, a
+security identical to SPY has beta exactly 1.0, insufficient-paired-
+history and missing-benchmark-data `None` cases) and 2 CLI end-to-end
+wiring tests in `test_compute_signal_ic_from_catalog_cli.py` (one
+looping over both reversal scores, one for low_beta). Full suite: 2148
+passed (up from 2136).
+
+This is now 12 externally-researched candidates built total (9 via
+`compute_fundamentals_ic_from_catalog.py`: `asset_growth`, `piotroski`,
+`shareholder_yield`, `sloan_accruals`, `dividend_growth`,
+`earnings_yield`, `quality_minus_junk`, `value_composite`, `size`; 3
+via `compute_signal_ic_from_catalog.py`: `long_term_reversal`,
+`short_term_reversal`, `low_beta`), all wired for a cheap raw IC check.
+None yet added to the 8-candidate walk-forward pool, none yet observed
+against real data -- fixed before any result is seen, per RULE 0.8.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true

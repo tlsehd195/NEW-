@@ -21,7 +21,7 @@ from backtest_helpers import make_bars, trading_days
 from storage_helpers import new_engine
 
 from data_infra.calendar import US_EQUITY
-from data_infra.universe import PILOT_UNIVERSE_V1
+from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1
 from storage.data_repository import DuckDBDataRepository
 from strategy_research.locked_windows import TEST_1
 
@@ -157,3 +157,64 @@ class TestEndToEndAgainstSyntheticCatalog:
         assert exit_code == 0
         out = capsys.readouterr().out
         assert "Signal IC: low_volatility" in out
+
+    def test_long_term_and_short_term_reversal_options_run_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 14. Both are price-only
+        ScoreFn-shaped like low_volatility, so share one fixture (a
+        3.5-year history so long_term_reversal's default 36-month
+        lookback has enough trailing data)."""
+        days = trading_days(date(2015, 1, 2), date(2019, 6, 1))
+        trendup_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        trenddown_closes = [100.0 * (0.9998**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+        repo.append_bars(make_bars(symbols[0], days, trendup_closes))
+        repo.append_bars(make_bars(symbols[1], days, trenddown_closes))
+        engine.close()
+
+        module = _load_script()
+        for strategy in ("long_term_reversal", "short_term_reversal"):
+            exit_code = module.main([
+                "--db-path", str(tmp_path / "store"),
+                "--universe", "PILOT_UNIVERSE",
+                "--strategy", strategy,
+                "--start", "2018-06-01",
+                "--end", "2019-01-01",
+                "--step-months", "1",
+                "--horizon-days", "20",
+            ])
+            assert exit_code == 0
+            assert f"Signal IC: {strategy}" in capsys.readouterr().out
+
+    def test_low_beta_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 14. The one price-only score
+        that also needs BENCHMARK_SYMBOL ("SPY") bars in the same
+        catalog -- regression guard that the CLI's real DuckDB catalog
+        (not just the in-memory unit fixtures in test_factor_scores.py)
+        actually has SPY reachable via the same repository/get_bars
+        path low_beta_score reads."""
+        days = trading_days(date(2015, 1, 2), date(2019, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        security_closes = [100.0 * (1.0006**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+        repo.append_bars(make_bars(BENCHMARK_SYMBOL, days, spy_closes))
+        repo.append_bars(make_bars(symbols[0], days, security_closes))
+        engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--db-path", str(tmp_path / "store"),
+            "--universe", "PILOT_UNIVERSE",
+            "--strategy", "low_beta",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Signal IC: low_beta" in capsys.readouterr().out

@@ -125,6 +125,22 @@ low-vol, profitability -- the "big six") explicitly, rather than only
 searching for what related citations are already present, which is
 exactly the blind spot that let this one through.
 
+**Second correction (ADR-0043 Decision 14):** applying that exact
+lesson -- checking the canonical anomaly list by name rather than only
+what was already cited -- surfaced three more foundational papers this
+project had never checked for: De Bondt & Thaler (1985, long-term
+reversal), Jegadeesh (1990, short-term reversal), and Frazzini &
+Pedersen (2014, Betting Against Beta / low-beta, distinct from the
+already-built `low_volatility_score`). All three verified real and
+built as `long_term_reversal_score`/`short_term_reversal_score`/
+`low_beta_score`. See ADR-0043 Decision 14 for the full build. This
+project's factor coverage is broader now across momentum's full
+"return autocorrelation" family (momentum + both reversal horizons)
+and the low-risk family (both total-vol and beta-based low-risk
+premia) than the original "5-6 families" framing implied -- future
+citation audits should treat momentum/low-risk each as a family with
+multiple internally-distinct sub-anomalies, not a single checkbox.
+
 ## What this does NOT do
 
 - Does not change any factor's implementation -- this is a verification

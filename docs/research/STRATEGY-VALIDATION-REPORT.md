@@ -1817,6 +1817,31 @@ yield`/`earnings_yield`. This is a real correction to ADR-0047's
 sixth, independent family that framing omitted entirely. Full account:
 ADR-0043 Decision 13 and the correction appended to ADR-0047.
 
+**Seventeenth update -- three more factors found by applying the
+Sixteenth update's own lesson (check the canonical anomaly list by
+name).** Checking momentum/value/quality/low-vol/size/profitability
+by name surfaced three more foundational papers this project had never
+checked: `long_term_reversal_score` (De Bondt & Thaler 1985 -- 3-5
+year losers subsequently outperform winners; a different horizon and
+opposite sign relationship from the already-null-tested momentum
+score, not a re-test of it), `short_term_reversal_score` (Jegadeesh
+1990 -- 1-month reversal, the exact effect academic momentum studies
+skip a month to avoid; built with an explicit microstructure-noise
+caveat this module's other factors did not need), and `low_beta_score`
+(Frazzini & Pedersen 2014's Betting Against Beta -- market beta versus
+SPY, a genuinely different construct from the already-built
+`low_volatility_score`'s total trailing volatility). All three are
+price-only and wired into `compute_signal_ic_from_catalog.py` (not the
+fundamentals CLI Decisions 8-13 used) via a new `_PRICE_ONLY_SCORES`
+dict (`--strategy long_term_reversal`/`short_term_reversal`/
+`low_beta`). `low_beta_score` needed genuinely new machinery -- paired,
+date-aligned (not list-position-aligned) return series against a
+second security (SPY, `data_infra.universe.BENCHMARK_SYMBOL`, already
+ingested per ADR-0029) -- the first factor in this module needing two
+securities' data at once. Zero new real ingestion for the two reversal
+scores; `low_beta_score` needs SPY, already covered. Full account:
+ADR-0043 Decision 14 and the second correction appended to ADR-0047.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

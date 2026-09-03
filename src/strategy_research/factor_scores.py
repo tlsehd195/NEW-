@@ -21,7 +21,9 @@ from typing import Optional, Sequence
 from backtest.asof import AsOfDataView
 from backtest.metrics import annualized_volatility, compute_returns
 
-from strategy_research._dates import trim_to_lookback
+from data_infra.universe import BENCHMARK_SYMBOL
+
+from strategy_research._dates import TRADING_DAYS_PER_MONTH, trim_to_lookback
 from strategy_research.signal_ic import rank_average
 
 
@@ -58,6 +60,169 @@ def low_volatility_score(
         return None
     vol = annualized_volatility(returns)
     return -vol
+
+
+def long_term_reversal_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_months: int = 36,
+) -> Optional[float]:
+    """HYPOTHESIS -- long-term return reversal (De Bondt & Thaler 1985,
+    "Does the Stock Market Overreact?," The Journal of Finance 40(3):
+    793-805): stocks with the WORST returns over a long (multi-year)
+    formation period ("losers") significantly OUTPERFORM stocks with
+    the BEST returns over the same period ("winners") over the
+    following years -- one of the founding papers of behavioral
+    finance, attributed to investor overreaction to a long run of bad
+    or good news. A genuinely different hypothesis from this project's
+    already-tested `_momentum_score` (`long_term_momentum.py`/
+    `risk_controlled_momentum.py`, real IC = -0.0078, Section G of
+    `STRATEGY-VALIDATION-REPORT.md`), not a re-test of it under a new
+    name: De Bondt & Thaler's own 3-5 YEAR formation window is far
+    longer than this project's momentum lookback range (6-18 months,
+    `LongTermMomentumParameters.lookback_months`), and the direction of
+    the resulting score is the OPPOSITE sign relationship (past losers
+    are hypothesized to be more attractive here, not less).
+
+    Score is the NEGATIVE of the cumulative return over the trailing
+    `lookback_months` (default 36, De Bondt & Thaler's own shorter
+    formation window -- a documented simplification of their full
+    36-60 month range, chosen since it needs less trailing history per
+    security to produce a usable score), so a WORSE past return
+    produces a HIGHER (more attractive) score -- matches this module's
+    convention. Reuses the identical `trim_to_lookback`/`get_bars`
+    machinery `low_volatility_score`/`_momentum_score` already use, no
+    new data or infrastructure needed."""
+    lookback_days = lookback_months * TRADING_DAYS_PER_MONTH
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=int(lookback_days * 1.6)), as_of_time),
+        lookback_days,
+    )
+    if len(bars) < 2:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    if closes[0] is None or closes[0] == 0:
+        return None
+    cumulative_return = closes[-1] / closes[0] - 1.0
+    return -cumulative_return
+
+
+def short_term_reversal_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_months: int = 1,
+) -> Optional[float]:
+    """HYPOTHESIS -- short-term return reversal (Jegadeesh 1990,
+    "Evidence of Predictable Behavior of Security Returns," The Journal
+    of Finance 45(3): 881-898): individual stock returns show
+    significant NEGATIVE serial correlation at the one-month horizon --
+    a stock with a bad past month tends to have a relatively good next
+    month, and vice versa. This is exactly why academic momentum
+    studies (including this project's own `_momentum_score`) skip the
+    most recent month when forming a momentum signal -- this factor
+    tests the skipped month's own effect directly, on its own, rather
+    than as a gap in another factor's construction.
+
+    HONEST CAVEAT, not previously needed for this module's other
+    factors: short-term reversal is the one anomaly in the literature
+    most associated with market microstructure noise (bid-ask bounce)
+    in individual stock returns rather than a genuine economic
+    mispricing signal, particularly at a 1-month/daily-close-only data
+    resolution like this project's (no intraday, no bid/ask spread
+    data). Built anyway, exactly as hypothesized in the literature and
+    fixed before any result is seen (RULE 0.8), but a null or even
+    negative real IC result here would be less surprising than for this
+    module's other factors, and should not be read as evidence against
+    the broader reversal literature the way `_momentum_score`'s own
+    null result was read as a real finding about medium-term momentum
+    specifically.
+
+    Score is the NEGATIVE of the cumulative return over the trailing
+    `lookback_months` (default 1), same construction as
+    `long_term_reversal_score`, just a much shorter window. Needs zero
+    new data or infrastructure."""
+    lookback_days = lookback_months * TRADING_DAYS_PER_MONTH
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=int(lookback_days * 1.6)), as_of_time),
+        lookback_days,
+    )
+    if len(bars) < 2:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    if closes[0] is None or closes[0] == 0:
+        return None
+    cumulative_return = closes[-1] / closes[0] - 1.0
+    return -cumulative_return
+
+
+def low_beta_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- "Betting Against Beta" (Frazzini & Pedersen 2014,
+    Journal of Financial Economics 111(1): 1-25): securities with LOWER
+    market beta earn higher risk-adjusted returns than a naive CAPM
+    would predict (leverage-constrained investors bid up high-beta
+    assets for the embedded leverage, depressing their risk-adjusted
+    return) -- one of the most cited and highest-Sharpe (0.78,
+    1926-2012 US sample per the original paper) anomalies in the
+    low-risk factor family. A genuinely different construct from
+    `low_volatility_score` already in this module: that factor is
+    NEGATIVE TOTAL trailing volatility (a security's own return
+    variability in isolation); this one is NEGATIVE market BETA
+    (covariance with a market benchmark, divided by the benchmark's own
+    variance) -- a low-total-vol stock can still have a high beta (if
+    nearly all its variance is systematic), and vice versa, so the two
+    scores can and do disagree on individual securities.
+
+    Beta is estimated as `Cov(security_returns, benchmark_returns) /
+    Var(benchmark_returns)` over the trailing `lookback_days` (default
+    252, ~1 trading year), using `data_infra.universe.BENCHMARK_SYMBOL`
+    ("SPY", already ingested per ADR-0029's S&P 500 benchmark decision
+    -- needs zero new data) as the market proxy, with security and
+    benchmark closes paired by calendar date (not by list position) so
+    a day either series is missing does not silently misalign the two
+    return series. A DELIBERATE SIMPLIFICATION of Frazzini & Pedersen's
+    own estimator, flagged honestly the same way `low_volatility_score`
+    flags its own simplification versus Ang et al: the original paper
+    uses a 1-year daily volatility estimate blended with a 5-year daily
+    correlation estimate (to reduce the correlation estimate's
+    small-sample noise) and then shrinks the resulting beta toward the
+    cross-sectional mean -- this implementation uses one uniform
+    1-year window and no shrinkage, a standard textbook beta estimator
+    rather than the paper's own noise-reduction refinements.
+
+    Score is the NEGATIVE of estimated beta, so a LOWER (more
+    defensive) beta produces a HIGHER (more attractive) score, matching
+    this module's convention. Needs at least 20 paired daily
+    observations to guard against a near-meaningless beta estimate from
+    a handful of overlapping trading days (e.g. a recently-listed
+    security or a benchmark data gap); returns `None` below that, the
+    same missing-data honesty this module's fundamentals-based factors
+    already apply."""
+    padded_days = int(lookback_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 21:
+        return None
+    security_returns = compute_returns([security_closes[d] for d in common_dates])
+    benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    if len(security_returns) < 20 or len(security_returns) != len(benchmark_returns):
+        return None
+    security_mean = sum(security_returns) / len(security_returns)
+    benchmark_mean = sum(benchmark_returns) / len(benchmark_returns)
+    covariance = sum(
+        (s - security_mean) * (b - benchmark_mean) for s, b in zip(security_returns, benchmark_returns)
+    ) / (len(security_returns) - 1)
+    benchmark_variance = sum((b - benchmark_mean) ** 2 for b in benchmark_returns) / (len(benchmark_returns) - 1)
+    if benchmark_variance == 0:
+        return None
+    beta = covariance / benchmark_variance
+    return -beta
 
 
 def _fy_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:

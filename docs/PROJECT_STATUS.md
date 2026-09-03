@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 9개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047) + S급 재조사로 찾은 Size factor 추가(ADR-0043 Decision 13))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 12개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047) + S급 재조사로 찾은 Size/장기·단기 역전/저베타 factor 4개 추가(ADR-0043 Decision 13-14))
 
 ---
 
@@ -75,9 +75,31 @@
      --fundamentals-db-path ./data/fundamentals_data \
      --score size --start 2010-01-01
    ```
+3-1. **raw IC 체크 3개 더 실행** (S급 재조사로 추가로 찾은
+   `long_term_reversal`/`short_term_reversal`/`low_beta` — 이 3개는
+   가격 데이터만 필요해서 다른 스크립트(`compute_signal_ic_from_catalog.py`,
+   `--fundamentals-db-path` 없음)를 씀. `low_beta`는 SPY 가격이
+   필요한데 ADR-0029 때 이미 같은 파이프라인으로 수집돼 있어서 추가
+   ingestion 불필요):
+   ```
+   python3 scripts/compute_signal_ic_from_catalog.py \
+     --db-path ./data/real_2010_latest \
+     --strategy long_term_reversal --start 2010-01-01
+
+   python3 scripts/compute_signal_ic_from_catalog.py \
+     --db-path ./data/real_2010_latest \
+     --strategy short_term_reversal --start 2010-01-01
+
+   python3 scripts/compute_signal_ic_from_catalog.py \
+     --db-path ./data/real_2010_latest \
+     --strategy low_beta --start 2010-01-01
+   ```
 4. **결과를 그대로 붙여넣어 보고** — `mean_ic`/`ic_information_ratio`/
-   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 9후보 풀에
-   추가할지, 어떤 걸 우선할지 판단함. Piotroski는 은행/증권사
+   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 12후보 풀에
+   추가할지, 어떤 걸 우선할지 판단함. `short_term_reversal`은 문헌상
+   미시구조 노이즈(bid-ask bounce) 영향을 강하게 받는다고 알려진
+   지표라 다른 팩터보다 null 결과가 나와도 덜 놀라운 일 — 버그
+   의심하지 않아도 됨. Piotroski는 은행/증권사
    (JPM/GS/MS/WFC/AXP/BAC)에서 `None`이 다수 나올 수 있음 — 버그 아님,
    문서화된 데이터 특성. `dividend_growth`는 무배당 종목에서 구조적으로
    `None`이 많이 나올 수 있음(전년도 배당 0이면 성장률 계산 불가) —
@@ -1228,6 +1250,36 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     quality_minus_junk/value_composite/size), 전부 raw IC 확인만
     남음. walk-forward 풀에는 아직 안 넣음 — RULE 0.8대로 결과
     보기 전 문헌으로 먼저 고정.
+- **사용자가 다시 "S급/A급 더 찾아봐" — 위에서 기록한 교훈("이름으로
+  체크")을 그대로 적용해 3개 더 찾음 (`ADR-0043` Decision 14,
+  `ADR-0047`에 두 번째 정정)**:
+  - `De Bondt & Thaler(1985)` 장기 역전(3-5년 패자가 승자보다
+    나중에 outperform — 행동재무학 창시 논문 중 하나, 7900+ 인용),
+    `Jegadeesh(1990)` 단기(1개월) 역전(momentum 논문들이 왜 최근
+    1개월을 건너뛰는지의 근거가 되는 그 효과 자체), `Frazzini &
+    Pedersen(2014)` Betting Against Beta(저베타 — 이미 있는
+    `low_volatility_score`의 총변동성과는 다른 개념, 벤치마크
+    대비 베타) — 전부 웹서치로 실존·내용 확인 후 구현(RULE 0.8).
+  - `long_term_reversal_score`/`short_term_reversal_score`:
+    momentum과 반대 방향(과거 손실 종목이 더 매력적)이고 훨씬 긴
+    형성기간이라 이미 null로 나온 momentum IC(-0.0078)를 다른
+    이름으로 재검증하는 게 아님. `short_term_reversal_score`는
+    bid-ask bounce 미시구조 노이즈 영향을 크게 받는다고 알려진
+    지표라는 점을 정직하게 문서화(다른 팩터보다 null이 나와도
+    덜 놀라운 일).
+  - `low_beta_score`: 이 모듈에서 처음으로 종목 하나가 아니라
+    벤치마크(SPY, `data_infra.universe.BENCHMARK_SYMBOL`, ADR-0029
+    때 이미 수집됨)와 날짜 정렬된 페어 수익률이 필요 — 새 인프라
+    필요했지만 새 데이터 수집은 불필요. Frazzini-Pedersen 원 논문의
+    1년vol+5년상관+shrinkage 방식을 단순화(1년 단일 윈도우, shrinkage
+    없음)했다고 정직하게 문서화(low_volatility_score가 Ang et al
+    단순화를 문서화한 것과 동일한 방식).
+  - 3개 전부 가격 전용이라 `compute_signal_ic_from_catalog.py`(다른
+    스크립트)에 `_PRICE_ONLY_SCORES` 딕셔너리로 배선
+    (`--strategy long_term_reversal`/`short_term_reversal`/
+    `low_beta`). 신규 테스트 12개(factor_scores 10개 + CLI
+    엔드투엔드 2개). 문헌 기반 후보 이제 총 12개 완료, 전부 raw
+    IC 확인만 남음.
 
 ### Completed (Session 33 — Phase 31 continued)
 

@@ -2,12 +2,17 @@
 """Track A (Phase 32): computes real-data Signal IC (rank correlation
 of a score against realized forward returns) for one of --
 `long_term_momentum`/`risk_controlled_momentum`'s shared
-`_momentum_score`, or the standalone `low_volatility_score` factor
-(`strategy_research.factor_scores` -- a genuinely different,
-independently pre-existing hypothesis, not a momentum variant, picked
-specifically to avoid re-testing the same failed idea with cosmetic
-changes) -- using `strategy_research.signal_ic.compute_ic_series`
-against a live DuckDB catalog.
+`_momentum_score`, or one of four standalone price-only factors in
+`strategy_research.factor_scores` -- `low_volatility_score` (Ang et
+al 2006), `long_term_reversal_score` (De Bondt & Thaler 1985, ADR-0043
+Decision 14 -- a different hypothesis and a much longer formation
+window than momentum, not a re-test of it), `short_term_reversal_score`
+(Jegadeesh 1990, ADR-0043 Decision 14), or `low_beta_score` (Frazzini &
+Pedersen 2014's Betting Against Beta, ADR-0043 Decision 14 -- market
+beta via SPY, a different construct from total-volatility-based
+`low_volatility_score`) -- using
+`strategy_research.signal_ic.compute_ic_series` against a live DuckDB
+catalog.
 
 Why this needs a live catalog (unlike `analyze_long_horizon_result.py`,
 which only reads a report JSON): IC requires re-scoring securities at
@@ -50,7 +55,12 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
-from strategy_research.factor_scores import low_volatility_score  # noqa: E402
+from strategy_research.factor_scores import (  # noqa: E402
+    long_term_reversal_score,
+    low_beta_score,
+    low_volatility_score,
+    short_term_reversal_score,
+)
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy  # noqa: E402
 from strategy_research.risk_controlled_momentum import (  # noqa: E402
@@ -65,12 +75,18 @@ _MOMENTUM_STRATEGIES = {
     "long_term_momentum": (LongTermMomentumStrategy, LongTermMomentumParameters),
     "risk_controlled_momentum": (RiskControlledMomentumStrategy, RiskControlledMomentumParameters),
 }
-_SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + ["low_volatility"])
+_PRICE_ONLY_SCORES = {
+    "low_volatility": low_volatility_score,
+    "long_term_reversal": long_term_reversal_score,
+    "short_term_reversal": short_term_reversal_score,
+    "low_beta": low_beta_score,
+}
+_SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 
 
 def _build_score_fn(name: str, symbol_ids: list[str]) -> ScoreFn:
-    if name == "low_volatility":
-        return low_volatility_score
+    if name in _PRICE_ONLY_SCORES:
+        return _PRICE_ONLY_SCORES[name]
     strategy_cls, params_cls = _MOMENTUM_STRATEGIES[name]
     return strategy_cls(symbol_ids, params_cls())._momentum_score
 
