@@ -1024,6 +1024,23 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
       셋 다 토스증권 어댑터 없고, 우리는 이미 point-in-time 안전성이
       검증된 자체 백테스트 엔진(`backtest.engine`, `AsOfDataView`)이
       있어서 NautilusTrader와 같은 결론 — 갈아탈 이유 없음.
+  - **3라운드 ("이것도 기록해두고 더 찾아봐")에서 새로 찾은 것**:
+    - `empyrical-reloaded`(Quantopian 계열, Sharpe/max drawdown/
+      Calmar/Omega 등 리스크·성과 지표) — purgedcv/alphalens-reloaded와
+      같은 성격, 우리 `backtest.metrics` 모듈 교차검증용 후보.
+      `quantstats`(ranaroussi, 50개+ 지표 + HTML tearsheet 리포트
+      생성) — 검증된 전략이 나온 뒤 보기 좋은 성과 리포트 만들 때
+      참고할 만함(우리 자체 Performance Report 모듈 대체가 아니라
+      비교/보완 용도).
+    - **우리 ADR-0033/0034의 실제 미해결 갭과 직결 — 주의 깊게 볼 만함**:
+      `teddykoker/survivorship-free-spy`(무료, survivorship-bias-free
+      S&P 500 구성종목 이력 + 가격 데이터) — 우리가 "EXTERNAL_DATASET_
+      REQUIRED"로 명시적으로 막혀있다고 문서화해둔 바로 그 문제(실제
+      과거 유니버스 구성원 이력)에 대한 오픈소스 시도. 다만 2019년
+      만들어진 걸로 보여서 **최신성/유지보수 상태 확인 필요** — 그대로
+      쓰기보다 접근 방식(위키피디아 리비전 기반 재구성 기법 포함)부터
+      검증하고 판단해야 함. 지금 당장 착수는 안 함, 다음에 실 유니버스
+      작업 다시 열 때 최우선 검토 후보로 기록.
 
 ### Completed (Session 33 — Phase 31 continued)
 
