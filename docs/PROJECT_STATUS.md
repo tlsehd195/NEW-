@@ -5,96 +5,66 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 19개 확정치로 기록, 단 `sales_yield` 1개는 재정리 과정에서 누락되어 추가 실행 대기 중)
 
 ---
 
-## 사용자가 코드스페이스(실제 환경)에서 직접 해야 할 일 (Session 36 기준, 2026-09-03 갱신)
+## 사용자가 코드스페이스(실제 환경)에서 직접 해야 할 일 (Session 36 기준, 2026-09-03 재갱신)
 
-**2026-09-03 갱신: 사용자가 실제로 63종목 ingestion + raw IC 19개(펀더멘털
-13개 + 시그널 6개)를 실행하고 결과를 relay함.** 그 결과 XOM 데이터가
-잘못된 CIK로 들어간 실제 버그(ADR-0042가 이미 한 번 발견·수정했던 바로
-그 버그)가 **다시 재현된 것을 발견** — 이번엔 CLI 플래그
-(`--cik-overrides XOM:0000034088`)를 사용자에게 안내하는 걸 내가
-빠뜨려서 재발함. `[15/63] XOM (CIK 0002115436, source=ticker_map):
--> 30 record(s) persisted` (다른 62종목은 수백~수천 개인데 XOM만 30개 —
-지주회사 개편으로 티커맵이 가리키는 현재 CIK가 진짜 15년치 이력이 있는
-옛 CIK가 아니라 최근 등록된 거의 빈 지주회사 CIK를 가리키는 문제, 실측
-확인된 내용 그대로 재발). **근본 수정 완료(`ADR-0050`)**: 사람이 매번
-플래그를 기억해야 하는 구조 자체가 문제였으므로, `scripts/
-ingest_fundamentals_data.py`에 `_KNOWN_CIK_OVERRIDES = {"XOM":
-"0000034088"}`를 코드 기본값으로 박아넣어 앞으로는 플래그 없이도 매번
-자동 적용됨(명시적 `--cik-overrides`는 여전히 이 기본값을 덮어쓸 수
-있음). 신규 테스트 3개, 전체 스위트 재검증 완료.
+**2026-09-03 재갱신: XOM 재실행 완료, 정상 확인됨.** `[15/63] XOM (CIK
+0000034088, source=override): -> 1712 record(s) persisted` — `ADR-0050`의
+`_KNOWN_CIK_OVERRIDES` 기본값이 실제로 작동해서 플래그 없이 자동으로
+올바른 CIK가 적용됨(다른 62종목과 비슷한 규모의 레코드 수, 이전의 30개
+오염 데이터 아님). 이 catalog로 재계산한 13개 펀더멘털 raw IC도 정상
+수신 — **아래 19개는 전부 확정치로 기록.** 단, 재실행 명령을 정리하며
+**`sales_yield` 하나를 실수로 목록에서 빠뜨림** — 14개여야 할 펀더멘털
+체크가 13개만 실행됨, 이거 하나만 추가로 실행 필요(아래 6번).
 
-**결과: 방금 받은 19개 raw IC 중 13개(펀더멘털 기반)는 XOM 오염 때문에
-잠정치로만 취급하고 재실행 필요. 6개(가격/거래량 기반, `--db-path
-./data/real_2010_latest`만 사용)는 펀더멘털 카탈로그를 아예 안 써서
-영향 없음 — 그대로 유효한 결과로 기록:**
+**raw IC 19개 확정 결과 (17후보 풀 편입 여부는 아래 6번의 `sales_yield`
+결과까지 받은 뒤 판단 — RULE 0.8대로 지금 성급하게 결정하지 않음):**
 
-| strategy | observations | mean_ic | ic_information_ratio | positive_ic_ratio |
-|---|---|---|---|---|
-| long_term_reversal | 79 | -0.0007 | -0.0028 | 53.16% |
-| short_term_reversal | 79 | 0.0106 | 0.0443 | 58.23% |
-| low_beta | 79 | -0.0261 | -0.0732 | 44.30% |
-| illiquidity | 79 | 0.0512 | 0.2836 | 56.96% |
-| fifty_two_week_high | 79 | -0.0075 | -0.0296 | 49.37% |
-| max_effect | 79 | -0.0217 | -0.0925 | 40.51% |
+| strategy | 종류 | observations | mean_ic | ic_information_ratio | positive_ic_ratio |
+|---|---|---|---|---|---|
+| long_term_reversal | 가격 | 79 | -0.0007 | -0.0028 | 53.16% |
+| short_term_reversal | 가격 | 79 | 0.0106 | 0.0443 | 58.23% |
+| low_beta | 가격 | 79 | -0.0261 | -0.0732 | 44.30% |
+| illiquidity | 가격 | 79 | 0.0512 | 0.2836 | 56.96% |
+| fifty_two_week_high | 가격 | 79 | -0.0075 | -0.0296 | 49.37% |
+| max_effect | 가격 | 79 | -0.0217 | -0.0925 | 40.51% |
+| asset_growth | 펀더멘털 | 80 | -0.0157 | -0.0832 | 40.00% |
+| piotroski | 펀더멘털 | 49 | 0.0766 | 0.1070 | 55.10% |
+| shareholder_yield | 펀더멘털 | 79 | 0.0027 | 0.0096 | 50.63% |
+| sloan_accruals | 펀더멘털 | 80 | 0.0265 | 0.1462 | 56.25% |
+| dividend_growth | 펀더멘털 | 80 | 0.0630 | 0.2687 | 56.25% |
+| earnings_yield | 펀더멘털 | 79 | -0.0301 | -0.1266 | 46.84% |
+| quality_minus_junk | 펀더멘털 | 80 | 0.0330 | 0.1476 | 56.25% |
+| value_composite | 펀더멘털 | 79 | -0.0220 | -0.0750 | 44.30% |
+| size | 펀더멘털 | 79 | 0.0320 | 0.1412 | 58.23% |
+| gross_profitability | 펀더멘털 | 79 | -0.0710 | -0.1440 | 44.30% |
+| altman_z | 펀더멘털 | 79 | 0.0072 | 0.0221 | 44.30% |
+| book_to_market | 펀더멘털 | 79 | -0.0486 | -0.2207 | 45.57% |
+| cashflow_yield | 펀더멘털 | 79 | -0.0132 | -0.0548 | 51.90% |
 
-(펀더멘털 13개의 raw 값 자체는 참고용으로 이 세션 대화에 남아있지만,
-XOM이 63종목 중 1종목이라 완전히 무의미하진 않되 — 30개 레코드가 다른
-법인(ExxonMobil Holdings Corp)의 실제 데이터라 "결측"이 아니라 "오염"에
-해당해서 표로 확정 기록하지 않음. 재실행 후 다시 relay 요망.)
+(피벗 참고: `piotroski`가 observations=49로 유독 낮은 건 은행/증권사
+6종목에서 구조적으로 `None`이 다수 나오기 때문 — 버그 아님, 문서화된
+데이터 특성. `dividend_growth`도 무배당 종목에서 구조적으로 `None`이
+많이 나올 수 있음.)
 
-아래 순서대로 진행하면 됨 — **XOM 재실행이 최우선**:
+아래 순서대로 진행하면 됨:
 
-1. **최신 코드 받기**: `git pull origin claude/phase-11-model-evolution-7hpibr`
-   (또는 병합 후 `main`) — `ADR-0050`의 `_KNOWN_CIK_OVERRIDES` 기본값
-   수정이 반영돼 있어야 함.
-2. **펀더멘털 카탈로그 전체 삭제 후 재실행** (XOM의 잘못된 30개 레코드가
-   이미 로컬 DB에 들어가 있어서, 부분 재실행으로는 안 지워짐 — 다른
-   법인의 정상 레코드라 같은 키로 충돌해서 덮어써지지도 않음. 반드시
-   전체 삭제 후 처음부터):
+1. **최신 코드 받기**: `git pull origin main`.
+2. (완료됨 — 위 확정 결과가 이미 이 catalog 기준. 재실행 불필요.)
+3. (완료됨 — 위 표 19개 값이 확정치. 재실행 불필요.)
+4. (완료됨 — 결과 이미 relay됨.)
+5. (완료됨 — 위 표에 정리됨.)
+6. **`sales_yield` raw IC 1개만 추가 실행** (내가 목록에서 실수로 빠뜨린 것):
    ```
-   rm -rf ./data/fundamentals_data
-   python3 scripts/ingest_fundamentals_data.py --universe RESEARCH_UNIVERSE \
-     --user-agent "NEW-research-project sdh08060900@gmail.com" \
-     --as-of <오늘 날짜, YYYY-MM-DD> --db-path ./data/fundamentals_data
-   ```
-   (`--cik-overrides` 플래그를 더 이상 손으로 넣을 필요 없음 — XOM 기본값이
-   이제 스크립트 자체에 박혀있어서 자동 적용됨. 실행 로그에
-   `XOM (CIK 0000034088, source=override): ... -> 771건 근방` 이 나오는지
-   확인하면 됨 — `source=override`가 핵심 확인 포인트.)
-3. **raw IC 체크 13개 재실행** (펀더멘털 기반 — 위 표에 없는 것 전부.
-   14후보 풀엔 아직 하나도 안 넣었음, 아래 결과를 보고 나서 넣을지 결정):
-   ```
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score asset_growth --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score piotroski --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score shareholder_yield --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score sloan_accruals --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score dividend_growth --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score earnings_yield --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score quality_minus_junk --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score value_composite --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score size --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score gross_profitability --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score altman_z --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score book_to_market --start 2010-01-01
    python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score sales_yield --start 2010-01-01
-   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score cashflow_yield --start 2010-01-01
    ```
-4. **결과를 그대로 붙여넣어 보고** — `mean_ic`/`ic_information_ratio`/
-   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 위 6개
-   결과와 합쳐서 17후보 풀에 추가할지, 어떤 걸 우선할지 판단함.
-   `short_term_reversal`(이미 받음, 위 표)은 문헌상 미시구조 노이즈
-   (bid-ask bounce) 영향을 강하게 받는다고 알려진 지표라 다른 팩터보다
-   null 결과가 나와도 덜 놀라운 일 — 버그 의심하지 않아도 됨. Piotroski는
-   은행/증권사(JPM/GS/MS/WFC/AXP/BAC)에서 `None`이 다수 나올 수 있음 —
-   버그 아님, 문서화된 데이터 특성. `dividend_growth`는 무배당 종목에서
-   구조적으로 `None`이 많이 나올 수 있음(전년도 배당 0이면 성장률 계산
-   불가) — 마찬가지로 버그 아님.
+   결과를 그대로 붙여넣어 주면 위 표에 20번째 행으로 추가하고, 17후보
+   풀 편입 여부(어떤 걸 넣을지, 우선순위는 뭘로 할지) 판단함.
 
-5. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
+7. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
    것들 — 전부 실제 데이터/네트워크가 필요해서 사용자 환경에서만 가능,
    위 1~4번 다 끝난 뒤 여유 있을 때만**:
    - **`survivorship-free-spy` 최신성 확인**: `teddykoker/survivorship-free-spy`
