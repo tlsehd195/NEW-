@@ -968,6 +968,15 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     8개 후보(asset_growth/piotroski/shareholder_yield/sloan_accruals/
     dividend_growth/earnings_yield/quality_minus_junk/value_composite)
     가 raw IC 결과 대기중.
+- **향후 고려사항으로 기록만 해둠 (미구현, 착수 안 함)**: 사용자가
+  토스증권 웹소켓 실시간 시세와 "종목에 악재 터졌을 때 빠르게 대응"
+  기능을 문의함. 결론: 웹소켓 자체보다 근본적으로 **뉴스/공시 데이터
+  소스가 이 프로젝트에 아예 없음**(`PHASE-1-data-infrastructure.md`가
+  처음부터 news data를 명시적으로 범위 밖으로 뺴둠, `PROJECT_MASTER_PLAN.md`
+  §17.3 "정의되지 않은 미래 요구사항을 위해 설계하지 않는다" 원칙).
+  나중에 구현하기로 사용자와 합의 — 착수하려면 뉴스/공시 데이터 소스
+  조사·계약, 파싱/저장 인프라, (감정분석까지 하면) NLP 파이프라인까지
+  전부 새로 설계해야 하는 별도 규모의 작업. 지금은 그냥 기록만.
 
 ### Completed (Session 33 — Phase 31 continued)
 
