@@ -599,3 +599,61 @@ class TestExperimentIdReflectsCandidateSet:
             "experiment_id must be computed after every strategy_specs.append() call, "
             "not before -- otherwise candidate_names cannot reflect the actual candidate set"
         )
+
+
+class TestAdr0051CandidateLoopsGatedCorrectly:
+    """ADR-0051: 6 price/volume-only candidates (`_PRICE_FACTOR_CANDIDATES`)
+    must be unconditional (need no fundamentals catalog at all, same as
+    the 4 original candidates); the remaining 14
+    (`_FUNDAMENTALS_FACTOR_CANDIDATES`/`_HYBRID_FACTOR_CANDIDATES`/
+    `_UNIVERSE_FACTOR_CANDIDATES`) must be gated behind the SAME
+    `if fundamentals_repository is not None:` guard as `leverage`/
+    `ml_ols`/`ml_ridge`/`rank_average_ensemble` above them. Real,
+    behavioral proof that the loops build distinct, non-closure-bugged
+    factories lives in
+    tests/strategy_research/test_run_long_horizon_validation_factor_wiring.py
+    (which imports the module) -- these tests only check placement."""
+
+    def _guard_positions(self, source: str) -> list[int]:
+        return [
+            i for i in range(len(source))
+            if source.startswith("if fundamentals_repository is not None:", i)
+        ]
+
+    def test_price_factor_loop_is_unconditional(self) -> None:
+        source = _source()
+        loop_idx = source.index("for name, hypothesis, score_fn in _PRICE_FACTOR_CANDIDATES:")
+        guards = self._guard_positions(source)
+        # The nearest guard to this loop (in either direction) must NOT
+        # wrap it -- i.e. no guard both precedes this loop AND is closer
+        # than the strategy_specs-building guard that follows it.
+        preceding = [g for g in guards if g < loop_idx]
+        following = [g for g in guards if g > loop_idx]
+        assert following, "expected the strategy_specs fundamentals guard to follow the price-factor loop"
+        # A guard immediately preceding (within the same tiny block) the
+        # loop would mean it got nested inside the fundamentals-only
+        # data_version guard by mistake -- the real data_version guard
+        # is much earlier in the file, so any preceding guard here must
+        # be far away.
+        if preceding:
+            assert loop_idx - max(preceding) > 2000
+
+    def test_fundamentals_hybrid_universe_loops_are_gated(self) -> None:
+        source = _source()
+        guards = self._guard_positions(source)
+        strategy_specs_guard = max(g for g in guards if g > source.index("strategy_specs = ["))
+        for loop_text in (
+            "for name, hypothesis, score_fn in _FUNDAMENTALS_FACTOR_CANDIDATES:",
+            "for name, hypothesis, score_fn in _HYBRID_FACTOR_CANDIDATES:",
+            "for name, hypothesis, score_fn in _UNIVERSE_FACTOR_CANDIDATES:",
+        ):
+            loop_idx = source.index(loop_text)
+            assert strategy_specs_guard < loop_idx < strategy_specs_guard + 8000, (
+                f"{loop_text!r} must be inside the fundamentals_repository guard block"
+            )
+
+    def test_price_factor_candidates_table_import_present(self) -> None:
+        source = _source()
+        assert "from strategy_research.factor_strategy import" in source
+        for name in ("PriceFactorStrategy", "FundamentalsFactorStrategy", "HybridFactorStrategy", "UniverseFactorStrategy"):
+            assert name in source

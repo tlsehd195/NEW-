@@ -85,10 +85,16 @@ populated by scripts/ingest_real_market_data.py):
 
 Add `--fundamentals-db-path ./data/fundamentals_data` (populated by
 `scripts/ingest_fundamentals_data.py`, ADR-0042) to additionally
-include the `leverage` fundamentals-based candidate
-(`src/strategy_research/leverage_strategy.py`) in the run -- omitted
-entirely, with every other candidate unaffected, when this flag is not
-passed.
+include the `leverage`/`ml_ols`/`ml_ridge`/`rank_average_ensemble`
+candidates and, as of ADR-0051, 14 more fundamentals-dependent
+raw-IC-screened candidates (5 fundamentals-only, 7 hybrid, 2
+cross-sectional composites -- see `_FUNDAMENTALS_FACTOR_CANDIDATES`/
+`_HYBRID_FACTOR_CANDIDATES`/`_UNIVERSE_FACTOR_CANDIDATES` below) in the
+run -- all omitted entirely, with every other candidate unaffected,
+when this flag is not passed. 6 more raw-IC-screened candidates
+(`_PRICE_FACTOR_CANDIDATES`) need only price/volume data and are
+always included, with or without this flag -- 28 total candidates in a
+run with --fundamentals-db-path, 10 without.
 
 Never executed by this repository's own automated test suite (it reads
 real, already-ingested data from a path the test suite never has, and
@@ -126,6 +132,34 @@ from strategy_research.evidence import assess_pbo_dsr_applicability, classify_ev
 from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
 from ml.ml_strategy import MLStrategy, MLStrategyParameters, ridge_cv_builder  # noqa: E402
 from strategy_research.ensemble_strategy import RankAverageEnsembleParameters, RankAverageEnsembleStrategy  # noqa: E402
+from strategy_research.factor_scores import (  # noqa: E402
+    altman_z_score,
+    asset_growth_score,
+    book_to_market_score,
+    cashflow_yield_score,
+    dividend_growth_score,
+    earnings_yield_score,
+    fifty_two_week_high_score,
+    gross_profitability_score,
+    illiquidity_score,
+    long_term_reversal_score,
+    low_beta_score,
+    max_effect_score,
+    piotroski_f_score,
+    quality_minus_junk_score,
+    sales_yield_score,
+    shareholder_yield_score,
+    short_term_reversal_score,
+    size_score,
+    sloan_accruals_score,
+    value_composite_score,
+)
+from strategy_research.factor_strategy import (  # noqa: E402
+    FundamentalsFactorStrategy,
+    HybridFactorStrategy,
+    PriceFactorStrategy,
+    UniverseFactorStrategy,
+)
 from strategy_research.leverage_strategy import LeverageParameters, LeverageStrategy  # noqa: E402
 from strategy_research.locked_windows import overlaps_any_locked_window  # noqa: E402
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy  # noqa: E402
@@ -148,6 +182,61 @@ _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH
 # REAL-provenance-plausibility check below.
 _KNOWN_REAL_PROVIDER_SOURCES = {"tiingo", "stooq"}
 _BENCHMARK_ID = "SPY_TOTAL_RETURN_REAL"
+
+# ADR-0051: the 20 raw-IC-screened candidates from Session 36 (see
+# PROJECT_STATUS.md's "raw IC 스크리닝 20개" table). RULE 0.8 --
+# the user explicitly chose "wire all of them" over "keep only the ones
+# whose raw IC sign matched the literature" specifically because this
+# project's own leverage/ml_ols precedent already showed raw IC does
+# not reliably predict walk-forward robustness in either direction; no
+# candidate below was excluded for looking weak in that screening pass.
+# Each tuple is (name, hypothesis, score_fn); grouped by which
+# `strategy_research.factor_strategy` wrapper its score_fn's call shape
+# needs (see that module's docstring).
+_PRICE_FACTOR_CANDIDATES = (
+    ("long_term_reversal", "De Bondt & Thaler 1985 long-term reversal, price-only (see src/strategy_research/factor_scores.py)", long_term_reversal_score),
+    ("short_term_reversal", "Jegadeesh 1990 short-term reversal, price-only", short_term_reversal_score),
+    ("low_beta", "Frazzini & Pedersen 2014 betting-against-beta, price-only", low_beta_score),
+    ("illiquidity", "Amihud 2002 illiquidity premium, price+volume", illiquidity_score),
+    ("fifty_two_week_high", "George & Hwang 2004 52-week-high anomaly, price-only", fifty_two_week_high_score),
+    ("max_effect", "Bali, Cakici & Whitelaw 2011 MAX effect, price-only", max_effect_score),
+)
+_FUNDAMENTALS_FACTOR_CANDIDATES = (
+    ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),
+    ("piotroski", "Piotroski 2000 F-Score, fundamentals-only", piotroski_f_score),
+    ("sloan_accruals", "Sloan 1996 accruals anomaly, fundamentals-only", sloan_accruals_score),
+    ("dividend_growth", "dividend growth rate, fundamentals-only", dividend_growth_score),
+    ("gross_profitability", "Novy-Marx 2013 gross profitability, fundamentals-only", gross_profitability_score),
+)
+_HYBRID_FACTOR_CANDIDATES = (
+    ("shareholder_yield", "O'Shaughnessy shareholder yield, fundamentals+price", shareholder_yield_score),
+    ("earnings_yield", "Basu 1977 earnings yield, fundamentals+price", earnings_yield_score),
+    ("book_to_market", "Fama & French 1992 book-to-market (HML basis), fundamentals+price", book_to_market_score),
+    ("sales_yield", "O'Shaughnessy price-to-sales yield, fundamentals+price", sales_yield_score),
+    ("cashflow_yield", "O'Shaughnessy price-to-cashflow yield, fundamentals+price", cashflow_yield_score),
+    ("size", "Banz 1981 size effect (SMB basis), fundamentals+price", size_score),
+    ("altman_z", "Altman 1968 Z-Score as a stock-selection signal, fundamentals+price", altman_z_score),
+)
+_UNIVERSE_FACTOR_CANDIDATES = (
+    ("quality_minus_junk", "Asness, Frazzini & Pedersen quality-minus-junk (3-pillar simplification), cross-sectional", quality_minus_junk_score),
+    ("value_composite", "O'Shaughnessy value composite (5 of 6 legs), cross-sectional", value_composite_score),
+)
+
+
+def _price_factor_factory(security_ids, score_fn, version):
+    return lambda: PriceFactorStrategy(security_ids, score_fn, version=version)
+
+
+def _fundamentals_factor_factory(security_ids, fundamentals_repository, score_fn, version):
+    return lambda: FundamentalsFactorStrategy(security_ids, fundamentals_repository, score_fn, version=version)
+
+
+def _hybrid_factor_factory(security_ids, fundamentals_repository, price_repository, score_fn, version):
+    return lambda: HybridFactorStrategy(security_ids, fundamentals_repository, price_repository, score_fn, version=version)
+
+
+def _universe_factor_factory(security_ids, fundamentals_repository, price_repository, score_fn, version):
+    return lambda: UniverseFactorStrategy(security_ids, fundamentals_repository, price_repository, score_fn, version=version)
 
 
 def _parse_date(value: str) -> datetime:
@@ -382,6 +471,14 @@ def main() -> int:
             ("trend_volatility", "trend + realized-volatility filter (see src/strategy_research/trend_volatility.py)", lambda: TrendVolatilityStrategy(security_ids, TrendVolatilityParameters())),
             ("risk_controlled_momentum", "momentum + inverse-vol sizing + position cap (see src/strategy_research/risk_controlled_momentum.py)", lambda: RiskControlledMomentumStrategy(security_ids, RiskControlledMomentumParameters())),
         ]
+        # ADR-0051: the 6 price/volume-only raw-IC-screened candidates
+        # need no fundamentals catalog at all -- included unconditionally,
+        # exactly like the 4 original candidates above, never gated
+        # behind --fundamentals-db-path.
+        for name, hypothesis, score_fn in _PRICE_FACTOR_CANDIDATES:
+            strategy_specs.append((
+                name, hypothesis, _price_factor_factory(security_ids, score_fn, f"{name}_v1"),
+            ))
         if fundamentals_repository is not None:
             # Only included when --fundamentals-db-path is supplied
             # (ADR-0042 Decision 12/13) -- the first fundamentals-based
@@ -455,6 +552,26 @@ def main() -> int:
                 "rank-average of leverage_score and net_margin_score, fundamentals-based (see src/strategy_research/ensemble_strategy.py, ADR-0043 Decision 5)",
                 lambda: RankAverageEnsembleStrategy(security_ids, fundamentals_repository, RankAverageEnsembleParameters()),
             ))
+            # ADR-0051: the remaining 14 raw-IC-screened candidates that
+            # need a fundamentals catalog -- 5 fundamentals-only, 7
+            # hybrid (fundamentals+price), 2 cross-sectional universe
+            # composites. Same gate as `leverage`/`ml_ols` above: skipped
+            # entirely when --fundamentals-db-path is not supplied.
+            for name, hypothesis, score_fn in _FUNDAMENTALS_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _fundamentals_factor_factory(security_ids, fundamentals_repository, score_fn, f"{name}_v1"),
+                ))
+            for name, hypothesis, score_fn in _HYBRID_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _hybrid_factor_factory(security_ids, fundamentals_repository, repository, score_fn, f"{name}_v1"),
+                ))
+            for name, hypothesis, score_fn in _UNIVERSE_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _universe_factor_factory(security_ids, fundamentals_repository, repository, score_fn, f"{name}_v1"),
+                ))
 
         # experiment_id: deterministic from caller-supplied run
         # configuration only (never datetime.now()/utcnow() -- rule

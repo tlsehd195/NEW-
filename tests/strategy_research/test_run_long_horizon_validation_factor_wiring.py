@@ -1,0 +1,182 @@
+"""Real, executable tests for the ADR-0051 factory helpers and
+candidate tables in `scripts/run_long_horizon_validation.py`
+(`_price_factor_factory`/`_fundamentals_factor_factory`/
+`_hybrid_factor_factory`/`_universe_factor_factory`,
+`_PRICE_FACTOR_CANDIDATES`/`_FUNDAMENTALS_FACTOR_CANDIDATES`/
+`_HYBRID_FACTOR_CANDIDATES`/`_UNIVERSE_FACTOR_CANDIDATES`).
+
+Unlike `test_run_long_horizon_validation_wiring.py` (AST/source-text
+only, deliberately never importing the module or calling `main()`),
+this file DOES import the module -- mirroring the established pattern
+`test_compute_fundamentals_ic_from_catalog_cli.py`/
+`test_train_ml_model_from_catalog_cli.py` already use for other CLI
+scripts (`importlib.util.spec_from_file_location`, never `main()`
+itself). Importing the module has no side effects (no network/DB
+access happens until `main()` runs); this file never calls `main()`,
+so it stays within the same "no real catalog needed" discipline the
+AST-only sibling file exists for.
+
+**Why this file exists, specifically**: `main()`'s new candidate-wiring
+loops build each strategy factory inside a `for name, hypothesis,
+score_fn in ...:` loop -- exactly the shape of Python's classic
+late-binding closure bug (a lambda that captures a LOOP VARIABLE by
+reference ends up sharing the loop's FINAL value across every
+iteration, not the value at the time the lambda was created). Source-
+text/AST matching cannot distinguish a correct closure from a buggy
+one -- both look identical as text. These tests call the real
+`_*_factory` functions the way `main()`'s loops actually call them and
+verify each produced strategy is bound to ITS OWN score_fn/version, not
+all of them to the last one in the candidates list."""
+
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run_long_horizon_validation.py"
+
+
+def _load_script():
+    spec = importlib.util.spec_from_file_location("run_long_horizon_validation", _SCRIPT_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _fake_score_fn_a(security_id, as_of_time, *args):
+    return 1.0
+
+
+def _fake_score_fn_b(security_id, as_of_time, *args):
+    return 2.0
+
+
+class TestPriceFactorFactoryNoLateBindingBug:
+    def test_two_factories_built_in_a_loop_stay_bound_to_their_own_score_fn(self) -> None:
+        module = _load_script()
+        security_ids = ["AAA", "BBB"]
+        candidates = [("cand_a", "hyp_a", _fake_score_fn_a), ("cand_b", "hyp_b", _fake_score_fn_b)]
+
+        factories = []
+        for name, hypothesis, score_fn in candidates:
+            factories.append((name, module._price_factor_factory(security_ids, score_fn, f"{name}_v1")))
+
+        strategies = [factory() for _name, factory in factories]
+        assert [s.version for s in strategies] == ["cand_a_v1", "cand_b_v1"]
+        assert strategies[0]._score_fn is _fake_score_fn_a
+        assert strategies[1]._score_fn is _fake_score_fn_b
+
+
+class TestFundamentalsFactorFactoryNoLateBindingBug:
+    def test_two_factories_built_in_a_loop_stay_bound_to_their_own_score_fn(self) -> None:
+        module = _load_script()
+        security_ids = ["AAA", "BBB"]
+        fundamentals_repository = object()
+        candidates = [("cand_a", "hyp_a", _fake_score_fn_a), ("cand_b", "hyp_b", _fake_score_fn_b)]
+
+        factories = []
+        for name, hypothesis, score_fn in candidates:
+            factories.append((
+                name, module._fundamentals_factor_factory(security_ids, fundamentals_repository, score_fn, f"{name}_v1"),
+            ))
+
+        strategies = [factory() for _name, factory in factories]
+        assert [s.version for s in strategies] == ["cand_a_v1", "cand_b_v1"]
+        assert strategies[0]._score_fn is _fake_score_fn_a
+        assert strategies[1]._score_fn is _fake_score_fn_b
+        assert strategies[0]._fundamentals_repository is fundamentals_repository
+
+
+class TestHybridFactorFactoryNoLateBindingBug:
+    def test_two_factories_built_in_a_loop_stay_bound_to_their_own_score_fn_and_repositories(self) -> None:
+        module = _load_script()
+        security_ids = ["AAA", "BBB"]
+        fundamentals_repository = object()
+        price_repository = object()
+        candidates = [("cand_a", "hyp_a", _fake_score_fn_a), ("cand_b", "hyp_b", _fake_score_fn_b)]
+
+        factories = []
+        for name, hypothesis, score_fn in candidates:
+            factories.append((
+                name,
+                module._hybrid_factor_factory(security_ids, fundamentals_repository, price_repository, score_fn, f"{name}_v1"),
+            ))
+
+        strategies = [factory() for _name, factory in factories]
+        assert [s.version for s in strategies] == ["cand_a_v1", "cand_b_v1"]
+        assert strategies[0]._score_fn is _fake_score_fn_a
+        assert strategies[1]._score_fn is _fake_score_fn_b
+        assert strategies[0]._fundamentals_repository is fundamentals_repository
+        assert strategies[0]._price_repository is price_repository
+
+
+class TestUniverseFactorFactoryNoLateBindingBug:
+    def test_two_factories_built_in_a_loop_stay_bound_to_their_own_score_fn(self) -> None:
+        module = _load_script()
+        security_ids = ["AAA", "BBB"]
+        fundamentals_repository = object()
+        price_repository = object()
+        candidates = [("cand_a", "hyp_a", _fake_score_fn_a), ("cand_b", "hyp_b", _fake_score_fn_b)]
+
+        factories = []
+        for name, hypothesis, score_fn in candidates:
+            factories.append((
+                name,
+                module._universe_factor_factory(security_ids, fundamentals_repository, price_repository, score_fn, f"{name}_v1"),
+            ))
+
+        strategies = [factory() for _name, factory in factories]
+        assert [s.version for s in strategies] == ["cand_a_v1", "cand_b_v1"]
+        assert strategies[0]._score_fn is _fake_score_fn_a
+        assert strategies[1]._score_fn is _fake_score_fn_b
+
+
+class TestCandidateTables:
+    """The 4 module-level candidate tables together must reproduce
+    exactly the 20 names in PROJECT_STATUS.md's raw-IC-screening table
+    (ADR-0051) -- no name collisions with each other, or with the 8
+    pre-existing candidates already in `strategy_specs` before this
+    ADR."""
+
+    _EXPECTED_NAMES = {
+        "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
+        "fifty_two_week_high", "max_effect",
+        "asset_growth", "piotroski", "sloan_accruals", "dividend_growth", "gross_profitability",
+        "shareholder_yield", "earnings_yield", "book_to_market", "sales_yield",
+        "cashflow_yield", "size", "altman_z",
+        "quality_minus_junk", "value_composite",
+    }
+    _PRE_EXISTING_NAMES = {
+        "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
+        "leverage", "ml_ols", "ml_ridge", "rank_average_ensemble",
+    }
+
+    def _all_new_candidate_names(self, module):
+        names = []
+        for table in (
+            module._PRICE_FACTOR_CANDIDATES, module._FUNDAMENTALS_FACTOR_CANDIDATES,
+            module._HYBRID_FACTOR_CANDIDATES, module._UNIVERSE_FACTOR_CANDIDATES,
+        ):
+            names.extend(name for name, _hypothesis, _score_fn in table)
+        return names
+
+    def test_all_20_expected_names_present_exactly_once(self) -> None:
+        module = _load_script()
+        names = self._all_new_candidate_names(module)
+        assert len(names) == len(set(names)), "duplicate candidate name across the 4 tables"
+        assert set(names) == self._EXPECTED_NAMES
+
+    def test_no_collision_with_pre_existing_candidate_names(self) -> None:
+        module = _load_script()
+        names = set(self._all_new_candidate_names(module))
+        assert not (names & self._PRE_EXISTING_NAMES)
+
+    def test_every_table_entry_score_fn_is_callable(self) -> None:
+        module = _load_script()
+        for table in (
+            module._PRICE_FACTOR_CANDIDATES, module._FUNDAMENTALS_FACTOR_CANDIDATES,
+            module._HYBRID_FACTOR_CANDIDATES, module._UNIVERSE_FACTOR_CANDIDATES,
+        ):
+            for name, hypothesis, score_fn in table:
+                assert callable(score_fn), f"{name}'s score_fn is not callable"
+                assert isinstance(hypothesis, str) and hypothesis

@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 19개 확정치로 기록, 단 `sales_yield` 1개는 재정리 과정에서 누락되어 추가 실행 대기 중)
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 20개(sales_yield 포함) 전부 확정 수신, 부호 기반 해석 기록 + 사용자가 "17개 전부 walk-forward 풀에 편입" 선택 → 20개 raw-IC-screened candidate 전부를 `run_long_horizon_validation.py`에 배선(ADR-0051): 4개 범용 Strategy 래퍼(`factor_strategy.py`) 신설, 후보 테이블+factory 함수로 루프 기반 배선의 late-binding 클로저 버그를 실제 import 테스트로 검증, 전체 스위트 2213개 통과)
 
 ---
 
@@ -76,10 +76,59 @@
   통과. **그래서 raw IC 부호/크기만으로 17개 후보 중 일부를 걸러내는
   건 사후선택 편향 위험이 있고, 과거에도 그렇게 하지 않았음.**
 
-**다음 결정 (사용자 확인 필요)**: 20개(중복 제외 17개 독립 팩터) 전부를
-walk-forward/PBO/DSR 풀에 넣을지, 아니면 이번엔 문헌과 부호가 일치하는
-9개만 먼저 넣을지는 순수 리서치 방법론 판단이라 사용자 확인 없이
-진행하지 않음 — 채팅에서 직접 질문함.
+**결정 완료 (사용자 선택: 20개 전부, ADR-0051)**: raw IC로 사전 필터링하지
+않고 20개 전부를 walk-forward/PBO/DSR 풀에 넣기로 결정 — 이 프로젝트
+자체의 leverage/ml_ols 선례가 이미 raw IC가 walk-forward 견고성을
+신뢰성 있게 예측하지 못함을 실측으로 보여줬으므로, 지금 raw IC로
+거르는 건 사후선택 편향.
+
+- **`src/strategy_research/factor_strategy.py` 신규**: 4개 범용
+  `Strategy` 래퍼(`PriceFactorStrategy`/`FundamentalsFactorStrategy`/
+  `HybridFactorStrategy`/`UniverseFactorStrategy`) — 20개 각각에
+  거의 동일한 파일을 20개 새로 만드는 대신(`LeverageStrategy`/
+  `RankAverageEnsembleStrategy`가 이미 2개 수준에서 보여준 중복
+  패턴), score_fn 호출 형태(가격전용/펀더멘털전용/가격+펀더멘털/
+  전체유니버스) 4가지에 맞춰 범용화. 기존 `LeverageStrategy`/
+  `RankAverageEnsembleStrategy`는 안 건드림(이미 검증된 코드,
+  스타일 통일만을 위한 리팩터링은 회귀 위험 대비 이득이 없음).
+- **`scripts/run_long_horizon_validation.py` 배선**: 가격 전용 6개는
+  무조건 포함(펀더멘털 카탈로그 불필요), 나머지 14개는 기존
+  `leverage`/`ml_ols`와 동일하게 `--fundamentals-db-path` 게이트
+  안에 포함. `--fundamentals-db-path`를 준 실행은 이제 총 28개
+  후보(기존 8개 + 신규 20개) 평가, 안 준 실행은 10개(기존 4개 +
+  신규 가격 6개) 평가.
+- **루프 기반 배선의 클로저 버그 함정**: `for name, score_fn in ...:`
+  루프 안에서 `lambda`를 직접 만들면 파이썬의 고전적인 late-binding
+  버그(모든 lambda가 루프의 마지막 값 하나에 묶임)에 걸림 — 이걸
+  피하려고 각 값을 명시적 인자로 받는 별도 factory 함수 4개
+  (`_price_factor_factory` 등)를 만들어 각 호출이 독립된 스코프를
+  갖게 함. 이 버그가 실제로 없는지는 텍스트/AST 매칭으로는 증명이
+  안 돼서, 스크립트를 실제로 import해서 factory를 실제로 호출해보는
+  전용 테스트로 별도 검증(`test_run_long_horizon_validation_factor_
+  wiring.py`).
+- 신규 테스트 21개(factor_strategy 11 + factory wiring 7 + 기존
+  wiring 파일에 배치 검증 3). 전체 스위트 2213개 통과(기존 2192 + 21).
+- `ADR-0051` 신규 작성.
+
+**다음 단계 (사용자가 코드스페이스에서 실행)**: 아래 명령으로 실제
+30개 후보 walk-forward/PBO/DSR 결과를 받아서 relay하면 됨. **주의:
+이번 배치는 후보 수가 기존 8개 → 28개로 늘어서, 실행 시간이 꽤 길어질
+수 있음** — `ml_ols`/`ml_ridge` 2개만으로도 이전에 5종목 기준 최적화가
+필요했었는데, 이번엔 63종목 기준으로 22개 규칙 기반 후보가 추가됨.
+규칙 기반 후보들은 `ml_ols`처럼 매 fold마다 다시 fit하지 않으므로
+`ml_ols` 만큼 느리진 않을 것으로 예상되지만, 실행이 오래 걸리면 터미널을
+닫지 말고 기다리거나 `nohup`/`&`로 백그라운드 실행 권장:
+```
+python3 scripts/run_long_horizon_validation.py \
+  --universe RESEARCH_UNIVERSE \
+  --start 2010-01-01 --end 2023-04-28 \
+  --db-path ./data/real_2010_latest \
+  --fundamentals-db-path ./data/fundamentals_data \
+  --data-status REAL
+```
+(`--end 2023-04-28`는 `TEST_1` 잠긴 구간 시작 직전 — 이 범위를 넘기면
+스크립트가 자동으로 거부함. 결과는 `--report-out` 안 주면
+`./data/real_2010_latest/long_horizon_validation.json`에 저장됨.)
 
 1. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
    것들 — 전부 실제 데이터/네트워크가 필요해서 사용자 환경에서만 가능,
