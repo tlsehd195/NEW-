@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol, Sequence
+from typing import Optional, Protocol, Sequence
 
 from backtest.asof import AsOfDataView
 from backtest.enums import OrderSide, OrderType
@@ -21,6 +21,17 @@ class OrderIntent:
     side: OrderSide
     quantity: float
     order_type: OrderType = OrderType.MARKET
+    # Session 36 addition: the decision-time rationale (e.g. factor
+    # scores, model inputs) a Strategy MAY attach to its own intent --
+    # optional and never populated by any Strategy in this file, so
+    # this is pure additive plumbing, not a behavior change. Exists so
+    # `trade_journal.backtest_adapter` has something real to put in
+    # `DecisionSnapshot.features` (previously always None for every
+    # order this project has ever journaled -- see ADR-0048) instead of
+    # needing a second, parallel way to pass rationale through
+    # `BacktestEngine`, which has no other route from a Strategy's own
+    # `generate_orders` call to the journal.
+    features: Optional[dict] = None
 
 
 class Strategy(Protocol):

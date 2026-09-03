@@ -22,7 +22,7 @@ from backtest.enums import OrderSide
 from backtest.strategy import BuyAndHoldStrategy, OrderIntent
 
 from trade_journal.backtest_adapter import ingest_backtest_result
-from trade_journal.enums import TradeProvenance
+from trade_journal.enums import DecisionAction, TradeProvenance
 from trade_journal.repository import InMemoryTradeJournalRepository
 
 
@@ -161,3 +161,96 @@ class TestBacktestIntegration:
         assert summary.decisions_recorded >= 1
         decisions = journal.list_decisions()
         assert decisions[0].strategy_version == "buy_and_hold_v1"
+
+
+class _FeatureCarryingStrategy:
+    """Session 36 (ADR-0048) -- a strategy that attaches a decision-time
+    rationale via OrderIntent.features, the same way a real Strategy
+    would once it chooses to. No existing Strategy in this codebase
+    does this yet; this class exists only to exercise the plumbing."""
+
+    version = "feature_carrying_test_v1"
+
+    def __init__(self, security_id: str) -> None:
+        self._security_id = security_id
+        self._done = False
+
+    def generate_orders(self, as_of_time, data, portfolio):
+        if self._done:
+            return []
+        self._done = True
+        return [OrderIntent(
+            self._security_id, OrderSide.BUY, 10.0,
+            features={"momentum_score": 0.42, "size_score": -1.5},
+        )]
+
+
+class TestOrderFeaturesReachTheExperienceDataset:
+    """Session 36 (ADR-0048) -- a Strategy's OrderIntent.features must
+    survive the full Order -> DecisionSnapshot -> ExperienceRecord.state
+    chain, the exact path this project's Learning Engine reads a
+    trainer's inputs from. Two real bugs in this chain were found and
+    fixed the same session these tests were added for: (1) neither
+    OrderIntent nor Order had a features field at all: fixed in
+    backtest.strategy/backtest.orders. (2)
+    trade_journal.experience.build_experience_records silently dropped
+    DecisionSnapshot.features even after fix (1), never copying it into
+    ExperienceRecord.state: fixed in trade_journal/experience.py. Both
+    fixes are additive (a new Optional field / a new dict key) -- no
+    existing Strategy, which never sets OrderIntent.features, is
+    affected."""
+
+    def test_features_survive_from_order_intent_to_decision_snapshot(self) -> None:
+        days = _trading_days(date(2024, 1, 2), date(2024, 1, 12))
+        closes = [100.0 + i for i in range(len(days))]
+        bars = _bars("AAA", days, closes)
+        sec = SecurityMaster(security_id="AAA", ticker="AAA", exchange="NASDAQ", currency="USD",
+                              company_id="C1", instrument_type=InstrumentType.EQUITY,
+                              valid_from=utc(2020, 1, 1), status=SecurityStatus.ACTIVE)
+        repo = InMemoryDataRepository(bars=bars, securities=[sec], calendars={"US_EQUITY": US_EQUITY})
+        config = BacktestConfig(market="US_EQUITY", start_date=days[0], end_date=days[-1],
+                                  initial_capital=10_000.0, security_ids=("AAA",))
+        result = BacktestEngine(repo, config, _FeatureCarryingStrategy("AAA")).run()
+
+        journal = InMemoryTradeJournalRepository()
+        ingest_backtest_result(journal, result, config)
+
+        decisions = journal.list_decisions()
+        assert len(decisions) >= 1
+        assert decisions[0].features == {"momentum_score": 0.42, "size_score": -1.5}
+
+    def test_features_survive_into_the_experience_dataset(self) -> None:
+        from trade_journal.experience import build_experience_records
+
+        days = _trading_days(date(2024, 1, 2), date(2024, 1, 19))
+        closes = [100.0 + i for i in range(len(days))]  # steadily rising, so the sell realizes a gain
+        bars = _bars("AAA", days, closes)
+        sec = SecurityMaster(security_id="AAA", ticker="AAA", exchange="NASDAQ", currency="USD",
+                              company_id="C1", instrument_type=InstrumentType.EQUITY,
+                              valid_from=utc(2020, 1, 1), status=SecurityStatus.ACTIVE)
+        repo = InMemoryDataRepository(bars=bars, securities=[sec], calendars={"US_EQUITY": US_EQUITY})
+        config = BacktestConfig(market="US_EQUITY", start_date=days[0], end_date=days[-1],
+                                  initial_capital=10_000.0, security_ids=("AAA",))
+
+        class _BuyOnceWithFeaturesThenSell:
+            version = "buy_once_with_features_v1"
+
+            def __init__(self) -> None:
+                self._step = 0
+
+            def generate_orders(self, as_of_time, data, portfolio):
+                self._step += 1
+                if self._step == 1:
+                    return [OrderIntent("AAA", OrderSide.BUY, 10.0, features={"momentum_score": 0.42})]
+                if self._step == 5 and portfolio.quantity_of("AAA") > 0:
+                    return [OrderIntent("AAA", OrderSide.SELL, portfolio.quantity_of("AAA"))]
+                return []
+
+        result = BacktestEngine(repo, config, _BuyOnceWithFeaturesThenSell()).run()
+        journal = InMemoryTradeJournalRepository()
+        ingest_backtest_result(journal, result, config)
+
+        records = build_experience_records(journal)
+        buy_records = [r for r in records if r.action == DecisionAction.BUY]
+        assert len(buy_records) == 1
+        assert buy_records[0].state["features"] == {"momentum_score": 0.42}

@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048))
 
 ---
 
@@ -1375,6 +1375,36 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     CLI 딕셔너리에 배선돼 있고, 팩터가 쓰는 XBRL 항목 16개 전부
     `ingest_fundamentals_data.py`의 기본 수집 목록에 있음 확인 —
     남은 배선/수집 갭 없음.
+- **사용자가 주제를 바꿔 "매매 후에 그 근거 기록 후 재학습하는 기능
+  관련 S급/A급 논문 있어?" 질문 — 문헌 근거 정리(`ADR-0015` 보강) 후,
+  "적용하려면 얼마나 걸리나/뭐가 이점인가" 후속 질문에 답하다가
+  실제 배선을 추적해서 진짜 버그 2개 발견·수정 (`ADR-0048`)**:
+  - **문헌**: `ExperienceRecord`의 `state`/`action`/`actual_outcome`/
+    `reward` 구조가 강화학습의 "경험 튜플" 그대로라, "저장된 경험을
+    나중에 재생해서 재학습"이라는 이 프로젝트의 설계는 Lin(1992,
+    experience replay를 처음 만든 논문)과 Mnih et al.(2015, DQN,
+    Nature) 이 개념을 대규모로 유명하게 만든 논문에 근거지을 수 있음.
+    금융 특화로는 López de Prado(2018)의 meta-labeling이 가장 가까움
+    (단, 이 프로젝트는 hit/miss 분류가 아니라 `realized_return` 직접
+    회귀라는 차이는 정직하게 명시). 코드 동작 변경 없음, 순수
+    문서화.
+  - **배선 감사 (더 중요한 발견)**: "재학습을 실제로 적용하려면
+    뭐가 필요한가" 추적하다가, `DecisionSnapshot.features`가
+    (1) 그 값을 채워 넣을 수단이 `OrderIntent`/`Order`에 아예 없었고
+    (2) 설령 채워도 `trade_journal.experience.build_experience_records`가
+    `state` 딕셔너리를 만들 때 `market_state`/`portfolio_state`만
+    쓰고 `features`는 조용히 버렸다는 것을 발견 — 즉 "매매 근거
+    기록 후 재학습"이 지금까지 한 번도 실제로 작동한 적이 없었음
+    (기록할 수단도 없고, 있어도 학습 단계에서 버려짐). 둘 다
+    추가적(additive) 방식으로 수정: `OrderIntent`/`Order`에
+    `features` 필드 추가(기본값 None, 기존 전략 전부 영향 없음),
+    `OrderSimulator`가 승인/거부 모든 경로에서 `intent.features`를
+    `Order`로 복사, `backtest_adapter.py`가 `DecisionSnapshot.features`로
+    전달, `build_experience_records`가 이제 `state["features"]`에
+    포함, DuckDB 직렬화(`order_to_dict`/`dict_to_order`)도 왕복 보존.
+    어떤 기존 전략도 아직 `features`를 실제로 채우지는 않음 — "무엇을
+    근거로 넣을지"는 검증된 전략이 나온 뒤 결정할 문제라 이번엔 배관만
+    뚫어둠. 신규 테스트 3개, 전체 스위트 2174 passed (2171 → 2174).
   - 신규 테스트 14개(factor_scores 11개 + CLI 엔드투엔드 3개). 문헌
     기반 후보 이제 총 17개 완료, 전부 raw IC 확인만 남음.
 

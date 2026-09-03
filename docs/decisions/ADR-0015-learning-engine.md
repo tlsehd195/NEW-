@@ -221,6 +221,18 @@ answers "is there a real citation for this design," the same standard
 already applied to `strategy_research.factor_scores` (ADR-0047), which
 this ADR's design had never been checked against until now.
 
+**Follow-up (ADR-0048, same session):** tracing exactly how `features`
+was meant to flow from a Strategy's decision into a training run --
+prompted by the user asking what building a real trainer on top of
+this literature would actually take -- found the data path did not
+work at all: no `Strategy` had any way to set `DecisionSnapshot.
+features` in the first place, and even a populated one was silently
+dropped by `trade_journal.experience.build_experience_records` before
+reaching `ExperienceRecord.state`. Both fixed, additively, in
+ADR-0048. This ADR's literature grounding was accurate about the
+INTENDED design; ADR-0048 is what made that design's central data flow
+actually functional.
+
 ## Alternatives Considered
 
 - **Reusing `backtest.experiment.ExperimentRecord` for training runs**:

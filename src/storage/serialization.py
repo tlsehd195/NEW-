@@ -363,6 +363,7 @@ def order_to_dict(order: Optional[Order]) -> Optional[dict]:
         "decision_time": order.decision_time.isoformat(),
         "status": order.status.value,
         "rejection_reason": order.rejection_reason,
+        "features": order.features,
     }
 
 
@@ -378,6 +379,7 @@ def dict_to_order(data: Optional[dict]) -> Optional[Order]:
         decision_time=datetime.fromisoformat(data["decision_time"]),
         status=OrderStatus(data["status"]),
         rejection_reason=data.get("rejection_reason"),
+        features=data.get("features"),
     )
 
 

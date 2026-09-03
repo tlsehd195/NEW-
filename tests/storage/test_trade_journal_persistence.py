@@ -44,6 +44,32 @@ class TestPersistenceAndRestart:
         assert reloaded_trade.fill == fill
         engine2.close()
 
+    def test_order_features_and_decision_features_both_survive_restart(self, tmp_path) -> None:
+        """Session 36 (ADR-0048): DecisionSnapshot.features and its
+        nested order.features are two separate copies of the same
+        rationale -- both must independently survive a DuckDB
+        persist/reload round trip, not just one of them."""
+        config = StorageConfig(tmp_path / "store")
+        engine1 = StorageEngine(config)
+        journal1 = DuckDBTradeJournalRepository(engine1)
+
+        order = dataclasses.replace(make_order(), features={"momentum_score": 0.42})
+        decision = journal1.record_decision(
+            decision_time=order.decision_time, security_id="AAA", decision=DecisionAction.BUY,
+            order=order, experiment_id="EXP-1", strategy_version="test_v1",
+            features={"momentum_score": 0.42},
+        )
+        engine1.close()
+
+        engine2 = StorageEngine(config)
+        journal2 = DuckDBTradeJournalRepository(engine2)
+        reloaded = journal2.get_decision(decision.snapshot_id)
+        assert reloaded is not None
+        assert reloaded.features == {"momentum_score": 0.42}
+        assert reloaded.order is not None
+        assert reloaded.order.features == {"momentum_score": 0.42}
+        engine2.close()
+
 
 class TestIdempotency:
     def test_recording_same_order_twice_does_not_duplicate(self, tmp_path) -> None:

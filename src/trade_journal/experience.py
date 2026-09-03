@@ -61,6 +61,15 @@ def build_experience_records(
             state={
                 "market_state": decision.market_state if decision is not None else {},
                 "portfolio_state": decision.portfolio_state if decision is not None else None,
+                # ADR-0048 (Session 36): previously silently dropped even
+                # when DecisionSnapshot.features was populated -- state
+                # is the only thing learning.labeling ever reads a
+                # trainer's inputs from (see learning/dataset.py), so
+                # omitting features here meant "record rationale then
+                # retrain" had no rationale to retrain from even after
+                # a Strategy set OrderIntent.features and it reached
+                # DecisionSnapshot.features successfully.
+                "features": decision.features if decision is not None else None,
             },
             action=action,
             actual_outcome=actual_outcome,

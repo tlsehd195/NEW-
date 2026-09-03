@@ -25,6 +25,11 @@ class Order:
     decision_time: datetime
     status: OrderStatus
     rejection_reason: Optional[str] = None
+    # Session 36 addition: copied straight through from the originating
+    # OrderIntent.features (see backtest.strategy.OrderIntent) so a
+    # rejected order still carries its rationale into the journal, not
+    # just an accepted one -- ADR-0048.
+    features: Optional[dict] = None
 
 
 class OrderSimulator:
@@ -62,7 +67,7 @@ class OrderSimulator:
         if intent.quantity <= 0:
             return Order(
                 order_id, intent.security_id, intent.side, intent.quantity, intent.order_type,
-                decision_time, OrderStatus.REJECTED, "non-positive quantity",
+                decision_time, OrderStatus.REJECTED, "non-positive quantity", intent.features,
             )
 
         if intent.side == OrderSide.SELL:
@@ -71,7 +76,7 @@ class OrderSimulator:
                 return Order(
                     order_id, intent.security_id, intent.side, intent.quantity, intent.order_type,
                     decision_time, OrderStatus.REJECTED,
-                    f"insufficient position: requested {intent.quantity}, held {held}",
+                    f"insufficient position: requested {intent.quantity}, held {held}", intent.features,
                 )
         else:  # BUY
             estimated_notional = reference_price * intent.quantity
@@ -81,10 +86,10 @@ class OrderSimulator:
                     order_id, intent.security_id, intent.side, intent.quantity, intent.order_type,
                     decision_time, OrderStatus.REJECTED,
                     f"insufficient cash: need ~{estimated_notional + estimated_commission:.2f}, "
-                    f"have {portfolio.cash:.2f}",
+                    f"have {portfolio.cash:.2f}", intent.features,
                 )
 
         return Order(
             order_id, intent.security_id, intent.side, intent.quantity, intent.order_type,
-            decision_time, OrderStatus.PROPOSED, None,
+            decision_time, OrderStatus.PROPOSED, None, intent.features,
         )

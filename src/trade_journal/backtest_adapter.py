@@ -60,6 +60,13 @@ def ingest_backtest_result(
       fills, since those events are not exposed on BacktestResult.
     - DecisionSnapshot.market_state is left {} — Phase 2's Order does not
       retain the decision-time reference price it was validated against.
+
+    DecisionSnapshot.features is copied from order.features (ADR-0048,
+    Session 36) -- a Strategy MAY set OrderIntent.features to attach its
+    own decision-time rationale (e.g. factor scores); no Strategy in
+    this codebase does yet, so this is still None for every order any
+    existing strategy has ever produced. Populating it is a future
+    Strategy's decision, not this adapter's -- see ADR-0048.
     """
     exp_id = experiment_id or result.experiment.experiment_id
     strategy_version = result.experiment.strategy_version
@@ -82,6 +89,7 @@ def ingest_backtest_result(
             order=order,
             portfolio_state=portfolio.snapshot_view(order.decision_time),
             market_state={},
+            features=order.features,  # ADR-0048 — None for every Strategy that doesn't set OrderIntent.features
             strategy_version=strategy_version,
             execution_version=EXECUTION_VERSION,
             provenance=provenance,
