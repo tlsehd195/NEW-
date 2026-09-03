@@ -104,6 +104,27 @@ beyond the original 12 candidates found nothing new worth adding.
 project's factor coverage is already broad across the recognized
 factor literature.**
 
+**Correction (ADR-0043 Decision 13):** this conclusion was wrong in one
+specific, significant way. The user pushed back, asking specifically
+about the most foundational ("S-tier"/"A-tier") papers rather than the
+broader speciality literature this audit's search actually covered. A
+targeted re-check found this project had **zero coverage of the Size
+factor** -- Banz (1981)'s small-cap premium, one of the oldest and most
+famous anomalies in asset pricing, the direct ancestor of the
+Fama-French three-factor model's SMB factor, and (per the five-family
+framing above) arguably a sixth independent family this audit's
+"5 robust families" list omitted entirely (Size is priced on firm size
+alone, distinct from Value/Quality's fundamentals-ratio construction).
+The earlier "no new family surfaced" claim was a genuine miss, not a
+hedge -- Size is exactly the kind of famous, easy-to-check anomaly a
+citation audit like this one should have caught on its own. `size_score`
+was built to close this gap (ADR-0043 Decision 13); see that decision
+for the full build. Lesson for any future round of this audit: check
+the canonical anomaly list by name (size, value, momentum, quality,
+low-vol, profitability -- the "big six") explicitly, rather than only
+searching for what related citations are already present, which is
+exactly the blind spot that let this one through.
+
 ## What this does NOT do
 
 - Does not change any factor's implementation -- this is a verification

@@ -1797,6 +1797,26 @@ out every non-rejected candidate from the original 12-strategy
 literature search -- 8 externally-researched candidates now built and
 awaiting real raw-IC results. Full account: ADR-0043 Decision 12.
 
+**Sixteenth update -- `size_score`, found by re-auditing the most
+foundational academic literature specifically, after the user
+challenged the citation audit's "no new candidate found" conclusion.**
+A targeted grep for the canonical anomaly names this project's citation
+audit (ADR-0047) had not explicitly checked by name (`Banz`, "size
+effect," `Carhart`) found the gap immediately: this project had never
+built a Size factor, despite Banz (1981)'s small-cap premium being one
+of the oldest, most-cited anomalies in asset pricing and the direct
+ancestor of the Fama-French three-factor model's SMB factor -- and
+despite already having every piece of market-cap infrastructure this
+needed (reused unchanged from `book_to_market_score`/`sales_yield_
+score`/`cashflow_yield_score`). `size_score` = the negative of raw
+`market_cap`, so smaller companies score higher, matching this
+module's convention. Needs zero new real ingestion. Wired into
+`_HYBRID_SCORES` (`--score size`), same call path as `shareholder_
+yield`/`earnings_yield`. This is a real correction to ADR-0047's
+"5 robust factor families" framing, not just an addition: Size is a
+sixth, independent family that framing omitted entirely. Full account:
+ADR-0043 Decision 13 and the correction appended to ADR-0047.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

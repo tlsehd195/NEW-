@@ -746,6 +746,50 @@ def cashflow_yield_score(
     return cfo_record.value / market_cap
 
 
+def size_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> Optional[float]:
+    """HYPOTHESIS -- the "size effect" (Banz 1981, "The Relationship
+    Between Return and Market Value of Common Stocks," Journal of
+    Financial Economics 9(1): 3-18): smaller companies (by market
+    capitalization) have historically earned higher risk-adjusted
+    returns than larger ones. One of the oldest and most famous
+    documented anomalies in asset pricing -- predates, and is the direct
+    ancestor of, the Fama-French three-factor model's SMB ("small minus
+    big") factor. Distinct in kind from every other factor in this
+    module: this is the one candidate from the classic small-cap-
+    premium/SMB literature this project had never built, despite
+    already having the exact market-cap-computation machinery this
+    needs (identical to `book_to_market_score`/`sales_yield_score`/
+    `cashflow_yield_score`, just without a fundamentals-ratio numerator).
+
+    Score is the NEGATIVE of `market_cap` (`_latest_price *
+    CommonStockSharesOutstanding`, same raw-close discipline as every
+    other market-cap-based score in this module -- see `_latest_price`),
+    so a higher score means a SMALLER (hypothesized more attractive)
+    company, matching this module's convention that a higher score
+    always ranks a security as more attractive. Since IC is computed via
+    Spearman rank correlation (`signal_ic.spearman_ic`), using raw
+    `market_cap` rather than `log(market_cap)` (the more common
+    transform in academic regressions, used there to tame market cap's
+    heavy right skew for OLS) makes no difference to the resulting IC --
+    any monotonic transform preserves rank order identically. Needs zero
+    new real ingestion: `CommonStockSharesOutstanding` is already
+    ingested for every other market-cap-based score this session."""
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    market_cap = price * shares_record.value
+    if market_cap <= 0:
+        return None
+    return -market_cap
+
+
 def _quality_component_values(
     security_ids: Sequence[str], as_of_time: datetime, repository: object,
 ) -> dict:

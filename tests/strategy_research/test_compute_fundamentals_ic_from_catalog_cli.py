@@ -395,6 +395,43 @@ class TestEndToEndAgainstSyntheticCatalogs:
         assert exit_code == 0
         assert "Fundamentals Signal IC: earnings_yield" in capsys.readouterr().out
 
+    def test_size_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 13. The third score routed
+        through compute_hybrid_ic_series (after shareholder_yield/
+        earnings_yield) -- regression guard that the CLI actually wires
+        this path for size too."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+        symbol = symbols[0]
+
+        price_engine = new_engine(tmp_path, name="price9")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals9")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        fundamentals_repo.add_fundamental(
+            _fy_record(symbol, f"{symbol}:shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=period_end)
+        )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price9"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals9"),
+            "--universe", "PILOT_UNIVERSE",
+            "--score", "size",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Fundamentals Signal IC: size" in capsys.readouterr().out
+
     def test_quality_minus_junk_and_value_composite_options_run_end_to_end(self, tmp_path, capsys) -> None:
         """Session 36 -- ADR-0043 Decision 12. The first two scores
         routed through compute_universe_ic_series (main()'s

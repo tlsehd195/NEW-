@@ -4,8 +4,8 @@
 > 진행되었는지 파악할 수 있어야 한다. 이 파일은 각 세션 종료 시 반드시
 > 최신 상태로 갱신한다.
 
-**Last Updated:** 2026-09-02
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 8개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음))
+**Last Updated:** 2026-09-03
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 9개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047) + S급 재조사로 찾은 Size factor 추가(ADR-0043 Decision 13))
 
 ---
 
@@ -25,10 +25,10 @@
    python3 scripts/ingest_fundamentals_data.py --universe RESEARCH_UNIVERSE \
      --user-agent "..." --as-of <오늘 날짜> --db-path ./data/fundamentals_data
    ```
-3. **raw IC 체크 8개 실행** (8후보 풀엔 아직 하나도 안 넣었음 — 아래 8개
-   결과를 보고 나서 넣을지 결정. 8개 전부 XBRL 추가 항목 없이 위
-   ingestion 한 번으로 다 커버됨 — 원래 문헌 조사 12개 후보 중 기각
-   안 된 건 이제 이 8개가 전부):
+3. **raw IC 체크 9개 실행** (9후보 풀엔 아직 하나도 안 넣었음 — 아래 9개
+   결과를 보고 나서 넣을지 결정. 9개 전부 XBRL 추가 항목 없이 위
+   ingestion 한 번으로 다 커버됨 — 원래 문헌 조사 12개 후보 + 이후
+   재조사로 찾은 `size`까지, 기각 안 된 건 이제 이 9개가 전부):
    ```
    python3 scripts/compute_fundamentals_ic_from_catalog.py \
      --price-db-path ./data/real_2010_latest \
@@ -69,9 +69,14 @@
      --price-db-path ./data/real_2010_latest \
      --fundamentals-db-path ./data/fundamentals_data \
      --score value_composite --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score size --start 2010-01-01
    ```
 4. **결과를 그대로 붙여넣어 보고** — `mean_ic`/`ic_information_ratio`/
-   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 8후보 풀에
+   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 9후보 풀에
    추가할지, 어떤 걸 우선할지 판단함. Piotroski는 은행/증권사
    (JPM/GS/MS/WFC/AXP/BAC)에서 `None`이 다수 나올 수 있음 — 버그 아님,
    문서화된 데이터 특성. `dividend_growth`는 무배당 종목에서 구조적으로
@@ -1191,6 +1196,38 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     가장 많이 재현된 5개 팩터군을 다시 훑었는데 우리는 이미 5개
     군 전부에 팩터가 있음(여러 개인 군도 있음) — 새로운 팩터군은
     안 나옴. 이전 라운드들의 "12개 밖 새 후보 없음" 결론과 일치.
+- **사용자가 위 결론에 반박: "S급/A급 논문 더 없나?" — 재조사 결과
+  실제로 놓친 게 있었음 (`ADR-0043` Decision 13, `ADR-0047`에 정정
+  추가)**:
+  - `Banz`/"size effect"/`Carhart`/`Fama.*French.*1993`로 코드 전체를
+    다시 grep — momentum(Jegadeesh & Titman 1993)은 정상적으로 인용돼
+    있었지만, **Size 팩터(시가총액이 작을수록 위험조정수익이 높다는
+    Banz 1981의 "size effect")는 이 프로젝트에 전혀 없었음** — 자산가격
+    이론에서 가장 오래되고 유명한 이상현상 중 하나이자 Fama-French
+    3-factor 모델의 SMB의 직접적 뿌리인데도, 이미 이 세션에서 여러 번
+    재사용한 시가총액 계산 인프라(`_latest_price *
+    CommonStockSharesOutstanding`)만으로 거의 공짜로 만들 수 있는
+    후보였음. 웹서치로 Banz(1981), Journal of Financial Economics
+    9(1):3-18 실존 확인.
+  - `size_score` 신규 구현 — `-market_cap` (시총이 작을수록 높은
+    점수, 이 모듈의 "높을수록 매력적" 컨벤션과 일치). IC는 Spearman
+    순위상관이라 `log(market_cap)`을 쓰든 원값을 쓰든 결과는 동일 —
+    단순화를 위해 원값 사용. 새 데이터 수집 불필요
+    (`CommonStockSharesOutstanding`은 이미 수집 중).
+    `compute_fundamentals_ic_from_catalog.py`의 `_HYBRID_SCORES`에
+    배선(`--score size`, shareholder_yield/earnings_yield와 동일
+    경로). 신규 테스트 6개(factor_scores 5개 + CLI 엔드투엔드 1개).
+  - `ADR-0047`의 "새 팩터군 없음" 결론을 정정: Size는 momentum/
+    저위험/quality/수익성/가치 5개 군과 별개인 6번째 독립 팩터군인데
+    그 조사에서 통째로 빠졌었음 — 앞으로 이런 감사를 다시 할 때는
+    관련 인용이 이미 있는지만 보지 말고 "6대 이상현상"(size, value,
+    momentum, quality, low-vol, profitability) 이름을 하나씩
+    명시적으로 체크하라는 교훈을 `ADR-0047`에 기록.
+  - 이제 문헌 기반 후보 9개 완료 (asset_growth/piotroski/
+    shareholder_yield/sloan_accruals/dividend_growth/earnings_yield/
+    quality_minus_junk/value_composite/size), 전부 raw IC 확인만
+    남음. walk-forward 풀에는 아직 안 넣음 — RULE 0.8대로 결과
+    보기 전 문헌으로 먼저 고정.
 
 ### Completed (Session 33 — Phase 31 continued)
 

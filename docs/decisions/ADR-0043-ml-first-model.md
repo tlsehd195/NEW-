@@ -918,6 +918,68 @@ None yet added to the 8-candidate walk-forward pool, none yet observed
 against real data -- all remain hypotheses fixed before any result is
 seen, per RULE 0.8.
 
+## Decision 13 -- a ninth externally-researched candidate, `size_score`, found by a targeted re-audit of the most foundational ("S-tier") academic literature this project might have missed
+
+After ADR-0047 concluded "no new paper-backed candidate found," the
+user pushed back specifically: are there S-tier/A-tier papers (the
+most foundational, most-cited ones, not the broader speciality
+literature ADR-0047's search covered) still missing? A targeted grep
+for the canonical anomaly names (`Banz`, `size effect`, `Carhart`,
+`Fama.*French.*1993`) across `strategy_research/*.py` found the gap
+immediately: `Jegadeesh & Titman (1993)` (momentum) was correctly
+cited, but **no match anywhere for Banz, "size effect," or any
+market-cap-based standalone factor** -- this project had never built a
+Size factor, despite Banz (1981), "The Relationship Between Return and
+Market Value of Common Stocks" (Journal of Financial Economics 9(1):
+3-18), being one of the oldest and most famous anomalies in asset
+pricing (the direct ancestor of the Fama-French three-factor model's
+SMB factor), and confirmed real via web search (small-cap stocks earn
+higher risk-adjusted returns than large-cap; the effect is concentrated
+in the smallest firms, not linear across the whole size range).
+
+Built `size_score`: the NEGATIVE of raw `market_cap` (`_latest_price *
+CommonStockSharesOutstanding`, identical construction to
+`book_to_market_score`/`sales_yield_score`/`cashflow_yield_score`),
+so a higher score means a smaller (hypothesized more attractive)
+company. Uses raw market cap rather than `log(market_cap)` (the more
+common transform in academic OLS regressions, used there to tame
+market cap's skew) -- since this project's IC is Spearman rank
+correlation, any monotonic transform gives an identical result, so the
+choice makes no numerical difference here. Needs zero new real
+ingestion: `CommonStockSharesOutstanding` is already ingested for
+every other market-cap-based score this session. Wired into
+`compute_fundamentals_ic_from_catalog.py`'s `_HYBRID_SCORES` dict
+(`--score size`), the same call path as `shareholder_yield`/
+`earnings_yield`/`size` itself.
+
+6 new tests: 5 in `tests/strategy_research/test_factor_scores.py::
+TestSizeScore` (hand-computable negative-market-cap value, a smaller
+company scoring higher than a larger one, missing-shares/missing-price
+`None` cases) and 1 CLI end-to-end wiring test. Full suite: 2136 passed
+(up from 2131). One test-authoring bug found and fixed along the way
+(not a factor_scores.py bug): the size-comparison test's fundamentals
+fixture originally reused the DuckDB-natural-key `record_id` ("shares")
+across the two different securities in the fixture -- `add_fundamental`'s
+`ON CONFLICT (provenance_source_record_id) DO NOTHING` silently dropped
+the second security's insert, so its score came back `None`. Every
+other multi-security fixture in this test file already avoids this by
+using a security-distinguishing `record_id`; fixed the same way here.
+Also corrects ADR-0047's
+"no new paper-backed candidate found" conclusion -- that search covered
+breadth across the 5 recognized factor families (momentum, low-risk,
+quality, profitability, value) but missed that Size is itself a sixth,
+independent, canonical family (distinct from Value/Quality -- it is
+priced on firm size alone, not any fundamentals ratio), which this
+project had zero coverage of before this decision.
+
+This is now the 9th externally-researched candidate built (after
+`asset_growth`, `piotroski`, `shareholder_yield`, `sloan_accruals`,
+`dividend_growth`, `earnings_yield`, `quality_minus_junk`,
+`value_composite`), wired for a cheap raw IC check the same way as the
+other 8. Not yet added to the 8-candidate walk-forward pool, not yet
+observed against real data -- fixed before any result is seen, per
+RULE 0.8.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true

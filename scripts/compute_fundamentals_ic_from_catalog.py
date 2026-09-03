@@ -17,9 +17,11 @@ value anomaly, ADR-0043 Decision 11 -- also wired through
 `compute_hybrid_ic_series`, since it needs price too), `quality_minus_junk`
 (Asness, Frazzini & Pedersen's quality composite, ADR-0043 Decision 12
 -- a CROSS-SECTIONAL score computed for the whole universe at once via
-the new `compute_universe_ic_series`, not per-security), or
-`value_composite` (O'Shaughnessy's multi-ratio value composite, ADR-0043
-Decision 12 -- also cross-sectional, and also needs price) -- using
+the new `compute_universe_ic_series`, not per-security), `value_composite` (O'Shaughnessy's multi-ratio value composite, ADR-0043
+Decision 12 -- also cross-sectional, and also needs price), or `size`
+(Banz 1981's size effect, ADR-0043 Decision 13 -- negative market cap,
+also wired through `compute_hybrid_ic_series` since it needs price) --
+using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` (or, for
 `shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`; or,
 for `quality_minus_junk`/`value_composite`, `compute_universe_ic_series`)
@@ -74,6 +76,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     roa_score,
     roe_score,
     shareholder_yield_score,
+    size_score,
     sloan_accruals_score,
     value_composite_score,
 )
@@ -106,6 +109,7 @@ _SCORES = {
 _HYBRID_SCORES = {
     "shareholder_yield": shareholder_yield_score,
     "earnings_yield": earnings_yield_score,
+    "size": size_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 12) -- scores whose score_fn is

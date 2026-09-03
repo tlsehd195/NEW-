@@ -37,6 +37,7 @@ from strategy_research.factor_scores import (
     roe_score,
     sales_yield_score,
     shareholder_yield_score,
+    size_score,
     sloan_accruals_score,
     value_composite_score,
 )
@@ -1013,6 +1014,52 @@ class TestCashflowYieldScore:
         price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
 
         assert cashflow_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+class TestSizeScore:
+    """Session 36 -- ADR-0043 Decision 13: Banz (1981)'s size effect.
+    Score is the negative of raw market_cap, so a smaller company scores
+    higher (more attractive), matching this module's convention."""
+
+    def test_computes_negative_market_cap(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = size_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(-10000.0)  # -(10 * 1000)
+
+    def test_smaller_company_scores_higher_than_larger_company(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("SMALL", "small_shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("BIG", "big_shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[
+            _price_bar("SMALL", "p1", close=10.0, timestamp=_utc(2023, 5, 25)),
+            _price_bar("BIG", "p2", close=10.0, timestamp=_utc(2023, 5, 25)),
+        ])
+
+        small_score = size_score("SMALL", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        big_score = size_score("BIG", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+
+        assert small_score is not None and big_score is not None
+        assert small_score > big_score  # smaller market cap -> higher (more attractive) score
+
+    def test_missing_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert size_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_missing_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[])
+
+        assert size_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
 
 
 def _add_quality_fixture(repo, security_id, *, roe_income=50.0, roe_equity=100.0, leverage_liabilities=100.0, accruals_cfo=60.0, accruals_ni=None) -> None:
