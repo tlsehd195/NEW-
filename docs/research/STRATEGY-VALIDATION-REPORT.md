@@ -2200,3 +2200,195 @@ the project's 5th candidate, has now been evaluated against real data
 (Section G's "Fifth update") and does not clear the CANDIDATE
 fold-consistency bar either -- `REAL_VALIDATION_NOT_COMPLETED` now
 applies to all 5 candidates.
+
+## Phase 33 Addendum -- 20 new literature candidates, full walk-forward/PBO/DSR pipeline, and a real RULE 0.8 catch
+
+**Primary objective**: put 20 literature-sourced factor candidates
+(researched and implemented across `ADR-0043` Decisions 8-16 and a
+subsequent S-tier re-investigation) through this project's full
+validation pipeline -- raw IC screening, then walk-forward/PBO/DSR --
+without pre-filtering by the screening result, per RULE 0.8. All
+numbers below are OBSERVED (real data, `RESEARCH_UNIVERSE_STAGE3`, 63
+symbols, `data/real_2010_latest` + `data/fundamentals_data`, real SEC
+EDGAR + Tiingo/Stooq ingestion) unless labeled otherwise.
+
+### A. The 20 candidates and their hypotheses
+
+6 price/volume-only: `long_term_reversal` (De Bondt & Thaler 1985),
+`short_term_reversal` (Jegadeesh 1990), `low_beta` (Frazzini & Pedersen
+2014), `illiquidity` (Amihud 2002), `fifty_two_week_high` (George &
+Hwang 2004), `max_effect` (Bali, Cakici & Whitelaw 2011).
+
+14 fundamentals-dependent: `asset_growth` (Cooper, Gulen & Schill
+2008), `piotroski` (Piotroski 2000 F-Score), `sloan_accruals` (Sloan
+1996), `dividend_growth`, `gross_profitability` (Novy-Marx 2013),
+`shareholder_yield` (O'Shaughnessy), `earnings_yield` (Basu 1977),
+`book_to_market` (Fama & French 1992), `sales_yield`/`cashflow_yield`
+(O'Shaughnessy), `size` (Banz 1981), `altman_z` (Altman 1968, applied
+as a stock-selection signal rather than its original bankruptcy-
+classification purpose), and 2 cross-sectional composites:
+`quality_minus_junk` (Asness, Frazzini & Pedersen, 3-pillar
+simplification) and `value_composite` (O'Shaughnessy, 5 of 6 legs).
+
+### B. Raw IC screening (all 20, real data, 2010-01-01 to 2023-04-28, pre-TEST_1)
+
+Every `factor_scores.py` function is already constructed so a higher
+score should predict a higher forward return -- literature agreement
+therefore predicts a POSITIVE `mean_ic` for all 20.
+
+| candidate | type | obs | mean_ic | IR | positive_ic_ratio | matches literature sign? |
+|---|---|---|---|---|---|---|
+| illiquidity | price | 79 | +0.0512 | 0.284 | 56.96% | yes (strongest positive) |
+| piotroski | fundamentals | 49 | +0.0766 | 0.107 | 55.10% | yes |
+| dividend_growth | fundamentals | 80 | +0.0630 | 0.269 | 56.25% | yes |
+| quality_minus_junk | fundamentals | 80 | +0.0330 | 0.148 | 56.25% | yes |
+| size | fundamentals | 79 | +0.0320 | 0.141 | 58.23% | yes |
+| sloan_accruals | fundamentals | 80 | +0.0265 | 0.146 | 56.25% | yes |
+| short_term_reversal | price | 79 | +0.0106 | 0.044 | 58.23% | yes |
+| altman_z | fundamentals | 79 | +0.0072 | 0.022 | 44.30% | yes (near zero) |
+| shareholder_yield | fundamentals | 79 | +0.0027 | 0.010 | 50.63% | yes (near zero) |
+| long_term_reversal | price | 79 | -0.0007 | -0.003 | 53.16% | no (near zero) |
+| fifty_two_week_high | price | 79 | -0.0075 | -0.030 | 49.37% | no |
+| cashflow_yield | fundamentals | 79 | -0.0132 | -0.055 | 51.90% | no |
+| asset_growth | fundamentals | 80 | -0.0157 | -0.083 | 40.00% | no |
+| max_effect | price | 79 | -0.0217 | -0.093 | 40.51% | no |
+| value_composite | fundamentals | 79 | -0.0220 | -0.075 | 44.30% | no |
+| low_beta | price | 79 | -0.0261 | -0.073 | 44.30% | no |
+| earnings_yield | fundamentals | 79 | -0.0301 | -0.127 | 46.84% | no |
+| book_to_market | fundamentals | 79 | -0.0486 | -0.221 | 45.57% | no |
+| sales_yield | fundamentals | 79 | -0.0502 | -0.191 | 45.57% | no |
+| gross_profitability | fundamentals | 79 | -0.0710 | -0.144 | 44.30% | no (largest magnitude, wrong sign) |
+
+9 of 20 match the literature-predicted sign; 11 do not (or are
+essentially zero). INFERRED, a pattern worth flagging as likely
+non-random rather than pure noise: all 4 independently-computed
+`value_composite` legs available as standalone candidates here
+(`book_to_market`, `sales_yield`, `cashflow_yield`, `earnings_yield`)
+point negative -- a coherent signal that classic value ratios do not
+carry a premium in this specific 63-symbol mega-cap universe over this
+period, not 4 independent coin flips landing the same way by chance.
+
+### C. Decision: wire all 20 into the walk-forward/PBO/DSR pool, not just the 9 sign-matching ones (ADR-0051)
+
+This project's own history already answers the "should raw IC gate
+admission" question empirically: `leverage_score`'s raw IC
+(mean_ic=+0.0782) was weaker than `ml_ols`'s VALIDATION IC
+(mean_ic=+0.1055), yet `ml_ols` had the second-worst walk-forward
+fold-consistency of 6 candidates (Section G above) while `leverage`
+passed. Raw IC magnitude/sign has not reliably predicted walk-forward
+robustness in either direction in this project's own real results.
+Filtering the pool by raw IC now, after seeing it, would be exactly the
+post-hoc selection RULE 0.8 prohibits. The user explicitly chose to
+wire all 20 (`docs/decisions/ADR-0051-wire-all-20-raw-ic-candidates.md`)
+over a "9 sign-matching only" alternative that was also offered.
+
+4 generic `Strategy` wrappers (`src/strategy_research/factor_strategy.py`)
+were built rather than 20 near-duplicate files, matching each of
+`factor_scores.py`'s 4 score_fn call shapes (price-only,
+fundamentals-only, hybrid, cross-sectional universe).
+
+### D. First real walk-forward/PBO/DSR run -- 28 candidates, top_n=5 (prior default)
+
+TRAIN [2010-01-01, 2017-12-29) / VALIDATION [2017-12-29, 2020-08-28) /
+TEST [2020-08-28, 2023-04-28], 60 real walk-forward folds per
+candidate, PBO=12.86% across 70 CSCV splits (vs. 38.57% in the smaller
+8-candidate pool this same universe/window produced before this
+phase -- more candidates in the CSCV comparison set, not a change in
+methodology).
+
+**2 candidates newly reached `CANDIDATE`**:
+
+- `size`: fold-positive-ratio 60%, PBO=0.13, DSR=0.99. Held-out
+  TEST=+85.26% (Sharpe 0.67) -- the strongest median walk-forward
+  return (+0.50%) and the best-looking TEST outcome of all 28.
+- `altman_z`: fold-positive-ratio 60%, PBO=0.13, DSR=0.96. Held-out
+  TEST=-25.80% (Sharpe 0.18) -- passes every walk-forward/PBO/DSR bar
+  but the ONE held-out TEST window it is evaluated on exactly once
+  went the opposite direction.
+
+**`leverage` (previously `CANDIDATE` in the 8-candidate pool) dropped
+out**: fold-positive-ratio unchanged at 60%, but DSR fell from 0.9674
+(8-candidate pool) to 0.8099 (28-candidate pool), below the 0.95 bar.
+This is Deflated Sharpe's multiple-testing correction working exactly
+as designed -- more real candidates in the comparison set raises the
+bar for "better than the best of N noisy trials," not a bug.
+
+### E. `size`'s TEST outcome traced to single-security concentration
+
+Pulling `size`'s held-out TEST fills through the existing
+`compute_contribution_report_from_fills` concentration report: **SLB
+(Schlumberger, an oilfield-services company) accounted for 76.3% of
+total TEST PnL** (`top_1_share_of_positive_pnl=63.8%`,
+`top_3_share_of_positive_pnl=94.1%`, Herfindahl index 0.348 against a
+0.10 ten-security-equal-weight baseline). The TEST window
+(2020-08-28 to 2023-04-28) overlaps the real 2022 oil-price supercycle
+(Russia-Ukraine war). HYPOTHESIS, strongly supported by the
+concentration numbers: this reads far more plausibly as "held one
+energy-sector name during a sector-specific event" than as evidence of
+a genuine cross-sectional size effect.
+
+### F. Root cause and fix: `top_n=5` is too narrow for genuine breadth (ADR-0052)
+
+Every strategy this project has ever walk-forward-tested defaults to
+`top_n=5` (holding only 5 of the 63-symbol universe at a time,
+~20%/position at initial construction) -- not a property specific to
+`size`. **An initial fix framing was considered and rejected before
+implementation**: aligning `top_n` with Production's separate
+`risk.config.RiskConfig.max_position_weight` (0.10, Phase 8) would have
+repeated exactly the confusion `risk_controlled_momentum.py`'s own
+docstring (citing instruction section 17) already warns against --
+research position-construction breadth and a production risk limit
+solve different problems and must not be conflated. The real,
+independent justification is a pure research-methodology one: too few
+held names lets one name's idiosyncratic outcome dominate a signal's
+own evidence. `_TOP_N_FOR_EVALUATION = 10` (roughly 1/6 of the 63-symbol
+universe, applied identically to all 28 candidates, chosen before
+re-running) was added to `run_long_horizon_validation.py` only -- each
+strategy's own class-level default (`top_n=5`) is unchanged for any
+other caller.
+
+### G. Re-run result -- 28 candidates, top_n=10 (corrected)
+
+Same split/window, PBO=14.29% across 70 CSCV splits.
+
+| candidate | evidence (top_n=5) | evidence (top_n=10) | TEST net cumret (top_n=10) |
+|---|---|---|---|
+| `size` | **CANDIDATE** (fold 60%, DSR=0.99) | ROBUSTNESS_PENDING (fold 57%) | +30.90% |
+| `altman_z` | **CANDIDATE** (fold 60%, DSR=0.96) | **CANDIDATE** (fold 63%, DSR=1.00) | **-25.80%** |
+| `rank_average_ensemble` | ROBUSTNESS_PENDING (fold 57%) | **CANDIDATE** (fold 60%, DSR=0.99) | **-15.19%** |
+| `leverage` | ROBUSTNESS_PENDING (fold 60%, DSR=0.81, below CANDIDATE bar) | ROBUSTNESS_PENDING (fold 57%) | -10.95% |
+| remaining 24 | ROBUSTNESS_PENDING | ROBUSTNESS_PENDING | (see JSON report) |
+
+`size` dropping below the fold-consistency bar at `top_n=10` is
+consistent with Section E's concentration hypothesis -- broader
+breadth removed most of one security's ability to carry the whole
+result. `altman_z` shows the identical TEST-negative pattern at both
+`top_n=5` and `top_n=10`, which argues AGAINST a concentration
+explanation for it specifically and FOR a genuine walk-forward-vs-TEST
+divergence (the same "PBO/DSR pass does not guarantee TEST
+performance" pattern this report already established for `ml_ols`,
+Section G above). `rank_average_ensemble` is a newly-observed instance
+of the same pattern.
+
+### Status after this addendum
+
+**Zero of the 20 new candidates (24 including `leverage`/`ml_ols`/
+`ml_ridge`/`rank_average_ensemble`'s prior evaluations) reach a
+trustworthy `VALIDATED` state.** 2 reach `CANDIDATE` at the corrected
+breadth (`altman_z`, `rank_average_ensemble`) but both show strongly
+negative held-out TEST performance and are held pending, not promoted
+-- `VALIDATED` requires explicit human review this project's own
+`classify_evidence_level` never performs
+(`PROJECT_MASTER_PLAN.md` section 11.5's `AI Proposal -> Experiment ->
+Validation -> Approval -> Deployment`), and that review concluded
+these two should not be promoted given the TEST divergence.
+`REAL_VALIDATION_NOT_COMPLETED` remains the correct classification for
+every candidate this project has ever produced, now 28 of them.
+
+This addendum's own process is, itself, evidence the pipeline works as
+designed: without the raw-IC-screening -> walk-forward/PBO/DSR ->
+concentration-diagnosis -> breadth-correction -> re-verification
+sequence, either `size` or `altman_z` alone (evaluated in isolation,
+at the original `top_n=5`, without a held-out TEST check) would have
+looked like a found alpha. Both were caught before being reported as
+one.
