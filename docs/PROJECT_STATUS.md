@@ -1004,6 +1004,26 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     구현됨), `sec-edgar-toolkit`(EdgarTools 대비 트랙션 낮음). 토스
     웹소켓·Alpha Arena도 각각 이유 있게 보류/기각(위 항목·이전 세션
     대화 참고).
+  - **추가 라운드 ("최대한 많이 찾아봐")에서 새로 찾은 것**:
+    - **가장 유용할 것 같음 — JKP Global Factor Data**
+      (bkelly-lab/jkp-data, jkpfactors.com): Jensen/Kelly/Pedersen
+      2023 "Is There a Replication Crisis in Finance?" 논문의 오픈
+      데이터셋 — 93개국 153개 팩터(accruals/quality/value composite
+      등 우리가 이미 만든 것과 거의 겹침)의 실제 팩터 수익률을 무료
+      제공(CC BY-NC 4.0, 비상업적 학술 이용). **우리 팩터 점수의
+      순위/방향성을 published 정답과 대조하는 용도**로 쓸 수 있음 —
+      단 포트폴리오 구성 방식(유니버스/가중치/브레이크포인트)이
+      우리와 다르니 "똑같이 나와야 함"이 아니라 "방향성이 비슷한가"
+      정도의 정성적 체크. Kenneth French Data Library(Dartmouth,
+      `pandas-datareader`로 접근 가능, HML/SMB/Mom 등 월간 팩터
+      수익률 수십 년치 무료)도 같은 용도로 book_to_market_score(HML
+      기반) 등을 대조할 수 있음. 둘 다 이번 라운드 최고 발견.
+    - **비교만 하고 결론 동일 — 백테스트 엔진 대안**
+      (Backtrader/Zipline-Reloaded/VectorBT): 다 나름의 장점 있지만
+      (VectorBT는 파라미터 스윕 속도, Zipline은 팩터 리서치 파이프라인)
+      셋 다 토스증권 어댑터 없고, 우리는 이미 point-in-time 안전성이
+      검증된 자체 백테스트 엔진(`backtest.engine`, `AsOfDataView`)이
+      있어서 NautilusTrader와 같은 결론 — 갈아탈 이유 없음.
 
 ### Completed (Session 33 — Phase 31 continued)
 
