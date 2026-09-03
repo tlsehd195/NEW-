@@ -977,6 +977,33 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   나중에 구현하기로 사용자와 합의 — 착수하려면 뉴스/공시 데이터 소스
   조사·계약, 파싱/저장 인프라, (감정분석까지 하면) NLP 파이프라인까지
   전부 새로 설계해야 하는 별도 규모의 작업. 지금은 그냥 기록만.
+- **외부 오픈소스/도구 조사 결과 (사용자 요청 "적용할만한거 찾아봐",
+  미착수 — 참고용 기록)**:
+  - **지금 해볼 만함**: `purgedcv`(eslazarev/purged-cross-validation,
+    scikit-learn 호환 PBO/DSR/CPCV) — 새 의존성 추가가 아니라, 우리가
+    손으로 짠 `pbo_dsr.py`가 맞는지 합성 데이터로 한 번 교차검증하는
+    용도. `alphalens-reloaded`(stefan-jansen 유지보수, 원조
+    quantopian/alphalens 후속) — 우리 `signal_ic.py`의
+    `spearman_ic`/`compute_ic_series`도 같은 방식으로 교차검증 가능.
+    둘 다 리스크 낮고 비용 적음.
+  - **조건부로 나중에**: `skfolio`(sklearn API 포트폴리오 최적화,
+    Black-Litterman) — 검증된 전략 나온 뒤 배분 최적화 단계에서.
+    `EdgarTools`(dgunning/edgartools, MIT, 프로덕션급 XBRL 파서) —
+    XOM 같은 실제 데이터 이상 케이스를 더 만나면 우리 커스텀
+    `SecEdgarFundamentalsProvider` 교체 검토용. 지금은 우리 것도
+    동작·테스트 됨.
+  - **참고 자료로만**: `awesome-quant`(wilsonfreitas, 계량투자 오픈소스
+    큐레이션). Sharadar/Tradevo Data/SimFin(point-in-time 펀더멘털
+    유료·부분무료 데이터 서비스, Dow 30만 완전 무료) — 우리는 무료
+    데이터 소스 원칙(ADR-0034)이라 지금 당장 안 씀, 그냥 이런 게
+    있다는 것만 기록.
+  - **검토 후 적용 안 하기로 결론** (The Open-Source Hedge Fund Stack
+    글 관련, 이전 대화에서 다룸): Kronos(캔들 예측 모델, Brier 점수가
+    무작위 걷기와 통계적으로 구분 안 됨), NautilusTrader(토스증권
+    어댑터 없음), Vibe-Trading(이미 ADR-0045 승인 게이트로 같은 원칙
+    구현됨), `sec-edgar-toolkit`(EdgarTools 대비 트랙션 낮음). 토스
+    웹소켓·Alpha Arena도 각각 이유 있게 보류/기각(위 항목·이전 세션
+    대화 참고).
 
 ### Completed (Session 33 — Phase 31 continued)
 
