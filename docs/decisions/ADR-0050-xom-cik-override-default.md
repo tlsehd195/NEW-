@@ -95,10 +95,7 @@ explicit `--cik-overrides` assignment. Same source-text/AST-only
 discipline as every other test in this file (the script itself is
 never imported or executed, since it makes real network calls).
 
-`pytest --collect-only` confirms 2192 tests collected (up from 2189)
-with no import/structural errors. Full suite run was in progress in
-the background at commit time -- see PROJECT_STATUS.md for the
-confirmed final pass count once available.
+Full suite: 2192 passed (up from 2189).
 
 ## What this does NOT do
 
