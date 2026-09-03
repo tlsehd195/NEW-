@@ -97,6 +97,11 @@ _DEFAULT_CONCEPTS = (
     # request justification as the Piotroski addition above.
     "PaymentsOfDividends", "PaymentsForRepurchaseOfCommonStock",
     "ProceedsFromIssuanceOfCommonStock",
+    # Session 36 addition (ADR-0043 Decision 16) -- the 2 concepts
+    # `strategy_research.factor_scores.altman_z_score` needs beyond
+    # what earlier scores already ingest. Same zero-extra-request
+    # justification as every earlier concept addition above.
+    "RetainedEarningsAccumulatedDeficit", "OperatingIncomeLoss",
 )
 
 _REQUEST_DELAY_SECONDS = 0.3

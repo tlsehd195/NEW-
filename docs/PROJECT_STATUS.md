@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 14개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 3차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity factor 6개 추가(ADR-0043 Decision 13-15))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16))
 
 ---
 
@@ -17,18 +17,19 @@
 
 1. **최신 코드 받기**: `git pull origin main` (Piotroski F-Score +
    Shareholder Yield 커밋이 이미 main에 병합돼 있음).
-2. **펀더멘털 재-ingestion** (XBRL 신규 항목 9개 반영 — Piotroski용 6개 +
-   Shareholder Yield용 3개, `--concepts` 옵션 없이 그냥 재실행하면 자동으로
-   전부 받아옴, SEC EDGAR가 기업당 전체 데이터를 한 번에 주는 구조라
-   추가 요청 비용 없음):
+2. **펀더멘털 재-ingestion** (XBRL 신규 항목 11개 반영 — Piotroski용 6개 +
+   Shareholder Yield용 3개 + Altman Z-Score용 2개, `--concepts` 옵션
+   없이 그냥 재실행하면 자동으로 전부 받아옴, SEC EDGAR가 기업당 전체
+   데이터를 한 번에 주는 구조라 추가 요청 비용 없음):
    ```
    python3 scripts/ingest_fundamentals_data.py --universe RESEARCH_UNIVERSE \
      --user-agent "..." --as-of <오늘 날짜> --db-path ./data/fundamentals_data
    ```
-3. **raw IC 체크 9개 실행** (9후보 풀엔 아직 하나도 안 넣었음 — 아래 9개
-   결과를 보고 나서 넣을지 결정. 9개 전부 XBRL 추가 항목 없이 위
-   ingestion 한 번으로 다 커버됨 — 원래 문헌 조사 12개 후보 + 이후
-   재조사로 찾은 `size`까지, 기각 안 된 건 이제 이 9개가 전부):
+3. **raw IC 체크 13개 실행** (14후보 풀엔 아직 하나도 안 넣었음 — 아래
+   13개 결과를 보고 나서 넣을지 결정. `altman_z`만 새 XBRL 항목 2개
+   필요(`RetainedEarningsAccumulatedDeficit`/`OperatingIncomeLoss`) —
+   위 2번 재-ingestion 명령이 이미 이 2개를 포함하므로 별도 조치
+   불필요, 나머지 12개는 추가 항목 없이 다 커버됨):
    ```
    python3 scripts/compute_fundamentals_ic_from_catalog.py \
      --price-db-path ./data/real_2010_latest \
@@ -79,16 +80,40 @@
      --price-db-path ./data/real_2010_latest \
      --fundamentals-db-path ./data/fundamentals_data \
      --score gross_profitability --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score altman_z --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score book_to_market --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score sales_yield --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score cashflow_yield --start 2010-01-01
    ```
-3-1. **raw IC 체크 4개 더 실행** (S급 재조사로 추가로 찾은
-   `long_term_reversal`/`short_term_reversal`/`low_beta`/`illiquidity`
-   — 이 4개는 가격(+거래량) 데이터만 필요해서 다른 스크립트
-   (`compute_signal_ic_from_catalog.py`, `--fundamentals-db-path`
-   없음)를 씀. `low_beta`는 SPY 가격이 필요한데 ADR-0029 때 이미
-   같은 파이프라인으로 수집돼 있어서 추가 ingestion 불필요.
-   `illiquidity`는 이 프로젝트에서 처음으로 거래량(`volume`)을 쓰는
-   팩터인데, 이것도 이미 매 PriceBar에 필수 필드로 들어있어서 추가
-   ingestion 불필요):
+   (`altman_z`는 새 XBRL 항목 2개 필요 — 위 2번 재-ingestion에 이미
+   포함돼 있음. `book_to_market`/`sales_yield`/`cashflow_yield`는
+   `value_composite`의 다리로 이미 만들어져 있었는데 CLI 옵션만
+   빠져있던 걸 이번에 발견해서 추가한 것 — 새 ingestion 불필요.)
+3-1. **raw IC 체크 6개 더 실행** (S급 재조사로 추가로 찾은
+   `long_term_reversal`/`short_term_reversal`/`low_beta`/`illiquidity`/
+   `fifty_two_week_high`/`max_effect` — 이 6개는 가격(+거래량)
+   데이터만 필요해서 다른 스크립트(`compute_signal_ic_from_catalog.py`,
+   `--fundamentals-db-path` 없음)를 씀. `low_beta`는 SPY 가격이
+   필요한데 ADR-0029 때 이미 같은 파이프라인으로 수집돼 있어서 추가
+   ingestion 불필요. `illiquidity`는 이 프로젝트에서 처음으로
+   거래량(`volume`)을 쓰는 팩터인데, 이것도 이미 매 PriceBar에 필수
+   필드로 들어있어서 추가 ingestion 불필요):
    ```
    python3 scripts/compute_signal_ic_from_catalog.py \
      --db-path ./data/real_2010_latest \
@@ -105,9 +130,17 @@
    python3 scripts/compute_signal_ic_from_catalog.py \
      --db-path ./data/real_2010_latest \
      --strategy illiquidity --start 2010-01-01
+
+   python3 scripts/compute_signal_ic_from_catalog.py \
+     --db-path ./data/real_2010_latest \
+     --strategy fifty_two_week_high --start 2010-01-01
+
+   python3 scripts/compute_signal_ic_from_catalog.py \
+     --db-path ./data/real_2010_latest \
+     --strategy max_effect --start 2010-01-01
    ```
 4. **결과를 그대로 붙여넣어 보고** — `mean_ic`/`ic_information_ratio`/
-   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 14후보 풀에
+   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 17후보 풀에
    추가할지, 어떤 걸 우선할지 판단함. `short_term_reversal`은 문헌상
    미시구조 노이즈(bid-ask bounce) 영향을 강하게 받는다고 알려진
    지표라 다른 팩터보다 null 결과가 나와도 덜 놀라운 일 — 버그
@@ -1312,6 +1345,38 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
   - 신규 테스트 9개(factor_scores 7개: gross_profitability 4개 +
     illiquidity 3개 + CLI 엔드투엔드 2개). 문헌 기반 후보 이제 총
     14개 완료, 전부 raw IC 확인만 남음.
+- **사용자가 이번엔 "논문 더 찾아봐"가 아니라 "놓친 부분이 있는지
+  확실하게 검사해"라고 요청 — 문헌 조사 + 배선(wiring) 감사 두 가지를
+  다 함 (`ADR-0043` Decision 16, `ADR-0047`에 네 번째 정정)**:
+  - **문헌 쪽**: 새로 확인한 3개 —
+    `altman_z_score`(Altman 1968 Z-Score, Dichev 1998/Campbell-
+    Hilscher-Szilagyi 2008의 "distress risk anomaly" 적용 — 재무적으로
+    부실한 기업이 오히려 낮은 수익률을 낸다는, 표준 위험-수익
+    이론과 어긋나는 유명한 퍼즐), `fifty_two_week_high_score`(George
+    & Hwang 2004 — 52주 최고가 대비 현재가, momentum과는 메커니즘
+    자체가 다름 — 앵커링 편향 vs 과소반응 — 이미 null인
+    `_momentum_score` 재검증이 아님), `max_effect_score`(Bali,
+    Cakici & Whitelaw 2011 — 최근 1개월 중 하루 최대 수익률의 음수,
+    복권 선호 편향 — 이미 있는 low_volatility/low_beta와는 또 다른
+    "단일 극단값" 효과). `altman_z`는 새 XBRL 항목 2개
+    (`RetainedEarningsAccumulatedDeficit`/`OperatingIncomeLoss`) 필요,
+    나머지 2개는 가격 전용이라 새 ingestion 불필요.
+  - **배선 감사 쪽 (더 중요한 발견)**: `factor_scores.py`의 모든
+    `*_score` 함수를 두 CLI 스크립트의 딕셔너리와 스크립트 레벨로
+    교차검증 — 이미 만들어져 있었는데 CLI에 한 번도 배선 안 된 함수
+    3개 발견: `book_to_market_score`/`sales_yield_score`/
+    `cashflow_yield_score` (`value_composite_score`의 5개 다리 중 3개,
+    Decision 12). 더 심각한 건 `book_to_market_score` 자신의
+    docstring이 "`compute_hybrid_ic_series`로 독립적으로 테스트
+    가능하다"고 명시적으로 주장했는데, 실제로는 그걸 실행할 `--score`
+    옵션이 없었다는 것 — 이전 인용 감사(`ADR-0047`)도 이 부분은
+    확인 안 하고 넘어갔던 지점. 3개 다 `_HYBRID_SCORES`에 추가해서
+    수정. 수정 후 재검증: 정의된 팩터 함수 25개 전부 정확히 하나의
+    CLI 딕셔너리에 배선돼 있고, 팩터가 쓰는 XBRL 항목 16개 전부
+    `ingest_fundamentals_data.py`의 기본 수집 목록에 있음 확인 —
+    남은 배선/수집 갭 없음.
+  - 신규 테스트 14개(factor_scores 11개 + CLI 엔드투엔드 3개). 문헌
+    기반 후보 이제 총 17개 완료, 전부 raw IC 확인만 남음.
 
 ### Completed (Session 33 — Phase 31 continued)
 

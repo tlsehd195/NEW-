@@ -1133,6 +1133,109 @@ raw IC check. None yet added to the 8-candidate walk-forward pool, none
 yet observed against real data -- fixed before any result is seen, per
 RULE 0.8.
 
+## Decision 16 -- the user asked for a thorough, definitive check for anything missed (not just "more papers"); found 3 more factors AND a real wiring gap in factors already built
+
+The user's request this round was explicitly broader than the prior
+three rounds: "check thoroughly whether anything was missed," not
+just "find more papers." Read as two separate checks, both performed:
+
+**(1) Literature check.** Checked three more famous, specific
+anomalies not yet covered and not already implied by an existing
+family:
+
+- **Altman (1968)**, "Financial Ratios, Discriminant Analysis and the
+  Prediction of Corporate Bankruptcy," The Journal of Finance 23(4):
+  589-609 -- the Z-Score, arguably the single most widely used
+  financial-distress formula in academia and practice since 1968.
+  Applied as a stock-selection signal per the distress-risk anomaly
+  (Dichev 1998; Campbell, Hilscher & Szilagyi 2008): financially
+  distressed firms earn systematically LOWER returns, a genuine puzzle
+  since standard theory predicts riskier firms should earn more.
+  Built as `altman_z_score`, the ORIGINAL 5-ratio public-manufacturer
+  formula (Z = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 + 1.0*X5), higher Z
+  (healthier) is more attractive, no negation needed. Needs 2 new real
+  ingestion concepts: `RetainedEarningsAccumulatedDeficit` and
+  `OperatingIncomeLoss` (used as an EBIT proxy -- a common, explicitly
+  flagged simplification versus reconstructing EBIT from separately-
+  tagged interest/tax add-backs, which are inconsistently tagged
+  across filers). Needs both repositories (market value of equity),
+  wired into `_HYBRID_SCORES` (`--score altman_z`).
+- **George & Hwang (2004)**, "The 52-Week High and Momentum
+  Investing," The Journal of Finance 59(5): 2145-2176 -- current price
+  relative to the trailing 52-week high predicts returns better than,
+  and largely subsumes, standard momentum, via investor anchoring to a
+  salient reference price rather than momentum's under-reaction story.
+  Distinct in MECHANISM (not just parameterization) from this
+  project's already-null `_momentum_score`, the same distinction
+  already established for `long_term_reversal_score`/
+  `short_term_reversal_score`. Built as `fifty_two_week_high_score` =
+  `close / trailing_52_week_high`, no negation needed (closer to the
+  high is more attractive, matching the paper's own sign). Price-only,
+  zero new ingestion, wired into `_PRICE_ONLY_SCORES`
+  (`--strategy fifty_two_week_high`).
+- **Bali, Cakici & Whitelaw (2011)**, "Maxing Out: Stocks as Lotteries
+  and the Cross-Section of Expected Returns," Journal of Financial
+  Economics 99(2): 427-446 -- the MAX effect: a HIGHER maximum single-
+  day return over the trailing month predicts LOWER subsequent
+  returns (lottery-seeking investors overpay for a small chance of a
+  large payoff). A single-extreme-observation effect distinct from
+  both `low_volatility_score` (average dispersion) and `low_beta_score`
+  (systematic co-movement) -- a stock can score well on both of those
+  and still have had one lottery-like spike day. Built as
+  `max_effect_score` = negative of the trailing month's single largest
+  daily return. Price-only, zero new ingestion, wired into
+  `_PRICE_ONLY_SCORES` (`--strategy max_effect`).
+
+**(2) Structural wiring audit -- found a real gap.** Cross-checked
+every `*_score` function defined in `factor_scores.py` against both
+CLI scripts' dispatch dicts (`_SCORES`/`_HYBRID_SCORES`/
+`_UNIVERSE_SCORES` in the fundamentals CLI, `_PRICE_ONLY_SCORES` in the
+price-only CLI) via a grep-based cross-reference, not by trusting the
+docstrings. Found 3 of 25 factor functions defined but never wired
+anywhere: `book_to_market_score`, `sales_yield_score`,
+`cashflow_yield_score` -- the 3 (of 5) `value_composite_score` legs
+this project never gave a standalone `--score` option. This is a real
+gap, not a cosmetic one: `book_to_market_score`'s OWN docstring
+(written when it was built, ADR-0043 Decision 12) explicitly claims it
+is "also independently testable on its own via
+`compute_hybrid_ic_series`" -- a claim about CLI-level testability
+that was not actually true, since no `--score book_to_market` option
+existed to invoke that call path without writing new code. Fixed by
+adding all 3 to `_HYBRID_SCORES` (`--score book_to_market` /
+`sales_yield` / `cashflow_yield`) -- the other 2 didn't make the same
+explicit CLI-testability claim in their own docstrings, but were
+fixed for the same reason (buildable standalone, arbitrarily withheld
+from the CLI) rather than fixing only the one whose docstring
+happened to promise it. After this fix, a script-level cross-check
+confirms all 25 defined factor functions are wired in exactly one CLI
+dict, and all 16 distinct XBRL concepts any factor function reads are
+present in `ingest_fundamentals_data.py`'s `_DEFAULT_CONCEPTS` --
+zero remaining wiring or ingestion gaps as of this decision.
+
+14 new tests: 5 in `TestAltmanZScore` (hand-computable Z value,
+healthier-vs-distressed ranking, missing-retained-earnings/zero-
+liabilities/missing-price `None` cases), 3 in
+`TestFiftyTwoWeekHighScore`, 3 in `TestMaxEffectScore`, plus 3 CLI
+end-to-end wiring tests (`altman_z`; a combined `fifty_two_week_high`/
+`max_effect` test; a combined `book_to_market`/`sales_yield`/
+`cashflow_yield` gap-fix test). Full suite: 2171 passed (up from
+2157).
+
+This is now 17 externally-researched candidates built total across
+Decisions 8-16 (`asset_growth`, `piotroski`, `shareholder_yield`,
+`sloan_accruals`, `dividend_growth`, `earnings_yield`,
+`quality_minus_junk`, `value_composite`, `size`, `gross_profitability`,
+`altman_z` -- 11 via `compute_fundamentals_ic_from_catalog.py`;
+`long_term_reversal`, `short_term_reversal`, `low_beta`, `illiquidity`,
+`fifty_two_week_high`, `max_effect` -- 6 via
+`compute_signal_ic_from_catalog.py`), all wired for a cheap raw IC
+check, plus the 3 `value_composite` legs (`book_to_market`,
+`sales_yield`, `cashflow_yield`) newly CLI-exposed by this decision's
+gap fix (already researched under Decision 12, not new candidates in
+their own right) -- 14 total `--score` options in the fundamentals CLI.
+None yet added to the 8-candidate walk-forward pool, none yet observed
+against real data -- fixed before any result is seen, per RULE 0.8.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true

@@ -285,6 +285,98 @@ def illiquidity_score(
     return sum(ratios) / len(ratios)
 
 
+def fifty_two_week_high_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- the "52-week high" anomaly (George & Hwang 2004,
+    "The 52-Week High and Momentum Investing," The Journal of Finance
+    59(5): 2145-2176): a stock's CURRENT PRICE relative to its own
+    trailing 52-week HIGH predicts returns better than, and largely
+    subsumes, standard past-return momentum -- the paper's own finding
+    is that proximity to the 52-week high is the more fundamental
+    driver, with cumulative past return itself carrying little
+    additional information once the 52-week-high ratio is known.
+    Distinct in MECHANISM, not just parameterization, from this
+    project's already-tested `_momentum_score` (real IC = -0.0078,
+    Section G of `STRATEGY-VALIDATION-REPORT.md`): George & Hwang's own
+    explanation is investor anchoring to a specific, salient reference
+    price (the 52-week high), a different psychological mechanism than
+    momentum's under-reaction-to-information story -- not a re-test of
+    the same already-null hypothesis under a new name, the same
+    distinction this project's own `long_term_reversal_score`/
+    `short_term_reversal_score` already established for a different
+    momentum-adjacent construction.
+
+    Score is `close / trailing_52_week_high` (never negated): CLOSER to
+    the 52-week high (ratio closer to 1) is hypothesized to be more
+    attractive, matching this module's convention directly since the
+    paper's own sign already points the right way -- the same "no
+    negation needed" situation as `illiquidity_score`. Uses raw `close`
+    (never `adjusted_close`) for both the current price and the
+    trailing high: comparing a security's own actual traded prices to
+    its own actual traded high needs the same (raw) price convention on
+    both sides, not one raw and one back-adjusted, the same reasoning
+    `_latest_price` documents. Needs zero new real ingestion -- price
+    data only."""
+    padded_days = int(lookback_days * 1.6)
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(bars) < 2:
+        return None
+    current_close = bars[-1].close
+    if current_close is None or current_close <= 0:
+        return None
+    highs = [b.close for b in bars if b.close is not None and b.close > 0]
+    if not highs:
+        return None
+    trailing_high = max(highs)
+    if trailing_high <= 0:
+        return None
+    return current_close / trailing_high
+
+
+def max_effect_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 21,
+) -> Optional[float]:
+    """HYPOTHESIS -- the "MAX effect" (Bali, Cakici & Whitelaw 2011,
+    "Maxing Out: Stocks as Lotteries and the Cross-Section of Expected
+    Returns," Journal of Financial Economics 99(2): 427-446): stocks
+    with a HIGHER maximum single-day return over the trailing month
+    earn LOWER subsequent returns -- interpreted as poorly-diversified,
+    lottery-seeking investors overpaying for a small chance of a large
+    (lottery-like) payoff. A single-extreme-observation effect distinct
+    from both of this module's other low-risk factors:
+    `low_volatility_score` (average dispersion over the whole window)
+    and `low_beta_score` (systematic co-movement with a benchmark) -- a
+    stock can have low average volatility and low beta yet still have
+    had one single extreme up-day that drives MAX, and vice versa. The
+    original paper reports the effect survives controls for size,
+    book-to-market, momentum, short-term reversal, liquidity, and
+    skewness, so it is not simply a repackaging of factors already in
+    this module either.
+
+    Score is the NEGATIVE of the maximum daily return over the trailing
+    `lookback_days` (default 21, ~1 trading month, matching the
+    paper's own monthly MAX construction), so a LOWER maximum single-
+    day return (hypothesized more attractive, per the paper's finding)
+    produces a HIGHER score -- matches this module's convention (see
+    `leverage_score`). Uses `adjusted_close or close`, this module's
+    usual convention for a return-based calculation. Needs zero new
+    real ingestion -- price data only."""
+    padded_days = int(lookback_days * 1.6)
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(bars) < 2:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    returns = compute_returns(closes)
+    if len(returns) < 2:
+        return None
+    return -max(returns)
+
+
 def _fy_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:
     """Every annual (`fiscal_period == "FY"`) `FundamentalRecord` for
     `(security_id, concept)` already knowable `as_of_time`, oldest
@@ -1055,6 +1147,96 @@ def size_score(
     if market_cap <= 0:
         return None
     return -market_cap
+
+
+def altman_z_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> Optional[float]:
+    """HYPOTHESIS -- Altman (1968) Z-Score ("Financial Ratios,
+    Discriminant Analysis and the Prediction of Corporate Bankruptcy,"
+    The Journal of Finance 23(4): 589-609), applied as a cross-
+    sectional stock-selection signal rather than its original
+    bankruptcy-classification purpose: Dichev (1998, "Is the Risk of
+    Bankruptcy a Systematic Risk?," The Journal of Finance 53(3):
+    1131-1147) and Campbell, Hilscher & Szilagyi (2008, "In Search of
+    Distress Risk," The Journal of Finance 63(6): 2899-2939) both found
+    financially DISTRESSED firms earn systematically LOWER, not higher,
+    subsequent returns -- the "distress risk anomaly," a genuine puzzle
+    since standard risk-return theory predicts riskier firms should
+    earn MORE, not less. Companies with a HIGHER Z-score (financially
+    healthier, lower bankruptcy risk) are hypothesized to have
+    relatively better forward returns, matching the same "safety
+    premium" intuition as `low_volatility_score`/`low_beta_score`/
+    `leverage_score` but via a specific, historically famous five-ratio
+    discriminant formula -- arguably the single most widely used
+    financial-distress formula in both academia and practice, in
+    continuous use since 1968 -- not a rank-average composite or a
+    single ratio, so genuinely different construction from every other
+    quality-family factor already in this module, not a relabeling of
+    one.
+
+    Z = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 + 1.0*X5, the ORIGINAL
+    (public-manufacturer) formula: X1 = (AssetsCurrent -
+    LiabilitiesCurrent)/Assets (working capital/assets), X2 =
+    RetainedEarningsAccumulatedDeficit/Assets, X3 = EBIT/Assets, X4 =
+    market value of equity/Liabilities, X5 = Revenues/Assets. EBIT is
+    proxied by the standard us-gaap `OperatingIncomeLoss` concept
+    (income before interest and taxes) -- a common, explicitly-flagged
+    simplification rather than reconstructing EBIT from `NetIncomeLoss`
+    plus separately-tagged interest and tax add-backs, which are
+    inconsistently tagged across filers and would introduce more
+    missing-data cases than the single, well-standardized
+    `OperatingIncomeLoss` tag. Market value of equity computed
+    identically to every other market-cap-based score in this module
+    (`_latest_price` raw-close discipline). Needs 2 new real ingestion
+    concepts beyond what earlier scores use:
+    `RetainedEarningsAccumulatedDeficit`, `OperatingIncomeLoss` -- both
+    cheap (SEC EDGAR returns a company's entire company-facts JSON per
+    request regardless of which concepts are requested, so extending
+    `_DEFAULT_CONCEPTS` costs zero additional real requests, the same
+    reasoning already established for every earlier concept
+    addition)."""
+    assets_record = _latest_fiscal_year_value(fundamentals_repository, security_id, "Assets", as_of_time)
+    if assets_record is None or assets_record.value <= 0:
+        return None
+    current_assets_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "AssetsCurrent", as_of_time,
+    )
+    current_liabilities_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "LiabilitiesCurrent", as_of_time,
+    )
+    retained_earnings_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "RetainedEarningsAccumulatedDeficit", as_of_time,
+    )
+    ebit_record = _latest_fiscal_year_value(fundamentals_repository, security_id, "OperatingIncomeLoss", as_of_time)
+    liabilities_record = _latest_fiscal_year_value(fundamentals_repository, security_id, "Liabilities", as_of_time)
+    revenue_record = _latest_fiscal_year_value(fundamentals_repository, security_id, "Revenues", as_of_time)
+    if (
+        current_assets_record is None or current_liabilities_record is None
+        or retained_earnings_record is None or ebit_record is None
+        or liabilities_record is None or revenue_record is None
+    ):
+        return None
+    if liabilities_record.value <= 0:
+        return None
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    market_value_equity = price * shares_record.value
+    if market_value_equity <= 0:
+        return None
+    assets = assets_record.value
+    x1 = (current_assets_record.value - current_liabilities_record.value) / assets
+    x2 = retained_earnings_record.value / assets
+    x3 = ebit_record.value / assets
+    x4 = market_value_equity / liabilities_record.value
+    x5 = revenue_record.value / assets
+    return 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + 1.0 * x5
 
 
 def _quality_component_values(

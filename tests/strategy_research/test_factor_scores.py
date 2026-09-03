@@ -26,17 +26,20 @@ from data_infra.universe import BENCHMARK_SYMBOL
 from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
 from strategy_research.factor_scores import (
+    altman_z_score,
     asset_growth_score,
     book_to_market_score,
     cashflow_yield_score,
     dividend_growth_score,
     earnings_yield_score,
+    fifty_two_week_high_score,
     gross_profitability_score,
     illiquidity_score,
     leverage_score,
     long_term_reversal_score,
     low_beta_score,
     low_volatility_score,
+    max_effect_score,
     net_margin_score,
     piotroski_f_score,
     quality_minus_junk_score,
@@ -298,6 +301,83 @@ class TestIlliquidityScore:
         data = _view(repo, as_of_time)
 
         assert illiquidity_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestFiftyTwoWeekHighScore:
+    """Session 36 -- ADR-0043 Decision 16: George & Hwang (2004)'s
+    52-week-high anomaly. Score = close/trailing_high, never negated --
+    closer to the high is more attractive."""
+
+    def test_a_security_at_its_high_scores_higher_than_one_far_below_its_high(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2021, 6, 1))
+        # AT_HIGH: rises steadily to today's close, so today IS the 52-week high (ratio 1.0).
+        at_high_closes = [50.0 + i * 0.1 for i in range(len(days))]
+        # FAR_BELOW: rises then falls sharply, so today's close is well below the peak.
+        far_below_closes = [50.0 + i * 0.1 for i in range(len(days) - 20)] + [30.0] * 20
+        repo = InMemoryDataRepository(bars=list(make_bars("AT_HIGH", days, at_high_closes)) + list(make_bars("FAR_BELOW", days, far_below_closes)))
+        as_of_time = _utc(2021, 5, 28)
+        data = _view(repo, as_of_time)
+
+        at_high_score = fifty_two_week_high_score("AT_HIGH", as_of_time, data)
+        far_below_score = fifty_two_week_high_score("FAR_BELOW", as_of_time, data)
+
+        assert at_high_score is not None and far_below_score is not None
+        assert at_high_score == pytest.approx(1.0)
+        assert at_high_score > far_below_score
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 4))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days))))
+        as_of_time = _utc(2021, 1, 3)
+        data = _view(repo, as_of_time)
+
+        assert fifty_two_week_high_score("AAA", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2021, 6, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0 + i * 0.05 for i in range(len(days))])))
+        as_of_time = _utc(2021, 5, 28)
+        data = _view(repo, as_of_time)
+
+        assert fifty_two_week_high_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestMaxEffectScore:
+    """Session 36 -- ADR-0043 Decision 16: Bali, Cakici & Whitelaw
+    (2011)'s MAX effect. Score is the negative of the trailing month's
+    single largest daily return -- a lottery-like spike lowers the
+    score, matching this module's convention (see leverage_score)."""
+
+    def test_a_security_with_no_spike_scores_higher_than_one_with_a_spike(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 2, 1))
+        steady_closes = [100.0 * (1.001**i) for i in range(len(days))]
+        spike_closes = list(steady_closes)
+        spike_closes[-3] = spike_closes[-4] * 1.25  # one large single-day jump near the end
+        repo = InMemoryDataRepository(bars=list(make_bars("STEADY", days, steady_closes)) + list(make_bars("SPIKE", days, spike_closes)))
+        as_of_time = _utc(days[-1].year, days[-1].month, days[-1].day)
+        data = _view(repo, as_of_time)
+
+        steady_score = max_effect_score("STEADY", as_of_time, data)
+        spike_score = max_effect_score("SPIKE", as_of_time, data)
+
+        assert steady_score is not None and spike_score is not None
+        assert steady_score > spike_score  # no lottery-like spike -> higher (more attractive) score
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 4))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days))))
+        as_of_time = _utc(2021, 1, 3)
+        data = _view(repo, as_of_time)
+
+        assert max_effect_score("AAA", as_of_time, data, lookback_days=21) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 2, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0 * (1.001**i) for i in range(len(days))])))
+        as_of_time = _utc(days[-1].year, days[-1].month, days[-1].day)
+        data = _view(repo, as_of_time)
+
+        assert max_effect_score("NONEXISTENT", as_of_time, data) is None
 
 
 def _fy_record(security_id, record_id, *, concept, value, period_end, available_time=None):
@@ -1295,6 +1375,83 @@ class TestSizeScore:
         price_repo = InMemoryDataRepository(bars=[])
 
         assert size_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+def _altman_fixture(repo, security_id, *, assets=1000.0, current_assets=400.0, current_liabilities=200.0,
+                     retained_earnings=300.0, ebit=150.0, liabilities=500.0, revenue=800.0, shares=100.0) -> None:
+    for concept, value in (
+        ("Assets", assets), ("AssetsCurrent", current_assets), ("LiabilitiesCurrent", current_liabilities),
+        ("RetainedEarningsAccumulatedDeficit", retained_earnings), ("OperatingIncomeLoss", ebit),
+        ("Liabilities", liabilities), ("Revenues", revenue), ("CommonStockSharesOutstanding", shares),
+    ):
+        repo.add_fundamental(_fy_record(security_id, f"{security_id}:{concept}", concept=concept, value=value, period_end=_utc(2022, 12, 31)))
+
+
+class TestAltmanZScore:
+    """Session 36 -- ADR-0043 Decision 16: Altman (1968)'s Z-Score
+    distress-risk formula, applied here as a stock-selection signal per
+    the Dichev (1998)/Campbell-Hilscher-Szilagyi (2008) distress
+    anomaly (higher Z = healthier = more attractive, matching this
+    module's convention with no negation needed)."""
+
+    def test_computes_the_five_ratio_discriminant_formula(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        _altman_fixture(fundamentals_repo, "AAA")
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=20.0, timestamp=_utc(2023, 5, 25))])
+
+        score = altman_z_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        # X1=(400-200)/1000=0.2 X2=300/1000=0.3 X3=150/1000=0.15 X4=(20*100)/500=4.0 X5=800/1000=0.8
+        # Z = 1.2*0.2 + 1.4*0.3 + 3.3*0.15 + 0.6*4.0 + 1.0*0.8 = 4.355
+        assert score == pytest.approx(4.355)
+
+    def test_healthier_company_scores_higher_than_distressed_one(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        _altman_fixture(fundamentals_repo, "HEALTHY")
+        _altman_fixture(
+            fundamentals_repo, "DISTRESSED", current_assets=150.0, current_liabilities=400.0,
+            retained_earnings=-200.0, ebit=-50.0, revenue=300.0,
+        )
+        price_repo = InMemoryDataRepository(bars=[
+            _price_bar("HEALTHY", "p1", close=20.0, timestamp=_utc(2023, 5, 25)),
+            _price_bar("DISTRESSED", "p2", close=20.0, timestamp=_utc(2023, 5, 25)),
+        ])
+
+        healthy_score = altman_z_score("HEALTHY", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        distressed_score = altman_z_score("DISTRESSED", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+
+        assert healthy_score is not None and distressed_score is not None
+        assert healthy_score > distressed_score
+
+    def test_missing_retained_earnings_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        for concept, value in (
+            ("Assets", 1000.0), ("AssetsCurrent", 400.0), ("LiabilitiesCurrent", 200.0),
+            ("OperatingIncomeLoss", 150.0), ("Liabilities", 500.0), ("Revenues", 800.0),
+            ("CommonStockSharesOutstanding", 100.0),
+        ):
+            fundamentals_repo.add_fundamental(_fy_record("AAA", f"AAA:{concept}", concept=concept, value=value, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=20.0, timestamp=_utc(2023, 5, 25))])
+
+        assert altman_z_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_zero_liabilities_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        _altman_fixture(fundamentals_repo, "AAA", liabilities=0.0)
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=20.0, timestamp=_utc(2023, 5, 25))])
+
+        assert altman_z_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_missing_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        _altman_fixture(fundamentals_repo, "AAA")
+        price_repo = InMemoryDataRepository(bars=[])
+
+        assert altman_z_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
 
 
 def _add_quality_fixture(repo, security_id, *, roe_income=50.0, roe_equity=100.0, leverage_liabilities=100.0, accruals_cfo=60.0, accruals_ni=None) -> None:

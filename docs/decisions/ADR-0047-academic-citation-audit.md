@@ -159,6 +159,32 @@ use a `PriceBar`'s `volume` field at all. Both built as
 15. Liquidity should now be added to the "big six" (momentum/value/
 quality/low-vol/size/liquidity) any future audit checks by name.
 
+**Fourth correction (ADR-0043 Decision 16):** the user asked this
+round for a genuinely thorough check, not just "more papers" -- two
+kinds of gap turned up. First, three more famous, specific anomalies:
+Altman (1968)'s Z-Score (applied per the Dichev 1998/Campbell-Hilscher-
+Szilagyi 2008 distress-risk anomaly), George & Hwang (2004)'s 52-week-
+high anomaly, and Bali, Cakici & Whitelaw (2011)'s MAX effect -- built
+as `altman_z_score`/`fifty_two_week_high_score`/`max_effect_score`.
+Second, and more significant for THIS audit's own credibility: a
+script-level cross-check (every `*_score` function in
+`factor_scores.py` against both CLI scripts' dispatch dicts) found 3
+factor functions this project had ALREADY BUILT but never wired into
+either CLI: `book_to_market_score`, `sales_yield_score`,
+`cashflow_yield_score` (3 of `value_composite_score`'s 5 legs,
+ADR-0043 Decision 12). Worse, `book_to_market_score`'s own docstring
+explicitly claimed it was "independently testable on its own via
+`compute_hybrid_ic_series`" -- a claim about CLI-level testability
+that this audit, and every session since Decision 12, had simply never
+verified against the actual CLI dispatch dicts. A citation audit that
+only checks whether papers are cited correctly, without also checking
+whether every factor a docstring claims is testable is ACTUALLY wired
+for testing, will keep missing exactly this class of gap. Fixed: all 3
+legs added to `_HYBRID_SCORES`. See ADR-0043 Decision 16 for the full
+account and the wiring cross-check methodology, which should be
+repeated at the start of any future round of this audit, not just at
+the end of a productive one.
+
 ## What this does NOT do
 
 - Does not change any factor's implementation -- this is a verification

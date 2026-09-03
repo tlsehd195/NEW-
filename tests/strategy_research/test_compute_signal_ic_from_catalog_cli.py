@@ -247,3 +247,29 @@ class TestEndToEndAgainstSyntheticCatalog:
         ])
         assert exit_code == 0
         assert "Signal IC: illiquidity" in capsys.readouterr().out
+
+    def test_fifty_two_week_high_and_max_effect_options_run_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 16. Both are price-only
+        ScoreFn-shaped like low_volatility, so share one fixture."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+        repo.append_bars(make_bars(symbols[0], days, closes))
+        engine.close()
+
+        module = _load_script()
+        for strategy in ("fifty_two_week_high", "max_effect"):
+            exit_code = module.main([
+                "--db-path", str(tmp_path / "store"),
+                "--universe", "PILOT_UNIVERSE",
+                "--strategy", strategy,
+                "--start", "2018-06-01",
+                "--end", "2019-01-01",
+                "--step-months", "1",
+                "--horizon-days", "20",
+            ])
+            assert exit_code == 0
+            assert f"Signal IC: {strategy}" in capsys.readouterr().out

@@ -1857,6 +1857,33 @@ of. Both wired for a cheap raw IC check (`gross_profitability` via the
 fundamentals CLI, `illiquidity` via the price-only CLI). Full account:
 ADR-0043 Decision 15 and the third correction appended to ADR-0047.
 
+**Nineteenth update -- asked to check thoroughly for anything missed,
+not just more papers; found 3 more factors AND a real wiring gap in
+factors already built.** Literature side: `altman_z_score` (Altman
+1968's Z-Score, applied per the Dichev 1998/Campbell-Hilscher-Szilagyi
+2008 distress-risk anomaly -- financially distressed firms earn
+systematically LOWER returns, a genuine risk-return puzzle), `fifty_
+two_week_high_score` (George & Hwang 2004 -- price relative to the
+trailing 52-week high, a different MECHANISM from momentum, not a
+re-test of the already-null `_momentum_score`), `max_effect_score`
+(Bali, Cakici & Whitelaw 2011 -- negative of the trailing month's
+single largest daily return, a single-extreme-observation effect
+distinct from both `low_volatility_score` and `low_beta_score`).
+Structural side, and the more significant finding: a script-level
+cross-check of every `*_score` function in `factor_scores.py` against
+both CLI scripts' dispatch dicts found 3 factor functions already
+built (`book_to_market_score`/`sales_yield_score`/`cashflow_yield_
+score`, `value_composite_score`'s legs from Decision 12) but never
+wired into either CLI -- and `book_to_market_score`'s OWN docstring
+had explicitly (if inaccurately) claimed it was "independently
+testable on its own via `compute_hybrid_ic_series`." Fixed by wiring
+all 3. After the fix, all 25 defined factor functions are confirmed
+wired in exactly one CLI dict and all 16 XBRL concepts any factor
+reads are confirmed present in `ingest_fundamentals_data.py`'s default
+concept list -- zero remaining wiring or ingestion gaps as of this
+update. Full account: ADR-0043 Decision 16 and the fourth correction
+appended to ADR-0047.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

@@ -3,7 +3,13 @@
 `roe`, `roa`, `net_margin`, `leverage` (all in `strategy_research.
 factor_scores`, sharing the same `_fy_ratio` plumbing), `gross_profitability`
 (Novy-Marx 2013's gross profitability premium, ADR-0043 Decision 15 --
-`(Revenues - CostOfGoodsAndServicesSold) / Assets`), `asset_growth`
+`(Revenues - CostOfGoodsAndServicesSold) / Assets`), `altman_z`
+(Altman 1968's Z-Score distress-risk formula, ADR-0043 Decision 16 --
+also needs price for market value of equity, wired through
+`compute_hybrid_ic_series`), `book_to_market`/`sales_yield`/
+`cashflow_yield` (the 3 of `value_composite`'s 5 legs that were
+buildable standalone but never had a CLI option -- ADR-0043 Decision
+16 gap fix), `asset_growth`
 (a year-over-year change rather than a single-period ratio -- Cooper,
 Gulen & Schill 2008's asset growth anomaly, ADR-0043 Decision 8), or
 `piotroski` (a 0-9 composite of nine YoY quality-improvement signals --
@@ -68,7 +74,10 @@ from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
+    altman_z_score,
     asset_growth_score,
+    book_to_market_score,
+    cashflow_yield_score,
     dividend_growth_score,
     earnings_yield_score,
     gross_profitability_score,
@@ -78,6 +87,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     quality_minus_junk_score,
     roa_score,
     roe_score,
+    sales_yield_score,
     shareholder_yield_score,
     size_score,
     sloan_accruals_score,
@@ -114,6 +124,19 @@ _HYBRID_SCORES = {
     "shareholder_yield": shareholder_yield_score,
     "earnings_yield": earnings_yield_score,
     "size": size_score,
+    "altman_z": altman_z_score,
+    # Session 36 gap fix (ADR-0043 Decision 16): book_to_market_score's
+    # own docstring already promised it is "independently testable on
+    # its own via compute_hybrid_ic_series" (ADR-0043 Decision 12) --
+    # but the CLI --score option to actually do that was never added.
+    # sales_yield/cashflow_yield are the other 2 of value_composite's 5
+    # legs that were similarly buildable standalone but never wired;
+    # added here for the same reason, closing the gap for all 3 at once
+    # rather than fixing only the one whose docstring explicitly
+    # promised it.
+    "book_to_market": book_to_market_score,
+    "sales_yield": sales_yield_score,
+    "cashflow_yield": cashflow_yield_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 12) -- scores whose score_fn is

@@ -431,6 +431,93 @@ class TestEndToEndAgainstSyntheticCatalogs:
         assert exit_code == 0
         assert "Fundamentals Signal IC: gross_profitability" in capsys.readouterr().out
 
+    def test_altman_z_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 16. Routed through
+        compute_hybrid_ic_series (needs price for market value of
+        equity) -- regression guard the CLI actually wires this path,
+        and that the 2 new RetainedEarningsAccumulatedDeficit/
+        OperatingIncomeLoss concepts round-trip through a real DuckDB
+        catalog."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+        symbol = symbols[0]
+
+        price_engine = new_engine(tmp_path, name="price11")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals11")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        for concept, value in (
+            ("Assets", 1000.0), ("AssetsCurrent", 400.0), ("LiabilitiesCurrent", 200.0),
+            ("RetainedEarningsAccumulatedDeficit", 300.0), ("OperatingIncomeLoss", 150.0),
+            ("Liabilities", 500.0), ("Revenues", 800.0), ("CommonStockSharesOutstanding", 100.0),
+        ):
+            fundamentals_repo.add_fundamental(
+                _fy_record(symbol, f"{symbol}:{concept}", concept=concept, value=value, period_end=period_end)
+            )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price11"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals11"),
+            "--universe", "PILOT_UNIVERSE",
+            "--score", "altman_z",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Fundamentals Signal IC: altman_z" in capsys.readouterr().out
+
+    def test_book_to_market_sales_yield_cashflow_yield_options_run_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 16 gap fix. These 3 of
+        value_composite_score's 5 legs were already buildable standalone
+        (book_to_market_score's own docstring even claimed it) but had
+        no --score CLI option until this fix -- regression guard the
+        CLI actually wires all 3 now."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+        symbol = symbols[0]
+
+        price_engine = new_engine(tmp_path, name="price12")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals12")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        for concept, value in (
+            ("StockholdersEquity", 500.0), ("Revenues", 200.0),
+            ("NetCashProvidedByUsedInOperatingActivities", 60.0), ("CommonStockSharesOutstanding", 1_000_000.0),
+        ):
+            fundamentals_repo.add_fundamental(
+                _fy_record(symbol, f"{symbol}:{concept}", concept=concept, value=value, period_end=period_end)
+            )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        for score in ("book_to_market", "sales_yield", "cashflow_yield"):
+            exit_code = module.main([
+                "--price-db-path", str(tmp_path / "price12"),
+                "--fundamentals-db-path", str(tmp_path / "fundamentals12"),
+                "--universe", "PILOT_UNIVERSE",
+                "--score", score,
+                "--start", "2018-06-01",
+                "--end", "2019-01-01",
+                "--step-months", "1",
+                "--horizon-days", "20",
+            ])
+            assert exit_code == 0
+            assert f"Fundamentals Signal IC: {score}" in capsys.readouterr().out
+
     def test_size_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
         """Session 36 -- ADR-0043 Decision 13. The third score routed
         through compute_hybrid_ic_series (after shareholder_yield/
