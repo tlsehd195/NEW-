@@ -154,6 +154,44 @@ class TestCikOverrides:
         assert '"cik_source": cik_source' in source
 
 
+class TestKnownCikOverridesAppliedByDefault:
+    """A real run (Session 36) omitted `--cik-overrides XOM:0000034088`
+    and silently re-triggered the exact bug ADR-0042 already documented
+    and fixed once (XOM resolved to a near-empty holdco CIK again) --
+    proof a manual per-run flag is not a durable fix for a *known,
+    verified* correction. `_KNOWN_CIK_OVERRIDES` bakes it into the
+    script itself so it no longer depends on a human remembering."""
+
+    def test_known_cik_overrides_dict_exists_and_has_xom(self) -> None:
+        tree = _tree()
+        found = False
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "_KNOWN_CIK_OVERRIDES"
+                and isinstance(node.value, ast.Dict)
+            ):
+                found = True
+                pairs = {k.value: v.value for k, v in zip(node.value.keys, node.value.values)}
+                assert pairs.get("XOM") == "0000034088"
+        assert found, "expected a _KNOWN_CIK_OVERRIDES = {...} dict literal"
+
+    def test_cik_overrides_dict_seeded_from_known_overrides_before_parsing_args(self) -> None:
+        source = _source()
+        assert "cik_overrides: dict[str, str] = dict(_KNOWN_CIK_OVERRIDES)" in source
+
+    def test_explicit_cik_overrides_flag_can_still_override_the_default(self) -> None:
+        # The seeded dict is built, then the --cik-overrides parsing loop
+        # runs and assigns into the same dict -- an explicit CLI entry
+        # for XOM (or any symbol) still wins over the baked-in default.
+        source = _source()
+        seed_index = source.index("cik_overrides: dict[str, str] = dict(_KNOWN_CIK_OVERRIDES)")
+        assign_index = source.index("cik_overrides[symbol.upper()] = cik.zfill(10)")
+        assert seed_index < assign_index
+
+
 class TestScriptIsSyntacticallyValid:
     def test_parses_without_error(self) -> None:
         _tree()  # raises SyntaxError on failure

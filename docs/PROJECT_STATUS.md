@@ -5,150 +5,94 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050))
 
 ---
 
-## 사용자가 코드스페이스(실제 환경)에서 직접 해야 할 일 (Session 36 기준, 2026-09-02)
+## 사용자가 코드스페이스(실제 환경)에서 직접 해야 할 일 (Session 36 기준, 2026-09-03 갱신)
 
-세션 도중 사용자가 폰이라 코드스페이스 사용이 불편하다고 해서, 이 세션에서
-직접 실행 가능한 코드/테스트 작업은 전부 끝내놓고 실제 데이터가 필요한
-작업만 아래에 모아둔다. 순서대로 실행하면 됨:
+**2026-09-03 갱신: 사용자가 실제로 63종목 ingestion + raw IC 19개(펀더멘털
+13개 + 시그널 6개)를 실행하고 결과를 relay함.** 그 결과 XOM 데이터가
+잘못된 CIK로 들어간 실제 버그(ADR-0042가 이미 한 번 발견·수정했던 바로
+그 버그)가 **다시 재현된 것을 발견** — 이번엔 CLI 플래그
+(`--cik-overrides XOM:0000034088`)를 사용자에게 안내하는 걸 내가
+빠뜨려서 재발함. `[15/63] XOM (CIK 0002115436, source=ticker_map):
+-> 30 record(s) persisted` (다른 62종목은 수백~수천 개인데 XOM만 30개 —
+지주회사 개편으로 티커맵이 가리키는 현재 CIK가 진짜 15년치 이력이 있는
+옛 CIK가 아니라 최근 등록된 거의 빈 지주회사 CIK를 가리키는 문제, 실측
+확인된 내용 그대로 재발). **근본 수정 완료(`ADR-0050`)**: 사람이 매번
+플래그를 기억해야 하는 구조 자체가 문제였으므로, `scripts/
+ingest_fundamentals_data.py`에 `_KNOWN_CIK_OVERRIDES = {"XOM":
+"0000034088"}`를 코드 기본값으로 박아넣어 앞으로는 플래그 없이도 매번
+자동 적용됨(명시적 `--cik-overrides`는 여전히 이 기본값을 덮어쓸 수
+있음). 신규 테스트 3개, 전체 스위트 재검증 완료.
 
-1. **최신 코드 받기**: `git pull origin main` (Piotroski F-Score +
-   Shareholder Yield 커밋이 이미 main에 병합돼 있음).
-2. **펀더멘털 재-ingestion** (XBRL 신규 항목 11개 반영 — Piotroski용 6개 +
-   Shareholder Yield용 3개 + Altman Z-Score용 2개, `--concepts` 옵션
-   없이 그냥 재실행하면 자동으로 전부 받아옴, SEC EDGAR가 기업당 전체
-   데이터를 한 번에 주는 구조라 추가 요청 비용 없음):
+**결과: 방금 받은 19개 raw IC 중 13개(펀더멘털 기반)는 XOM 오염 때문에
+잠정치로만 취급하고 재실행 필요. 6개(가격/거래량 기반, `--db-path
+./data/real_2010_latest`만 사용)는 펀더멘털 카탈로그를 아예 안 써서
+영향 없음 — 그대로 유효한 결과로 기록:**
+
+| strategy | observations | mean_ic | ic_information_ratio | positive_ic_ratio |
+|---|---|---|---|---|
+| long_term_reversal | 79 | -0.0007 | -0.0028 | 53.16% |
+| short_term_reversal | 79 | 0.0106 | 0.0443 | 58.23% |
+| low_beta | 79 | -0.0261 | -0.0732 | 44.30% |
+| illiquidity | 79 | 0.0512 | 0.2836 | 56.96% |
+| fifty_two_week_high | 79 | -0.0075 | -0.0296 | 49.37% |
+| max_effect | 79 | -0.0217 | -0.0925 | 40.51% |
+
+(펀더멘털 13개의 raw 값 자체는 참고용으로 이 세션 대화에 남아있지만,
+XOM이 63종목 중 1종목이라 완전히 무의미하진 않되 — 30개 레코드가 다른
+법인(ExxonMobil Holdings Corp)의 실제 데이터라 "결측"이 아니라 "오염"에
+해당해서 표로 확정 기록하지 않음. 재실행 후 다시 relay 요망.)
+
+아래 순서대로 진행하면 됨 — **XOM 재실행이 최우선**:
+
+1. **최신 코드 받기**: `git pull origin claude/phase-11-model-evolution-7hpibr`
+   (또는 병합 후 `main`) — `ADR-0050`의 `_KNOWN_CIK_OVERRIDES` 기본값
+   수정이 반영돼 있어야 함.
+2. **펀더멘털 카탈로그 전체 삭제 후 재실행** (XOM의 잘못된 30개 레코드가
+   이미 로컬 DB에 들어가 있어서, 부분 재실행으로는 안 지워짐 — 다른
+   법인의 정상 레코드라 같은 키로 충돌해서 덮어써지지도 않음. 반드시
+   전체 삭제 후 처음부터):
    ```
+   rm -rf ./data/fundamentals_data
    python3 scripts/ingest_fundamentals_data.py --universe RESEARCH_UNIVERSE \
-     --user-agent "..." --as-of <오늘 날짜> --db-path ./data/fundamentals_data
+     --user-agent "NEW-research-project sdh08060900@gmail.com" \
+     --as-of <오늘 날짜, YYYY-MM-DD> --db-path ./data/fundamentals_data
    ```
-3. **raw IC 체크 13개 실행** (14후보 풀엔 아직 하나도 안 넣었음 — 아래
-   13개 결과를 보고 나서 넣을지 결정. `altman_z`만 새 XBRL 항목 2개
-   필요(`RetainedEarningsAccumulatedDeficit`/`OperatingIncomeLoss`) —
-   위 2번 재-ingestion 명령이 이미 이 2개를 포함하므로 별도 조치
-   불필요, 나머지 12개는 추가 항목 없이 다 커버됨):
+   (`--cik-overrides` 플래그를 더 이상 손으로 넣을 필요 없음 — XOM 기본값이
+   이제 스크립트 자체에 박혀있어서 자동 적용됨. 실행 로그에
+   `XOM (CIK 0000034088, source=override): ... -> 771건 근방` 이 나오는지
+   확인하면 됨 — `source=override`가 핵심 확인 포인트.)
+3. **raw IC 체크 13개 재실행** (펀더멘털 기반 — 위 표에 없는 것 전부.
+   14후보 풀엔 아직 하나도 안 넣었음, 아래 결과를 보고 나서 넣을지 결정):
    ```
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score asset_growth --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score piotroski --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score shareholder_yield --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score sloan_accruals --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score dividend_growth --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score earnings_yield --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score quality_minus_junk --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score value_composite --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score size --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score gross_profitability --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score altman_z --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score book_to_market --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score sales_yield --start 2010-01-01
-
-   python3 scripts/compute_fundamentals_ic_from_catalog.py \
-     --price-db-path ./data/real_2010_latest \
-     --fundamentals-db-path ./data/fundamentals_data \
-     --score cashflow_yield --start 2010-01-01
-   ```
-   (`altman_z`는 새 XBRL 항목 2개 필요 — 위 2번 재-ingestion에 이미
-   포함돼 있음. `book_to_market`/`sales_yield`/`cashflow_yield`는
-   `value_composite`의 다리로 이미 만들어져 있었는데 CLI 옵션만
-   빠져있던 걸 이번에 발견해서 추가한 것 — 새 ingestion 불필요.)
-3-1. **raw IC 체크 6개 더 실행** (S급 재조사로 추가로 찾은
-   `long_term_reversal`/`short_term_reversal`/`low_beta`/`illiquidity`/
-   `fifty_two_week_high`/`max_effect` — 이 6개는 가격(+거래량)
-   데이터만 필요해서 다른 스크립트(`compute_signal_ic_from_catalog.py`,
-   `--fundamentals-db-path` 없음)를 씀. `low_beta`는 SPY 가격이
-   필요한데 ADR-0029 때 이미 같은 파이프라인으로 수집돼 있어서 추가
-   ingestion 불필요. `illiquidity`는 이 프로젝트에서 처음으로
-   거래량(`volume`)을 쓰는 팩터인데, 이것도 이미 매 PriceBar에 필수
-   필드로 들어있어서 추가 ingestion 불필요):
-   ```
-   python3 scripts/compute_signal_ic_from_catalog.py \
-     --db-path ./data/real_2010_latest \
-     --strategy long_term_reversal --start 2010-01-01
-
-   python3 scripts/compute_signal_ic_from_catalog.py \
-     --db-path ./data/real_2010_latest \
-     --strategy short_term_reversal --start 2010-01-01
-
-   python3 scripts/compute_signal_ic_from_catalog.py \
-     --db-path ./data/real_2010_latest \
-     --strategy low_beta --start 2010-01-01
-
-   python3 scripts/compute_signal_ic_from_catalog.py \
-     --db-path ./data/real_2010_latest \
-     --strategy illiquidity --start 2010-01-01
-
-   python3 scripts/compute_signal_ic_from_catalog.py \
-     --db-path ./data/real_2010_latest \
-     --strategy fifty_two_week_high --start 2010-01-01
-
-   python3 scripts/compute_signal_ic_from_catalog.py \
-     --db-path ./data/real_2010_latest \
-     --strategy max_effect --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score asset_growth --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score piotroski --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score shareholder_yield --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score sloan_accruals --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score dividend_growth --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score earnings_yield --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score quality_minus_junk --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score value_composite --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score size --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score gross_profitability --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score altman_z --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score book_to_market --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score sales_yield --start 2010-01-01
+   python3 scripts/compute_fundamentals_ic_from_catalog.py --price-db-path ./data/real_2010_latest --fundamentals-db-path ./data/fundamentals_data --score cashflow_yield --start 2010-01-01
    ```
 4. **결과를 그대로 붙여넣어 보고** — `mean_ic`/`ic_information_ratio`/
-   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 17후보 풀에
-   추가할지, 어떤 걸 우선할지 판단함. `short_term_reversal`은 문헌상
-   미시구조 노이즈(bid-ask bounce) 영향을 강하게 받는다고 알려진
-   지표라 다른 팩터보다 null 결과가 나와도 덜 놀라운 일 — 버그
-   의심하지 않아도 됨. Piotroski는 은행/증권사
-   (JPM/GS/MS/WFC/AXP/BAC)에서 `None`이 다수 나올 수 있음 — 버그 아님,
-   문서화된 데이터 특성. `dividend_growth`는 무배당 종목에서 구조적으로
-   `None`이 많이 나올 수 있음(전년도 배당 0이면 성장률 계산 불가) —
-   마찬가지로 버그 아님.
+   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 위 6개
+   결과와 합쳐서 17후보 풀에 추가할지, 어떤 걸 우선할지 판단함.
+   `short_term_reversal`(이미 받음, 위 표)은 문헌상 미시구조 노이즈
+   (bid-ask bounce) 영향을 강하게 받는다고 알려진 지표라 다른 팩터보다
+   null 결과가 나와도 덜 놀라운 일 — 버그 의심하지 않아도 됨. Piotroski는
+   은행/증권사(JPM/GS/MS/WFC/AXP/BAC)에서 `None`이 다수 나올 수 있음 —
+   버그 아님, 문서화된 데이터 특성. `dividend_growth`는 무배당 종목에서
+   구조적으로 `None`이 많이 나올 수 있음(전년도 배당 0이면 성장률 계산
+   불가) — 마찬가지로 버그 아님.
 
 5. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
    것들 — 전부 실제 데이터/네트워크가 필요해서 사용자 환경에서만 가능,

@@ -75,6 +75,17 @@ from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE3}
 
+# Verified, real corrections (ADR-0042) for tickers whose CURRENT SEC
+# ticker-map CIK does NOT point at the company's actual multi-decade
+# filing history -- see --cik-overrides' help text below for XOM's
+# full story (a holding-company reorganization orphaned the operating
+# company's real CIK from the live ticker map). Applied automatically
+# on every run so this fix does not depend on a human remembering to
+# pass --cik-overrides each time -- a real gap that let this exact bug
+# silently recur once already. An explicit --cik-overrides entry for
+# the same symbol still takes precedence over this default.
+_KNOWN_CIK_OVERRIDES = {"XOM": "0000034088"}
+
 # A short, deliberately chosen starting set (ADR-0042 Decision 4) --
 # not exhaustive, not fixed for all time; --concepts overrides it.
 # Core income-statement/balance-sheet line items with broad us-gaap
@@ -148,7 +159,7 @@ def main(argv=None) -> int:
     else:
         symbols = list(_UNIVERSES[args.universe].symbol_ids)
 
-    cik_overrides: dict[str, str] = {}
+    cik_overrides: dict[str, str] = dict(_KNOWN_CIK_OVERRIDES)
     for pair in args.cik_overrides:
         symbol, _, cik = pair.partition(":")
         if not symbol or not cik:
