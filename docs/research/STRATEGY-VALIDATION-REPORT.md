@@ -1842,6 +1842,21 @@ securities' data at once. Zero new real ingestion for the two reversal
 scores; `low_beta_score` needs SPY, already covered. Full account:
 ADR-0043 Decision 14 and the second correction appended to ADR-0047.
 
+**Eighteenth update -- two more factors, one closing a citation gap and
+one a genuinely new family.** `gross_profitability_score` (Novy-Marx
+2013's `(Revenues - CostOfGoodsAndServicesSold) / Assets`) closes a
+gap the citation audit itself missed: `net_margin_score`'s docstring
+already cited Novy-Marx honestly as "closely related," and the audit
+verified that hedge was accurate, but never checked whether the
+paper's OWN factor had actually been built -- it had not, until now.
+`illiquidity_score` (Amihud 2002's ILLIQ = average `|return|/
+dollar_volume`) is the first factor in this module's history to use a
+`PriceBar`'s `volume` field at all, and adds Liquidity as a genuinely
+new, seventh independent factor family this project had zero coverage
+of. Both wired for a cheap raw IC check (`gross_profitability` via the
+fundamentals CLI, `illiquidity` via the price-only CLI). Full account:
+ADR-0043 Decision 15 and the third correction appended to ADR-0047.
+
 ### H. Portfolio construction decomposition (PARTIAL -- OBSERVED for `risk_controlled_momentum`, UNKNOWN for the other 3)
 
 `long_term_momentum` and `risk_controlled_momentum` share the

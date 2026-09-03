@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Computes real-data Signal IC for a fundamentals-based factor --
 `roe`, `roa`, `net_margin`, `leverage` (all in `strategy_research.
-factor_scores`, sharing the same `_fy_ratio` plumbing), `asset_growth`
+factor_scores`, sharing the same `_fy_ratio` plumbing), `gross_profitability`
+(Novy-Marx 2013's gross profitability premium, ADR-0043 Decision 15 --
+`(Revenues - CostOfGoodsAndServicesSold) / Assets`), `asset_growth`
 (a year-over-year change rather than a single-period ratio -- Cooper,
 Gulen & Schill 2008's asset growth anomaly, ADR-0043 Decision 8), or
 `piotroski` (a 0-9 composite of nine YoY quality-improvement signals --
@@ -69,6 +71,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     asset_growth_score,
     dividend_growth_score,
     earnings_yield_score,
+    gross_profitability_score,
     leverage_score,
     net_margin_score,
     piotroski_f_score,
@@ -93,6 +96,7 @@ _SCORES = {
     "roe": roe_score,
     "roa": roa_score,
     "net_margin": net_margin_score,
+    "gross_profitability": gross_profitability_score,
     "leverage": leverage_score,
     "asset_growth": asset_growth_score,
     "piotroski": piotroski_f_score,

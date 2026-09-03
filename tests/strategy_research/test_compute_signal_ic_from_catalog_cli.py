@@ -218,3 +218,32 @@ class TestEndToEndAgainstSyntheticCatalog:
         ])
         assert exit_code == 0
         assert "Signal IC: low_beta" in capsys.readouterr().out
+
+    def test_illiquidity_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 15. Volume-based, not just
+        price-based -- the CLI's real DuckDB catalog carries `volume`
+        on every bar (`make_bars`'s own default), so this is also a
+        regression guard that volume survives the catalog round-trip
+        `illiquidity_score` now depends on for the first time in this
+        module."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0 + 0.01 * ((-1) ** i)) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+        repo.append_bars(make_bars(symbols[0], days, closes))
+        engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--db-path", str(tmp_path / "store"),
+            "--universe", "PILOT_UNIVERSE",
+            "--strategy", "illiquidity",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Signal IC: illiquidity" in capsys.readouterr().out

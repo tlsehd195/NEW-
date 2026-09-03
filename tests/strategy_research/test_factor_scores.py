@@ -31,6 +31,8 @@ from strategy_research.factor_scores import (
     cashflow_yield_score,
     dividend_growth_score,
     earnings_yield_score,
+    gross_profitability_score,
+    illiquidity_score,
     leverage_score,
     long_term_reversal_score,
     low_beta_score,
@@ -256,6 +258,48 @@ class TestLowBetaScore:
         assert low_beta_score("NOBENCH", as_of_time, data) is None
 
 
+class TestIlliquidityScore:
+    """Session 36 -- ADR-0043 Decision 15: Amihud (2002)'s illiquidity
+    premium, |return|/dollar_volume averaged over the lookback. Higher
+    illiquidity -> higher (more attractive) score, the one place in
+    this module a "bad"-sounding quantity is NOT negated."""
+
+    def test_low_volume_security_scores_higher_than_high_volume_security(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        closes = [100.0 * (1.0 + 0.02 * math.sin(i / 5.0)) for i in range(len(days))]
+        # Identical price/return series for both -- only volume differs, so
+        # any score difference isolates illiquidity's dependence on volume.
+        low_volume_bars = make_bars("THIN", days, closes, volume=1_000.0)
+        high_volume_bars = make_bars("DEEP", days, closes, volume=10_000_000.0)
+        repo = InMemoryDataRepository(bars=list(low_volume_bars) + list(high_volume_bars))
+        as_of_time = _utc(2020, 1, 4)
+        data = _view(repo, as_of_time)
+
+        thin_score = illiquidity_score("THIN", as_of_time, data)
+        deep_score = illiquidity_score("DEEP", as_of_time, data)
+
+        assert thin_score is not None and deep_score is not None
+        assert thin_score > deep_score  # lower dollar volume -> higher illiquidity -> higher (more attractive) score
+
+    def test_insufficient_observations_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 20-observation floor
+        closes = [100.0 + i for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, closes, volume=1_000.0)))
+        as_of_time = _utc(2020, 1, 19)
+        data = _view(repo, as_of_time)
+
+        assert illiquidity_score("THIN", as_of_time, data, lookback_days=252) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        closes = [100.0 + i * 0.01 for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, closes, volume=1_000.0)))
+        as_of_time = _utc(2020, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert illiquidity_score("NONEXISTENT", as_of_time, data) is None
+
+
 def _fy_record(security_id, record_id, *, concept, value, period_end, available_time=None):
     available_time = available_time or period_end
     return FundamentalRecord(
@@ -422,6 +466,48 @@ class TestNetMarginScore:
         repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=0.0, period_end=_utc(2022, 12, 31)))
 
         assert net_margin_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestGrossProfitabilityScore:
+    """Session 36 -- ADR-0043 Decision 15: Novy-Marx (2013)'s gross
+    profitability premium, (Revenues - CostOfGoodsAndServicesSold) /
+    Assets."""
+
+    def test_computes_gross_profit_over_assets(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=100.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        assert gross_profitability_score("AAA", _utc(2023, 6, 1), repo) == pytest.approx(0.2)  # (100-60)/200
+
+    def test_cogs_exceeding_revenue_produces_a_negative_score_not_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=100.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=150.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        score = gross_profitability_score("AAA", _utc(2023, 6, 1), repo)
+        assert score is not None and score < 0
+
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=100.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=0.0, period_end=_utc(2022, 12, 31)))
+
+        assert gross_profitability_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_cogs_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev", concept="Revenues", value=100.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        assert gross_profitability_score("AAA", _utc(2023, 6, 1), repo) is None
 
 
 class TestLeverageScore:

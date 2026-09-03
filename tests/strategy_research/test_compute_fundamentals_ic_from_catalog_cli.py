@@ -395,6 +395,42 @@ class TestEndToEndAgainstSyntheticCatalogs:
         assert exit_code == 0
         assert "Fundamentals Signal IC: earnings_yield" in capsys.readouterr().out
 
+    def test_gross_profitability_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- ADR-0043 Decision 15. A plain fundamentals-only
+        score (no price data needed), same _SCORES branch as roe/roa."""
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        closes = [100.0 * (1.0005**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+        symbol = symbols[0]
+
+        price_engine = new_engine(tmp_path, name="price10")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals10")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        for concept, value in (("Revenues", 200.0), ("CostOfGoodsAndServicesSold", 120.0), ("Assets", 300.0)):
+            fundamentals_repo.add_fundamental(
+                _fy_record(symbol, f"{symbol}:{concept}", concept=concept, value=value, period_end=period_end)
+            )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price10"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals10"),
+            "--universe", "PILOT_UNIVERSE",
+            "--score", "gross_profitability",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Fundamentals Signal IC: gross_profitability" in capsys.readouterr().out
+
     def test_size_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
         """Session 36 -- ADR-0043 Decision 13. The third score routed
         through compute_hybrid_ic_series (after shareholder_yield/

@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 12개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047) + S급 재조사로 찾은 Size/장기·단기 역전/저베타 factor 4개 추가(ADR-0043 Decision 13-14))
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 14개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 3차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity factor 6개 추가(ADR-0043 Decision 13-15))
 
 ---
 
@@ -74,12 +74,20 @@
      --price-db-path ./data/real_2010_latest \
      --fundamentals-db-path ./data/fundamentals_data \
      --score size --start 2010-01-01
+
+   python3 scripts/compute_fundamentals_ic_from_catalog.py \
+     --price-db-path ./data/real_2010_latest \
+     --fundamentals-db-path ./data/fundamentals_data \
+     --score gross_profitability --start 2010-01-01
    ```
-3-1. **raw IC 체크 3개 더 실행** (S급 재조사로 추가로 찾은
-   `long_term_reversal`/`short_term_reversal`/`low_beta` — 이 3개는
-   가격 데이터만 필요해서 다른 스크립트(`compute_signal_ic_from_catalog.py`,
-   `--fundamentals-db-path` 없음)를 씀. `low_beta`는 SPY 가격이
-   필요한데 ADR-0029 때 이미 같은 파이프라인으로 수집돼 있어서 추가
+3-1. **raw IC 체크 4개 더 실행** (S급 재조사로 추가로 찾은
+   `long_term_reversal`/`short_term_reversal`/`low_beta`/`illiquidity`
+   — 이 4개는 가격(+거래량) 데이터만 필요해서 다른 스크립트
+   (`compute_signal_ic_from_catalog.py`, `--fundamentals-db-path`
+   없음)를 씀. `low_beta`는 SPY 가격이 필요한데 ADR-0029 때 이미
+   같은 파이프라인으로 수집돼 있어서 추가 ingestion 불필요.
+   `illiquidity`는 이 프로젝트에서 처음으로 거래량(`volume`)을 쓰는
+   팩터인데, 이것도 이미 매 PriceBar에 필수 필드로 들어있어서 추가
    ingestion 불필요):
    ```
    python3 scripts/compute_signal_ic_from_catalog.py \
@@ -93,9 +101,13 @@
    python3 scripts/compute_signal_ic_from_catalog.py \
      --db-path ./data/real_2010_latest \
      --strategy low_beta --start 2010-01-01
+
+   python3 scripts/compute_signal_ic_from_catalog.py \
+     --db-path ./data/real_2010_latest \
+     --strategy illiquidity --start 2010-01-01
    ```
 4. **결과를 그대로 붙여넣어 보고** — `mean_ic`/`ic_information_ratio`/
-   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 12후보 풀에
+   `positive_ic_ratio`/`observations` 값을 그대로 전달하면 14후보 풀에
    추가할지, 어떤 걸 우선할지 판단함. `short_term_reversal`은 문헌상
    미시구조 노이즈(bid-ask bounce) 영향을 강하게 받는다고 알려진
    지표라 다른 팩터보다 null 결과가 나와도 덜 놀라운 일 — 버그
@@ -1280,6 +1292,26 @@ decision framework 5개 상태 중 실제로 적용되는 것(C+D 동시 적용)
     `low_beta`). 신규 테스트 12개(factor_scores 10개 + CLI
     엔드투엔드 2개). 문헌 기반 후보 이제 총 12개 완료, 전부 raw
     IC 확인만 남음.
+- **사용자가 세 번째로 "S급/A급 더 찾아봐" — 2개 더 찾음 (`ADR-0043`
+  Decision 15, `ADR-0047`에 세 번째 정정)**:
+  - `gross_profitability_score`(Novy-Marx 2013): 새로 발견한 인용이
+    아니라, 이미 `net_margin_score` docstring에 "closely related"로
+    정직하게 인용은 돼 있었지만 논문 고유의 팩터(GP/Assets)는 한
+    번도 실제로 만든 적 없었던 것 — 인용 감사(`ADR-0047`)가 인용의
+    정직성은 확인했지만 "실제로 그 팩터를 만들었는지"까지는
+    확인하지 않았던 감사 자체의 빈틈. `(Revenues -
+    CostOfGoodsAndServicesSold) / Assets`, 새 ingestion 불필요
+    (전부 이미 Piotroski/ROA용으로 수집됨).
+  - `illiquidity_score`(Amihud 2002): 이 모듈 역사상 처음으로
+    거래량(`volume`)을 쓰는 팩터 — 유동성(liquidity)이라는, 이
+    프로젝트가 전혀 커버 안 하던 7번째 독립 팩터군. `|수익률|/달러거래량`의
+    연 평균, 비유동성이 클수록 기대수익이 높다는 게 논문의 핵심이라
+    이 모듈에서 유일하게 "나쁜" 느낌의 수치를 부호 반전 안 함(논문
+    자체 부호가 이미 이 모듈 컨벤션과 맞음). 새 ingestion 불필요
+    (`volume`은 이미 모든 PriceBar의 필수 필드).
+  - 신규 테스트 9개(factor_scores 7개: gross_profitability 4개 +
+    illiquidity 3개 + CLI 엔드투엔드 2개). 문헌 기반 후보 이제 총
+    14개 완료, 전부 raw IC 확인만 남음.
 
 ### Completed (Session 33 — Phase 31 continued)
 

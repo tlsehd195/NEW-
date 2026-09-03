@@ -1076,6 +1076,63 @@ via `compute_signal_ic_from_catalog.py`: `long_term_reversal`,
 None yet added to the 8-candidate walk-forward pool, none yet observed
 against real data -- fixed before any result is seen, per RULE 0.8.
 
+## Decision 15 -- two more S/A-tier candidates the user asked for by name once more (`gross_profitability_score`, `illiquidity_score`)
+
+The user asked a third time for more S-tier/A-tier papers. Two
+candidates surfaced this round, of a different character from each
+other:
+
+- **Novy-Marx (2013)**, "The Other Side of Value: The Gross
+  Profitability Premium," The Journal of Financial Economics 108(1):
+  1-28 -- NOT a newly-discovered citation (already correctly cited in
+  `net_margin_score`'s own docstring as "closely related"), but a
+  citation this project had honestly hedged around without ever
+  building the paper's OWN specific factor: gross profit (revenue
+  minus cost of goods sold, before any operating expenses/R&D/interest/
+  tax) scaled by total assets. ADR-0047's audit had correctly verified
+  the existing hedge was honest (never claiming net_margin/ROE ARE
+  Novy-Marx's factor), but did not go the further step of noticing the
+  paper's own construction was still unbuilt. `(Revenues -
+  CostOfGoodsAndServicesSold) / Assets`, same single-period-ratio shape
+  as `roa_score`/`net_margin_score`, wired into `_SCORES`
+  (`--score gross_profitability`). Needs zero new real ingestion:
+  `Revenues`/`CostOfGoodsAndServicesSold` already ingested for
+  `piotroski_f_score`'s gross-margin criterion, `Assets` for
+  `roa_score`/`leverage_score`.
+- **Amihud (2002)**, "Illiquidity and Stock Returns: Cross-Section and
+  Time-Series Effects," Journal of Financial Markets 5(1): 31-56 -- one
+  of the most-cited liquidity-based anomalies in empirical asset
+  pricing, and a genuinely new SEVENTH factor family this project had
+  zero coverage of: this module had never used a `PriceBar`'s `volume`
+  field in any factor before this one. ILLIQ = the average, over a
+  trailing year, of the daily ratio `|return| / dollar_volume`, where
+  higher illiquidity is hypothesized to earn a return PREMIUM (not a
+  discount) -- the one factor in this module where a "bad"-sounding
+  quantity is NOT negated, since the paper's own sign already points
+  the direction this module's "higher score = more attractive"
+  convention needs. Dollar volume uses raw `close` (never
+  `adjusted_close`), the same reasoning `_latest_price` already
+  documents for market-cap calculations. Price-only (`ScoreFn`-shaped),
+  wired into `compute_signal_ic_from_catalog.py`'s `_PRICE_ONLY_SCORES`
+  (`--strategy illiquidity`). Needs zero new real ingestion: `volume`
+  is already a required field on every ingested `PriceBar`.
+
+9 new tests: 4 in `TestGrossProfitabilityScore`, 3 in
+`TestIlliquidityScore` (a low-dollar-volume security scores higher
+than an identical-return high-dollar-volume one -- isolating
+illiquidity's dependence on volume alone since both use the exact same
+price series; insufficient-observations and unknown-security `None`
+cases), plus 2 CLI end-to-end wiring tests (one per script). Full
+suite: 2157 passed (up from 2148).
+
+This is now 14 externally-researched candidates built total (10 via
+`compute_fundamentals_ic_from_catalog.py`, adding `gross_profitability`
+to the 9 from Decisions 8-13; 4 via `compute_signal_ic_from_catalog.py`,
+adding `illiquidity` to the 3 from Decision 14), all wired for a cheap
+raw IC check. None yet added to the 8-candidate walk-forward pool, none
+yet observed against real data -- fixed before any result is seen, per
+RULE 0.8.
+
 ## What this does NOT do
 
 No TEST evaluation, of any kind, has happened -- this stays true

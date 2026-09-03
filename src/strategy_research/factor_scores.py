@@ -225,6 +225,66 @@ def low_beta_score(
     return -beta
 
 
+def illiquidity_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- Amihud (2002)'s illiquidity premium ("Illiquidity
+    and Stock Returns: Cross-Section and Time-Series Effects," Journal
+    of Financial Markets 5(1): 31-56): investors demand a return
+    premium for holding harder-to-trade (more illiquid) stocks, so
+    HIGHER illiquidity is hypothesized to predict HIGHER subsequent
+    returns -- one of the most-cited liquidity-based anomalies in
+    empirical asset pricing, and (per the correction this decision adds
+    to ADR-0047) arguably a SEVENTH independent factor family alongside
+    momentum/value/quality/low-risk/size that project's earlier "5-6
+    families" framing omitted: this module had zero factors using
+    trading VOLUME at all before this one.
+
+    IMPORTANT SIGN NOTE, the one place in this module where a
+    "bad"-sounding word does NOT get negated: unlike `leverage_score`/
+    `asset_growth_score` (where the module negates a quantity investors
+    consider undesirable), illiquidity itself is hypothesized to be
+    POSITIVELY related to expected return (compensation for a real
+    cost/risk of holding the stock), so a HIGHER illiquidity score
+    means a MORE, not less, attractive candidate here -- still matches
+    this module's "higher score = more attractive" convention, just
+    with the paper's own sign already pointing the right way.
+
+    ILLIQ is the Amihud measure: the average, over the trailing
+    `lookback_days` (default 252, ~1 trading year, matching the
+    paper's own annual-averaging convention), of the daily ratio
+    `|return| / dollar_volume`, where `dollar_volume = close * volume`
+    for that day. Dollar volume deliberately uses raw `close` (never
+    `adjusted_close`), the same reasoning `_latest_price` documents for
+    market-cap calculations: a back-adjusted price does not represent
+    the actual dollar amount that traded on that historical day. The
+    `|return|` itself uses `adjusted_close or close`, this module's
+    usual convention for a RETURN calculation (splits/dividends must be
+    reflected there). Needs zero new real ingestion: `volume` is
+    already a required field on every ingested `PriceBar`, just never
+    previously used by any factor in this module. Requires at least 20
+    valid daily observations (a defensible floor for a meaningful
+    average, not itself from the paper, which uses a full year) with
+    positive dollar volume; `None` below that."""
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=int(lookback_days * 1.6)), as_of_time),
+        lookback_days,
+    )
+    if len(bars) < 2:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    returns = compute_returns(closes)
+    ratios = []
+    for bar, r in zip(bars[1:], returns):
+        dollar_volume = (bar.close or 0.0) * (bar.volume or 0.0)
+        if dollar_volume <= 0:
+            continue
+        ratios.append(abs(r) / dollar_volume)
+    if len(ratios) < 20:
+        return None
+    return sum(ratios) / len(ratios)
+
+
 def _fy_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:
     """Every annual (`fiscal_period == "FY"`) `FundamentalRecord` for
     `(security_id, concept)` already knowable `as_of_time`, oldest
@@ -326,6 +386,48 @@ def net_margin_score(security_id: str, as_of_time: datetime, repository: object)
     such as Novy-Marx 2013 uses a closely related profit-over-sales-or-
     assets construction)."""
     return _fy_ratio(repository, security_id, as_of_time, "NetIncomeLoss", "Revenues")
+
+
+def gross_profitability_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Novy-Marx (2013)'s gross profitability premium
+    ("The Other Side of Value: The Gross Profitability Premium," The
+    Journal of Financial Economics 108(1): 1-28): gross profit scaled
+    by total assets, `(Revenues - CostOfGoodsAndServicesSold) / Assets`,
+    predicts the cross-section of returns with roughly the same power
+    as book-to-market -- companies with HIGHER gross profitability
+    relative to their asset base are hypothesized to have relatively
+    better forward returns. This project's `net_margin_score`'s own
+    docstring already flagged this as "a closely related profit-over-
+    sales-or-assets construction" without ever building the paper's
+    OWN specific factor -- the citation audit (ADR-0047) correctly
+    verified that existing hedge ("closely related," never claiming
+    net_margin/ROE ARE Novy-Marx's factor) as honest, but a later
+    re-check of the canonical anomaly list by name (the same lesson
+    ADR-0043 Decisions 13-14 already applied to size/reversal/low-beta)
+    found this project had still never built gross profitability
+    itself, only factors related to it.
+
+    Distinct from `net_margin_score` (profit/REVENUE) and `roa_score`
+    (net income/assets): gross profit (revenue minus cost of goods
+    sold, BEFORE operating expenses, R&D, interest, and taxes) scaled
+    by assets is deliberately a less-processed, less accounting-
+    discretion-prone profitability measure than net income -- Novy-
+    Marx's own stated motivation is that "the further down the income
+    statement one goes, ... the less related [it] is to true economic
+    profitability," having been diluted by accounting distortions along
+    the way. Needs zero new real ingestion: `Revenues` and
+    `CostOfGoodsAndServicesSold` are both already ingested for
+    `piotroski_f_score`'s gross-margin criterion, `Assets` for
+    `roa_score`/`leverage_score`."""
+    revenue_record = _latest_fiscal_year_value(repository, security_id, "Revenues", as_of_time)
+    cogs_record = _latest_fiscal_year_value(repository, security_id, "CostOfGoodsAndServicesSold", as_of_time)
+    assets_record = _latest_fiscal_year_value(repository, security_id, "Assets", as_of_time)
+    if revenue_record is None or cogs_record is None or assets_record is None:
+        return None
+    if assets_record.value <= 0:
+        return None
+    gross_profit = revenue_record.value - cogs_record.value
+    return gross_profit / assets_record.value
 
 
 def leverage_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:

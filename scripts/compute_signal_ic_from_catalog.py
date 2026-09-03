@@ -10,7 +10,9 @@ window than momentum, not a re-test of it), `short_term_reversal_score`
 (Jegadeesh 1990, ADR-0043 Decision 14), or `low_beta_score` (Frazzini &
 Pedersen 2014's Betting Against Beta, ADR-0043 Decision 14 -- market
 beta via SPY, a different construct from total-volatility-based
-`low_volatility_score`) -- using
+`low_volatility_score`), or `illiquidity_score` (Amihud 2002, ADR-0043
+Decision 15 -- the first factor in this module using trading volume,
+not just price) -- using
 `strategy_research.signal_ic.compute_ic_series` against a live DuckDB
 catalog.
 
@@ -56,6 +58,7 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
+    illiquidity_score,
     long_term_reversal_score,
     low_beta_score,
     low_volatility_score,
@@ -80,6 +83,7 @@ _PRICE_ONLY_SCORES = {
     "long_term_reversal": long_term_reversal_score,
     "short_term_reversal": short_term_reversal_score,
     "low_beta": low_beta_score,
+    "illiquidity": illiquidity_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 

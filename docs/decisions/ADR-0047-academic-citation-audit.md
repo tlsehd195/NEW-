@@ -141,6 +141,24 @@ premia) than the original "5-6 families" framing implied -- future
 citation audits should treat momentum/low-risk each as a family with
 multiple internally-distinct sub-anomalies, not a single checkbox.
 
+**Third correction (ADR-0043 Decision 15):** two more findings, of a
+different character from the first two corrections. First, a genuine
+audit gap this ADR's original table should have caught: Novy-Marx
+(2013) was already correctly and honestly cited in `net_margin_score`
+("closely related... construction"), and this ADR's original citation
+audit verified that hedge was accurate -- but never checked whether
+the paper's OWN specific factor (gross profit/assets) had actually
+been built anywhere. It had not. A citation being honestly hedged is
+not the same as the paper's finding being implemented; this audit
+should have flagged that gap explicitly rather than treating an
+accurate hedge as equivalent to full coverage. Second, a genuinely new
+family this project had zero prior coverage of: Amihud (2002)'s
+illiquidity premium -- the first factor in this module's history to
+use a `PriceBar`'s `volume` field at all. Both built as
+`gross_profitability_score`/`illiquidity_score`; see ADR-0043 Decision
+15. Liquidity should now be added to the "big six" (momentum/value/
+quality/low-vol/size/liquidity) any future audit checks by name.
+
 ## What this does NOT do
 
 - Does not change any factor's implementation -- this is a verification
