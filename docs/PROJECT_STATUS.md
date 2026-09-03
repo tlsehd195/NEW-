@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 20개(sales_yield 포함) 전부 확정 수신, 부호 기반 해석 기록 + 사용자가 "17개 전부 walk-forward 풀에 편입" 선택 → 20개 raw-IC-screened candidate 전부를 `run_long_horizon_validation.py`에 배선(ADR-0051): 4개 범용 Strategy 래퍼(`factor_strategy.py`) 신설, 후보 테이블+factory 함수로 루프 기반 배선의 late-binding 클로저 버그를 실제 import 테스트로 검증, 전체 스위트 2213개 통과 + 실제 28개 후보 walk-forward/PBO/DSR 결과 수신, size/altman_z가 CANDIDATE 달성했으나 size는 concentration 리포트로 SLB 단일 종목 몰빵(76.3%) 발견, altman_z는 TEST 저조 → 둘 다 VALIDATED 보류 + top_n=5 기본값이 통계적 breadth 부족(Live 리스크 정책과의 불일치라는 최초 프레이밍은 지침 section 17 위반으로 정정)을 유발한다는 걸 발견, top_n=10으로 통일해 28개 후보 재실행(ADR-0052) → 재실행 결과 size는 CANDIDATE 탈락(가설 확인), altman_z/rank_average_ensemble은 CANDIDATE 등급이지만 TEST 마이너스라 둘 다 보류 → Session 36 전체 결론: 문헌 후보 20개 중 VALIDATED 승격 가능한 후보 없음, RULE 0.8/PBO/DSR 규율이 오탐 방지에 실제로 작동한 사례 + 사용자 요청("가장 좋다고 생각하는 방향으로 진행")으로 이 세션의 모든 실측 결과(raw IC 20개, 28후보 walk-forward/PBO/DSR 2회분, size 콘센트레이션 발견, top_n 수정)를 `STRATEGY-VALIDATION-REPORT.md`(신규 "Phase 33 Addendum" 섹션)와 `PRODUCTION-READINESS-MATRIX.md`(Walk Forward 행 + 서술 갱신)에 정식 반영 — PROJECT_STATUS.md의 세션 로그에만 흩어져 있던 내용을 이 프로젝트의 공식 리서치/준비상태 문서에 통합, 문서 전용 변경이라 테스트 재실행 없음)
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 20개(sales_yield 포함) 전부 확정 수신, 부호 기반 해석 기록 + 사용자가 "17개 전부 walk-forward 풀에 편입" 선택 → 20개 raw-IC-screened candidate 전부를 `run_long_horizon_validation.py`에 배선(ADR-0051): 4개 범용 Strategy 래퍼(`factor_strategy.py`) 신설, 후보 테이블+factory 함수로 루프 기반 배선의 late-binding 클로저 버그를 실제 import 테스트로 검증, 전체 스위트 2213개 통과 + 실제 28개 후보 walk-forward/PBO/DSR 결과 수신, size/altman_z가 CANDIDATE 달성했으나 size는 concentration 리포트로 SLB 단일 종목 몰빵(76.3%) 발견, altman_z는 TEST 저조 → 둘 다 VALIDATED 보류 + top_n=5 기본값이 통계적 breadth 부족(Live 리스크 정책과의 불일치라는 최초 프레이밍은 지침 section 17 위반으로 정정)을 유발한다는 걸 발견, top_n=10으로 통일해 28개 후보 재실행(ADR-0052) → 재실행 결과 size는 CANDIDATE 탈락(가설 확인), altman_z/rank_average_ensemble은 CANDIDATE 등급이지만 TEST 마이너스라 둘 다 보류 → Session 36 전체 결론: 문헌 후보 20개 중 VALIDATED 승격 가능한 후보 없음, RULE 0.8/PBO/DSR 규율이 오탐 방지에 실제로 작동한 사례 + 사용자 요청("가장 좋다고 생각하는 방향으로 진행")으로 이 세션의 모든 실측 결과(raw IC 20개, 28후보 walk-forward/PBO/DSR 2회분, size 콘센트레이션 발견, top_n 수정)를 `STRATEGY-VALIDATION-REPORT.md`(신규 "Phase 33 Addendum" 섹션)와 `PRODUCTION-READINESS-MATRIX.md`(Walk Forward 행 + 서술 갱신)에 정식 반영 — PROJECT_STATUS.md의 세션 로그에만 흩어져 있던 내용을 이 프로젝트의 공식 리서치/준비상태 문서에 통합, 문서 전용 변경이라 테스트 재실행 없음 + 사용자 요청("전략을 인터넷이나 S급 논문에서 찾아봐")으로 실제 웹 검색 수행 → idiosyncratic volatility(Ang, Hodrick, Xing & Zhang 2006)를 신규 후보로 발견·구현(ADR-0053, `idiosyncratic_volatility_score`) — 기존 low_volatility(총변동성)/low_beta(시장 공행성)와 구조적으로 다른, "시장 요인 제거 후 남는 종목 고유 잔차변동성" 지표. PEAD/SUE는 "2006년 이후 대형주에서는 효과가 사실상 0"이라는 문헌 자체 근거로 기각(우리 유니버스가 전부 대형주라 안 맞음), 모멘텀 재조사는 이미 우리 실측 IC가 0이라 기각. 아직 walk-forward 풀엔 안 넣음(raw IC 먼저). 신규 테스트 5개, 전체 스위트 2218개 통과)
 
 ---
 
@@ -203,7 +203,27 @@ walk-forward/PBO/DSR(top_n=5) → breadth 수정 후 재검증(top_n=10)까지
 결과 — RULE 0.8/PBO/DSR 규율이 없었다면 `size`나 `altman_z` 중
 하나를 "알파를 찾았다"고 오판했을 수 있는 상황이었음.
 
+**후속 (같은 세션, 2026-09-03) — 실제 웹 검색으로 신규 후보 1개 추가
+발견·구현(ADR-0053)**: 사용자 요청으로 인터넷/S급 논문 재조사 →
+`idiosyncratic_volatility_score`(Ang, Hodrick, Xing & Zhang 2006)
+신규 구현 — 기존 `low_volatility`(총변동성)/`low_beta`(시장
+공행성)와 구조적으로 다른 "시장 요인 제거 후 남는 종목 고유
+잔차변동성" 지표. 같은 검색에서 PEAD/SUE는 "2006년 이후 대형주
+효과 사실상 0"이라는 문헌 자체 근거로 기각(우리 유니버스가 전부
+대형주), 모멘텀 재조사는 이미 실측 IC가 0이라 재검토 의미 없어 기각
+— 둘 다 결과를 보기 전에, 문헌 자체 근거로 미리 배제한 것(RULE 0.8).
+신규 테스트 5개, 전체 스위트 2218개 통과.
+
+**사용자가 코드스페이스에서 실행할 일**: raw IC 1개 체크(아직
+walk-forward 풀엔 안 넣음 — raw IC 먼저 보고 결정):
+```
+python3 scripts/compute_signal_ic_from_catalog.py \
+  --db-path ./data/real_2010_latest \
+  --strategy idiosyncratic_volatility --start 2010-01-01
+```
+
 **다음 세션 시작점 (우선순위 없음, 전부 선택)**:
+- 위 raw IC 결과 받아서 walk-forward 풀 편입 여부 판단
 - 새 문헌 후보를 더 찾을지 (지금까지 재현 성공률이 낮아서 수확체감 우려)
 - 리스크 레이어(섹터 집중도 등, `docs/operations/LIVE-RISK-POLICY.md`
   #5 BLOCKING 항목)를 먼저 메울지

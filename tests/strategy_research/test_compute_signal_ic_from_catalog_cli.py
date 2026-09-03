@@ -219,6 +219,34 @@ class TestEndToEndAgainstSyntheticCatalog:
         assert exit_code == 0
         assert "Signal IC: low_beta" in capsys.readouterr().out
 
+    def test_idiosyncratic_volatility_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 -- literature search for a candidate distinct
+        from everything already tested. Also needs BENCHMARK_SYMBOL
+        ("SPY") bars in the same real catalog, like `low_beta` above."""
+        days = trading_days(date(2015, 1, 2), date(2019, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        security_closes = [100.0 * (1.0006**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+        repo.append_bars(make_bars(BENCHMARK_SYMBOL, days, spy_closes))
+        repo.append_bars(make_bars(symbols[0], days, security_closes))
+        engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--db-path", str(tmp_path / "store"),
+            "--universe", "PILOT_UNIVERSE",
+            "--strategy", "idiosyncratic_volatility",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Signal IC: idiosyncratic_volatility" in capsys.readouterr().out
+
     def test_illiquidity_option_runs_end_to_end(self, tmp_path, capsys) -> None:
         """Session 36 -- ADR-0043 Decision 15. Volume-based, not just
         price-based -- the CLI's real DuckDB catalog carries `volume`

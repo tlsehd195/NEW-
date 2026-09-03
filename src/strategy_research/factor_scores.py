@@ -225,6 +225,98 @@ def low_beta_score(
     return -beta
 
 
+def idiosyncratic_volatility_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 21,
+) -> Optional[float]:
+    """HYPOTHESIS -- the idiosyncratic volatility anomaly (Ang, Hodrick,
+    Xing & Zhang 2006, "The Cross-Section of Volatility and Expected
+    Returns," The Journal of Finance 61(1): 259-299): stocks with
+    HIGHER idiosyncratic (stock-specific, non-market) return volatility
+    earn LOWER subsequent returns -- one of the most-cited puzzles in
+    the low-risk factor family (the original paper's own "IVOL puzzle"
+    is that this contradicts a naive CAPM prediction that only
+    systematic risk should be priced). Session 36 (post-mortem on
+    `size`/`altman_z`'s real results, see `docs/research/
+    STRATEGY-VALIDATION-REPORT.md`'s "Phase 33 Addendum") searched
+    current literature specifically for a candidate genuinely distinct
+    from everything already tested in this module, before looking at
+    any new result (RULE 0.8) -- this is that candidate.
+
+    **A genuinely different construct from every other low-risk factor
+    already in this module**, not a re-parameterization of one:
+    `low_volatility_score` is TOTAL trailing volatility (a security's
+    own return variability in isolation, systematic + idiosyncratic
+    combined); `low_beta_score` is systematic co-movement with a
+    benchmark (covariance-based, says nothing about how much of a
+    security's OWN variance is left over after removing that
+    co-movement). Idiosyncratic volatility is what remains of a
+    security's return variance AFTER regressing out its co-movement
+    with the market -- the residual, stock-specific component -- so a
+    security can have low total volatility yet high idiosyncratic
+    volatility (if nearly all its variance is non-systematic), or high
+    beta yet low idiosyncratic volatility (if it moves almost
+    perfectly with the market), and this score can disagree with both
+    existing scores on any individual security.
+
+    **Construction, a deliberate simplification of the original paper's
+    own estimator, flagged the same way `low_beta_score` flags its
+    own**: the original paper fits daily excess returns against the
+    Fama-French 3-factor model (market, SMB, HML) over the trailing
+    ONE MONTH and takes the standard deviation of the regression
+    residuals; this implementation regresses against the market
+    (`BENCHMARK_SYMBOL`, "SPY") alone via simple OLS (the same
+    `Cov/Var` beta estimator `low_beta_score` already uses, plus the
+    OLS intercept), matching the original paper's own trailing ONE
+    MONTH window (`lookback_days=21` default) rather than a longer,
+    more-stable-but-less-faithful-to-the-paper window. No SMB/HML
+    control is applied -- this project's universe (63 large-cap
+    securities only) has no independently-constructed SMB/HML series
+    to regress against, and building one is out of scope for a single
+    factor's screening pass. Score is the NEGATIVE of the residual
+    standard deviation (higher score = lower idiosyncratic vol = more
+    attractive, matching this module's convention and the paper's own
+    "high IVOL -> low returns" finding).
+
+    Needs at least 15 paired daily observations (a defensible floor for
+    a ~1-month window that can have a few missing days, lower than
+    `low_beta_score`'s 20-observation floor for its full-year window)
+    with non-zero benchmark return variance; `None` below that, the
+    same missing-data honesty this module's other factors already
+    apply."""
+    padded_days = int(lookback_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 16:
+        return None
+    security_returns = compute_returns([security_closes[d] for d in common_dates])
+    benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    if len(security_returns) < 15 or len(security_returns) != len(benchmark_returns):
+        return None
+    security_mean = sum(security_returns) / len(security_returns)
+    benchmark_mean = sum(benchmark_returns) / len(benchmark_returns)
+    covariance = sum(
+        (s - security_mean) * (b - benchmark_mean) for s, b in zip(security_returns, benchmark_returns)
+    ) / (len(security_returns) - 1)
+    benchmark_variance = sum((b - benchmark_mean) ** 2 for b in benchmark_returns) / (len(benchmark_returns) - 1)
+    if benchmark_variance == 0:
+        return None
+    beta = covariance / benchmark_variance
+    alpha = security_mean - beta * benchmark_mean
+    residuals = [s - alpha - beta * b for s, b in zip(security_returns, benchmark_returns)]
+    residual_mean = sum(residuals) / len(residuals)
+    residual_variance = sum((r - residual_mean) ** 2 for r in residuals) / (len(residuals) - 1)
+    return -(residual_variance ** 0.5)
+
+
 def illiquidity_score(
     security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 252,
 ) -> Optional[float]:

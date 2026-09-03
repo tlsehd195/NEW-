@@ -34,6 +34,7 @@ from strategy_research.factor_scores import (
     earnings_yield_score,
     fifty_two_week_high_score,
     gross_profitability_score,
+    idiosyncratic_volatility_score,
     illiquidity_score,
     leverage_score,
     long_term_reversal_score,
@@ -259,6 +260,73 @@ class TestLowBetaScore:
         data = _view(repo, as_of_time)
 
         assert low_beta_score("NOBENCH", as_of_time, data) is None
+
+
+class TestIdiosyncraticVolatilityScore:
+    """Session 36 -- literature search specifically for a candidate
+    genuinely distinct from everything already tested (post-mortem on
+    `size`/`altman_z`'s real results): Ang, Hodrick, Xing & Zhang
+    (2006)'s idiosyncratic volatility anomaly. A distinct construct from
+    BOTH `low_volatility_score` (total trailing volatility) AND
+    `low_beta_score` (systematic co-movement alone) -- this is the
+    residual, stock-specific volatility left over after a security's
+    co-movement with the market is regressed out."""
+
+    def test_a_security_perfectly_explained_by_beta_has_near_zero_idiosyncratic_volatility(self) -> None:
+        # TWICEBETA is EXACTLY 2x SPY's own move every day -- no
+        # idiosyncratic noise at all, so its CAPM residuals should be
+        # ~0 regardless of its (nonzero) beta.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        twice_beta_closes = [100.0 * (1.0 + 2.0 * (c / spy_closes[0] - 1.0)) for c in spy_closes]
+        extra_bars = list(make_bars("TWICEBETA", days, twice_beta_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        score = idiosyncratic_volatility_score("TWICEBETA", as_of_time, data)
+
+        assert score is not None
+        assert score == pytest.approx(0.0, abs=1e-4)  # negative of ~0 residual stdev
+
+    def test_a_security_with_real_idiosyncratic_noise_scores_lower_than_a_noise_free_one(self) -> None:
+        # Both NOISY and CLEAN share the identical beta (1.0x SPY) --
+        # only NOISY has stock-specific daily noise added on top, so
+        # only idiosyncratic (not total or beta-driven) volatility
+        # should distinguish them.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        clean_closes = list(spy_closes)
+        noisy_closes = [c * (1.0 + 0.03 * math.sin(i * 7.0)) for i, c in enumerate(spy_closes)]
+        extra_bars = list(make_bars("CLEAN", days, clean_closes)) + list(make_bars("NOISY", days, noisy_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        clean_score = idiosyncratic_volatility_score("CLEAN", as_of_time, data)
+        noisy_score = idiosyncratic_volatility_score("NOISY", as_of_time, data)
+
+        assert clean_score is not None and noisy_score is not None
+        assert clean_score > noisy_score  # less idiosyncratic noise -> higher (more attractive) score
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 10))  # far fewer than the 15-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 1, 10), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 9)
+        data = _view(repo, as_of_time)
+
+        assert idiosyncratic_volatility_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert idiosyncratic_volatility_score("NOBENCH", as_of_time, data) is None
 
 
 class TestIlliquidityScore:

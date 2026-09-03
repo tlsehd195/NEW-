@@ -15,8 +15,11 @@ Decision 15 -- the first factor in this module using trading volume,
 not just price), `fifty_two_week_high_score` (George & Hwang 2004,
 ADR-0043 Decision 16 -- close/trailing-52-week-high), or
 `max_effect_score` (Bali, Cakici & Whitelaw 2011, ADR-0043 Decision 16
--- negative of the trailing month's single largest daily return) --
-using
+-- negative of the trailing month's single largest daily return), or
+`idiosyncratic_volatility_score` (Ang, Hodrick, Xing & Zhang 2006,
+Session 36 -- negative of the trailing month's CAPM-residual return
+standard deviation, distinct from both `low_volatility_score` (total
+vol) and `low_beta_score` (systematic co-movement)) -- using
 `strategy_research.signal_ic.compute_ic_series` against a live DuckDB
 catalog.
 
@@ -63,6 +66,7 @@ from storage.engine import StorageEngine  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
     fifty_two_week_high_score,
+    idiosyncratic_volatility_score,
     illiquidity_score,
     long_term_reversal_score,
     low_beta_score,
@@ -92,6 +96,7 @@ _PRICE_ONLY_SCORES = {
     "illiquidity": illiquidity_score,
     "fifty_two_week_high": fifty_two_week_high_score,
     "max_effect": max_effect_score,
+    "idiosyncratic_volatility": idiosyncratic_volatility_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 
