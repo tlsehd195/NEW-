@@ -5,7 +5,7 @@
 > 최신 상태로 갱신한다.
 
 **Last Updated:** 2026-09-03
-**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 20개(sales_yield 포함) 전부 확정 수신, 부호 기반 해석 기록 + 사용자가 "17개 전부 walk-forward 풀에 편입" 선택 → 20개 raw-IC-screened candidate 전부를 `run_long_horizon_validation.py`에 배선(ADR-0051): 4개 범용 Strategy 래퍼(`factor_strategy.py`) 신설, 후보 테이블+factory 함수로 루프 기반 배선의 late-binding 클로저 버그를 실제 import 테스트로 검증, 전체 스위트 2213개 통과)
+**Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 20개(sales_yield 포함) 전부 확정 수신, 부호 기반 해석 기록 + 사용자가 "17개 전부 walk-forward 풀에 편입" 선택 → 20개 raw-IC-screened candidate 전부를 `run_long_horizon_validation.py`에 배선(ADR-0051): 4개 범용 Strategy 래퍼(`factor_strategy.py`) 신설, 후보 테이블+factory 함수로 루프 기반 배선의 late-binding 클로저 버그를 실제 import 테스트로 검증, 전체 스위트 2213개 통과 + 실제 28개 후보 walk-forward/PBO/DSR 결과 수신, size/altman_z가 CANDIDATE 달성했으나 size는 concentration 리포트로 SLB 단일 종목 몰빵(76.3%) 발견, altman_z는 TEST 저조 → 둘 다 VALIDATED 보류 + top_n=5 기본값이 이 프로젝트 자체의 Live 리스크 정책(max_position_weight=10%)과 2배 불일치하는 구조적 갭 발견, 다음 세션 우선순위 1로 기록)
 
 ---
 
@@ -140,16 +140,51 @@ TEST=-28.29%, Sharpe=0.18** — walk-forward fold들은 통과했는데 정작
 통과해도 PBO/DSR 기준 미달) — 상세 수치는 실제 리포트
 (`data/real_2010_latest/long_horizon_validation.json`)에 있음.
 
-**다음 단계 — 이건 사용자 판단 영역, 자동 진행 안 함**: `size`/
-`altman_z` 둘 다 `CandidateModelStatus`/`EvidenceLevel` 체계상
-"CANDIDATE"일 뿐 "VALIDATED"가 아님 — VALIDATED는 이 프로젝트
-설계상 자동화된 스크립트가 아니라 **명시적인 사람의 review**가
-필요(`classify_evidence_level` 자체 docstring/`strategy_research.
-evidence` 모듈에 이미 하드코딩된 원칙). `altman_z`는 TEST 저조 때문에
-개인적으로도 신뢰도가 낮다고 판단됨. `size`는 지금까지 나온 결과 중
-가장 설득력 있어 보이지만, 이것도 "다음에 뭘 할지"(실제 사람 review
-절차를 밟을지, paper trading 후보로 고려할지 등)는 사용자가 정할
-일이라 먼저 여쭤봄 — 채팅에서 이어감.
+**최종 결정: `size`/`altman_z` 둘 다 보류(VALIDATED 처리 안 함) —
+사용자 review 완료.** `size`의 held-out TEST 성과(+85.26%)를
+`compute_contribution_report_from_fills`의 concentration 리포트로
+까보니 **SLB(유전서비스 기업) 한 종목이 전체 PnL의 76.3%**를 차지
+(top_1_share_of_positive_pnl=63.8%, top_3=94.1%, Herfindahl=0.348 —
+10종목 균등분산 기준선 0.10의 3.5배). TEST 구간(2020-08-28~2023-04-28)이
+러시아-우크라이나 전쟁발 유가 폭등 시기와 겹쳐서, "size effect가
+실제로 작동한 증거"가 아니라 "우연히 에너지 섹터 종목 하나를 들고
+그 시기 유가 슈퍼사이클을 탄 것"일 가능성이 훨씬 큼. `altman_z`는
+이미 TEST 저조(-28.29%)로 별도 사유 존재. **둘 다 CANDIDATE 등급은
+유지(실제로 그 기준을 통과했다는 사실 자체는 안 바꿈)하되, VALIDATED로
+승격하지 않고 보류** — `AI Proposal → Experiment → Validation →
+Approval → Deployment`(`PROJECT_MASTER_PLAN.md` §11.5) 중 Validation
+단계에서 사람이 반려한 것으로 기록.
+
+**구조적으로 발견한, `size`에 국한되지 않는 진짜 갭**: 이 프로젝트의
+모든 walk-forward 후보(이번 28개 포함, `long_term_momentum` 등
+과거 후보 전부)가 기본값 `top_n=5`를 씀 — 즉 종목당 약 20% 비중.
+그런데 이미 Phase 8부터 확정된 이 프로젝트 자체의 Live 리스크 정책
+(`docs/operations/LIVE-RISK-POLICY.md` #3, `RiskConfig.
+max_position_weight=0.10`)은 종목당 최대 10%로 못박혀 있음 —
+**리서치/백테스트 레이어가 처음부터 실제 Live 리스크 한도의 2배
+집중도로 시뮬레이션해왔다는 뜻**. `size`의 SLB 몰빵이 이번에 우연히
+드러났을 뿐, 구조적으로는 모든 후보의 walk-forward 결과에 다
+해당되는 문제. 이건 `size`를 봐주려고 지금 만든 기준이 아니라 이미
+Phase 8부터 있던 규칙과의 불일치를 이번에 실제로 발견한 것 — 다음
+섹션에 우선순위 1로 기록.
+
+**다음 진행할 일 (우선순위순)**:
+1. **[핵심, 권장] top_n 기본값을 실제 Live 리스크 한도(10%)에 맞게
+   조정하고 28개 후보 전체 재실행** — `top_n=5`(종목당 20%)를
+   `top_n=10`(종목당 10%) 근처로 바꿔서 이 프로젝트 자체의 이미
+   정해진 리스크 정책과 일치시킴. **주의**: 이건 "size가 잘 나오게"
+   바꾸는 게 아니라 모든 28개 후보에 동일하게 적용하는 구조적 정합성
+   수정 — 결과가 어느 방향으로 나올지 미리 알 수 없고, 실제로 재실행
+   전엔 어떤 후보가 이득/손해를 볼지 모름(RULE 0.8 그대로 유지).
+2. 나머지 26개 후보(ROBUSTNESS_PENDING 25개 + `leverage`)는 지금은
+   전부 보류 상태 유지 — 위 1번 재실행 후 다시 판단.
+3. (선택, 급하지 않음) 아래 4번 항목의 sandboxed 환경 제약 목록.
+
+**결론(정직하게)**: 이 세션에서 문헌 기반 후보 20개를 전부 실제
+walk-forward/PBO/DSR에 태웠지만, 진짜로 신뢰할 만한 VALIDATED 후보는
+아직 하나도 없음. `size`는 유망해 보였다가 몰빵으로 판명, `altman_z`는
+TEST 저조, `leverage`는 다중검정 보정으로 탈락. 다음 세션은 위 1번
+(포지션 비중 정합성 수정 + 재실행)부터 시작하면 됨.
 
 1. **(선택, 급하지 않음) 이번 세션에서 이 sandboxed 환경 때문에 못 한
    것들 — 전부 실제 데이터/네트워크가 필요해서 사용자 환경에서만 가능,
