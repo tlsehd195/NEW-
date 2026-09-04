@@ -400,3 +400,24 @@ data has been ingested for its 24 new symbols** -- same "define now,
 ingest later" sequencing Stage 3 itself followed (`ADR-0044`). No
 change to any Toss/Live row from any of the three; full suite: 2249
 passed.
+
+**Session 36 further update (real Stage 4 ingestion completed by the
+user, 2 real bugs found and fixed, both new candidates wired in --
+`ADR-0057`)**: the user ran real ingestion for Stage 4's 24 new
+symbols, surfacing 2 genuine bugs -- a real SEC EDGAR entry (LMT) whose
+`filed` date preceded its `end` date crashed `FundamentalRecord`'s own
+construction-time safety guard and, because the per-symbol loop only
+caught provider errors (not `ValueError`), took down the entire
+24-symbol run; both are fixed (the malformed entry is now skipped,
+and the loop degrades to "this one symbol failed" for any per-symbol
+data problem). Full suite: 2253 passed. With real Stage 4 data
+available, `combined_factor` (mean_ic=-0.0530, `observations=43` vs.
+79-80 for every other candidate -- a structural consequence of its own
+9-leg all-or-nothing coverage requirement) and `idiosyncratic_
+volatility` (mean_ic=-0.0151, near-zero) raw IC came back, both
+negative/wrong-signed. Consistent with `ADR-0051`'s own "no post-hoc
+filtering by raw IC sign" precedent, both were wired into the
+walk-forward pool anyway (30 candidates now, up from 28) rather than
+excluded for looking unfavorable -- excluding them now would itself
+have been the post-hoc selection RULE 0.8 exists to prevent. No change
+to any Toss/Live row.
