@@ -181,6 +181,67 @@ class TestSameAccnMultiplePeriodsAreAllPreservedNotCollapsed:
         assert len(ids) == 2  # a repository keying on this natural key would never collapse them
 
 
+class TestFiledEarlierThanEndEntryIsSkippedNotCrashed:
+    """Regression guard: a REAL Stage 4 ingestion run (LMT) crashed this
+    script with `FundamentalRecord.__post_init__`'s own ValueError
+    ("available_time must not be earlier than period_end") -- SEC does
+    NOT validate filer-submitted XBRL for logical date consistency, so a
+    small number of real entries genuinely have `filed` earlier than
+    `end` (almost certainly a filer-side tagging error, not a bug in
+    this normalize() function). The single malformed entry must be
+    skipped, same "skip rather than fabricate" discipline as a missing
+    required field -- never raised, never silently accepted."""
+
+    def test_an_entry_with_filed_before_end_is_skipped(self) -> None:
+        raw = {
+            "facts": {"us-gaap": {"Assets": {"units": {"USD": [
+                # filed (2020-01-01) is BEFORE end (2020-12-31) -- the
+                # real, observed malformed shape.
+                {"end": "2020-12-31", "val": 100.0, "accn": "BAD-ACCN", "fy": 2020, "fp": "FY", "form": "10-K", "filed": "2020-01-01"},
+            ]}}}}
+        }
+        provider = _provider()
+
+        records = provider.normalize_company_facts(
+            "LMT", raw, ["Assets"], retrieved_at=utc(2024, 1, 1), ingestion_time=utc(2024, 1, 1),
+        )
+
+        assert records == []
+
+    def test_a_good_entry_alongside_a_bad_one_still_survives(self) -> None:
+        raw = {
+            "facts": {"us-gaap": {"Assets": {"units": {"USD": [
+                {"end": "2020-12-31", "val": 100.0, "accn": "BAD-ACCN", "fy": 2020, "fp": "FY", "form": "10-K", "filed": "2020-01-01"},
+                {"end": "2019-12-31", "val": 90.0, "accn": "GOOD-ACCN", "fy": 2019, "fp": "FY", "form": "10-K", "filed": "2020-02-01"},
+            ]}}}}
+        }
+        provider = _provider()
+
+        records = provider.normalize_company_facts(
+            "LMT", raw, ["Assets"], retrieved_at=utc(2024, 1, 1), ingestion_time=utc(2024, 1, 1),
+        )
+
+        assert len(records) == 1
+        assert records[0].period_end == utc(2019, 12, 31)
+
+    def test_filed_exactly_equal_to_end_is_not_skipped(self) -> None:
+        # The boundary case -- FundamentalRecord.__post_init__ itself
+        # only rejects STRICTLY earlier (`<`), so filed == end must
+        # still be accepted here, not over-corrected into a stricter cap.
+        raw = {
+            "facts": {"us-gaap": {"Assets": {"units": {"USD": [
+                {"end": "2020-12-31", "val": 100.0, "accn": "SAME-DAY", "fy": 2020, "fp": "FY", "form": "10-K", "filed": "2020-12-31"},
+            ]}}}}
+        }
+        provider = _provider()
+
+        records = provider.normalize_company_facts(
+            "LMT", raw, ["Assets"], retrieved_at=utc(2024, 1, 1), ingestion_time=utc(2024, 1, 1),
+        )
+
+        assert len(records) == 1
+
+
 class TestFetchCompanyFacts:
     def test_builds_the_correct_zero_padded_cik_path(self) -> None:
         calls = []

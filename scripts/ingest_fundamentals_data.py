@@ -219,7 +219,21 @@ def main(argv=None) -> int:
                 total_records_persisted += len(records)
                 per_symbol_results.append({"security_id": symbol, "cik": cik, "cik_source": cik_source, "records_persisted": len(records), "error": None})
                 print(f"      -> {len(records)} record(s) persisted", flush=True)
-            except (TransientProviderError, PermanentProviderError) as exc:
+            except (TransientProviderError, PermanentProviderError, ValueError) as exc:
+                # ValueError alongside the two provider errors: a REAL
+                # ingestion run (Stage 4, LMT) crashed the ENTIRE script
+                # here on a `FundamentalRecord.__post_init__` ValueError
+                # from a single malformed upstream entry -- losing every
+                # already-fetched symbol's progress over one bad data
+                # point in the last symbol processed. `normalize_company_
+                # facts` now also skips the one specific malformed-entry
+                # shape found this way, but this except clause is the
+                # correct second layer regardless: a per-symbol data
+                # problem (of any kind normalize_company_facts does not
+                # already defend against) must degrade to "this one
+                # symbol failed," never abort every remaining symbol in
+                # the run, matching this loop's own existing discipline
+                # for TransientProviderError/PermanentProviderError.
                 per_symbol_results.append({"security_id": symbol, "cik": cik, "cik_source": cik_source, "records_persisted": 0, "error": str(exc)})
                 print(f"      -> FAILED: {exc}", flush=True)
 

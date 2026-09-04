@@ -205,6 +205,27 @@ class SecEdgarFundamentalsProvider:
                         continue  # incomplete entry -- skip rather than fabricate a missing field
                     filed_time = _parse_edgar_date(entry["filed"])
                     period_end = _parse_edgar_date(entry["end"])
+                    if filed_time < period_end:
+                        # A REAL, observed EDGAR data-quality issue (found
+                        # via a real Stage 4 ingestion run, LMT): SEC does
+                        # NOT validate filer-submitted XBRL for logical
+                        # date consistency, so a small number of entries
+                        # in the wild genuinely have `filed` earlier than
+                        # `end` -- almost certainly a filer-side tagging
+                        # error (e.g. a schedule/note item mistagged under
+                        # the wrong concept or period), not a bug in this
+                        # normalize() function. `FundamentalRecord.
+                        # __post_init__` already refuses to construct such
+                        # a record (it exists specifically to catch this
+                        # class of ordering violation before storage) --
+                        # skipping the single malformed entry here, same
+                        # "skip rather than fabricate/crash" discipline as
+                        # the missing-field check just above, is the
+                        # honest choice: this one entry cannot be trusted
+                        # regardless of which of its two dates is wrong,
+                        # but it must not take down the rest of a real
+                        # ingestion run over one bad upstream data point.
+                        continue
                     period_start = _parse_edgar_date(entry["start"]) if entry.get("start") else None
                     accn = entry.get("accn", "")
                     content_fields = {
