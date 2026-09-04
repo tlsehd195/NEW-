@@ -201,6 +201,17 @@ def main(argv=None) -> int:
         "universe": args.universe, "security_ids": sorted(security_ids),
         "start": args.start.isoformat(), "end": args.end.isoformat(),
         "initial_capital": args.initial_capital,
+        # A run's risk_config is a real determinant of its outcome (this
+        # script's own `--max-sector-weight`/`--max-order-notional`
+        # flags directly change position sizes and fill counts) -- a
+        # checksum that omitted it would call two runs with materially
+        # different risk limits and materially different results
+        # identical, the same reproducibility gap Phase 30/31 already
+        # fixed for the ingestion manifest.
+        "risk_config": {
+            "max_sector_weight": args.max_sector_weight, "max_order_notional": args.max_order_notional,
+            "max_drawdown": args.max_drawdown, "max_portfolio_volatility": args.max_portfolio_volatility,
+        },
     })
 
     report = {

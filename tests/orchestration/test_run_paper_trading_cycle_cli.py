@@ -112,6 +112,36 @@ class TestEndToEndAgainstASeededCatalog:
         report = json.loads(out_path.read_text())
         assert report["risk_config"]["max_sector_weight"] == 1.0
 
+    def test_different_risk_config_produces_a_different_checksum(self, tmp_path) -> None:
+        """Found via a real user run: two runs over the identical universe/
+        window/capital but different --max-sector-weight/--max-order-notional
+        produced materially different orders/fills/positions yet an
+        IDENTICAL content_checksum, because the checksum payload omitted
+        risk_config entirely -- the same reproducibility gap Phase 30/31
+        already fixed for the ingestion manifest."""
+        db_path = tmp_path / "market_data"
+        _seed_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        def _run(paper_store_name, **risk_kwargs):
+            out_path = tmp_path / f"{paper_store_name}.json"
+            argv = [
+                "--universe", "TEST_UNIVERSE",
+                "--db-path", str(db_path),
+                "--paper-store", str(tmp_path / paper_store_name),
+                "--start", "2024-02-01", "--end", "2024-02-15",
+                "--out", str(out_path),
+            ]
+            for flag, value in risk_kwargs.items():
+                argv += [flag, str(value)]
+            assert module.main(argv) == 0
+            return json.loads(out_path.read_text())
+
+        unrestricted = _run("store_a")
+        restricted = _run("store_b", **{"--max-sector-weight": 0.25, "--max-order-notional": 1000.0})
+        assert unrestricted["content_checksum"] != restricted["content_checksum"]
+
     def test_missing_bars_fails_cleanly_not_with_a_traceback(self, tmp_path) -> None:
         db_path = tmp_path / "empty_market_data"
         StorageEngine(StorageConfig(root_dir=db_path)).close()
