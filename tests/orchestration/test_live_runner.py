@@ -9,6 +9,7 @@ test in this repository."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 
 from backtest_helpers import build_repository, make_bars, make_security, trading_days
@@ -174,7 +175,7 @@ class TestOrdersActuallySubmitAndFill:
         assert second.decision.as_of_time == view.current_time
 
 
-class TestGateContextOrderValidationStatusIsDerivedNotPassedThrough:
+class TestGateContextDerivedFieldsOverrideCallerPlaceholders:
     def test_the_callers_wrong_placeholder_status_is_overridden_by_the_real_result(self) -> None:
         """The caller's base gate_context intentionally carries a WRONG
         `order_validation_status` (VALIDATION_REJECTED) for a security
@@ -219,6 +220,47 @@ class TestGateContextOrderValidationStatusIsDerivedNotPassedThrough:
         assert outcome.risk_checked.status == RiskCheckStatus.REJECT
         assert outcome.validation.status == OrderValidationStatus.VALIDATION_REJECTED
         assert outcome.submission is None
+
+    def test_the_callers_wrong_account_and_kill_switch_placeholders_are_overridden_by_reality(self) -> None:
+        """The caller's base context intentionally claims the account
+        state is UNKNOWN (`account_state_known=False`) and the kill
+        switch IS engaged (`kill_switch_engaged=True`), both wrong for
+        this real session. If `run_cycle` passed those through
+        unchanged, the gate would fail (`account_state_unknown`/
+        `kill_switch_engaged`) -- instead it passes, proving both are
+        derived from real session/broker state, not the caller's claim."""
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        wrong_base_context = _gate_context(session, view.current_time)
+        wrong_base_context = replace(wrong_base_context, account_state_known=False, kill_switch_engaged=True)
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, gate_context=wrong_base_context, **_components())[0]
+
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is True
+        assert outcome.submission.gate_result.passed is True
+
+    def test_a_really_engaged_kill_switch_blocks_submission_even_with_a_wrong_false_placeholder(self) -> None:
+        """The inverse of the case above: the REAL kill switch is
+        engaged (via `session.engage_kill_switch`), but the caller's
+        base context wrongly claims `kill_switch_engaged=False`. The
+        gate must still block -- proving the derived value reflects
+        reality even when the caller's claim points the other, more
+        dangerous, direction (a caller falsely claiming "not engaged")."""
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        session.engage_kill_switch("test", occurred_at=view.current_time)
+        wrong_base_context = _gate_context(session, view.current_time)
+        wrong_base_context = replace(wrong_base_context, kill_switch_engaged=False)
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, gate_context=wrong_base_context, **_components())[0]
+
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is False
+        assert outcome.submission.status == "BLOCKED"
+        assert "kill_switch_engaged" in outcome.submission.gate_result.failed_conditions
 
 
 class TestSectorLimitPropagatesThroughTheWholeChain:

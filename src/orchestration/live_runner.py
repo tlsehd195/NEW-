@@ -30,42 +30,65 @@ differences in what Live actually is, not by choice:**
    unavailable -- a `PortfolioView` this module hands to Decision/Sizing/
    Risk must never encode a false "resting on $0".
 
-2. **`SafetyGateContext` is a REQUIRED, caller-supplied parameter --
-   this module never assembles one itself.** `evaluate_safety_gate`
-   (`broker.live.safety_gate`) needs `risk_health`/`order_validation_
-   status`/`account_state_known`/`position_state_known`/`model_state_
-   valid`/`configuration_integrity_valid`/`max_turnover`/`approval` --
-   a repo-wide check this session (before writing this module) found
-   that NOTHING in `src/` currently computes real values for most of
-   these fields; every existing caller (`tests/broker/live_helpers.py`'s
-   `make_passing_gate_context`) is a test fixture that hardcodes a
-   "passing" context. Building real, honest computations for each of
-   those fields (wiring `monitoring.health`'s existing `evaluate_account_
-   health`/`evaluate_pipeline_health`/etc., deciding what "model_state_
-   valid" even means against the Candidate approval boundary this
-   project deliberately keeps automation-free) is real, separate,
-   safety-critical work this module does not attempt -- exactly the
-   same "found a bigger gap, documented it honestly rather than
-   fabricating a fix" precedent ADR-0067 already set for `value_history`.
-   A caller of `run_cycle` here MUST supply a real, base `SafetyGateContext`;
-   this module will neither build one from scratch nor accept `None` for
-   it (unlike `sector_by_security`, which has a documented, tested
-   fail-closed `None` behavior in the Risk Engine itself --
-   `SafetyGateContext` has no such fallback anywhere in this codebase,
-   so `None` is not offered here at all).
+2. **`SafetyGateContext` is a REQUIRED, caller-supplied BASE parameter
+   -- this module never builds one from scratch, but it DOES override
+   every field it can determine with certainty from data it already
+   has, rather than trusting a caller's placeholder for something this
+   module can just know.** Of `evaluate_safety_gate`'s inputs, SEVEN
+   fields (six independent items, the last one covering two fields
+   derived together) are overridden by `run_cycle` itself, per
+   submission, via `dataclasses.replace(gate_context, ...)`:
+     - `order_validation_status` -- from that security's own real
+       `build_validated_order(...).status` (`tests/integration/
+       test_live_trading_lineage.py`'s own precedent for this field).
+     - `as_of_time` -- the checkpoint's own real time.
+     - `config` -- `session.config`, the session's own real config;
+       there is no honest reason a caller-supplied copy could differ.
+     - `broker_capabilities` -- `session.adapter.get_capabilities(
+       as_of=as_of_time)`, a real, already-available broker call.
+     - `kill_switch_engaged` -- `session.is_kill_switch_engaged()`,
+       likewise already available and authoritative.
+     - `account_state_known`/`position_state_known` -- reaching this
+       point in `run_cycle` at all means `_live_portfolio_view` already
+       obtained a real account snapshot AND a real positions read (it
+       RAISES otherwise -- see that function's docstring), so both are
+       genuinely `True` here, not a caller's guess.
 
-   One field IS this module's own to set: `order_validation_status`.
-   `tests/integration/test_live_trading_lineage.py` (the one existing
-   real end-to-end example of assembling a `SafetyGateContext`)
-   populates it from that specific order's own `build_validated_order(...)
-   .status` -- a value only known once this module has actually run
-   Risk/Validation for that security, which differs security to
-   security within the same cycle. `run_cycle` therefore takes the
-   caller's base `gate_context` and, per security, derives the context
-   actually handed to `session.submit()` via `dataclasses.replace(
-   gate_context, order_validation_status=validation.status,
-   as_of_time=as_of_time)` -- every other field passes through
-   unchanged, exactly as the caller supplied it.
+   A repo-wide check (before writing this module) found that NOTHING in
+   `src/` computes real values for the REMAINING fields --
+   `risk_health`/`model_state_valid`/`configuration_integrity_valid`/
+   `max_turnover`/`approval`/`required_capabilities` -- every existing
+   caller (`tests/broker/live_helpers.py::make_passing_gate_context`)
+   is a test fixture that hardcodes a "passing" value. These stay
+   genuinely the caller's responsibility, for reasons specific to each,
+   not merely "not gotten to yet":
+     - `max_turnover` -- `risk_engine` is typed as the `PortfolioRiskEngine`
+       Protocol, which exposes no public config; reading a specific
+       implementation's private `RiskConfig` would silently break for
+       any other implementation, so this module cannot get at the real
+       number honestly.
+     - `approval` (`LiveActivationApproval`) -- a human-signed
+       attestation by construction (`approved_by` structurally rejects
+       "AI"/"SYSTEM"/"CLAUDE"); no code may ever synthesize one.
+     - `required_capabilities` -- depends on what order types the
+       calling strategy actually issues, a caller-level fact this
+       module has no way to infer.
+     - `risk_health`/`model_state_valid`/`configuration_integrity_valid`
+       -- wiring `monitoring.health`'s existing evaluators into real
+       computations for these (and deciding what "model_state_valid"
+       even means against the Candidate approval boundary this project
+       deliberately keeps automation-free) is real, separate,
+       safety-critical design work this module does not attempt --
+       the same "found a bigger gap, documented it honestly rather than
+       fabricating a fix" precedent ADR-0067 already set for
+       `value_history` (see ADR-0071 for the narrowing this point
+       describes).
+
+   `run_cycle` will neither build a `SafetyGateContext` from scratch
+   nor accept `None` for it (unlike `sector_by_security`, which has a
+   documented, tested fail-closed `None` behavior in the Risk Engine
+   itself -- `SafetyGateContext` has no such fallback anywhere in this
+   codebase, so `None` is not offered here at all).
 
 Still deliberately NOT "a real, running Trading Engine loop" (no timer/
 scheduler) -- same scope boundary `paper_runner`'s own module docstring
@@ -220,16 +243,18 @@ def run_cycle(
     checkpoint" discipline `paper_runner.run_cycle`/`backtest.engine.
     BacktestEngine.run()` already use.
 
-    `gate_context` is REQUIRED and is the BASE context this cycle uses --
-    every field except `order_validation_status`/`as_of_time` is passed
-    straight through to every `session.submit()` call this cycle,
-    unchanged (see module docstring point 2: real, honest values for
-    those fields are a separate, unbuilt piece of work this module does
-    not attempt). `order_validation_status` IS this module's own to set,
-    per security, from that security's real `build_validated_order(...)
-    .status` -- matching `tests/integration/test_live_trading_lineage.py`'s
-    own precedent for how that one field gets populated. A stale or
-    wrong value in any of the OTHER fields is entirely the caller's
+    `gate_context` is REQUIRED and is the BASE context this cycle uses.
+    Seven fields are overridden by this function itself before every
+    `session.submit()` call -- `order_validation_status`, `as_of_time`,
+    `config`, `broker_capabilities`, `kill_switch_engaged`,
+    `account_state_known`, `position_state_known` -- each derived from
+    real, already-available data (session/adapter calls, or the fact
+    that `_live_portfolio_view` above did not raise), never from the
+    caller's copy (module docstring point 2 explains why each). The
+    remaining fields (`risk_health`, `model_state_valid`,
+    `configuration_integrity_valid`, `max_turnover`, `approval`,
+    `required_capabilities`) pass through completely unchanged -- a
+    stale or wrong value in any of THOSE is entirely the caller's
     responsibility, exactly as it already is for every existing
     `LiveTradingSession.submit()` caller in this codebase.
 
@@ -238,6 +263,18 @@ def run_cycle(
     ADR-0068) -- opt-in, `None`/absent preserves the same fail-closed or
     skip-persistence behavior described there."""
     portfolio = _live_portfolio_view(session, view, as_of_time)
+    # Reaching this line at all means `_live_portfolio_view` obtained a
+    # real, available account snapshot AND a real positions read (it
+    # raises otherwise, see that function's own docstring) -- so
+    # `account_state_known`/`position_state_known` are genuinely True
+    # here, not a caller's guess. `broker_capabilities` and
+    # `kill_switch_engaged` are likewise always real, already-available
+    # facts (`session.adapter.get_capabilities`/`session.
+    # is_kill_switch_engaged()`) -- there is no honest reason to make a
+    # caller supply a stand-in for any of these four, so `run_cycle`
+    # derives them itself, same as `order_validation_status`/`as_of_time`.
+    broker_capabilities = session.adapter.get_capabilities(as_of=as_of_time)
+    kill_switch_engaged = session.is_kill_switch_engaged()
 
     value_history: Optional[tuple[float, ...]] = None
     if state is not None:
@@ -283,7 +320,11 @@ def run_cycle(
         )
         submission: Optional[LiveSubmissionOutcome] = None
         if validation.validated_order is not None:
-            order_gate_context = replace(gate_context, order_validation_status=validation.status, as_of_time=as_of_time)
+            order_gate_context = replace(
+                gate_context, order_validation_status=validation.status, as_of_time=as_of_time,
+                config=session.config, broker_capabilities=broker_capabilities,
+                kill_switch_engaged=kill_switch_engaged, account_state_known=True, position_state_known=True,
+            )
             submission = session.submit(
                 validation.validated_order, requested_at=as_of_time, gate_context=order_gate_context,
             )
