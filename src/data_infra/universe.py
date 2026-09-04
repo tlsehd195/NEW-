@@ -39,11 +39,13 @@ response -- not from this module's authors' background knowledge.
 `_REAL_SEC_SECTOR_AND_EXCHANGE` below holds real SEC EDGAR SIC data,
 fetched via `scripts/fetch_sector_classifications.py` in the user's own
 real environment, not from background knowledge -- the first fields in
-this module ever populated from a real provider response. Every symbol
-this session did not confirm (`AVB`, whose CIK lookup did not resolve
-on that run) is still left `None` via `_real_symbol_metadata`'s own
-"unresolved -> honest default" fallback, not silently skipped or
-guessed.
+this module ever populated from a real provider response. `AVB`'s CIK
+lookup did not resolve on the original fetch run and was left `None`
+via `_real_symbol_metadata`'s own "unresolved -> honest default"
+fallback; the user later re-ran the same script with an explicit
+`--cik-overrides AVB:0000915912` and got a real result, now applied
+below -- all 87 `RESEARCH_UNIVERSE_STAGE4` symbols have a real,
+provider-confirmed `sector`/`exchange` as of this session.
 
 **Session 36 continued (ADR-0061) partially fulfills this promise for
 `listed_from`**: `_SP500_PIT_CONFIRMED_LISTED_FROM` below holds real
@@ -143,9 +145,12 @@ class UniverseDefinition:
 # fetched via `scripts/fetch_sector_classifications.py` against SEC
 # EDGAR's `/submissions/` endpoint in the user's own real environment
 # on 2026-09-04 (86 of Stage 4's 87 symbols; AVB's ticker-map CIK
-# lookup did not resolve on that run, so it is simply absent here --
-# not a guess, not a zero). `sector` is the SEC's own SIC classification
-# TEXT (`sicDescription`), NOT a GICS sector label -- see
+# lookup did not resolve on that run, so it was simply absent here --
+# not a guess, not a zero). AVB was resolved in a follow-up re-run with
+# an explicit --cik-overrides AVB:0000915912, appended separately below
+# with its own provenance comment -- all 87 symbols now real. `sector`
+# is the SEC's own SIC classification TEXT (`sicDescription`), NOT a
+# GICS sector label -- see
 # `SecEdgarFundamentalsProvider.normalize_submissions`'s own docstring
 # for why the two taxonomies must not be conflated. Every symbol below
 # still keeps `source="manual_curation"` in its own `SymbolMetadata`
@@ -245,6 +250,12 @@ _REAL_SEC_SECTOR_AND_EXCHANGE: dict[str, tuple[str, Optional[str]]] = {
     "FCX": ("Metal Mining", "NYSE"),
     "DOW": ("Plastic Materials, Synth Resins & Nonvulcan Elastomers", "NYSE"),
     "NUE": ("Steel Works, Blast Furnaces & Rolling Mills (Coke Ovens)", "NYSE"),
+    # AVB -- unresolved on the original Session 36 fetch run (ADR-0058/
+    # ADR-0059); resolved this session via the user re-running
+    # scripts/fetch_sector_classifications.py with an explicit
+    # --cik-overrides AVB:0000915912 (the real CIK found for the
+    # earlier fundamentals-ingestion gap). Real SEC EDGAR response.
+    "AVB": ("Real Estate Investment Trusts", "NYSE"),
 }
 
 
@@ -288,9 +299,9 @@ _SP500_PIT_CONFIRMED_LISTED_FROM: dict[str, str] = {
 def _real_symbol_metadata(symbol: str) -> SymbolMetadata:
     """Builds one `SymbolMetadata` using `_REAL_SEC_SECTOR_AND_EXCHANGE`
     when this symbol was actually resolved (real `sector`/`exchange`),
-    or the honest all-`None` default otherwise (e.g. `AVB`, unresolved
-    on the fetch run above) -- never a fabricated value for a symbol
-    this session did not actually confirm. Separately merges in a real
+    or the honest all-`None` default otherwise (e.g. any symbol never
+    actually fetched) -- never a fabricated value for a symbol this
+    session did not actually confirm. Separately merges in a real
     `listed_from` from `_SP500_PIT_CONFIRMED_LISTED_FROM` when
     available (ADR-0061) -- an independent data source from `sector`/
     `exchange`, so a symbol can have either, both, or neither

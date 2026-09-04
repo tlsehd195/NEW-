@@ -34,6 +34,13 @@ class TestUndefinedPolicyItemsDefaultToNotEnforced:
     def test_max_order_notional_is_undefined_by_default(self) -> None:
         assert RiskConfig().max_order_notional is None
 
+    def test_max_consecutive_failures_defaults_to_none_meaning_halt_on_first_failure(self) -> None:
+        # ADR-0065: None is NOT "not enforced" the way it is for every
+        # other field here -- it means "halt on the very first
+        # BrokerError," the ORIGINAL, strictest behavior. A human must
+        # explicitly set a higher number to loosen it.
+        assert LiveTradingConfig().max_consecutive_failures is None
+
 
 class TestInheritedPolicyItemsMatchPhase8Defaults:
     """#2, #3, #4, #9 -- these values exist and are enforced, but were
@@ -60,22 +67,11 @@ class TestInheritedPolicyItemsMatchPhase8Defaults:
 
 
 class TestBlockingPolicyItemsHaveNoField:
-    """#11 only, as of this session -- structurally confirmed absent,
-    not merely unset. `LiveTradingSession.consecutive_failure_count`
-    (ADR-0063) is a real, tested observability counter, but
-    deliberately NOT a configurable threshold -- adding one would mean
-    loosening the existing (stricter) single-failure halt behavior,
-    which this session declined to do without an explicit human
-    decision to that effect. A future addition of a
-    `max_consecutive_failures` field should prompt updating
-    docs/operations/LIVE-RISK-POLICY.md, which this test's failure
-    would flag."""
-
-    def test_live_trading_config_has_no_max_consecutive_failures_field(self) -> None:
-        import dataclasses
-
-        field_names = {f.name for f in dataclasses.fields(LiveTradingConfig)}
-        assert "max_consecutive_failures" not in field_names
+    """No items remain in this category as of this session -- #5/#10/#11
+    all moved to UNDEFINED (ADR-0062/ADR-0063/ADR-0065). Kept as an
+    empty class (rather than deleted) so a future BLOCKING item has an
+    obvious place to land, matching this file's own per-classification
+    structure."""
 
 
 class TestDataHealthTriggerIsNowWired:

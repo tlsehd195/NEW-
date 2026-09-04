@@ -203,11 +203,16 @@ class TestRealSymbolMetadata:
         assert metadata.exchange == "Nasdaq"
         assert metadata.symbol == "MSFT"
 
-    def test_an_unresolved_symbol_gets_the_honest_all_none_default(self) -> None:
-        # AVB's real fetch run did not resolve a CIK -- never fabricated.
+    def test_avb_originally_unresolved_is_now_real_since_the_cik_override_re_run(self) -> None:
+        # Session 36 continued: AVB's CIK lookup did not resolve on the
+        # original fetch run (ADR-0058/ADR-0059's own "still AVB,
+        # unresolved" caveat), but the user re-ran
+        # scripts/fetch_sector_classifications.py with an explicit
+        # --cik-overrides AVB:0000915912 and got a real result --
+        # applied here, not fabricated from the earlier gap staying open.
         metadata = _real_symbol_metadata("AVB")
-        assert metadata.sector is None
-        assert metadata.exchange is None
+        assert metadata.sector == "Real Estate Investment Trusts"
+        assert metadata.exchange == "NYSE"
 
     def test_a_symbol_never_fetched_at_all_also_gets_the_honest_default(self) -> None:
         metadata = _real_symbol_metadata("NOT_A_REAL_SYMBOL_XYZ")
@@ -233,13 +238,20 @@ class TestRealSymbolMetadata:
         assert metadata.listed_from is None
 
     def test_sector_exchange_and_listed_from_are_independently_populated(self) -> None:
-        # AVB has no real sector/exchange (unresolved CIK) but DOES have
-        # a real confirmed listed_from -- the two data sources must not
-        # be coupled to each other.
-        metadata = _real_symbol_metadata("AVB")
-        assert metadata.sector is None
-        assert metadata.exchange is None
-        assert metadata.listed_from == datetime(2007, 1, 10, tzinfo=timezone.utc)
+        # MSFT has a real, confirmed sector/exchange but was already an
+        # S&P 500 member in the SP500 PIT dataset's very first snapshot
+        # (left-censored, listed_from stays None) -- the two data
+        # sources must not be coupled to each other.
+        metadata = _real_symbol_metadata("MSFT")
+        assert metadata.sector == "Services-Prepackaged Software"
+        assert metadata.exchange == "Nasdaq"
+        assert metadata.listed_from is None
+        # AVB is the reverse case: real confirmed listed_from AND (as of
+        # this session's re-run) real confirmed sector/exchange too --
+        # both independently populated for the same symbol.
+        avb = _real_symbol_metadata("AVB")
+        assert avb.sector == "Real Estate Investment Trusts"
+        assert avb.listed_from == datetime(2007, 1, 10, tzinfo=timezone.utc)
 
 
 class TestUniverseDefinitionValidation:
