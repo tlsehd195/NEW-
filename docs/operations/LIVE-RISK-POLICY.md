@@ -518,3 +518,59 @@ adapter, or any Live activation code this phase. Confirmed, unchanged:
   `scripts/run_long_horizon_validation.py`) never reads or writes any
   field in this document's scope — walk-forward/evidence-classification
   infrastructure has no interaction with Live risk policy at all.
+
+## Session 36 — Risk limit values RATIFIED by the user (#1/#6/#7)
+
+The account owner reviewed Phase 22's revised proposals directly and
+ratified all three, with one revision:
+
+| # | Field | Phase 22 proposal | **RATIFIED value** |
+|---|---|---|---|
+| 1 | `LiveTradingConfig.max_daily_loss` | `0.02` (2%) | **`0.05` (5%) of initial capital** — the user explicitly requested a looser figure than Claude's 2% proposal |
+| 6 | `RiskConfig.max_turnover` | `2.0` | **`2.0`, accepted as proposed** |
+| 7 | `LiveTradingConfig.max_order_frequency_per_hour` | `6` | **`6`, accepted as proposed** |
+
+**Why #1 moved from 2% to 5%, recorded for future reference (not a
+technical decision, a stated investment-philosophy one):** the user's
+own reasoning was that a price decline in a genuinely good company they
+already hold is, in their view, a buying opportunity rather than a loss
+to react to — so a tight daily-loss trigger felt, to them, like it
+might work against that philosophy. Before ratifying, Claude verified
+against `LiveTradingSession.engage_kill_switch`
+(`src/broker/live/session.py`) exactly what triggering `max_daily_loss`
+does: it cancels only open/pending (not-yet-filled) orders and pauses
+further *automated* order submission until a human reviews and calls
+`release_kill_switch` — it never sells or liquidates any existing
+filled position. This means the trigger does not conflict with the
+user's stated philosophy at any value (existing holdings are never
+force-sold), so 5% was accepted as the user's own risk-tolerance
+choice, not something Claude talked them out of or into. The looser
+number simply means the automated system pauses new automated activity
+(including any automated additional buying it might otherwise have
+attempted that day) at a somewhat larger single-day paper/realized loss
+than Claude's original conservative proposal — a manual-review
+speed bump on that specific day, not a forced loss.
+
+**Status: RATIFIED (financial-policy decision), not yet CODE-APPLIED.**
+No production `LiveTradingConfig`/`RiskConfig` instantiation exists yet
+in this codebase — `DEFAULT_LIVE_TRADING_CONFIG` (`src/broker/live/
+config.py`) is deliberately left as `LiveTradingConfig()` (all three
+fields `None`, `live_trading_enabled=False`), and `RiskConfig`'s own
+default likewise leaves `max_turnover=None`, because both are shared
+defaults consumed by backtesting/paper-trading code paths as well —
+changing either dataclass's default would silently change behavior for
+every non-Live consumer, not just a future Live account. There is
+still no concrete number for `max_daily_loss` specifically (it is coded
+as an absolute `float`, not a ratio — Option A of Phase 17's own
+analysis), because **initial Live capital has still not been decided**;
+`max_daily_loss = 0.05 * initial_capital` once it is. `max_turnover=2.0`
+and `max_order_frequency_per_hour=6` are concrete integers already and
+need no further capital decision — they will be passed explicitly at
+whatever future point a real `LiveTradingConfig`/`RiskConfig` is first
+constructed for actual Live use (still independently blocked today by
+the Toss capability gap, `TOSS-API-GAP-ANALYSIS.md`, regardless of this
+ratification).
+
+**Remaining open item:** initial Live capital amount — still not
+decided by the user as of this session, needed before #1 becomes a
+concrete number.
