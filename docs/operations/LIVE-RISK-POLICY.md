@@ -398,6 +398,139 @@ several months of planned withdrawals without forced selling).
 Impact: none today -- same independent Toss-gap blocker as #14.
 ```
 
+## Session 36 — Design pass for #14/#15 (options enumerated, still NO decision)
+
+The user asked to proceed on #14/#15 specifically as a design-only
+pass -- "생각이 많이 필요함" (this needs a lot of thought), i.e. the
+opposite of something to rush. What follows enumerates real options
+with their real tradeoffs, exactly what the placeholders above said
+was still missing. **No option is recommended, no number is proposed,
+and no code changes as a result of this section** -- both remain
+open, financially consequential, human decisions
+(`PROJECT_MASTER_PLAN.md` section 13.12), and both remain moot today
+regardless, since Live is independently blocked by the Toss capability
+gap.
+
+### #14 — Withdrawal policy: three real shapes, not variations of one
+
+**Option A — Fixed schedule, system-executed.** A human sets a rule
+like "withdraw 2% of portfolio value on the first trading day of each
+quarter" once, and the system executes it automatically from then on,
+no per-withdrawal approval needed.
+- *For*: genuinely "set and forget"; matches how some real retirement
+  drawdown strategies work (a fixed or fixed-percentage rule, decided
+  in advance specifically to avoid emotional/timing decisions).
+- *Against*: this project's own architecture has never given any
+  automated component authority to move capital OUT of an account
+  without a human decision in the loop (every existing gate --
+  `LiveActivationApproval`, the kill switch, Model Candidate promotion
+  -- requires a human to approve the *thing that changes*, not just
+  the initial policy that permits it). A fixed schedule is exactly
+  "the AI decides withdrawal timing was pre-approved," which is a
+  different, weaker safeguard than "a human approves this specific
+  withdrawal." It also directly collides with sequence-of-returns
+  risk exactly as the existing placeholder above already named: a
+  fixed schedule withdraws the same amount whether the portfolio is up
+  or deep in a drawdown that quarter, converting a paper loss into a
+  realized one on a schedule, not a judgment call.
+
+**Option B — Rule-based policy, human pre-approves the RULE, system
+proposes, human approves each EXECUTION.** A human sets bounds (e.g.
+"never withdraw if portfolio is more than 10% below its high-water
+mark"; "never withdraw more than N% of a single quarter's realized
+gain"), the system computes whether a withdrawal is currently within
+those bounds and, if so, surfaces a proposal -- but doesn't move
+anything until a human separately approves that specific proposal.
+- *For*: matches this project's existing governance pattern closely
+  (`LiveActivationApproval`'s own two-layer shape: a policy exists,
+  but a specific action still needs its own human sign-off). Directly
+  addresses sequence-of-returns risk -- a high-water-mark or drawdown
+  condition is exactly the mechanism that would refuse to propose a
+  withdrawal during a bad stretch.
+- *Against*: real new design and engineering work -- there is no
+  "Withdrawal Proposal" concept, approval type, or persisted record
+  anywhere in this codebase today; this would need its own small
+  module (something like `LiveActivationApproval`'s own shape, but for
+  a withdrawal event instead of an activation event), not a field
+  added to an existing config.
+
+**Option C — Purely manual, out-of-band, the system does nothing.** A
+human decides to withdraw and does so directly against the real Toss
+account (or wherever Live capital eventually lives) -- this codebase
+never observes or participates in the withdrawal at all.
+- *For*: zero new code, zero new risk surface introduced by this
+  project. Matches how most individual investors actually manage
+  withdrawals from a self-directed account today, without any
+  algorithmic system in the loop for that specific action.
+- *Against*: this system's own `PortfolioAccounting`/`PortfolioView`
+  would then reflect a stale, too-high cash/portfolio-value figure
+  immediately after any such withdrawal until the next real balance
+  sync -- a data-freshness gap, not a decision-authority gap, but a
+  real operational consideration: every risk check that reads
+  `portfolio_state.cash`/`portfolio_value` (cash_minimum,
+  gross_exposure, concentration, the new sector/notional checks) would
+  be computing against a wrong number until synced.
+
+**A fourth axis, independent of A/B/C**: WHERE the withdrawal decision
+lives is separate from HOW MUCH/WHEN. Any of A/B/C could be paired
+with a fixed amount, a fixed percentage of the account, or a
+percentage of realized gains only (never touching principal) -- that
+sizing question is its own sub-decision, not analyzed further here.
+
+### #15 — Cash buffer: three real shapes, and why #14 gates two of them
+
+**Option A — Keep the current static floor (`minimum_cash_ratio`,
+`0.05`), unchanged.** No new work; the existing Phase 8 default
+continues to gate every BUY.
+- *Against*: as the existing placeholder already noted, `0.05` was
+  chosen for backtesting, not for a Live account that might someday
+  need to fund real withdrawals without forced selling. It is also,
+  per the referenced `risk_controlled_momentum` finding, partly a
+  strategy side effect today (uninvested cash from position-cap
+  overflow is not redistributed) rather than a deliberately sized
+  reserve.
+
+**Option B — A buffer sized off #14's actual withdrawal schedule.**
+Whatever #14 resolves to (a fixed schedule, a rule-based policy, or
+purely manual) implies an expected near-term cash need; the buffer
+could be set to cover N withdrawal cycles without needing to sell a
+position.
+- *Directly gated by #14*: this option cannot be meaningfully sized
+  until #14 has an actual shape -- "enough cash for the next
+  withdrawal" is undefined if there is no defined withdrawal
+  mechanism yet. This is the dependency the original placeholder
+  already flagged ("should be reconciled with #14").
+
+**Option C — Regime-conditional buffer**, e.g. holding a larger cash
+reserve when `regime.enums`' existing LIQUIDITY/VOLATILITY axes report
+a less favorable state, smaller otherwise.
+- *For*: this project already has a real, tested regime-detection
+  subsystem (Phase 5) that `RiskConfig`'s own `enforce_liquidity_limit`
+  already partially consumes (`liquidity_state`) -- reusing that
+  existing signal rather than inventing a new one would be consistent
+  with this project's own reuse discipline.
+- *Against*: genuinely new design work -- there is no established
+  mapping from "which regime state" to "what buffer size," and
+  inventing one now, before either #14 is decided or any real Live
+  track record exists, risks exactly the kind of premature, unvalidated
+  policy-tuning RULE 0.8 warns against in the strategy-research context
+  and that same caution applies here.
+
+**Not mutually exclusive**: B and C could combine (a withdrawal-sized
+floor that additionally widens in an unfavorable regime) -- flagged
+here as a real possibility, not analyzed further.
+
+### What this section does NOT do
+
+- Does not pick an option for #14 or #15.
+- Does not change `RiskConfig.minimum_cash_ratio` or add any new
+  withdrawal-related field, model, or module to `src/`.
+- Does not claim any option above is complete -- each would need its
+  own full design pass (data model, approval flow if any, tests) once
+  actually chosen, matching how #1/#6/#7's own proposals (Phase 20)
+  were themselves later still just proposals until the user explicitly
+  ratified them (Session 36, `ADR-0060`).
+
 ## Phase 22 — Revised (more conservative) proposed values, and Option B adopted for #1/#7
 
 Phase 22's instruction directed two concrete changes on top of Phase
