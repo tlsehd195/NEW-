@@ -100,3 +100,24 @@ Toss account (itself BLOCKED regardless — see
 `docs/operations/LIVE-TRADING-RUNBOOK.md`'s unmet-conditions list) and a
 human needs to reason about a risk limit or capital figure in KRW
 terms. Until then this remains an intentionally empty placeholder.
+
+## Session 36: this trigger point has now occurred — still no rate recorded
+
+The user stated a real initial Live capital target, 3,000,000 KRW, and
+`docs/operations/LIVE-RISK-POLICY.md`'s Session 36 ratification section
+needs it in USD terms to produce a concrete
+`LiveTradingConfig.max_daily_loss` value (that config's loss
+computation is USD-denominated throughout this codebase). This is
+exactly the scenario this document anticipated above.
+
+**No rate is added here even so.** This environment still has no
+verified access to a citable KRW/USD source (the same `EGRESS_BLOCKED`
+pattern as Phase 20/22, re-affirmed rather than re-checked this
+session since nothing about this environment's network access has
+changed). Recorded resolution: use the account's own real,
+broker-reported USD balance at the time the Toss Live account actually
+opens and the stated KRW is actually deposited/converted, rather than
+a speculative rate computed today — see
+`LIVE-RISK-POLICY.md`'s "Initial Live capital stated" section for the
+full reasoning. This document's own placeholder table below remains
+unfilled.

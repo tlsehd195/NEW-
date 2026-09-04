@@ -64,6 +64,30 @@ Risk limit values RATIFIED by the user" section):
   unconditionally blocks Live activation regardless of this
   ratification.
 
+## Session 36 continued: initial Live capital stated (3,000,000 KRW)
+
+The user then stated their initial Live capital target directly:
+3,000,000 KRW. Recorded in `LIVE-RISK-POLICY.md` using the same
+"stated target, not a conversion" pattern
+`MARKET-DATA-FX-REFERENCE.md` already established for Paper Trading's
+`PAPER_CAPITAL_KRW_STATED_TARGET`. Pure arithmetic on the KRW figure
+gives `max_daily_loss (5%) = 150,000 KRW` -- but this still cannot
+become the concrete USD `float` `LiveTradingConfig.max_daily_loss`
+needs, because this codebase's loss computation is USD-denominated
+throughout and no verified KRW/USD rate is accessible from this
+environment (`MARKET-DATA-FX-REFERENCE.md`, unchanged status since
+Phase 20/22). Fabricating a rate to finish the arithmetic was
+explicitly rejected, matching that document's own standing refusal to
+do so.
+
+**Resolution path recorded, not itself a fabricated number:** once a
+real Toss Live account opens and the stated KRW is actually
+deposited/converted, the account's own real, broker-reported USD
+balance at that time is the correct basis for
+`max_daily_loss = 0.05 * (real USD balance)`. `MARKET-DATA-FX-REFERENCE.md`
+was updated to note its own "when this would become necessary" trigger
+has now occurred, while still leaving its rate table unfilled.
+
 ## Tests
 
 None -- this is a documentation-only ratification of a financial

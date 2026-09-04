@@ -571,6 +571,48 @@ constructed for actual Live use (still independently blocked today by
 the Toss capability gap, `TOSS-API-GAP-ANALYSIS.md`, regardless of this
 ratification).
 
-**Remaining open item:** initial Live capital amount — still not
-decided by the user as of this session, needed before #1 becomes a
-concrete number.
+**Remaining open item (resolved below):** initial Live capital amount
+— was not decided at the time the table above was written; the user
+subsequently stated it in the same session.
+
+### Initial Live capital stated: 3,000,000 KRW
+
+The user stated their initial Live capital target as **3,000,000 KRW**
+(300만원). Recorded here using the same pattern
+`docs/operations/MARKET-DATA-FX-REFERENCE.md` already established for
+Paper Trading's `PAPER_CAPITAL_KRW_STATED_TARGET` — the user's actual
+stated figure, in the currency they actually stated it in, never
+silently converted.
+
+**Pure arithmetic on the stated KRW figure** (no currency conversion
+involved): `max_daily_loss (5%) = 0.05 * 3,000,000 = 150,000 KRW`.
+
+**Why this still does not produce a concrete
+`LiveTradingConfig.max_daily_loss` value:** `LiveTradingConfig.max_daily_loss`
+is compared against loss computed inside this system's own
+`PortfolioAccounting`/risk-evaluation code, which is USD-denominated
+throughout (the pilot/research universe is US equities — every price,
+position value, and P&L figure this codebase computes is in USD; see
+`MARKET-DATA-FX-REFERENCE.md`). Converting "150,000 KRW" into a USD
+figure right now would require a real, sourced KRW/USD exchange rate,
+which `MARKET-DATA-FX-REFERENCE.md` has documented since Phase 20 as
+**not available from this environment** (every FX source checked was
+unreachable) — writing in a guessed rate here would be exactly the
+fabrication that document already refused to do, and this section does
+not do it either.
+
+**Recommended resolution path (not itself a fabricated number):** once
+a real Toss Live account actually exists and the stated 3,000,000 KRW
+is actually deposited/converted, the account's own real, broker-reported
+USD balance at that time is the correct basis for
+`max_daily_loss = 0.05 * (that real USD balance)` — not a
+speculative conversion computed today with an unverifiable rate. This
+also means the exact USD number cannot be finalized until Live account
+opening, independently still blocked by the Toss capability gap
+(`TOSS-API-GAP-ANALYSIS.md`) regardless.
+
+`docs/operations/MARKET-DATA-FX-REFERENCE.md` is updated alongside this
+section to note that its own "when this would actually become
+necessary" trigger point — a human reasoning about a real Live capital
+figure in KRW terms — has now occurred, without fabricating the rate it
+still does not have.
