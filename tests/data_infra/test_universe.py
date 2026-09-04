@@ -20,6 +20,7 @@ from data_infra.universe import (
     RESEARCH_UNIVERSE_STAGE4,
     SymbolMetadata,
     UniverseDefinition,
+    _real_symbol_metadata,
     build_security_masters,
     build_universe_memberships,
 )
@@ -184,6 +185,36 @@ class TestResearchUniverseStage4:
         assert len(new_symbols) == len(RESEARCH_UNIVERSE_STAGE4.symbol_ids) - len(RESEARCH_UNIVERSE_STAGE3.symbol_ids)
 
 
+class TestRealSymbolMetadata:
+    """Session 36 (ADR-0058) -- `_real_symbol_metadata` is the one
+    place `SymbolMetadata.sector`/`exchange` are populated from real,
+    provider-sourced SEC EDGAR data rather than left `None`."""
+
+    def test_a_resolved_symbol_gets_its_real_sector_and_exchange(self) -> None:
+        metadata = _real_symbol_metadata("MSFT")
+        assert metadata.sector == "Services-Prepackaged Software"
+        assert metadata.exchange == "Nasdaq"
+        assert metadata.symbol == "MSFT"
+
+    def test_an_unresolved_symbol_gets_the_honest_all_none_default(self) -> None:
+        # AVB's real fetch run did not resolve a CIK -- never fabricated.
+        metadata = _real_symbol_metadata("AVB")
+        assert metadata.sector is None
+        assert metadata.exchange is None
+
+    def test_a_symbol_never_fetched_at_all_also_gets_the_honest_default(self) -> None:
+        metadata = _real_symbol_metadata("NOT_A_REAL_SYMBOL_XYZ")
+        assert metadata.sector is None
+        assert metadata.exchange is None
+
+    def test_a_symbol_with_a_confirmed_sector_but_no_confirmed_exchange_leaves_exchange_none(self) -> None:
+        # XOM's real fetch resolved a sector but the exchanges list was
+        # empty that run -- exchange must stay None, not fabricated.
+        metadata = _real_symbol_metadata("XOM")
+        assert metadata.sector == "Petroleum Refining"
+        assert metadata.exchange is None
+
+
 class TestUniverseDefinitionValidation:
     def test_rejects_empty_symbols(self) -> None:
         with pytest.raises(ValueError):
@@ -213,18 +244,31 @@ class TestUniverseDefinitionValidation:
 
 
 class TestSymbolMetadataHonesty:
-    def test_pilot_universe_metadata_fields_are_unconfirmed_by_default(self) -> None:
-        """Every PILOT_UNIVERSE_V1 entry must leave exchange/sector/
-        market_cap_bucket/listed_from/listed_to as None -- this session
-        never received a real provider response confirming any of
-        them, and the module's own discipline forbids filling these in
-        from general knowledge."""
+    def test_pilot_universe_market_cap_bucket_and_listed_dates_are_still_unconfirmed(self) -> None:
+        """market_cap_bucket/listed_from/listed_to have no real data
+        source this project has ever integrated -- these must stay
+        None for every PILOT_UNIVERSE_V1 entry, unconditionally."""
         for entry in PILOT_UNIVERSE_V1.symbols:
-            assert entry.exchange is None
-            assert entry.sector is None
             assert entry.market_cap_bucket is None
             assert entry.listed_from is None
             assert entry.listed_to is None
+
+    def test_pilot_universe_sector_is_now_real_sec_edgar_data_where_resolved(self) -> None:
+        """Session 36 (ADR-0058): `sector`/`exchange` are no longer
+        unconditionally None -- `_real_symbol_metadata` populates them
+        from real, provider-sourced SEC EDGAR SIC data for every symbol
+        this project's fetch run actually resolved, PILOT_UNIVERSE_V1's
+        entries included (they are the same real companies Stage 4's
+        real fetch also covers, just referenced from a different
+        UniverseDefinition -- the underlying fact does not change with
+        which definition happens to list the symbol)."""
+        by_symbol = {s.symbol: s for s in PILOT_UNIVERSE_V1.symbols}
+        assert by_symbol["AAPL"].sector == "Electronic Computers"
+        assert by_symbol["AAPL"].exchange == "Nasdaq"
+        # XOM's real fetch resolved a sector but not an exchange that
+        # run -- exchange stays honestly None, not fabricated.
+        assert by_symbol["XOM"].sector == "Petroleum Refining"
+        assert by_symbol["XOM"].exchange is None
 
 
 class TestConverters:
@@ -235,10 +279,16 @@ class TestConverters:
         assert all(m.universe == "PILOT_UNIVERSE" for m in memberships)
         assert {m.security_id for m in memberships} == set(PILOT_UNIVERSE_V1.symbol_ids)
 
-    def test_build_security_masters_uses_unknown_sentinel_for_unconfirmed_exchange(self) -> None:
+    def test_build_security_masters_uses_unknown_sentinel_only_for_symbols_with_no_confirmed_exchange(self) -> None:
         records = build_security_masters(PILOT_UNIVERSE_V1, valid_from=utc(2024, 1, 1))
         assert len(records) == len(PILOT_UNIVERSE_V1.symbols)
-        assert all(r.exchange == "UNKNOWN" for r in records)
+        by_id = {r.security_id: r for r in records}
+        # AAPL now has a real, provider-confirmed exchange (Session 36,
+        # ADR-0058) -- the converter must use it, not the sentinel.
+        assert by_id["AAPL"].exchange == "Nasdaq"
+        # XOM's real fetch resolved a sector but not an exchange --
+        # still honestly UNKNOWN, not fabricated.
+        assert by_id["XOM"].exchange == "UNKNOWN"
         assert all(r.status == SecurityStatus.ACTIVE for r in records)
         assert all(r.currency == "USD" for r in records)
 

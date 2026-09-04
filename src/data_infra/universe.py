@@ -34,6 +34,16 @@ ingestion (`scripts/ingest_real_market_data.py`) actually runs against
 a live provider and that provider's response includes exchange/sector
 data, a future phase should populate these fields from that real
 response -- not from this module's authors' background knowledge.
+
+**Session 36 (ADR-0058) fulfilled this promise for `sector`/`exchange`**:
+`_REAL_SEC_SECTOR_AND_EXCHANGE` below holds real SEC EDGAR SIC data,
+fetched via `scripts/fetch_sector_classifications.py` in the user's own
+real environment, not from background knowledge -- the first fields in
+this module ever populated from a real provider response. Every symbol
+this session did not confirm (`AVB`, whose CIK lookup did not resolve
+on that run) is still left `None` via `_real_symbol_metadata`'s own
+"unresolved -> honest default" fallback, not silently skipped or
+guessed.
 """
 
 from __future__ import annotations
@@ -110,6 +120,128 @@ class UniverseDefinition:
         return tuple(s.symbol for s in self.symbols)
 
 
+# Session 36 (ADR-0058) -- REAL, provider-sourced sector/exchange data,
+# fetched via `scripts/fetch_sector_classifications.py` against SEC
+# EDGAR's `/submissions/` endpoint in the user's own real environment
+# on 2026-09-04 (86 of Stage 4's 87 symbols; AVB's ticker-map CIK
+# lookup did not resolve on that run, so it is simply absent here --
+# not a guess, not a zero). `sector` is the SEC's own SIC classification
+# TEXT (`sicDescription`), NOT a GICS sector label -- see
+# `SecEdgarFundamentalsProvider.normalize_submissions`'s own docstring
+# for why the two taxonomies must not be conflated. Every symbol below
+# still keeps `source="manual_curation"` in its own `SymbolMetadata`
+# entry (unchanged) -- that field describes this universe's SYMBOL
+# SELECTION provenance (hand-curated, per every prior stage's own
+# discipline), a genuinely different question from "is this one field's
+# VALUE real" that `sector`/`exchange` being provider-sourced answers
+# separately. This is the first field in this module ever populated
+# from real, verified provider data rather than left `None` -- the
+# module's own honesty discipline (see module docstring) is why every
+# entry below waited this long rather than being filled from background
+# knowledge.
+_REAL_SEC_SECTOR_AND_EXCHANGE: dict[str, tuple[str, Optional[str]]] = {
+    "AAPL": ("Electronic Computers", "Nasdaq"),
+    "MSFT": ("Services-Prepackaged Software", "Nasdaq"),
+    "NVDA": ("Semiconductors & Related Devices", "Nasdaq"),
+    "AMZN": ("Retail-Catalog & Mail-Order Houses", "Nasdaq"),
+    "GOOGL": ("Services-Computer Programming, Data Processing, Etc.", "Nasdaq"),
+    "META": ("Services-Computer Programming, Data Processing, Etc.", "Nasdaq"),
+    "AVGO": ("Semiconductors & Related Devices", "Nasdaq"),
+    "TSLA": ("Motor Vehicles & Passenger Car Bodies", "Nasdaq"),
+    "JPM": ("National Commercial Banks", "NYSE"),
+    "V": ("Services-Business Services, NEC", "NYSE"),
+    "MA": ("Services-Business Services, NEC", "NYSE"),
+    "COST": ("Retail-Variety Stores", "Nasdaq"),
+    "WMT": ("Retail-Variety Stores", "Nasdaq"),
+    "JNJ": ("Pharmaceutical Preparations", "NYSE"),
+    "XOM": ("Petroleum Refining", None),
+    "CAT": ("Construction Machinery & Equip", "NYSE"),
+    "HON": ("Aircraft Engines & Engine Parts", "Nasdaq"),
+    "UPS": ("Trucking & Courier Services (No Air)", "NYSE"),
+    "BA": ("Aircraft", "NYSE"),
+    "UNH": ("Hospital & Medical Service Plans", "NYSE"),
+    "PFE": ("Pharmaceutical Preparations", "NYSE"),
+    "ABBV": ("Pharmaceutical Preparations", "NYSE"),
+    "MRK": ("Pharmaceutical Preparations", "NYSE"),
+    "BAC": ("National Commercial Banks", "NYSE"),
+    "GS": ("Security Brokers, Dealers & Flotation Companies", "NYSE"),
+    "PG": ("Soap, Detergents, Cleang Preparations, Perfumes, Cosmetics", "NYSE"),
+    "KO": ("Beverages", "NYSE"),
+    "PEP": ("Beverages", "Nasdaq"),
+    "HD": ("Retail-Lumber & Other Building Materials Dealers", "NYSE"),
+    "MCD": ("Retail-Eating  Places", "NYSE"),
+    "NKE": ("Rubber & Plastics Footwear", "NYSE"),
+    "CVX": ("Petroleum Refining", "NYSE"),
+    "VZ": ("Telephone Communications (No Radiotelephone)", "NYSE"),
+    "T": ("Telephone Communications (No Radiotelephone)", "NYSE"),
+    "DIS": ("Services-Miscellaneous Amusement & Recreation", "NYSE"),
+    "ORCL": ("Services-Prepackaged Software", "NYSE"),
+    "IBM": ("Computer & office Equipment", "NYSE"),
+    "CSCO": ("Computer Communications Equipment", "Nasdaq"),
+    "NEE": ("Electric Services", "NYSE"),
+    "PLD": ("Real Estate Investment Trusts", "NYSE"),
+    "AMT": ("Real Estate Investment Trusts", "NYSE"),
+    "EQIX": ("Real Estate Investment Trusts", "Nasdaq"),
+    "SPG": ("Real Estate Investment Trusts", "NYSE"),
+    "LIN": ("Industrial Inorganic Chemicals", "Nasdaq"),
+    "APD": ("Industrial Inorganic Chemicals", "NYSE"),
+    "ECL": ("Soap, Detergents, Cleang Preparations, Perfumes, Cosmetics", "NYSE"),
+    "NEM": ("Gold and Silver Ores", "NYSE"),
+    "DUK": ("Electric & Other Services Combined", "NYSE"),
+    "SO": ("Electric Services", "NYSE"),
+    "D": ("Electric Services", "NYSE"),
+    "SLB": ("Oil & Gas Field Services, NEC", "NYSE"),
+    "COP": ("Petroleum Refining", "NYSE"),
+    "MS": ("Security Brokers, Dealers & Flotation Companies", "NYSE"),
+    "WFC": ("National Commercial Banks", "NYSE"),
+    "AXP": ("Finance Services", "NYSE"),
+    "LLY": ("Pharmaceutical Preparations", "NYSE"),
+    "TMO": ("Measuring & Controlling Devices, NEC", "NYSE"),
+    "ABT": ("Pharmaceutical Preparations", "NYSE"),
+    "ADBE": ("Services-Prepackaged Software", "Nasdaq"),
+    "CRM": ("Services-Prepackaged Software", "NYSE"),
+    "QCOM": ("Radio & Tv Broadcasting & Communications Equipment", "Nasdaq"),
+    "LOW": ("Retail-Lumber & Other Building Materials Dealers", "NYSE"),
+    "PM": ("Cigarettes", "NYSE"),
+    "PSX": ("Petroleum Refining", "NYSE"),
+    "VLO": ("Petroleum Refining", "NYSE"),
+    "OXY": ("Crude Petroleum & Natural Gas", "NYSE"),
+    "WMB": ("Natural Gas Transmission", "NYSE"),
+    "KMI": ("Natural Gas Transmission", "NYSE"),
+    "GE": ("Electronic & Other Electrical Equipment (No Computer Equip)", "NYSE"),
+    "RTX": ("Aircraft Engines & Engine Parts", "NYSE"),
+    "LMT": ("Guided Missiles & Space Vehicles & Parts", "NYSE"),
+    "DE": ("Farm Machinery & Equipment", "NYSE"),
+    "EMR": ("Electronic & Other Electrical Equipment (No Computer Equip)", "NYSE"),
+    "AEP": ("Electric Services", None),
+    "EXC": ("Electric & Other Services Combined", "Nasdaq"),
+    "SRE": ("Gas & Other Services Combined", "NYSE"),
+    "XEL": ("Electric & Other Services Combined", "Nasdaq"),
+    "ED": ("Electric & Other Services Combined", "NYSE"),
+    "O": ("Real Estate Investment Trusts", "NYSE"),
+    "PSA": ("Real Estate Investment Trusts", "NYSE"),
+    "WELL": ("Real Estate Investment Trusts", "NYSE"),
+    "DLR": ("Real Estate Investment Trusts", "NYSE"),
+    "SHW": ("Retail-Building Materials, Hardware, Garden Supply", "NYSE"),
+    "FCX": ("Metal Mining", "NYSE"),
+    "DOW": ("Plastic Materials, Synth Resins & Nonvulcan Elastomers", "NYSE"),
+    "NUE": ("Steel Works, Blast Furnaces & Rolling Mills (Coke Ovens)", "NYSE"),
+}
+
+
+def _real_symbol_metadata(symbol: str) -> SymbolMetadata:
+    """Builds one `SymbolMetadata` using `_REAL_SEC_SECTOR_AND_EXCHANGE`
+    when this symbol was actually resolved (real `sector`/`exchange`),
+    or the honest all-`None` default otherwise (e.g. `AVB`, unresolved
+    on the fetch run above) -- never a fabricated value for a symbol
+    this session did not actually confirm."""
+    found = _REAL_SEC_SECTOR_AND_EXCHANGE.get(symbol)
+    if found is None:
+        return SymbolMetadata(symbol=symbol)
+    sector, exchange = found
+    return SymbolMetadata(symbol=symbol, sector=sector, exchange=exchange)
+
+
 # -- PILOT_UNIVERSE v1 -- Phase 22's original 16-symbol US long-term
 # pilot universe (docs/operations/MARKET-DATA-PROVIDER.md), preserved
 # here unchanged as ONE named, versioned universe -- not the system's
@@ -128,7 +260,7 @@ PILOT_UNIVERSE_V1 = UniverseDefinition(
         "survivorship limitations)."
     ),
     symbols=tuple(
-        SymbolMetadata(symbol=s)
+        _real_symbol_metadata(s)
         for s in (
             "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "TSLA",
             "JPM", "V", "MA", "COST", "WMT", "JNJ", "XOM",
@@ -223,7 +355,7 @@ RESEARCH_UNIVERSE_STAGE2 = UniverseDefinition(
     ),
     symbols=PILOT_UNIVERSE_V1.symbols
     + tuple(
-        SymbolMetadata(symbol=s)
+        _real_symbol_metadata(s)
         for s in (
             # Industrials
             "CAT", "HON", "UPS", "BA",
@@ -303,7 +435,7 @@ RESEARCH_UNIVERSE_STAGE3 = UniverseDefinition(
     ),
     symbols=RESEARCH_UNIVERSE_STAGE2.symbols
     + tuple(
-        SymbolMetadata(symbol=s)
+        _real_symbol_metadata(s)
         for s in (
             # Real Estate (absent from Stage 2)
             "PLD", "AMT", "EQIX", "SPG",
@@ -389,7 +521,7 @@ RESEARCH_UNIVERSE_STAGE4 = UniverseDefinition(
     ),
     symbols=RESEARCH_UNIVERSE_STAGE3.symbols
     + tuple(
-        SymbolMetadata(symbol=s)
+        _real_symbol_metadata(s)
         for s in (
             # Energy (4 symbols after Stage 3 -- the diagnosed SLB
             # concentration root cause; deepened most deliberately)
