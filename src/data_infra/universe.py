@@ -44,12 +44,31 @@ this session did not confirm (`AVB`, whose CIK lookup did not resolve
 on that run) is still left `None` via `_real_symbol_metadata`'s own
 "unresolved -> honest default" fallback, not silently skipped or
 guessed.
+
+**Session 36 continued (ADR-0061) partially fulfills this promise for
+`listed_from`**: `_SP500_PIT_CONFIRMED_LISTED_FROM` below holds real
+S&P 500 index-membership join dates for 32 symbols, computed by
+`scripts/compute_sp500_pit_listed_from.py` from the real, MIT-licensed
+`hanshof/sp500_constituents` scrape (ADR-0037). This is a genuine,
+real-data-sourced improvement, moving `audit_survivorship`'s
+classification of the universes below from `CURRENT-UNIVERSE-ONLY`
+toward `PARTIALLY_MITIGATED` -- but it is NOT a claim that
+survivorship bias is resolved: every symbol in these universes was
+selected because it is a CURRENT holding, so this data can only ever
+confirm WHEN a still-surviving symbol joined the index, never restore
+a company that was removed and is therefore absent from these universes
+entirely (ADR-0037 Decision 3's limitation, unchanged). `listed_to` is
+never set from this data -- every one of these symbols is still an
+S&P 500 member as of the source dataset's last snapshot, so a
+`listed_to` value would be a fabricated delisting. See
+`_real_symbol_metadata`'s own docstring for the ticker-vs-corporate-
+identity caveat that applies to every `listed_from` value below.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Sequence
 
 from data_infra.enums import InstrumentType, SecurityStatus
@@ -229,17 +248,62 @@ _REAL_SEC_SECTOR_AND_EXCHANGE: dict[str, tuple[str, Optional[str]]] = {
 }
 
 
+# Real S&P 500 index-membership join dates (ADR-0061), computed by
+# `scripts/compute_sp500_pit_listed_from.py` from the real, MIT-
+# licensed `hanshof/sp500_constituents` scrape (ADR-0037). Only the 32
+# symbols (of 87 in RESEARCH_UNIVERSE_STAGE4) for which the source data
+# was NOT left-censored -- i.e. the symbol was NOT already present in
+# the dataset's very first (1996-01-02) snapshot, so its apparent join
+# date is a real, dateable event rather than "unknown, predates the
+# dataset." Every one of these 32 symbols is still an S&P 500 member as
+# of the source dataset's last snapshot (2025-08-23) -- none has a
+# `listed_to` value, since none has actually left the index.
+#
+# **Ticker-vs-corporate-identity caveat (see module docstring):** this
+# dataset tracks TICKER STRINGS, not durable corporate identity. For a
+# ticker that changed name, or was newly issued after a merger/spinoff/
+# restructuring, `listed_from` reflects when THAT TICKER STRING first
+# appeared in an S&P 500 snapshot -- which is not always the same thing
+# as "when this business first became part of the S&P 500" (e.g. a
+# renamed ticker for an already-included company would show the RENAME
+# date here, not the company's true original inclusion date). This
+# project does not attempt to classify which of the 32 symbols below
+# fall into that category from background knowledge -- doing so without
+# a verified source would itself be exactly the fabrication this
+# project's discipline forbids. Every value here is a REAL date from a
+# REAL, licensed dataset; it is the INTERPRETATION ("this is when the
+# company itself joined") that carries this caveat, not the date itself.
+_SP500_PIT_CONFIRMED_LISTED_FROM: dict[str, str] = {
+    "ABBV": "2013-01-02", "ADBE": "1997-05-06", "AMT": "2007-11-19", "AMZN": "2005-11-21",
+    "AVB": "2007-01-10", "AVGO": "2014-05-08", "CRM": "2008-09-15", "DLR": "2016-05-18",
+    "DOW": "2023-05-17", "EQIX": "2015-03-23", "GOOGL": "2006-04-03", "GS": "2002-07-22",
+    "KMI": "2000-12-12", "LIN": "2018-11-06", "MA": "2008-07-18", "META": "2022-06-09",
+    "NVDA": "2001-11-30", "O": "2015-04-07", "PLD": "2003-07-17", "PM": "2008-03-31",
+    "PSA": "2005-08-19", "PSX": "2012-05-01", "QCOM": "1999-07-22", "RTX": "2020-04-03",
+    "SPG": "2002-06-26", "SRE": "1998-06-29", "TMO": "1997-01-02", "TSLA": "2020-12-21",
+    "UPS": "2002-07-22", "V": "2009-12-21", "VLO": "2004-04-29", "WELL": "2009-01-30",
+}
+
+
 def _real_symbol_metadata(symbol: str) -> SymbolMetadata:
     """Builds one `SymbolMetadata` using `_REAL_SEC_SECTOR_AND_EXCHANGE`
     when this symbol was actually resolved (real `sector`/`exchange`),
     or the honest all-`None` default otherwise (e.g. `AVB`, unresolved
     on the fetch run above) -- never a fabricated value for a symbol
-    this session did not actually confirm."""
+    this session did not actually confirm. Separately merges in a real
+    `listed_from` from `_SP500_PIT_CONFIRMED_LISTED_FROM` when
+    available (ADR-0061) -- an independent data source from `sector`/
+    `exchange`, so a symbol can have either, both, or neither
+    populated. `listed_to` is never set here (see that dict's own
+    comment for why)."""
     found = _REAL_SEC_SECTOR_AND_EXCHANGE.get(symbol)
-    if found is None:
-        return SymbolMetadata(symbol=symbol)
-    sector, exchange = found
-    return SymbolMetadata(symbol=symbol, sector=sector, exchange=exchange)
+    sector, exchange = found if found is not None else (None, None)
+    listed_from_str = _SP500_PIT_CONFIRMED_LISTED_FROM.get(symbol)
+    listed_from = (
+        datetime.strptime(listed_from_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if listed_from_str is not None else None
+    )
+    return SymbolMetadata(symbol=symbol, sector=sector, exchange=exchange, listed_from=listed_from)
 
 
 # -- PILOT_UNIVERSE v1 -- Phase 22's original 16-symbol US long-term

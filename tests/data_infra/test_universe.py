@@ -21,6 +21,7 @@ from data_infra.universe import (
     SymbolMetadata,
     UniverseDefinition,
     _real_symbol_metadata,
+    _SP500_PIT_CONFIRMED_LISTED_FROM,
     build_security_masters,
     build_universe_memberships,
 )
@@ -74,14 +75,20 @@ class TestResearchUniverseStage2:
         assert RESEARCH_UNIVERSE_STAGE2.version != RESEARCH_UNIVERSE_STAGE1.version
         assert RESEARCH_UNIVERSE_STAGE2.name == RESEARCH_UNIVERSE_STAGE1.name  # same named universe, later stage
 
-    def test_stage2_symbols_carry_no_provider_confirmed_dates(self) -> None:
+    def test_stage2_symbols_carry_no_listed_to_and_only_real_confirmed_listed_from(self) -> None:
         """Stage 2 is a wider hand-curated list, not survivorship-bias
-        mitigation -- every entry must still leave listed_from/
-        listed_to unconfirmed, same honesty discipline as PILOT_UNIVERSE_V1."""
+        mitigation on its own -- `listed_to` stays unconfirmed for
+        every entry (no symbol has actually left the index), and
+        `listed_from` is real only for the subset ADR-0061's real
+        S&P 500 point-in-time data actually confirmed (never a
+        fabricated value for the rest)."""
         for entry in RESEARCH_UNIVERSE_STAGE2.symbols:
-            assert entry.listed_from is None
             assert entry.listed_to is None
             assert entry.source == "manual_curation"
+            if entry.symbol in _SP500_PIT_CONFIRMED_LISTED_FROM:
+                assert entry.listed_from is not None
+            else:
+                assert entry.listed_from is None
 
     def test_stage2_request_budget_fits_one_hourly_window(self) -> None:
         """24 new symbols x 2 requests/symbol (price + corporate
@@ -115,15 +122,15 @@ class TestResearchUniverseStage3:
         assert RESEARCH_UNIVERSE_STAGE3.version != RESEARCH_UNIVERSE_STAGE2.version
         assert RESEARCH_UNIVERSE_STAGE3.name == RESEARCH_UNIVERSE_STAGE2.name  # same named universe, later stage
 
-    def test_stage3_symbols_carry_no_provider_confirmed_dates(self) -> None:
-        """Stage 3 is a wider hand-curated list, not survivorship-bias
-        mitigation -- every entry must still leave listed_from/
-        listed_to unconfirmed, same honesty discipline as every prior
-        stage."""
+    def test_stage3_symbols_carry_no_listed_to_and_only_real_confirmed_listed_from(self) -> None:
+        """Same real-vs-honest-None split as Stage 2's own test above."""
         for entry in RESEARCH_UNIVERSE_STAGE3.symbols:
-            assert entry.listed_from is None
             assert entry.listed_to is None
             assert entry.source == "manual_curation"
+            if entry.symbol in _SP500_PIT_CONFIRMED_LISTED_FROM:
+                assert entry.listed_from is not None
+            else:
+                assert entry.listed_from is None
 
     def test_stage3_request_budget_fits_one_hourly_window(self) -> None:
         """24 new symbols x 2 requests/symbol must fit under the
@@ -158,15 +165,15 @@ class TestResearchUniverseStage4:
         assert RESEARCH_UNIVERSE_STAGE4.version != RESEARCH_UNIVERSE_STAGE3.version
         assert RESEARCH_UNIVERSE_STAGE4.name == RESEARCH_UNIVERSE_STAGE3.name  # same named universe, later stage
 
-    def test_stage4_symbols_carry_no_provider_confirmed_dates(self) -> None:
-        """Stage 4 is a wider hand-curated list, not survivorship-bias
-        mitigation -- every entry must still leave listed_from/
-        listed_to unconfirmed, same honesty discipline as every prior
-        stage."""
+    def test_stage4_symbols_carry_no_listed_to_and_only_real_confirmed_listed_from(self) -> None:
+        """Same real-vs-honest-None split as Stage 2's own test above."""
         for entry in RESEARCH_UNIVERSE_STAGE4.symbols:
-            assert entry.listed_from is None
             assert entry.listed_to is None
             assert entry.source == "manual_curation"
+            if entry.symbol in _SP500_PIT_CONFIRMED_LISTED_FROM:
+                assert entry.listed_from is not None
+            else:
+                assert entry.listed_from is None
 
     def test_stage4_request_budget_fits_one_hourly_window(self) -> None:
         """24 new symbols x 2 requests/symbol must fit under the
@@ -214,6 +221,26 @@ class TestRealSymbolMetadata:
         assert metadata.sector == "Petroleum Refining"
         assert metadata.exchange is None
 
+    def test_a_symbol_with_a_confirmed_sp500_pit_join_date_gets_a_real_listed_from(self) -> None:
+        # ADR-0061: an independent real data source from sector/exchange.
+        metadata = _real_symbol_metadata("TSLA")
+        assert metadata.listed_from == datetime(2020, 12, 21, tzinfo=timezone.utc)
+
+    def test_a_symbol_left_censored_in_the_sp500_pit_dataset_leaves_listed_from_none(self) -> None:
+        # AAPL was already present in the source dataset's very first
+        # snapshot -- true join date unknown, never fabricated.
+        metadata = _real_symbol_metadata("AAPL")
+        assert metadata.listed_from is None
+
+    def test_sector_exchange_and_listed_from_are_independently_populated(self) -> None:
+        # AVB has no real sector/exchange (unresolved CIK) but DOES have
+        # a real confirmed listed_from -- the two data sources must not
+        # be coupled to each other.
+        metadata = _real_symbol_metadata("AVB")
+        assert metadata.sector is None
+        assert metadata.exchange is None
+        assert metadata.listed_from == datetime(2007, 1, 10, tzinfo=timezone.utc)
+
 
 class TestUniverseDefinitionValidation:
     def test_rejects_empty_symbols(self) -> None:
@@ -244,14 +271,24 @@ class TestUniverseDefinitionValidation:
 
 
 class TestSymbolMetadataHonesty:
-    def test_pilot_universe_market_cap_bucket_and_listed_dates_are_still_unconfirmed(self) -> None:
-        """market_cap_bucket/listed_from/listed_to have no real data
-        source this project has ever integrated -- these must stay
-        None for every PILOT_UNIVERSE_V1 entry, unconditionally."""
+    def test_pilot_universe_market_cap_bucket_and_listed_to_are_still_unconfirmed(self) -> None:
+        """market_cap_bucket has no real data source this project has
+        ever integrated -- stays None unconditionally. listed_to stays
+        None too -- no PILOT_UNIVERSE_V1 symbol has actually left the
+        S&P 500 (ADR-0061)."""
         for entry in PILOT_UNIVERSE_V1.symbols:
             assert entry.market_cap_bucket is None
-            assert entry.listed_from is None
             assert entry.listed_to is None
+
+    def test_pilot_universe_listed_from_is_now_real_sp500_pit_data_where_resolved(self) -> None:
+        """Session 36 continued (ADR-0061): listed_from is no longer
+        unconditionally None -- real for symbols ADR-0061's real S&P
+        500 point-in-time data actually confirmed, still honestly None
+        for the rest (e.g. AAPL, present in the source dataset's very
+        first snapshot -- true join date unknown, never fabricated)."""
+        by_symbol = {s.symbol: s for s in PILOT_UNIVERSE_V1.symbols}
+        assert by_symbol["NVDA"].listed_from == datetime(2001, 11, 30, tzinfo=timezone.utc)
+        assert by_symbol["AAPL"].listed_from is None
 
     def test_pilot_universe_sector_is_now_real_sec_edgar_data_where_resolved(self) -> None:
         """Session 36 (ADR-0058): `sector`/`exchange` are no longer
@@ -275,7 +312,15 @@ class TestConverters:
     def test_build_universe_memberships_uses_supplied_valid_from(self) -> None:
         memberships = build_universe_memberships(PILOT_UNIVERSE_V1, valid_from=utc(2024, 1, 1))
         assert len(memberships) == len(PILOT_UNIVERSE_V1.symbols)
-        assert all(m.valid_from == utc(2024, 1, 1) for m in memberships)
+        # AAPL has no real, provider-confirmed listed_from (ADR-0061) --
+        # it must fall back to the caller-supplied valid_from.
+        by_id = {m.security_id: m for m in memberships}
+        assert by_id["AAPL"].valid_from == utc(2024, 1, 1)
+        # NVDA DOES have a real, provider-confirmed listed_from that
+        # predates 2024-01-01 -- the converter must prefer it over the
+        # caller-supplied fallback (Phase 29's own `s.listed_from or
+        # valid_from` precedent, unchanged by this ADR).
+        assert by_id["NVDA"].valid_from == datetime(2001, 11, 30, tzinfo=timezone.utc)
         assert all(m.universe == "PILOT_UNIVERSE" for m in memberships)
         assert {m.security_id for m in memberships} == set(PILOT_UNIVERSE_V1.symbol_ids)
 
