@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from datetime import date, datetime, timezone
+from typing import Optional
 
 import pytest
 
@@ -30,6 +31,7 @@ from strategy_research.factor_scores import (
     asset_growth_score,
     book_to_market_score,
     cashflow_yield_score,
+    combined_factor_score,
     dividend_growth_score,
     earnings_yield_score,
     fifty_two_week_high_score,
@@ -1633,5 +1635,112 @@ class TestValueCompositeScore:
         _add_value_fixture(repo, "ONLY_ONE", price_repo)
 
         scores = value_composite_score(["ONLY_ONE"], _utc(2023, 6, 1), repo, price_repo)
+
+        assert scores == {}
+
+
+# Fixed per-security fake values for the 9 legs `combined_factor_score`
+# combines. "GOOD" scores higher on every leg, "BAD" lower on every
+# leg -- isolates the aggregation logic itself (rank-averaging,
+# all-or-nothing missing-data exclusion) from any single underlying
+# factor's own real construction/fixture complexity, the same
+# monkeypatched-fake-score_fn isolation `test_factor_strategy.py`
+# already uses for the generic Strategy wrappers.
+_COMBINED_FAKE_PRICE_LEGS = {"GOOD": 10.0, "BAD": 1.0, "MISSING_PRICE_LEG": 5.0}
+_COMBINED_FAKE_FUNDAMENTALS_LEGS = {"GOOD": 9.0, "BAD": 0.0, "MISSING_PRICE_LEG": 5.0}
+_COMBINED_FAKE_QMJ = {"GOOD": 1.0, "BAD": -1.0, "MISSING_PRICE_LEG": 0.0}
+
+
+def _fake_short_term_reversal(security_id, as_of_time, data) -> Optional[float]:
+    assert isinstance(data, AsOfDataView)  # proves the fresh AsOfDataView wiring
+    return _COMBINED_FAKE_PRICE_LEGS.get(security_id)
+
+
+def _fake_illiquidity(security_id, as_of_time, data) -> Optional[float]:
+    assert isinstance(data, AsOfDataView)
+    return _COMBINED_FAKE_PRICE_LEGS.get(security_id)
+
+
+def _fake_fundamentals_leg(security_id, as_of_time, repository) -> Optional[float]:
+    return _COMBINED_FAKE_FUNDAMENTALS_LEGS.get(security_id)
+
+
+def _fake_hybrid_leg(security_id, as_of_time, fundamentals_repository, price_repository) -> Optional[float]:
+    return _COMBINED_FAKE_FUNDAMENTALS_LEGS.get(security_id)
+
+
+def _fake_quality_minus_junk(security_ids, as_of_time, fundamentals_repository, price_repository) -> dict:
+    return {sid: _COMBINED_FAKE_QMJ[sid] for sid in security_ids if sid in _COMBINED_FAKE_QMJ}
+
+
+def _patch_combined_factor_legs(monkeypatch, *, omit=()) -> None:
+    """Patches every one of `combined_factor_score`'s 9 underlying legs
+    with a fake, unless named in `omit` (left as the real function, so
+    a test can exercise a real missing-data path on exactly one leg)."""
+    fakes = {
+        "short_term_reversal_score": _fake_short_term_reversal,
+        "illiquidity_score": _fake_illiquidity,
+        "piotroski_f_score": _fake_fundamentals_leg,
+        "dividend_growth_score": _fake_fundamentals_leg,
+        "sloan_accruals_score": _fake_fundamentals_leg,
+        "size_score": _fake_hybrid_leg,
+        "altman_z_score": _fake_hybrid_leg,
+        "shareholder_yield_score": _fake_hybrid_leg,
+        "quality_minus_junk_score": _fake_quality_minus_junk,
+    }
+    for name, fake in fakes.items():
+        if name not in omit:
+            monkeypatch.setattr(f"strategy_research.factor_scores.{name}", fake)
+
+
+class TestCombinedFactorScore:
+    """Session 36 -- the "combine several independently-motivated weak
+    signals" expansion (see this function's own HYPOTHESIS docstring
+    for the RULE-0.8-compliant, sign-based-only leg selection). Uses
+    monkeypatched fakes for all 9 underlying legs (matching
+    `test_factor_strategy.py`'s isolation approach) rather than
+    real per-factor fixtures -- these tests are about the aggregation
+    logic (rank-averaging, all-or-nothing exclusion, the fresh
+    `AsOfDataView` construction for the 2 price-only legs) itself, not
+    about re-testing any individual factor's own already-tested
+    construction."""
+
+    def test_a_security_scoring_higher_on_every_leg_scores_higher(self, monkeypatch) -> None:
+        _patch_combined_factor_legs(monkeypatch)
+
+        scores = combined_factor_score(["GOOD", "BAD"], _utc(2023, 6, 1), fundamentals_repository=None, price_repository=None)
+
+        assert scores["GOOD"] > scores["BAD"]
+
+    def test_a_security_missing_any_leg_is_excluded_from_the_cross_section(self, monkeypatch) -> None:
+        # "MISSING_PRICE_LEG" has every leg except short_term_reversal,
+        # forced to None here specifically for this one security.
+        _patch_combined_factor_legs(monkeypatch)
+        monkeypatch.setattr(
+            "strategy_research.factor_scores.short_term_reversal_score",
+            lambda security_id, as_of_time, data: None if security_id == "MISSING_PRICE_LEG" else _COMBINED_FAKE_PRICE_LEGS.get(security_id),
+        )
+
+        scores = combined_factor_score(
+            ["GOOD", "BAD", "MISSING_PRICE_LEG"], _utc(2023, 6, 1), fundamentals_repository=None, price_repository=None,
+        )
+
+        assert "GOOD" in scores and "BAD" in scores
+        assert "MISSING_PRICE_LEG" not in scores
+
+    def test_a_security_missing_from_quality_minus_junk_is_excluded_before_the_per_security_loop(self, monkeypatch) -> None:
+        _patch_combined_factor_legs(monkeypatch)
+
+        scores = combined_factor_score(
+            ["GOOD", "BAD", "NOT_IN_QMJ"], _utc(2023, 6, 1), fundamentals_repository=None, price_repository=None,
+        )
+
+        assert "GOOD" in scores and "BAD" in scores
+        assert "NOT_IN_QMJ" not in scores
+
+    def test_fewer_than_two_scorable_securities_returns_an_empty_dict_not_a_fabricated_score(self, monkeypatch) -> None:
+        _patch_combined_factor_legs(monkeypatch)
+
+        scores = combined_factor_score(["GOOD"], _utc(2023, 6, 1), fundamentals_repository=None, price_repository=None)
 
         assert scores == {}

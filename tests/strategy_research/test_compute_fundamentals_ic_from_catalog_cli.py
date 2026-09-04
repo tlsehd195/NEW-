@@ -607,3 +607,92 @@ class TestEndToEndAgainstSyntheticCatalogs:
             ])
             assert exit_code == 0
             assert f"Fundamentals Signal IC: {score}" in capsys.readouterr().out
+
+
+class TestCombinedFactorScoreOption:
+    """Session 36 -- `combined_factor_score` is `UniverseScoreFn`-shaped
+    exactly like `quality_minus_junk`/`value_composite` above, so it
+    reuses the same `_UNIVERSE_SCORES`/`compute_universe_ic_series` call
+    path with no new plumbing. Needs a fixture covering all 9 of its
+    underlying legs' concepts at once (piotroski's 2-year concept set,
+    altman_z's distress-formula concepts, dividend_growth's 2-year
+    PaymentsOfDividends, plus everything quality_minus_junk/
+    shareholder_yield/size already need) -- a strict superset of the
+    fixture above, not a new construction. The two symbols are
+    deliberately given DIFFERENT fundamentals (unlike the identical-
+    fixture pattern `TestQualityMinusJunkAndValueCompositeOptions`
+    above uses) -- identical values tie every rank, which makes
+    `spearman_ic` correctly return `None` (zero variance in scores),
+    silently producing `observations=0`. That would make this test
+    pass even if the CLI wiring were broken, so real differentiation is
+    needed to prove an IC is actually computed."""
+
+    def test_combined_factor_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
+        # Different daily drift per symbol -- both the fundamentals AND
+        # the forward returns must differ between the two symbols, or
+        # spearman_ic correctly (not a bug) returns None for a
+        # zero-variance side and every rebalance date is silently
+        # skipped, producing observations=0 even with correct wiring.
+        daily_drifts = {symbols[0]: 1.0005, symbols[1]: 0.9996}
+
+        price_engine = new_engine(tmp_path, name="price_combined")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        for symbol in symbols:
+            drift = daily_drifts[symbol]
+            closes = [100.0 * (drift**i) for i in range(len(days))]
+            price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        fundamentals_engine = new_engine(tmp_path, name="fundamentals_combined")
+        fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
+        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        prior_end = datetime(2016, 12, 31, tzinfo=timezone.utc)
+        # multiplier > 1.0 for the second symbol pushes every leg (all
+        # of which are ratios/changes/market-cap-scaled quantities) to
+        # a different rank, breaking the tie described above.
+        multipliers = {symbols[0]: 1.0, symbols[1]: 1.6}
+        two_year_concepts = (
+            ("NetIncomeLoss", 60.0, 50.0), ("Assets", 280.0, 300.0),
+            ("LongTermDebtNoncurrent", 50.0, 40.0), ("AssetsCurrent", 100.0, 110.0),
+            ("LiabilitiesCurrent", 90.0, 80.0), ("CommonStockSharesOutstanding", 1_000_000.0, 1_000_000.0),
+            ("Revenues", 180.0, 200.0), ("CostOfGoodsAndServicesSold", 130.0, 130.0),
+            ("PaymentsOfDividends", 20.0, 30.0),
+        )
+        single_year_concepts = (
+            ("StockholdersEquity", 500.0), ("Liabilities", 100.0),
+            ("NetCashProvidedByUsedInOperatingActivities", 60.0),
+            ("RetainedEarningsAccumulatedDeficit", 150.0), ("OperatingIncomeLoss", 70.0),
+        )
+        for symbol in symbols:
+            m = multipliers[symbol]
+            for concept, prior_value, current_value in two_year_concepts:
+                fundamentals_repo.add_fundamental(
+                    _fy_record(symbol, f"{symbol}:{concept}:prior", concept=concept, value=prior_value * m, period_end=prior_end)
+                )
+                fundamentals_repo.add_fundamental(
+                    _fy_record(symbol, f"{symbol}:{concept}:current", concept=concept, value=current_value * m, period_end=period_end)
+                )
+            for concept, value in single_year_concepts:
+                fundamentals_repo.add_fundamental(
+                    _fy_record(symbol, f"{symbol}:{concept}", concept=concept, value=value * m, period_end=period_end)
+                )
+        fundamentals_engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price_combined"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals_combined"),
+            "--universe", "PILOT_UNIVERSE",
+            "--score", "combined_factor",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "Fundamentals Signal IC: combined_factor" in out
+        assert "observations=0" not in out
