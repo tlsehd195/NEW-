@@ -4,7 +4,64 @@
 > 진행되었는지 파악할 수 있어야 한다. 이 파일은 각 세션 종료 시 반드시
 > 최신 상태로 갱신한다.
 
-**Last Updated:** 2026-09-03
+**Last Updated:** 2026-09-04
+**Updated By:** Claude Code (Session 37 — 사용자가 실제 페이퍼 트레이딩 사이클 CLI 실행 로그(`python3 scripts/run_paper_trading_cycle.py --universe RESEARCH_UNIVERSE ...`)를 붙여넣으며 시작 — 그 스크립트는 리포지토리에 존재하지 않았음(사용자가 어딘가에서 본 예시 출력이었거나, 아직 안 만들어진 스크립트의 기대 동작이었던 것으로 추정). `scripts/run_first_real_strategy_evaluation.py`/`run_long_horizon_validation.py`의 CLI 컨벤션과 Phase 6-8/13/15의 기존 Predict→Regime→Decision→Position Sizing→Risk Engine→Order Validation→`PaperTradingSession` 체인(전부 미수정, 새 오케스트레이션 루프만 추가)을 조사한 뒤 `scripts/run_paper_trading_cycle.py` 신규 작성 — `[--start, --end]` 구간의 US_EQUITY 거래일마다 체크포인트 하나씩, 유니버스 전 종목에 대해 그 체인을 실행하고 `broker.validation.build_validated_order` + `PaperTradingSession.submit`으로 페이퍼 주문 제출, JSON 리포트 기록. "DriftPredictor's own warmup window" 진단은 실제 `predict()`의 데이터충분성 게이트(`len(bars)<2 or reliability<min_data_completeness`)를 기존 fetch된 bar로 재현해 체크포인트 루프 전에 한 번에 계산(중복 predict 호출 없음). 로컬 합성 DuckDB 카탈로그 2종(정상 히스토리 확보 케이스, 워밍업 위주 케이스)으로 직접 실행해 주문 제출/체결/워밍업 카운트/최종 cash/리포트 파일까지 정상 동작 확인 — **이 sandbox 세션은 이번에도 `curl`로 재확인한 결과 `api.tiingo.com`/`stooq.com` 모두 egress proxy에서 `connect_rejected`로 차단(`ENVIRONMENT_BLOCKED`, Session 31 이래 상태 불변)이고 `data/`도 비어 있어 실제 실데이터로는 실행 못함** — 사용자가 로컬 환경에서 직접 ingest+실행하기로 결정, 이 세션은 실행 방법(정확한 CLI 커맨드, `--start`를 실제 시작일보다 60일+ 앞서 잡아야 하는 이유)만 안내. 브랜치 `claude/paper-trading-cycle-report-hgd1gp`에 커밋+푸시 완료, PR은 아직 미생성(사용자가 명시적으로 요청 안 함). src/ 아래 기존 모듈은 전혀 수정하지 않음(신규 스크립트 1개 추가뿐).)
+
+---
+
+## 신규 CLI: `scripts/run_paper_trading_cycle.py` (Session 37, 2026-09-04) — 실데이터 실행은 아직 사용자 로컬에서 미완료
+
+기존 Predict→Regime→Decision→Position Sizing→Risk Engine→Order
+Validation→`PaperTradingSession` 체인(Phase 6-8/13/15, 전부 미수정)을
+날짜별 체크포인트 루프로 묶은 새 CLI. `run_first_real_strategy_evaluation.py`/
+`run_long_horizon_validation.py`와 달리 이건 walk-forward 검증이 아니라
+**실제 페이퍼 계좌 하나를 시간순으로 굴리는 시뮬레이션**이다 — 매
+체크포인트마다 유니버스 전 종목에 대해 예측→의사결정→사이징→
+리스크체크를 거쳐 `broker.validation.build_validated_order`로 검증된
+주문만 `PaperTradingSession.submit`으로 제출한다.
+
+- **`--universe`/`--db-path`/`--paper-store`/`--start`/`--end`/`--out`**:
+  `--db-path`는 `ingest_real_market_data.py`가 이미 채워둔 실데이터
+  카탈로그, `--paper-store`는 이 페이퍼 계좌 전용의 별도 DuckDB
+  카탈로그(주문/체결/상태 이력이 `storage/paper_repository.py` +
+  `storage/broker_repository.py`를 통해 영속화됨) — 서로 다른 두
+  카탈로그를 섞지 않음.
+- **워밍업 진단**: `DriftPredictor` 기본 `lookback_days=60`이 요구하는
+  61일치 실데이터가 아직 없는 체크포인트를, 이미 fetch한 bar들로부터
+  루프 시작 전에 한 번에 계산해서 `"Running N checkpoint(s) (W within
+  warmup)"` 형태로 출력. 실제 `predict()` 호출을 중복하지 않음.
+  `--start`를 실제 페이퍼 트레이딩 원하는 시작일과 똑같이 잡으면 초반
+  체크포인트 대부분이 워밍업으로 빠진다는 걸 로컬 테스트로 실측
+  확인(합성 카탈로그로 pre-start 이력이 8거래일뿐인 케이스: 44개 중
+  37개가 워밍업, 주문 0건).
+- **체크포인트마다**: 종목별로 주문 제출 시 `portfolio` 스냅샷을 즉시
+  갱신(다음 종목이 이번에 쓴 현금을 반영해서 사이징하도록)하되,
+  마크투마켓(`accounting.mark_to_market`)은 체크포인트 끝에 한 번만
+  수행 — 같은 날 여러 건 주문이 겹칠 때 신규 포지션의 시가평가가 그
+  날 안에서는 즉시 반영되지 않는다는 걸 코드 주석으로 명시.
+  `session.advance(checkpoint_time)`로 이전 체크포인트에 남아있던
+  PENDING 주문도 매일 재시도.
+- **검증**: 합성 데이터로 만든 로컬 DuckDB 카탈로그 2종(1) 5개월치
+  사전 이력 확보 → 6개 종목 중 6건 주문 전부 체결, 워밍업 0건, (2)
+  사전 이력 8거래일뿐 → 37/44 체크포인트 워밍업, 주문 0건 — 로
+  end-to-end 스모크 테스트 완료. **실제 real_market_data로는 아직 못
+  돌려봄** — 이 sandbox 세션은 `api.tiingo.com`/`stooq.com` 모두
+  egress proxy 차단(`ENVIRONMENT_BLOCKED`, 매 세션 재확인되는 기존
+  상태) + `data/` 디렉토리가 비어 있음. 사용자가 로컬 환경에서
+  `ingest_real_market_data.py` → 이 스크립트 순서로 직접 돌려보고
+  결과를 공유하기로 함.
+- 브랜치 `claude/paper-trading-cycle-report-hgd1gp`에 커밋+푸시
+  완료(1 커밋). PR 미생성. `src/` 아래 기존 모듈은 전혀 안 건드림 —
+  신규 스크립트 파일 1개만 추가.
+- **다음 세션 시작점**: 사용자가 실데이터 실행 결과를 가져오면 (1)
+  결과 해석 (제출/체결 비율, 워밍업 비율, cash 소진 패턴이 합리적인지),
+  (2) 필요시 PR 생성, (3) 그 이후 원래 Session 36 말미의 백로그(raw IC
+  20개 편입 판단, 리스크 레이어 BLOCKING 항목, Learning Engine 등)로
+  복귀.
+
+---
+
+**Last Updated (Session 36):** 2026-09-03
 **Updated By:** Claude Code (Session 36 — Phase 33 continued: real Stage 3(64종목) 결과 수신 + 인프라 축 잔여 갭 정리(ADR-0045) + 문헌 조사 기반 신규 팩터 17개 추가, 원래 12개 후보 중 기각 안 된 것 전부 완료(Decision 8-12) + 외부 라이브러리 5개로 우리 통계 로직 교차검증(ADR-0046, 프로덕션 의존성 변경 없음) + 전체 인용 논문 감사(ADR-0047, 4차례 정정) + S급 재조사로 찾은 Size/장기·단기 역전/저베타/gross profitability/illiquidity/Altman Z-Score/52주 최고가/MAX effect factor 9개 추가 + CLI 배선 감사로 이미 만들어져 있던 팩터 3개(book_to_market/sales_yield/cashflow_yield) 배선 누락 발견·수정(ADR-0043 Decision 13-16) + Learning Engine 문헌 근거 기록(ADR-0015 보강) + "매매 근거 기록 후 재학습" 파이프라인 실제로 안 통하던 배선 버그 2건 발견·수정(ADR-0048) + 실제로 학습하는 첫 CandidateTrainer(LinearRegressionTrainer) 구현 + 세 번째 배선 갭(LabeledSample.features) 발견·수정 + Evaluator 샘플별 예측 지원(ADR-0049) + 사용자가 실제 63종목 ingestion과 raw IC 19개를 실행·relay, 그 과정에서 ADR-0042가 이미 고쳤던 XOM CIK 버그가 CLI 플래그 안내 누락으로 재발한 것 발견, `_KNOWN_CIK_OVERRIDES` 기본값으로 근본 수정(ADR-0050) + 사용자가 수정 반영 후 재실행, XOM 정상 확인(1712건, source=override) + raw IC 20개(sales_yield 포함) 전부 확정 수신, 부호 기반 해석 기록 + 사용자가 "17개 전부 walk-forward 풀에 편입" 선택 → 20개 raw-IC-screened candidate 전부를 `run_long_horizon_validation.py`에 배선(ADR-0051): 4개 범용 Strategy 래퍼(`factor_strategy.py`) 신설, 후보 테이블+factory 함수로 루프 기반 배선의 late-binding 클로저 버그를 실제 import 테스트로 검증, 전체 스위트 2213개 통과 + 실제 28개 후보 walk-forward/PBO/DSR 결과 수신, size/altman_z가 CANDIDATE 달성했으나 size는 concentration 리포트로 SLB 단일 종목 몰빵(76.3%) 발견, altman_z는 TEST 저조 → 둘 다 VALIDATED 보류 + top_n=5 기본값이 통계적 breadth 부족(Live 리스크 정책과의 불일치라는 최초 프레이밍은 지침 section 17 위반으로 정정)을 유발한다는 걸 발견, top_n=10으로 통일해 28개 후보 재실행(ADR-0052) → 재실행 결과 size는 CANDIDATE 탈락(가설 확인), altman_z/rank_average_ensemble은 CANDIDATE 등급이지만 TEST 마이너스라 둘 다 보류 → Session 36 전체 결론: 문헌 후보 20개 중 VALIDATED 승격 가능한 후보 없음, RULE 0.8/PBO/DSR 규율이 오탐 방지에 실제로 작동한 사례 + 사용자 요청("가장 좋다고 생각하는 방향으로 진행")으로 이 세션의 모든 실측 결과(raw IC 20개, 28후보 walk-forward/PBO/DSR 2회분, size 콘센트레이션 발견, top_n 수정)를 `STRATEGY-VALIDATION-REPORT.md`(신규 "Phase 33 Addendum" 섹션)와 `PRODUCTION-READINESS-MATRIX.md`(Walk Forward 행 + 서술 갱신)에 정식 반영 — PROJECT_STATUS.md의 세션 로그에만 흩어져 있던 내용을 이 프로젝트의 공식 리서치/준비상태 문서에 통합, 문서 전용 변경이라 테스트 재실행 없음 + 사용자 요청("전략을 인터넷이나 S급 논문에서 찾아봐")으로 실제 웹 검색 수행 → idiosyncratic volatility(Ang, Hodrick, Xing & Zhang 2006)를 신규 후보로 발견·구현(ADR-0053, `idiosyncratic_volatility_score`) — 기존 low_volatility(총변동성)/low_beta(시장 공행성)와 구조적으로 다른, "시장 요인 제거 후 남는 종목 고유 잔차변동성" 지표. PEAD/SUE는 "2006년 이후 대형주에서는 효과가 사실상 0"이라는 문헌 자체 근거로 기각(우리 유니버스가 전부 대형주라 안 맞음), 모멘텀 재조사는 이미 우리 실측 IC가 0이라 기각. 아직 walk-forward 풀엔 안 넣음(raw IC 먼저). 신규 테스트 5개, 전체 스위트 2218개 통과)
 
 ---
