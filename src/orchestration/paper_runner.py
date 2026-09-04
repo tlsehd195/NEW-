@@ -23,31 +23,40 @@ pattern) is the caller's job, matching `broker.pipeline.
 submit_validated_order`'s own "return objects, caller decides what to
 keep" precedent.
 
-**Known, honestly-disclosed limitation (found while writing this
-module's own tests, not discovered later)**: `run_cycle` does not
-source `value_history` (past portfolio values) for `risk_engine.
-assess`. `RiskConfig.max_drawdown`/`max_portfolio_volatility` default
-to real numbers (`0.20`/`0.30`, Phase 8), and per `PortfolioRiskEngine`'s
-own fail-closed design (`src/risk/engine.py`), a configured check with
-no data to evaluate REJECTs (`drawdown_unknown`/
-`portfolio_volatility_unknown`) rather than silently passing -- so a
-caller using `risk_engine`'s default `RiskConfig` here will see every
-BUY rejected on those grounds specifically. A caller must either pass
-`RiskConfig(max_drawdown=None, max_portfolio_volatility=None)` (opting
-out of those two checks, same posture several existing test suites
-already take) or extend this module with real historical portfolio-
-value sourcing (not built here) before those checks can pass. Every
-other risk check (`max_position_weight`/`max_gross_exposure`/
-`concentration_limit`/`max_sector_weight`/`max_order_notional`/
-`minimum_cash_ratio`) is unaffected -- they need only the current
-`PortfolioView`, which this module already builds correctly.
+**`value_history` (Session 36 continued): now sourced, opt-in.** The
+limitation above was real when first written; `run_cycle` now accepts
+an optional `state: PaperRunnerState` a caller carries across
+successive calls. When supplied, `run_cycle` appends this cycle's real
+`portfolio.portfolio_value` to it and passes the running series to
+`risk_engine.assess` as `value_history` -- the same "last element is
+the current checkpoint's value" shape `risk.engine`'s own tests already
+use. `state=None` (the default) preserves the original behavior exactly:
+no `value_history` is passed, so `max_drawdown`/`max_portfolio_volatility`
+still REJECT unless the caller's `RiskConfig` sets them `None`. A
+resumed session should seed `PaperRunnerState.value_history` from
+whatever real, already-persisted portfolio-value log it has -- never
+fabricated or backfilled with guessed values for a gap.
+
+**Persistence (Session 36 continued): now available, opt-in.**
+`run_cycle` accepts optional `prediction_repository`/
+`regime_repository`/`decision_repository`/`sizing_repository`/
+`risk_repository` parameters -- when supplied, each stage's real output
+is recorded through them (the exact repository classes/methods
+`tests/integration/test_risk_lineage.py` already demonstrates,
+e.g. `storage.prediction_repository.DuckDBPredictionRepository`).
+`PaperTradingSession.submit` already persists its own order/fill/status
+records internally (`broker.paper.*`'s own repositories, unchanged,
+untouched here) -- these five parameters cover exactly the five stages
+that session does not already persist. All default to `None` (skip),
+matching `broker.pipeline.submit_validated_order`'s own "persist only
+if a repository is supplied" precedent.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional, Sequence
+from typing import Optional, Protocol, Sequence
 
 from backtest.asof import AsOfDataView
 from backtest.portfolio import PortfolioView, PositionView
@@ -77,6 +86,41 @@ from trade_journal.enums import TradeProvenance
 # weekend/holiday plus one missed provider update) -- still only ever
 # returns the latest *available* bar, never interpolates or guesses.
 _PRICE_LOOKBACK_DAYS = 5
+
+
+class PredictionRepository(Protocol):
+    def record(self, prediction: PredictionOutput) -> None: ...
+
+
+class RegimeRepository(Protocol):
+    def record_composite(self, regime: CompositeRegimeObservation) -> None: ...
+
+
+class DecisionRepository(Protocol):
+    def record(self, decision: DecisionOutput) -> None: ...
+
+
+class SizingRepository(Protocol):
+    def record(self, sizing: PositionSizingResult) -> None: ...
+
+
+class RiskRepository(Protocol):
+    def record(self, risk_checked: RiskCheckedPosition) -> None: ...
+
+
+@dataclass
+class PaperRunnerState:
+    """Mutable state a caller carries across successive `run_cycle`
+    calls for the same Paper session -- currently just the running
+    portfolio-value history `risk_engine.assess`'s `max_drawdown`/
+    `max_portfolio_volatility` checks need (`RiskConfig`, Phase 8). A
+    fresh `PaperRunnerState()` is correct for a brand-new session; a
+    caller resuming a previous one should seed `value_history` from
+    whatever real, already-persisted portfolio-value log it has --
+    this object never fabricates or backfills a gap with guessed
+    values."""
+
+    value_history: list[float] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -135,6 +179,12 @@ def run_cycle(
     position_sizer: PositionSizer,
     risk_engine: PortfolioRiskEngine,
     sector_by_security: Optional[dict[str, str]] = None,
+    state: Optional[PaperRunnerState] = None,
+    prediction_repository: Optional[PredictionRepository] = None,
+    regime_repository: Optional[RegimeRepository] = None,
+    decision_repository: Optional[DecisionRepository] = None,
+    sizing_repository: Optional[SizingRepository] = None,
+    risk_repository: Optional[RiskRepository] = None,
     provenance: TradeProvenance = TradeProvenance.PAPER_TRADING,
     experiment_id: Optional[str] = None,
 ) -> tuple[CycleOutcome, ...]:
@@ -154,27 +204,57 @@ def run_cycle(
     silently skip the check (fail-closed, unchanged from ADR-0062's own
     design). A caller that wants sector enforcement active must supply
     a real mapping here, e.g. from `data_infra.universe`'s own
-    `_REAL_SEC_SECTOR_AND_EXCHANGE`-derived data."""
+    `_REAL_SEC_SECTOR_AND_EXCHANGE`-derived data.
+
+    `state`, when supplied, makes this cycle's real `portfolio_value`
+    the newest point in a running series carried forward across calls,
+    passed to `risk_engine.assess` as `value_history` (see module
+    docstring). The five `*_repository` parameters, when supplied,
+    persist that stage's real output through the exact repository
+    classes `tests/integration/test_risk_lineage.py` already uses --
+    `PaperTradingSession.submit` already persists its own order/fill/
+    status records independently of these."""
     account = session.account_summary(as_of=as_of_time)
     portfolio = _portfolio_view(account, view, as_of_time)
+
+    value_history: Optional[tuple[float, ...]] = None
+    if state is not None:
+        value_history = tuple(state.value_history) + (portfolio.portfolio_value,)
+        state.value_history.append(portfolio.portfolio_value)
 
     outcomes = []
     for security_id in security_ids:
         current_price = _reference_price(view, security_id, as_of_time)
         prediction = predictor.predict(view, security_id, provenance=provenance, experiment_id=experiment_id)
+        if prediction_repository is not None:
+            prediction_repository.record(prediction)
+
         regime = regime_detector.compute_composite(view, security_id, provenance=provenance, experiment_id=experiment_id)
+        if regime_repository is not None:
+            regime_repository.record_composite(regime)
+
         decision = decision_agent.decide(
             security_id, as_of_time, prediction, regime, portfolio,
             provenance=provenance, experiment_id=experiment_id,
         )
+        if decision_repository is not None:
+            decision_repository.record(decision)
+
         sizing = position_sizer.size(
             security_id, as_of_time, decision, prediction, regime, portfolio,
             current_price=current_price, provenance=provenance, experiment_id=experiment_id,
         )
+        if sizing_repository is not None:
+            sizing_repository.record(sizing)
+
         risk_checked = risk_engine.assess(
             security_id, as_of_time, sizing, portfolio, current_price=current_price,
-            sector_by_security=sector_by_security, provenance=provenance, experiment_id=experiment_id,
+            sector_by_security=sector_by_security, value_history=value_history,
+            provenance=provenance, experiment_id=experiment_id,
         )
+        if risk_repository is not None:
+            risk_repository.record(risk_checked)
+
         current_quantity = portfolio.positions[security_id].quantity if security_id in portfolio.positions else 0.0
         validation = build_validated_order(
             risk_checked, current_quantity, configuration_version=session.config.configuration_version(),

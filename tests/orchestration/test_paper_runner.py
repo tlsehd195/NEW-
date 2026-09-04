@@ -27,7 +27,7 @@ from broker.paper.session import PaperTradingSession
 from decision.agent import BaselineRuleDecisionAgent
 from decision.config import DecisionConfig
 
-from orchestration.paper_runner import run_cycle
+from orchestration.paper_runner import PaperRunnerState, run_cycle
 
 from predict.config import PredictionConfig
 from predict.predictor import DriftPredictor
@@ -39,6 +39,13 @@ from risk.config import PositionSizingConfig, RiskConfig
 from risk.engine import DeterministicPortfolioRiskEngine
 from risk.enums import RiskCheckStatus
 from risk.sizing import DeterministicPositionSizer
+
+from storage.config import StorageConfig
+from storage.decision_repository import DuckDBDecisionRepository
+from storage.engine import StorageEngine
+from storage.prediction_repository import DuckDBPredictionRepository
+from storage.regime_repository import DuckDBRegimeRepository
+from storage.risk_repository import DuckDBPositionSizingRepository, DuckDBRiskRepository
 
 
 def _scenario():
@@ -184,3 +191,85 @@ class TestMaxOrderNotionalPropagatesThroughTheWholeChain:
         assert "max_order_notional" in tight_outcome.risk_checked.breached_limits
         assert tight_outcome.submission is not None
         assert tight_outcome.submission.filled_quantity < loose_outcome.submission.filled_quantity
+
+
+class TestValueHistoryState:
+    """Session 36 continued -- PaperRunnerState lets max_drawdown/
+    max_portfolio_volatility actually become evaluable, closing the
+    limitation ADR-0067's own module docstring originally disclosed."""
+
+    def test_without_state_a_real_max_drawdown_always_rejects_as_unknown(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_drawdown=0.5, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, **_components(risk_config))[0]
+
+        assert "drawdown_unknown" in outcome.risk_checked.breached_limits
+
+    def test_with_state_value_history_accumulates_across_cycles(self) -> None:
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_drawdown=0.5, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+        components = _components(risk_config)
+        state = PaperRunnerState()
+
+        outcomes = []
+        for offset in range(5):
+            clock.index = 100 + offset
+            outcomes.append(run_cycle(["AAA"], view.current_time, view, session, state=state, **components)[0])
+
+        assert len(state.value_history) == 5
+        # With enough history (>= RiskConfig.min_history_for_volatility,
+        # default 5), the drawdown check has real data to evaluate --
+        # the FIRST cycle (1 history point) must still reject as
+        # drawdown_unknown; the LAST must not, for that specific reason.
+        assert "drawdown_unknown" in outcomes[0].risk_checked.breached_limits
+        assert "drawdown_unknown" not in outcomes[-1].risk_checked.breached_limits
+
+
+class TestPersistence:
+    """Session 36 continued -- the five upstream stages `PaperTradingSession.
+    submit` itself never persists, now optionally recorded through the
+    exact repository classes `tests/integration/test_risk_lineage.py`
+    already established."""
+
+    def test_all_five_repositories_receive_exactly_one_record(self, tmp_path) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+
+        engine = StorageEngine(StorageConfig(tmp_path / "store"))
+        prediction_repo = DuckDBPredictionRepository(engine)
+        regime_repo = DuckDBRegimeRepository(engine)
+        decision_repo = DuckDBDecisionRepository(engine)
+        sizing_repo = DuckDBPositionSizingRepository(engine)
+        risk_repo = DuckDBRiskRepository(engine)
+
+        run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(),
+            prediction_repository=prediction_repo, regime_repository=regime_repo,
+            decision_repository=decision_repo, sizing_repository=sizing_repo, risk_repository=risk_repo,
+        )
+
+        assert len(prediction_repo.list_all(security_id="AAA")) == 1
+        assert len(regime_repo.list_composites(subject_id="AAA")) == 1
+        assert len(decision_repo.list_all(security_id="AAA")) == 1
+        assert len(sizing_repo.list_all(security_id="AAA")) == 1
+        assert len(risk_repo.list_all(security_id="AAA")) == 1
+        engine.close()
+
+    def test_omitted_repositories_persist_nothing(self, tmp_path) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+
+        engine = StorageEngine(StorageConfig(tmp_path / "store"))
+        prediction_repo = DuckDBPredictionRepository(engine)
+
+        run_cycle(["AAA"], view.current_time, view, session, **_components(), prediction_repository=prediction_repo)
+
+        assert len(prediction_repo.list_all(security_id="AAA")) == 1
+        engine.close()
