@@ -156,10 +156,28 @@ class LiveTradingSession:
         self._operational_state = OperationalState.OFF
         self._kill_switch_ids = _IdAllocator("KSEVENT")
         self._reconciliation_ids = _IdAllocator("RECON")
+        self._consecutive_failure_count = 0
 
     @property
     def operational_state(self) -> OperationalState:
         return self._operational_state
+
+    @property
+    def consecutive_failure_count(self) -> int:
+        """Count of `BrokerError`s on `submit_order` since the last
+        successful submission, reset to 0 on every success (LIVE-RISK-
+        POLICY.md item #11, ADR-0063). Observability only -- it does
+        NOT change `submit`'s existing behavior of halting to
+        `RECONCILIATION_REQUIRED` on the FIRST failure, which remains
+        unchanged and, per that ADR's own analysis, is already stricter
+        than any "tolerate N consecutive failures" policy this count
+        could be used to build. This count only advances while a new
+        submission is actually attempted -- it does not advance while
+        blocked in `RECONCILIATION_REQUIRED` (no submission is
+        attempted then), so it reflects failures across successive
+        submit attempts over the session's life, not a live retry
+        loop."""
+        return self._consecutive_failure_count
 
     def is_kill_switch_engaged(self) -> bool:
         return is_engaged(self._kill_switch_repository)
@@ -182,6 +200,7 @@ class LiveTradingSession:
         except BrokerError as exc:
             self._internal_status[order.client_order_id] = BrokerOrderStatus.UNKNOWN
             self._operational_state = OperationalState.RECONCILIATION_REQUIRED
+            self._consecutive_failure_count += 1
             return LiveSubmissionOutcome(
                 submitted=False, status="UNKNOWN", gate_result=gate_result, response=None,
                 error=f"{type(exc).__name__}: {exc}",
@@ -189,6 +208,7 @@ class LiveTradingSession:
 
         self._internal_status[order.client_order_id] = response.status
         self._operational_state = OperationalState.ACTIVE
+        self._consecutive_failure_count = 0
         return LiveSubmissionOutcome(submitted=True, status=response.status.value, gate_result=gate_result, response=response)
 
     def reconcile_order(self, client_order_id: str, *, as_of: datetime) -> ReconciliationResult:

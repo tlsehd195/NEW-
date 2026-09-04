@@ -83,6 +83,15 @@ class RiskConfig:
     max_gross_exposure: float = 1.0
     concentration_limit: float = 0.25
 
+    # -- max_order_notional: an absolute per-order dollar/currency-unit
+    # cap, independent of every weight-based limit above (ADR-0062
+    # session continued) -- closes LIVE-RISK-POLICY.md item #10, which
+    # previously had no field anywhere in risk.*/broker.live.* (only
+    # weight-based limits and quantity validation existed). `None`
+    # means "not enforced," same as every other Optional limit here --
+    # a human must explicitly set a value for it to have any effect --
+    max_order_notional: Optional[float] = None
+
     # -- cash_minimum: the portfolio must always retain at least this
     # fraction of portfolio_value as cash after any new BUY --
     minimum_cash_ratio: float = 0.05
@@ -102,14 +111,19 @@ class RiskConfig:
     # regime axis itself reporting UNKNOWN, which always rejects) --
     enforce_liquidity_limit: bool = True
 
-    # -- sector_limit / factor_limit: intentionally left unconfigured.
-    # data_infra.models.SecurityMaster has no sector/factor field, so
-    # there is no data to check these against yet (instruction section
-    # 12: "현재 데이터가 지원하지 않는 constraint는 억지로 구현하지
-    # 않는다") -- kept here, defaulted to None ("not enforced"), purely
-    # as the documented extension point a future Feature Registry
-    # addition can populate without a schema change --
+    # -- sector_limit: enforcement path now exists (ADR-0062,
+    # PortfolioRiskEngine.assess's opt-in sector_by_security parameter --
+    # SecurityMaster itself still has no sector field, so the caller
+    # must supply the mapping per call, e.g. sourced from data_infra.
+    # universe's own real sector data, ADR-0058). None here still means
+    # "not enforced" -- a human must explicitly set a value, same as
+    # max_turnover's own precedent --
     max_sector_weight: Optional[float] = None
+    # -- factor_limit: still intentionally left unconfigured.
+    # No factor-exposure data source exists anywhere in this project
+    # (instruction section 12: "현재 데이터가 지원하지 않는 constraint는
+    # 억지로 구현하지 않는다") -- kept here as a documented extension
+    # point, unchanged by ADR-0062 --
     max_factor_exposure: Optional[float] = None
 
     # -- minimum number of historical portfolio-value points required
@@ -125,6 +139,8 @@ class RiskConfig:
             raise ValueError("max_gross_exposure must be positive")
         if not 0.0 < self.concentration_limit <= 1.0:
             raise ValueError("concentration_limit must be in (0, 1]")
+        if self.max_order_notional is not None and self.max_order_notional <= 0:
+            raise ValueError("max_order_notional must be positive when configured")
         if not 0.0 <= self.minimum_cash_ratio < 1.0:
             raise ValueError("minimum_cash_ratio must be in [0, 1)")
         if self.max_drawdown is not None and not 0.0 < self.max_drawdown <= 1.0:

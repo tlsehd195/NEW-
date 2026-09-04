@@ -63,6 +63,7 @@ class PortfolioRiskEngine(Protocol):
         value_history: Optional[Sequence[float]] = None,
         turnover: Optional[float] = None,
         liquidity_state: Optional[str] = None,
+        sector_by_security: Optional[dict[str, str]] = None,
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         experiment_id: Optional[str] = None,
     ) -> RiskCheckedPosition: ...
@@ -96,6 +97,7 @@ class DeterministicPortfolioRiskEngine:
         *,
         value_history: Optional[Sequence[float]],
         turnover: Optional[float],
+        sector_by_security: Optional[dict[str, str]] = None,
     ) -> PortfolioRiskState:
         config = self._config
         position_weights = {
@@ -105,6 +107,22 @@ class DeterministicPortfolioRiskEngine:
         }
         gross_exposure = sum(position_weights.values()) if position_weights else 0.0
         concentration = max(position_weights.values()) if position_weights else 0.0
+
+        # sector_exposure: only computed when the caller supplies a
+        # sector_by_security mapping (e.g. sourced from data_infra.
+        # universe's own real, provider-confirmed sector data -- ADR-0058)
+        # -- SecurityMaster itself still has no sector field, so this
+        # engine cannot look it up on its own (module docstring). A
+        # security with a weight but no entry in sector_by_security is
+        # simply excluded from every sector's total, never guessed.
+        sector_exposure: Optional[dict[str, float]] = None
+        if sector_by_security is not None:
+            sector_exposure = {}
+            for sid, w in position_weights.items():
+                sector = sector_by_security.get(sid)
+                if sector is None:
+                    continue
+                sector_exposure[sector] = sector_exposure.get(sector, 0.0) + w
 
         drawdown: Optional[float] = None
         max_drawdown: Optional[float] = None
@@ -129,7 +147,7 @@ class DeterministicPortfolioRiskEngine:
             gross_exposure=gross_exposure,
             net_exposure=gross_exposure,  # no short positions are representable in this codebase today
             position_weights=position_weights,
-            sector_exposure=None,  # no sector data field exists on SecurityMaster -- see module docstring
+            sector_exposure=sector_exposure,
             drawdown=drawdown,
             max_drawdown=max_drawdown,
             portfolio_volatility=portfolio_volatility,
@@ -150,6 +168,7 @@ class DeterministicPortfolioRiskEngine:
         value_history: Optional[Sequence[float]] = None,
         turnover: Optional[float] = None,
         liquidity_state: Optional[str] = None,
+        sector_by_security: Optional[dict[str, str]] = None,
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         experiment_id: Optional[str] = None,
     ) -> RiskCheckedPosition:
@@ -195,6 +214,7 @@ class DeterministicPortfolioRiskEngine:
 
         risk_state = self._compute_risk_state(
             as_of_time, portfolio_state, value_history=value_history, turnover=turnover,
+            sector_by_security=sector_by_security,
         )
 
         if sizing_result is None:
@@ -272,6 +292,18 @@ class DeterministicPortfolioRiskEngine:
             clamp_to(config.concentration_limit)
             breached.append("concentration")
 
+        # max_order_notional -- an absolute dollar cap, independent of
+        # every weight-based limit above. Recomputed from the current
+        # (possibly already-clamped) weight, since this is the final
+        # absolute-notional check on whatever the position-weight
+        # clamps above already produced.
+        if config.max_order_notional is not None:
+            order_notional = weight * portfolio_state.portfolio_value
+            if order_notional > config.max_order_notional:
+                allowed_weight = config.max_order_notional / portfolio_state.portfolio_value
+                clamp_to(min(weight, allowed_weight))
+                breached.append("max_order_notional")
+
         # drawdown_limit -- configured means fail-closed on missing data
         if config.max_drawdown is not None:
             if risk_state.drawdown is None:
@@ -312,6 +344,30 @@ class DeterministicPortfolioRiskEngine:
                     RiskCheckStatus.REJECT, "turnover_limit_breached", breached=tuple(breached) + ("turnover_limit",),
                     final_target_weight=0.0, final_target_quantity=0.0, risk_state=risk_state,
                 )
+
+        # sector_limit -- configured means fail-closed on missing data,
+        # same pattern as turnover_limit above. Requires BOTH
+        # config.max_sector_weight set AND the caller supplying
+        # sector_by_security for this call; either without the other is
+        # "cannot evaluate this configured check right now", not "not
+        # configured" -- fail-closed, not silently skipped.
+        if config.max_sector_weight is not None:
+            sector = sector_by_security.get(security_id) if sector_by_security is not None else None
+            if sector is None:
+                return build(
+                    RiskCheckStatus.REJECT, "sector_unknown", breached=tuple(breached) + ("sector_unknown",),
+                    final_target_weight=0.0, final_target_quantity=0.0, risk_state=risk_state,
+                )
+            existing_sector_exposure = (risk_state.sector_exposure or {}).get(sector, 0.0)
+            if existing_sector_exposure + weight > config.max_sector_weight:
+                allowed_addition = max(0.0, config.max_sector_weight - existing_sector_exposure)
+                if allowed_addition <= 0:
+                    return build(
+                        RiskCheckStatus.REJECT, "sector_limit_breached", breached=tuple(breached) + ("sector_limit",),
+                        final_target_weight=0.0, final_target_quantity=0.0, risk_state=risk_state,
+                    )
+                clamp_to(min(weight, allowed_addition))
+                breached.append("sector_limit")
 
         # liquidity_limit -- only evaluated when the caller supplies a
         # liquidity_state at all (see module docstring / RiskConfig)

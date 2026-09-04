@@ -139,6 +139,37 @@ class TestExposureViolation:
         assert checked.reason == "gross_exposure_limit_breached"
 
 
+class TestMaxOrderNotional:
+    """LIVE-RISK-POLICY.md item #10 -- an absolute dollar cap,
+    independent of every weight-based limit."""
+
+    def test_notional_beyond_cap_clamps_the_position(self) -> None:
+        config = PositionSizingConfig(max_position_weight=0.90)
+        sizing = _sized_buy(confidence=1.0, volatility=0.05, config=config)
+        engine = DeterministicPortfolioRiskEngine(
+            RiskConfig(max_position_weight=1.0, concentration_limit=1.0, max_order_notional=5_000.0, max_drawdown=None, max_portfolio_volatility=None)
+        )
+        checked = engine.assess("AAA", T, sizing, empty_portfolio(), current_price=50.0)
+        assert checked.status == RiskCheckStatus.REDUCE
+        assert "max_order_notional" in checked.breached_limits
+        assert checked.final_target_weight * 100_000.0 <= 5_000.0 + 1e-6
+
+    def test_notional_within_cap_is_not_affected(self) -> None:
+        config = PositionSizingConfig(max_position_weight=0.05)
+        sizing = _sized_buy(confidence=1.0, volatility=0.05, config=config)
+        engine = DeterministicPortfolioRiskEngine(
+            RiskConfig(max_order_notional=90_000.0, max_drawdown=None, max_portfolio_volatility=None)
+        )
+        checked = engine.assess("AAA", T, sizing, empty_portfolio(), current_price=50.0)
+        assert "max_order_notional" not in checked.breached_limits
+
+    def test_not_configured_skips_the_check(self) -> None:
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_order_notional=None, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess("AAA", T, sizing, empty_portfolio(), current_price=50.0)
+        assert "max_order_notional" not in checked.breached_limits
+
+
 class TestTurnoverViolation:
     def test_turnover_beyond_limit_rejects(self) -> None:
         sizing = _sized_buy()
@@ -159,6 +190,74 @@ class TestTurnoverViolation:
         engine = DeterministicPortfolioRiskEngine(RiskConfig(max_turnover=None, max_drawdown=None, max_portfolio_volatility=None))
         checked = engine.assess("AAA", T, sizing, empty_portfolio(), current_price=50.0, turnover=None)
         assert checked.status == RiskCheckStatus.PASS
+
+
+class TestSectorLimit:
+    """ADR-0062: sector_by_security is caller-supplied and opt-in --
+    SecurityMaster itself still has no sector field. Same fail-closed-
+    when-configured pattern TestTurnoverViolation already established."""
+
+    def test_sector_limit_reduces_a_new_buy_that_would_exceed_it(self) -> None:
+        held = portfolio_holding(T, "BBB", quantity=500.0, average_cost=100.0, cash=50_000.0, portfolio_value=100_000.0)
+        sizing = _sized_buy(confidence=1.0, volatility=0.05, portfolio=held, config=PositionSizingConfig(max_position_weight=0.90))
+        engine = DeterministicPortfolioRiskEngine(
+            RiskConfig(
+                max_sector_weight=0.60, max_position_weight=1.0, max_gross_exposure=1.0, concentration_limit=1.0,
+                minimum_cash_ratio=0.0, max_drawdown=None, max_portfolio_volatility=None,
+            )
+        )
+        checked = engine.assess("AAA", T, sizing, held, current_price=50.0, sector_by_security={"AAA": "Tech", "BBB": "Tech"})
+        assert checked.status in (RiskCheckStatus.REDUCE, RiskCheckStatus.REJECT)
+        assert "sector_limit" in checked.breached_limits
+
+    def test_sector_already_at_cap_rejects_outright(self) -> None:
+        held = portfolio_holding(T, "BBB", quantity=1000.0, average_cost=100.0, cash=50_000.0, portfolio_value=100_000.0)
+        sizing = _sized_buy(confidence=1.0, volatility=0.05, portfolio=held, config=PositionSizingConfig(max_position_weight=0.90))
+        engine = DeterministicPortfolioRiskEngine(
+            RiskConfig(
+                max_sector_weight=1.0, max_position_weight=1.0, max_gross_exposure=2.0, concentration_limit=1.0,
+                minimum_cash_ratio=0.0, max_drawdown=None, max_portfolio_volatility=None,
+            )
+        )
+        checked = engine.assess("AAA", T, sizing, held, current_price=50.0, sector_by_security={"AAA": "Tech", "BBB": "Tech"})
+        assert checked.status == RiskCheckStatus.REJECT
+        assert checked.reason == "sector_limit_breached"
+
+    def test_sector_unknown_when_configured_but_no_mapping_supplied_rejects(self) -> None:
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_sector_weight=0.50, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess("AAA", T, sizing, empty_portfolio(), current_price=50.0, sector_by_security=None)
+        assert checked.status == RiskCheckStatus.REJECT
+        assert checked.reason == "sector_unknown"
+
+    def test_sector_unknown_when_this_security_missing_from_the_mapping_rejects(self) -> None:
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_sector_weight=0.50, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess("AAA", T, sizing, empty_portfolio(), current_price=50.0, sector_by_security={"BBB": "Tech"})
+        assert checked.status == RiskCheckStatus.REJECT
+        assert checked.reason == "sector_unknown"
+
+    def test_sector_not_configured_skips_the_check_even_without_a_mapping(self) -> None:
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_sector_weight=None, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess("AAA", T, sizing, empty_portfolio(), current_price=50.0, sector_by_security=None)
+        assert checked.status == RiskCheckStatus.PASS
+
+    def test_sector_exposure_is_populated_on_risk_state_only_when_a_mapping_is_supplied(self) -> None:
+        held = portfolio_holding(T, "BBB", quantity=500.0, average_cost=100.0, cash=50_000.0, portfolio_value=100_000.0)
+        sizing = _sized_buy(confidence=1.0, volatility=0.05, portfolio=held, config=PositionSizingConfig(max_position_weight=0.90))
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_drawdown=None, max_portfolio_volatility=None))
+        without_mapping = engine.assess("AAA", T, sizing, held, current_price=50.0)
+        assert without_mapping.risk_state.sector_exposure is None
+        with_mapping = engine.assess("AAA", T, sizing, held, current_price=50.0, sector_by_security={"BBB": "Tech"})
+        assert with_mapping.risk_state.sector_exposure == {"Tech": pytest.approx(0.5)}
+
+    def test_a_security_absent_from_the_mapping_is_excluded_from_every_sector_total(self) -> None:
+        held = portfolio_holding(T, "BBB", quantity=500.0, average_cost=100.0, cash=50_000.0, portfolio_value=100_000.0)
+        sizing = _sized_buy(confidence=1.0, volatility=0.05, portfolio=held, config=PositionSizingConfig(max_position_weight=0.90))
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess("AAA", T, sizing, held, current_price=50.0, sector_by_security={})
+        assert checked.risk_state.sector_exposure == {}
 
 
 class TestLiquidityViolation:

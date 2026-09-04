@@ -12,8 +12,12 @@ from risk.config import PositionSizingConfig, RiskConfig
 
 
 class TestUndefinedPolicyItemsDefaultToNotEnforced:
-    """#1, #6, #7 -- None means "not enforced," never a silently
-    invented number."""
+    """#1, #5, #6, #7, #10 -- None means "not enforced," never a
+    silently invented number. #5/#10 moved here from BLOCKING this
+    session (ADR-0062/ADR-0063): a real enforcement path now exists in
+    `PortfolioRiskEngine`, only the number itself (and, for #5, a
+    Live/Paper caller actually supplying `sector_by_security`) remain
+    undecided."""
 
     def test_daily_loss_limit_is_undefined_by_default(self) -> None:
         assert LiveTradingConfig().max_daily_loss is None
@@ -23,6 +27,12 @@ class TestUndefinedPolicyItemsDefaultToNotEnforced:
 
     def test_order_frequency_limit_is_undefined_by_default(self) -> None:
         assert LiveTradingConfig().max_order_frequency_per_hour is None
+
+    def test_sector_weight_is_undefined_by_default(self) -> None:
+        assert RiskConfig().max_sector_weight is None
+
+    def test_max_order_notional_is_undefined_by_default(self) -> None:
+        assert RiskConfig().max_order_notional is None
 
 
 class TestInheritedPolicyItemsMatchPhase8Defaults:
@@ -50,25 +60,22 @@ class TestInheritedPolicyItemsMatchPhase8Defaults:
 
 
 class TestBlockingPolicyItemsHaveNoField:
-    """#5, #10, #11 -- structurally confirmed absent, not merely unset.
-    A future addition of any of these fields should prompt updating
+    """#11 only, as of this session -- structurally confirmed absent,
+    not merely unset. `LiveTradingSession.consecutive_failure_count`
+    (ADR-0063) is a real, tested observability counter, but
+    deliberately NOT a configurable threshold -- adding one would mean
+    loosening the existing (stricter) single-failure halt behavior,
+    which this session declined to do without an explicit human
+    decision to that effect. A future addition of a
+    `max_consecutive_failures` field should prompt updating
     docs/operations/LIVE-RISK-POLICY.md, which this test's failure
     would flag."""
-
-    def test_risk_config_has_no_max_order_notional_field(self) -> None:
-        import dataclasses
-
-        field_names = {f.name for f in dataclasses.fields(RiskConfig)}
-        assert "max_order_notional" not in field_names
 
     def test_live_trading_config_has_no_max_consecutive_failures_field(self) -> None:
         import dataclasses
 
         field_names = {f.name for f in dataclasses.fields(LiveTradingConfig)}
         assert "max_consecutive_failures" not in field_names
-
-    def test_risk_config_sector_weight_is_unenforceable_placeholder(self) -> None:
-        assert RiskConfig().max_sector_weight is None
 
 
 class TestDataHealthTriggerIsNowWired:

@@ -220,6 +220,49 @@ class TestScenario20ProcessCrashAfterSubmitThenReconcile:
         assert result.status.value in ("MATCHED", "MISMATCH", "UNKNOWN")
 
 
+class TestConsecutiveFailureCount:
+    """LIVE-RISK-POLICY.md item #11, ADR-0063 -- observability only.
+    Does NOT change submit()'s existing halt-on-first-failure behavior
+    (still RECONCILIATION_REQUIRED after exactly one BrokerError)."""
+
+    def test_starts_at_zero(self) -> None:
+        session = _session()
+        assert session.consecutive_failure_count == 0
+
+    def test_a_single_broker_error_increments_it_to_one(self) -> None:
+        session = _session(failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 1
+
+    def test_a_successful_submission_resets_it_to_zero(self) -> None:
+        session = _session()
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 0
+
+    def test_repeated_failures_across_reconciliation_cycles_accumulate(self) -> None:
+        session = _session(failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        session.submit(_order(client_order_id="CID-1"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 1
+        # simulate reconciliation resolving the block, matching
+        # TestScenario20's own manual-state-manipulation pattern above
+        session._operational_state = OperationalState.ACTIVE  # type: ignore[attr-defined]
+        session.submit(_order(client_order_id="CID-2"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 2
+
+    def test_still_halts_on_the_first_failure_exactly_as_before(self) -> None:
+        # The count is additive observability -- it does not loosen the
+        # existing single-failure halt in any way.
+        session = _session(failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+        second = session.submit(_order(client_order_id="CID-2"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert second.error == "reconciliation_required"
+
+
 class TestNoBlindRetryAcrossFailureModes:
     @pytest.mark.parametrize("failure_mode,exc_type", [
         ("unavailable", BrokerTransportError),

@@ -75,10 +75,14 @@ class PortfolioRiskState:
     field that cannot be honestly computed from the data supplied to
     `PortfolioRiskEngine.assess()` is `None` -- never estimated
     (instruction section 7: "알 수 없는 위험을 안전하다고 간주하지
-    않는다"). `sector_exposure` in particular is always `None` today:
-    `data_infra.models.SecurityMaster` has no sector field, so there is
-    no data to compute it from (a documented gap, not an oversight --
-    see docs/decisions/ADR-0014)."""
+    않는다"). `sector_exposure` is `None` unless the caller supplies a
+    `sector_by_security` mapping to `assess()` (ADR-0062):
+    `data_infra.models.SecurityMaster` itself still has no sector
+    field, so this engine cannot look sectors up on its own -- the
+    caller (e.g. sourcing `data_infra.universe`'s own real,
+    provider-confirmed sector data, ADR-0058) must supply the mapping
+    per call, opt-in, same pattern `turnover`/`liquidity_state` already
+    established."""
 
     as_of_time: datetime
     portfolio_value: float
