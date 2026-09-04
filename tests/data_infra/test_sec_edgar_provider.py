@@ -228,6 +228,92 @@ class TestFetchTickerMap:
             provider.fetch_ticker_map(_StubTransport())
 
 
+_SAMPLE_SUBMISSIONS = {
+    "cik": "1524472",
+    "entityType": "operating",
+    "sic": "1311",
+    "sicDescription": "CRUDE PETROLEUM AND NATURAL GAS",
+    "name": "Sample Energy Co",
+    "tickers": ["SAMP"],
+    "exchanges": ["NYSE"],
+}
+
+
+class TestFetchSubmissions:
+    def test_builds_the_correct_zero_padded_cik_path(self) -> None:
+        calls = []
+
+        class _StubTransport:
+            def get(self, path, *, timeout):
+                calls.append(path)
+                return SecEdgarTransportResponse(status_code=200, body=_SAMPLE_SUBMISSIONS, raw_text=None, headers={})
+
+        provider = SecEdgarFundamentalsProvider(SecEdgarConfig(), _StubTransport())
+        provider.fetch_submissions("0001524472")
+        assert calls == ["/submissions/CIK0001524472.json"]
+
+    def test_unexpected_shape_raises_permanent_provider_error(self) -> None:
+        class _StubTransport:
+            def get(self, path, *, timeout):
+                return SecEdgarTransportResponse(status_code=200, body=["not", "a", "dict"], raw_text=None, headers={})
+
+        provider = SecEdgarFundamentalsProvider(SecEdgarConfig(), _StubTransport())
+        with pytest.raises(PermanentProviderError):
+            provider.fetch_submissions("0001524472")
+
+
+class TestNormalizeSubmissions:
+    """The gap `TiingoDataProvider.normalize_symbol_metadata`'s own
+    docstring explicitly flags -- Tiingo's metadata endpoint never
+    supplies `sector`. EDGAR's submissions response DOES document a
+    real classification (`sicDescription`), so this is the one place
+    in this project a `SymbolMetadata.sector` value can honestly be
+    populated from an actual provider response rather than left `None`."""
+
+    def test_maps_sic_description_onto_sector(self) -> None:
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", _SAMPLE_SUBMISSIONS)
+        assert metadata.sector == "CRUDE PETROLEUM AND NATURAL GAS"
+
+    def test_maps_the_first_exchange(self) -> None:
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", _SAMPLE_SUBMISSIONS)
+        assert metadata.exchange == "NYSE"
+
+    def test_source_is_sec_edgar(self) -> None:
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", _SAMPLE_SUBMISSIONS)
+        assert metadata.source == "sec_edgar"
+
+    def test_missing_sic_description_leaves_sector_none_not_fabricated(self) -> None:
+        raw = {"cik": "1524472", "exchanges": ["NYSE"]}
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", raw)
+        assert metadata.sector is None
+
+    def test_empty_exchanges_list_leaves_exchange_none(self) -> None:
+        raw = {"sicDescription": "CRUDE PETROLEUM AND NATURAL GAS", "exchanges": []}
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", raw)
+        assert metadata.exchange is None
+
+    def test_exchanges_list_with_a_leading_empty_string_skips_to_the_next_real_value(self) -> None:
+        # A real, documented EDGAR quirk: some filers' exchanges list
+        # carries an empty-string placeholder entry.
+        raw = {"sicDescription": "CRUDE PETROLEUM AND NATURAL GAS", "exchanges": ["", "NYSE"]}
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", raw)
+        assert metadata.exchange == "NYSE"
+
+    def test_market_cap_bucket_and_listed_dates_stay_none(self) -> None:
+        # EDGAR's submissions shape does not name these -- never guessed.
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", _SAMPLE_SUBMISSIONS)
+        assert metadata.market_cap_bucket is None
+        assert metadata.listed_from is None
+        assert metadata.listed_to is None
+
+
 class TestResolveCik:
     _MAP = {
         "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
