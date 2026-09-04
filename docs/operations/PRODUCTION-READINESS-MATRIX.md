@@ -374,3 +374,29 @@ are held, not promoted. **Real result to date: zero candidates
 VALIDATED across all 28 -- no change to any Toss/Live row; Live
 activation still Blocked, and would remain blocked even absent every
 other open row, since no strategy has been validated by a human.**
+
+**Session 36 further update (same phase, the user's explicit "전부 다
+진행하는건?" 3-part request -- `ADR-0054`/`ADR-0055`/`ADR-0056`)**:
+(1) `combined_factor_score`, a 9-leg rank-averaged combination of every
+sign-matching candidate from the 20-candidate screen, added to
+`factor_scores.py` and wired for raw IC via `--score combined_factor`
+-- deliberately NOT yet in the 28-candidate walk-forward pool, raw IC
+comes first (ADR-0053's own precedent). (2) A real sector data path
+(`SecEdgarFundamentalsProvider.fetch_submissions`/`normalize_
+submissions`, SEC EDGAR's SIC classification) and an opt-in sector-
+neutralization cap (`factor_strategy._select_target`,
+`FactorStrategyParameters.sector_by_security`/`max_per_sector`) were
+built specifically to prevent the `size` concentration artifact
+described above structurally rather than only detect it after the
+fact -- **not yet populated with real data (no network access in this
+environment) and not yet activated for any pool candidate**, both
+opt-in with `None` defaults so no existing candidate's behavior
+changed. (3) `RESEARCH_UNIVERSE_STAGE4` (87 symbols) defined, deepening
+the 5 sectors (Energy, Industrials, Utilities, Real Estate, Materials)
+tied thinnest after Stage 3 -- Energy specifically because it was the
+diagnosed root cause of the `size` concentration finding. All 9 CLI
+scripts' `RESEARCH_UNIVERSE` alias repointed to Stage 4, but **no real
+data has been ingested for its 24 new symbols** -- same "define now,
+ingest later" sequencing Stage 3 itself followed (`ADR-0044`). No
+change to any Toss/Live row from any of the three; full suite: 2249
+passed.
