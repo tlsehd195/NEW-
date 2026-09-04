@@ -17,6 +17,7 @@ from data_infra.universe import (
     RESEARCH_UNIVERSE_STAGE1,
     RESEARCH_UNIVERSE_STAGE2,
     RESEARCH_UNIVERSE_STAGE3,
+    RESEARCH_UNIVERSE_STAGE4,
     SymbolMetadata,
     UniverseDefinition,
     build_security_masters,
@@ -129,6 +130,58 @@ class TestResearchUniverseStage3:
         Stage 2's own addition."""
         new_symbol_count = len(set(RESEARCH_UNIVERSE_STAGE3.symbol_ids) - set(RESEARCH_UNIVERSE_STAGE2.symbol_ids))
         assert new_symbol_count * 2 <= 50
+
+
+class TestResearchUniverseStage4:
+    """Stage 4 -- Session 36's "전부 다 진행하는건?" item #3, deepening
+    the 5 sectors Stage 3 leaves thinnest (Energy specifically was the
+    diagnosed root cause of the SLB concentration artifact behind
+    size_score's walk-forward CANDIDATE result). Same discipline as
+    Stage 2/Stage 3 -- concentration risk only, NOT survivorship bias."""
+
+    def test_stage4_contains_all_of_stage3(self) -> None:
+        assert set(RESEARCH_UNIVERSE_STAGE3.symbol_ids) <= set(RESEARCH_UNIVERSE_STAGE4.symbol_ids)
+
+    def test_stage4_adds_exactly_24_new_symbols(self) -> None:
+        new_symbols = set(RESEARCH_UNIVERSE_STAGE4.symbol_ids) - set(RESEARCH_UNIVERSE_STAGE3.symbol_ids)
+        assert len(new_symbols) == 24
+
+    def test_stage4_has_no_duplicate_symbols(self) -> None:
+        ids = RESEARCH_UNIVERSE_STAGE4.symbol_ids
+        assert len(ids) == len(set(ids))
+
+    def test_stage4_benchmark_symbol_never_a_member(self) -> None:
+        assert BENCHMARK_SYMBOL not in RESEARCH_UNIVERSE_STAGE4.symbol_ids
+
+    def test_stage4_is_distinct_version_from_stage3(self) -> None:
+        assert RESEARCH_UNIVERSE_STAGE4.version != RESEARCH_UNIVERSE_STAGE3.version
+        assert RESEARCH_UNIVERSE_STAGE4.name == RESEARCH_UNIVERSE_STAGE3.name  # same named universe, later stage
+
+    def test_stage4_symbols_carry_no_provider_confirmed_dates(self) -> None:
+        """Stage 4 is a wider hand-curated list, not survivorship-bias
+        mitigation -- every entry must still leave listed_from/
+        listed_to unconfirmed, same honesty discipline as every prior
+        stage."""
+        for entry in RESEARCH_UNIVERSE_STAGE4.symbols:
+            assert entry.listed_from is None
+            assert entry.listed_to is None
+            assert entry.source == "manual_curation"
+
+    def test_stage4_request_budget_fits_one_hourly_window(self) -> None:
+        """24 new symbols x 2 requests/symbol must fit under the
+        confirmed 50-requests/hour Tiingo free-tier cap, same margin as
+        Stage 2's and Stage 3's own additions."""
+        new_symbol_count = len(set(RESEARCH_UNIVERSE_STAGE4.symbol_ids) - set(RESEARCH_UNIVERSE_STAGE3.symbol_ids))
+        assert new_symbol_count * 2 <= 50
+
+    def test_stage4_new_symbols_do_not_collide_with_any_prior_stage(self) -> None:
+        # A sanity guard distinct from the plain duplicate check above --
+        # confirms the 24 new tickers were genuinely NEW additions, not
+        # an accidental re-listing of an existing symbol under this
+        # stage's own tuple (which the duplicate check alone would not
+        # catch, since UniverseDefinition builds via concatenation).
+        new_symbols = set(RESEARCH_UNIVERSE_STAGE4.symbol_ids) - set(RESEARCH_UNIVERSE_STAGE3.symbol_ids)
+        assert len(new_symbols) == len(RESEARCH_UNIVERSE_STAGE4.symbol_ids) - len(RESEARCH_UNIVERSE_STAGE3.symbol_ids)
 
 
 class TestUniverseDefinitionValidation:

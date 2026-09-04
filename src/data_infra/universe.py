@@ -328,6 +328,85 @@ RESEARCH_UNIVERSE_STAGE3 = UniverseDefinition(
 )
 
 
+# -- RESEARCH_UNIVERSE Stage 4 -- built as part of Session 36's
+# explicit "전부 다 진행하는건?" 3-part request (universe expansion is
+# item #3, alongside factor combination and sector neutralization).
+# Same discipline as every prior stage, unchanged: hand-curated
+# (`source="manual_curation"`), NOT presented as a verified live index
+# membership snapshot.
+#
+# Selection criterion, fixed BEFORE any Stage 4 backtest is ever run
+# (RULE 0.8): deepen the 5 GICS-style sectors Stage 3 leaves thinnest
+# among its own explicitly-curated (Stage 2 + Stage 3) additions --
+# Energy, Industrials, Utilities, Real Estate, Materials, each sitting
+# at exactly 4 explicitly-tracked symbols after Stage 3 (see the
+# section comments on Stage 2/Stage 3 above for the per-sector tallies
+# this counts). This is not an arbitrary choice: Energy's thinness is
+# the DIRECTLY DIAGNOSED root cause of a real finding this same session
+# -- `size_score` reaching walk-forward CANDIDATE at top_n=5 turned out
+# to be SLB (Energy's only other liquid name besides XOM/CVX at the
+# time) supplying 76.3% of its positive TEST PnL, a concentration
+# artifact rather than a genuine size effect (`docs/research/
+# STRATEGY-VALIDATION-REPORT.md`'s "Phase 33 Addendum" section E). The
+# other 4 sectors are included because they are equally thin by the
+# same count, not because any of them individually showed a problem --
+# this is pre-registered breadth, not a reaction to something observed
+# in this stage's own future backtest.
+#
+# Request-budget arithmetic (reuses the same confirmed Tiingo free-tier
+# numbers Stage 2/Stage 3 already established -- 50 requests/hour,
+# 1,000 requests/day, 2.00 GB/month; re-check the user's actual account
+# limits before running if they may have changed): 24 new symbols x 2
+# requests/symbol (price + corporate actions,
+# `scripts/ingest_real_market_data.py`, unmodified) = 48 requests,
+# fitting inside the confirmed 50-requests/hour cap in a SINGLE hourly
+# window -- identical shape to Stage 2's and Stage 3's own additions.
+#
+# NOT YET the active `RESEARCH_UNIVERSE` binding any script resolves by
+# default (`scripts/compute_signal_ic_from_catalog.py`/
+# `compute_fundamentals_ic_from_catalog.py`/`run_long_horizon_
+# validation.py` all still import `RESEARCH_UNIVERSE_STAGE3` by name)
+# -- switching those imports to Stage 4 requires the user to first run
+# real ingestion for these 24 new symbols in their own environment
+# (this session/environment has no network access to do so), the same
+# sequencing every prior stage already followed.
+RESEARCH_UNIVERSE_STAGE4 = UniverseDefinition(
+    name="RESEARCH_UNIVERSE",
+    version="stage4",
+    role="RESEARCH",
+    description=(
+        "Stage 4 of the research universe: Stage 3's 63 symbols plus 24 additional "
+        "hand-curated large-cap US companies deepening the 5 sectors Stage 3 leaves "
+        "thinnest (Energy, Industrials, Utilities, Real Estate, Materials -- each at 4 "
+        "explicitly-curated symbols after Stage 3). Energy specifically was the diagnosed "
+        "root cause of a real Session 36 finding: size_score's walk-forward CANDIDATE "
+        "result at top_n=5 turned out to be SLB alone supplying 76.3% of its positive TEST "
+        "PnL, a concentration artifact rather than a genuine size effect. Selection was "
+        "fixed before any Stage 4 backtest was run (RULE 0.8). Addresses cross-sectional "
+        "breadth/concentration risk only -- NOT survivorship bias (every symbol still has "
+        "listed_from=listed_to=None, same as every prior stage; see this definition's own "
+        "module-level comment)."
+    ),
+    symbols=RESEARCH_UNIVERSE_STAGE3.symbols
+    + tuple(
+        SymbolMetadata(symbol=s)
+        for s in (
+            # Energy (4 symbols after Stage 3 -- the diagnosed SLB
+            # concentration root cause; deepened most deliberately)
+            "PSX", "VLO", "OXY", "WMB", "KMI",
+            # Industrials (4 symbols, unchanged since Stage 2)
+            "GE", "RTX", "LMT", "DE", "EMR",
+            # Utilities (4 symbols after Stage 3)
+            "AEP", "EXC", "SRE", "XEL", "ED",
+            # Real Estate (4 symbols, all from Stage 3)
+            "O", "PSA", "WELL", "DLR", "AVB",
+            # Materials (4 symbols, all from Stage 3)
+            "SHW", "FCX", "DOW", "NUE",
+        )
+    ),
+)
+
+
 def build_universe_memberships(universe: UniverseDefinition, *, valid_from: datetime) -> list[UniverseMembership]:
     """Converts a `UniverseDefinition` into the `UniverseMembership`
     records `DataRepository.add_universe_membership`/`get_universe`

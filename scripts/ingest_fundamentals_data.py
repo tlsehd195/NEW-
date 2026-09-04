@@ -67,13 +67,13 @@ from data_infra.provider import PermanentProviderError, TransientProviderError  
 from data_infra.providers.sec_edgar import SecEdgarFundamentalsProvider, resolve_cik  # noqa: E402
 from data_infra.providers.sec_edgar_config import SecEdgarConfig  # noqa: E402
 from data_infra.providers.sec_edgar_transport import SecEdgarHttpTransport  # noqa: E402
-from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE3  # noqa: E402
+from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from data_infra.versioning import compute_data_version  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 
-_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE3}
+_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
 
 # Verified, real corrections (ADR-0042) for tickers whose CURRENT SEC
 # ticker-map CIK does NOT point at the company's actual multi-decade

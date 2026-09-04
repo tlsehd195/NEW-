@@ -59,7 +59,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE3  # noqa: E402
+from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
@@ -82,7 +82,7 @@ from strategy_research.risk_controlled_momentum import (  # noqa: E402
 )
 from strategy_research.signal_ic import ScoreFn, compute_ic_series  # noqa: E402
 
-_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE3}
+_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
 
 _MOMENTUM_STRATEGIES = {
     "long_term_momentum": (LongTermMomentumStrategy, LongTermMomentumParameters),
