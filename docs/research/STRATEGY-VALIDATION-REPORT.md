@@ -2370,20 +2370,76 @@ performance" pattern this report already established for `ml_ols`,
 Section G above). `rank_average_ensemble` is a newly-observed instance
 of the same pattern.
 
+### H. Session 36 continued -- Stage 4 universe (87 symbols), 2 more candidates (ADR-0054/0053/0057)
+
+Per the user's explicit "전부 다 진행하는건?" request, three things were
+built in parallel: `combined_factor_score` (a 9-leg rank-averaged
+combination of every candidate above whose raw IC sign matched
+literature, ADR-0054), a real SEC EDGAR sector-data path + opt-in
+sector-neutralization cap (ADR-0055, not yet populated with real data
+or activated for any candidate), and `RESEARCH_UNIVERSE_STAGE4`
+(87 symbols, deepening the 5 sectors thinnest after Stage 3 --
+Energy specifically because it was the diagnosed root cause of
+Section E's SLB concentration finding, ADR-0056).
+
+Real raw IC for the 2 new candidates against Stage 4 (2010-01-01 to
+TEST_1.start): `combined_factor` mean_ic=-0.0530, `observations=43`
+(vs. 79-80 for every other candidate -- a direct consequence of its own
+9-leg all-or-nothing coverage requirement); `idiosyncratic_volatility`
+mean_ic=-0.0151 (near-zero). Both negative/wrong-signed. Consistent
+with `ADR-0051`'s own "no post-hoc filtering by raw IC sign" precedent,
+both were wired into the pool anyway (`ADR-0057`) -- excluding them for
+looking unfavorable would itself have been the post-hoc selection
+RULE 0.8 exists to prevent.
+
+**Real walk-forward/PBO/DSR run, 30 candidates, Stage 4 (87 symbols),
+same TRAIN/VALIDATION/TEST split as Section D/G**: PBO=7.14% across 70
+CSCV splits (down from 14.29% at Stage 3's 63 symbols -- a wider
+universe, not a methodology change).
+
+- `idiosyncratic_volatility`: ROBUSTNESS_PENDING (58% positive folds,
+  DSR=0.83, TEST cumret=+3.61%, Sharpe=0.16) -- an unremarkable null
+  result, consistent with its near-zero raw IC.
+- `combined_factor`: ROBUSTNESS_PENDING, but strikingly so -- **20%
+  positive folds (12/60)**, the worst fold-consistency of all 30
+  candidates by a wide margin (every other candidate is 38-63%),
+  DSR=0.10 (also the lowest), and only **8 trades in the entire TEST
+  window**. TEST cumret is nonetheless positive (+52.98%, Sharpe=0.68).
+  This exact combination -- near-worst fold consistency, a positive
+  TEST result anyway, and almost no trading activity -- is the
+  signature `ADR-0057` predicted from `observations=43`: the 9-leg
+  all-or-nothing filter leaves too few securities scorable at most
+  rebalance dates to fill even a `top_n=10` portfolio, so most
+  walk-forward folds see little to no real rebalancing, and the
+  positive TEST number reflects whichever handful of names survived
+  the filter during that specific window getting lucky, not a genuine
+  cross-sectional combined-factor signal being tested at scale. This is
+  read as a sample-sparsity artifact, not evidence against the
+  "combining reduces noise" hypothesis itself -- the hypothesis was
+  never actually tested at meaningful breadth.
+- `altman_z`/`rank_average_ensemble` remain the only 2 candidates
+  reaching `CANDIDATE` (fold 63%/60%, DSR=1.00/0.98), with the same
+  TEST-negative pattern as the Stage 3 run (`altman_z` TEST=-24.67%,
+  materially unchanged from Section G's -25.80%). Reproducing under a
+  wider, independently-expanded universe strengthens rather than
+  weakens the "hold, do not promote" conclusion -- this is not an
+  artifact specific to Stage 3's particular 63 symbols.
+
 ### Status after this addendum
 
-**Zero of the 20 new candidates (24 including `leverage`/`ml_ols`/
-`ml_ridge`/`rank_average_ensemble`'s prior evaluations) reach a
-trustworthy `VALIDATED` state.** 2 reach `CANDIDATE` at the corrected
-breadth (`altman_z`, `rank_average_ensemble`) but both show strongly
-negative held-out TEST performance and are held pending, not promoted
--- `VALIDATED` requires explicit human review this project's own
-`classify_evidence_level` never performs
+**Zero of the 30 candidates now screened (34 including
+`buy_and_hold`/`long_term_momentum`/`trend_volatility`/`risk_
+controlled_momentum`'s original evaluations) reach a trustworthy
+`VALIDATED` state.** 2 reach `CANDIDATE` (`altman_z`,
+`rank_average_ensemble`), reproduced at both Stage 3 and Stage 4
+universes with the same strongly negative held-out TEST performance,
+and remain held, not promoted -- `VALIDATED` requires explicit human
+review this project's own `classify_evidence_level` never performs
 (`PROJECT_MASTER_PLAN.md` section 11.5's `AI Proposal -> Experiment ->
 Validation -> Approval -> Deployment`), and that review concluded
 these two should not be promoted given the TEST divergence.
 `REAL_VALIDATION_NOT_COMPLETED` remains the correct classification for
-every candidate this project has ever produced, now 28 of them.
+every candidate this project has ever produced, now 30 of them.
 
 This addendum's own process is, itself, evidence the pipeline works as
 designed: without the raw-IC-screening -> walk-forward/PBO/DSR ->
@@ -2391,4 +2447,7 @@ concentration-diagnosis -> breadth-correction -> re-verification
 sequence, either `size` or `altman_z` alone (evaluated in isolation,
 at the original `top_n=5`, without a held-out TEST check) would have
 looked like a found alpha. Both were caught before being reported as
-one.
+one. `combined_factor`'s own low-`observations`/low-fold-consistency
+signature, caught the same way, is a second instance of the same
+discipline catching a would-be false positive before it was ever
+reported as one.
