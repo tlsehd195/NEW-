@@ -1,0 +1,38 @@
+# Prevents GitHub's own auto-disable of scheduled workflows after 60
+# days with no repository commit activity (ADR-0083). Workflow RUNS
+# (including paper_trading_cycle.yml firing daily) do NOT count as
+# activity for this rule -- only new commits do. This workflow makes a
+# trivial, harmless commit (a heartbeat timestamp file, never touching
+# data/ or any DuckDB path) on a schedule well inside that 60-day
+# window, so the scheduled Paper Trading workflow never silently stops
+# firing.
+name: Keepalive
+
+on:
+  schedule:
+    # Monthly -- comfortably inside the 60-day auto-disable window
+    # even if one run is delayed or skipped.
+    - cron: "0 12 1 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record heartbeat
+        run: |
+          mkdir -p .github
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/keepalive-heartbeat.txt
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/keepalive-heartbeat.txt
+          git diff --cached --quiet || git commit -m "chore: keepalive heartbeat (prevents 60-day scheduled-workflow auto-disable)"
+          git push
