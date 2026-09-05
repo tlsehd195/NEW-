@@ -55,13 +55,46 @@ differences in what Live actually is, not by choice:**
        genuinely `True` here, not a caller's guess.
 
    A repo-wide check (before writing this module) found that NOTHING in
-   `src/` computes real values for the REMAINING fields --
-   `risk_health`/`model_state_valid`/`configuration_integrity_valid`/
-   `max_turnover`/`approval`/`required_capabilities` -- every existing
-   caller (`tests/broker/live_helpers.py::make_passing_gate_context`)
-   is a test fixture that hardcodes a "passing" value. These stay
-   genuinely the caller's responsibility, for reasons specific to each,
-   not merely "not gotten to yet":
+   `src/` computed real values for `risk_health`/`model_state_valid`/
+   `configuration_integrity_valid`/`max_turnover`/`approval`/
+   `required_capabilities` -- every existing caller
+   (`tests/broker/live_helpers.py::make_passing_gate_context`) is a test
+   fixture that hardcodes a "passing" value.
+
+   **Three of those SIX are now ALSO derivable by `run_cycle` itself --
+   opt-in, per ADR-0074, each only when the caller supplies what this
+   module needs to compute it for real (never fabricated when absent;
+   the caller's own value on the base `gate_context` passes through
+   unchanged in that case, same as before ADR-0074):**
+     - `risk_health` -- supply `state` (already needed for
+       `value_history`): `LiveRunnerState.risk_assessment_total`/
+       `risk_assessment_rejected` track this session's REAL running
+       REJECT rate across every `risk_engine.assess()` call, fed into
+       the existing generic `monitoring.health.
+       evaluate_health_from_failure_rate` (`MonitoringComponent.RISK`)
+       -- `MonitoringConfig`'s own comment already names "Risk
+       rejections" as this component's intended failure signal
+       (matching Broker/AI Gateway's own rejection-rate health), not an
+       operational exception rate. An optional `monitoring_config`
+       parameter overrides the default thresholds.
+     - `model_state_valid` -- supply BOTH `candidate_id` and
+       `model_status_repository`: `orchestration.
+       live_safety_gate_inputs.compute_model_state_valid` reads that
+       candidate's latest real, already-recorded `ModelStatusTransition`
+       (ADR-0072) -- never constructs one. Omit either (the honest
+       default, since nothing in this codebase yet ties `run_cycle`'s
+       deterministic `predictor`/`decision_agent` to any specific
+       `CandidateModelArtifact` -- which candidate, if any, governs a
+       given live run remains a real, separate, still-open architecture
+       question) and this field is untouched.
+     - `configuration_integrity_valid` -- supply `pinned_configuration_version`
+       (a hash an operator recorded at deployment time, per the Phase 16
+       spec's own wording): `compute_configuration_integrity_valid`
+       compares it against `session.config`'s own real, current
+       `configuration_version()`.
+
+   **These three remain genuinely, unconditionally the caller's
+   responsibility -- no opt-in path exists for any of them:**
      - `max_turnover` -- `risk_engine` is typed as the `PortfolioRiskEngine`
        Protocol, which exposes no public config; reading a specific
        implementation's private `RiskConfig` would silently break for
@@ -73,28 +106,6 @@ differences in what Live actually is, not by choice:**
      - `required_capabilities` -- depends on what order types the
        calling strategy actually issues, a caller-level fact this
        module has no way to infer.
-     - `model_state_valid`/`configuration_integrity_valid` -- real,
-       spec-faithful (`PHASE-16-live-trading.md` section 5) pure
-       functions now exist for BOTH (`orchestration.
-       live_safety_gate_inputs.compute_model_state_valid`/
-       `compute_configuration_integrity_valid`, ADR-0072) -- but
-       `run_cycle` still cannot call them itself: `model_state_valid`
-       needs a real `candidate_id` to fetch the latest
-       `ModelStatusTransition` for, and nothing in this codebase yet
-       ties `run_cycle`'s deterministic `predictor`/`decision_agent` to
-       any specific `CandidateModelArtifact` (a real, separate,
-       still-open architecture question, not this module's to answer);
-       `configuration_integrity_valid` needs a pinned reference hash
-       only an operator can supply. The caller computes these two and
-       passes the results in on the base `gate_context`.
-     - `risk_health` -- `monitoring.health.evaluate_health_from_failure_rate`
-       already exists and is the right generic evaluator
-       (`MonitoringComponent.RISK`), but nothing tracks a real running
-       failure-rate/sample-count for `risk_engine.assess()` calls to
-       feed it (`DeterministicPortfolioRiskEngine.assess` structurally
-       returns a REJECT rather than raising, so "failure" here would
-       have to mean something more specific than "REJECTs a lot" --
-       still an open design question, not attempted this session).
 
    `run_cycle` will neither build a `SafetyGateContext` from scratch
    nor accept `None` for it (unlike `sector_by_security`, which has a
@@ -125,6 +136,14 @@ from broker.validation import build_validated_order
 from decision.agent import DecisionAgent
 from decision.models import DecisionOutput
 
+from evolution.repository import ModelStatusTransitionRepository
+
+from monitoring.config import MonitoringConfig
+from monitoring.enums import ComponentHealthStatus, MonitoringComponent
+from monitoring.health import evaluate_health_from_failure_rate
+
+from orchestration.live_safety_gate_inputs import compute_configuration_integrity_valid, compute_model_state_valid
+
 from predict.models import PredictionOutput
 from predict.predictor import Predictor
 
@@ -132,6 +151,7 @@ from regime.detector import RegimeDetector
 from regime.models import CompositeRegimeObservation
 
 from risk.engine import PortfolioRiskEngine
+from risk.enums import RiskCheckStatus
 from risk.models import PositionSizingResult, RiskCheckedPosition
 from risk.sizing import PositionSizer
 
@@ -170,9 +190,22 @@ class LiveRunnerState:
     discipline. A fresh `LiveRunnerState()` is correct for a brand-new
     session; a caller resuming a previous one should seed `value_history`
     from whatever real, already-persisted portfolio-value log it has --
-    never fabricated or backfilled with guessed values for a gap."""
+    never fabricated or backfilled with guessed values for a gap.
+
+    `risk_assessment_total`/`risk_assessment_rejected` (ADR-0074) are the
+    running counts `run_cycle` derives `risk_health` from: `MonitoringConfig`'s
+    own comment names "Risk rejections" as this component's intended
+    failure signal (matching Broker/AI Gateway's own rejection-rate-based
+    health), not an operational exception rate -- a risk engine REJECTing
+    almost everything is exactly the kind of anomaly worth surfacing as
+    DEGRADED/UNAVAILABLE, whether each individual REJECT was itself
+    "correct" per policy or not. A caller resuming a previous session
+    should seed both from real, already-persisted history, same as
+    `value_history`."""
 
     value_history: list[float] = field(default_factory=list)
+    risk_assessment_total: int = 0
+    risk_assessment_rejected: int = 0
 
 
 @dataclass(frozen=True)
@@ -228,6 +261,24 @@ def _live_portfolio_view(session: LiveTradingSession, view: AsOfDataView, as_of_
     )
 
 
+def _compute_risk_health(state: LiveRunnerState, monitoring_config: MonitoringConfig, as_of_time: datetime) -> ComponentHealthStatus:
+    """`evaluate_health_from_failure_rate` is the existing, generic
+    evaluator this project already uses for Broker/AI Gateway's own
+    rejection-rate health -- `MonitoringComponent.RISK` reuses it
+    unmodified, fed from `state`'s own real, running counts (never a
+    per-call guess). `sample_count=0` (a fresh state, nothing assessed
+    yet this session) correctly comes back `UNKNOWN` via that
+    function's own `min_sample_count` gate -- fail-closed, not
+    vacuously `HEALTHY`."""
+    total = state.risk_assessment_total
+    failure_rate = (state.risk_assessment_rejected / total) if total > 0 else None
+    health = evaluate_health_from_failure_rate(
+        MonitoringComponent.RISK, failure_rate=failure_rate, sample_count=float(total),
+        config=monitoring_config, as_of_time=as_of_time, health_id=f"RISK-HEALTH-{as_of_time.isoformat()}",
+    )
+    return health.status
+
+
 def run_cycle(
     security_ids: Sequence[str],
     as_of_time: datetime,
@@ -247,6 +298,10 @@ def run_cycle(
     decision_repository: Optional[DecisionRepository] = None,
     sizing_repository: Optional[SizingRepository] = None,
     risk_repository: Optional[RiskRepository] = None,
+    monitoring_config: Optional[MonitoringConfig] = None,
+    candidate_id: Optional[str] = None,
+    model_status_repository: Optional[ModelStatusTransitionRepository] = None,
+    pinned_configuration_version: Optional[str] = None,
     experiment_id: Optional[str] = None,
 ) -> tuple[LiveCycleOutcome, ...]:
     """Runs the full chain once for each of `security_ids`, in order,
@@ -256,19 +311,24 @@ def run_cycle(
     BacktestEngine.run()` already use.
 
     `gate_context` is REQUIRED and is the BASE context this cycle uses.
-    Seven fields are overridden by this function itself before every
-    `session.submit()` call -- `order_validation_status`, `as_of_time`,
-    `config`, `broker_capabilities`, `kill_switch_engaged`,
+    Seven fields are ALWAYS overridden by this function itself before
+    every `session.submit()` call -- `order_validation_status`,
+    `as_of_time`, `config`, `broker_capabilities`, `kill_switch_engaged`,
     `account_state_known`, `position_state_known` -- each derived from
-    real, already-available data (session/adapter calls, or the fact
-    that `_live_portfolio_view` above did not raise), never from the
-    caller's copy (module docstring point 2 explains why each). The
-    remaining fields (`risk_health`, `model_state_valid`,
-    `configuration_integrity_valid`, `max_turnover`, `approval`,
-    `required_capabilities`) pass through completely unchanged -- a
-    stale or wrong value in any of THOSE is entirely the caller's
-    responsibility, exactly as it already is for every existing
-    `LiveTradingSession.submit()` caller in this codebase.
+    real, already-available data, never from the caller's copy (module
+    docstring point 2). THREE MORE are overridden CONDITIONALLY, only
+    when the caller supplies the real inputs each needs (ADR-0074):
+    `risk_health` when `state` is supplied (tracks a real running REJECT
+    rate); `model_state_valid` when BOTH `candidate_id` and
+    `model_status_repository` are supplied; `configuration_integrity_valid`
+    when `pinned_configuration_version` is supplied. Omitting any of
+    those leaves that field exactly as the caller supplied it on the
+    base context -- never fabricated. `max_turnover`/`approval`/
+    `required_capabilities` pass through completely unchanged always,
+    with no opt-in path -- a stale or wrong value in any of THOSE is
+    entirely the caller's responsibility, exactly as it already is for
+    every existing `LiveTradingSession.submit()` caller in this
+    codebase.
 
     `sector_by_security`/`state`/the five `*_repository` parameters all
     match `paper_runner.run_cycle`'s own contract exactly (ADR-0062,
@@ -325,6 +385,10 @@ def run_cycle(
         )
         if risk_repository is not None:
             risk_repository.record(risk_checked)
+        if state is not None:
+            state.risk_assessment_total += 1
+            if risk_checked.status == RiskCheckStatus.REJECT:
+                state.risk_assessment_rejected += 1
 
         current_quantity = portfolio.positions[security_id].quantity if security_id in portfolio.positions else 0.0
         validation = build_validated_order(
@@ -332,11 +396,27 @@ def run_cycle(
         )
         submission: Optional[LiveSubmissionOutcome] = None
         if validation.validated_order is not None:
-            order_gate_context = replace(
-                gate_context, order_validation_status=validation.status, as_of_time=as_of_time,
+            overrides = dict(
+                order_validation_status=validation.status, as_of_time=as_of_time,
                 config=session.config, broker_capabilities=broker_capabilities,
                 kill_switch_engaged=kill_switch_engaged, account_state_known=True, position_state_known=True,
             )
+            # Each of these three is ONLY overridden when the caller
+            # supplied what this module needs to compute it for real
+            # (module docstring point 2) -- omitted entirely otherwise,
+            # so the caller's own value on `gate_context` passes through
+            # unchanged exactly as before (ADR-0074 narrows, never
+            # widens, what a caller must still supply itself).
+            if state is not None:
+                overrides["risk_health"] = _compute_risk_health(state, monitoring_config or MonitoringConfig(), as_of_time)
+            if candidate_id is not None and model_status_repository is not None:
+                transition = model_status_repository.get_latest(candidate_id)
+                overrides["model_state_valid"] = compute_model_state_valid(transition)
+            if pinned_configuration_version is not None:
+                overrides["configuration_integrity_valid"] = compute_configuration_integrity_valid(
+                    session.config, pinned_configuration_version,
+                )
+            order_gate_context = replace(gate_context, **overrides)
             submission = session.submit(
                 validation.validated_order, requested_at=as_of_time, gate_context=order_gate_context,
             )

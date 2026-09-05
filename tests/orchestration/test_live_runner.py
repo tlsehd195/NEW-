@@ -29,7 +29,12 @@ from broker.mock import MockBrokerAdapter
 from decision.agent import BaselineRuleDecisionAgent
 from decision.config import DecisionConfig
 
+from learning.enums import CandidateModelStatus
+
+from monitoring.config import MonitoringConfig
 from monitoring.enums import ComponentHealthStatus
+
+from monitoring_helpers import make_transition
 
 from orchestration.live_runner import LiveRunnerState, run_cycle
 
@@ -374,3 +379,195 @@ class TestAccountUnavailableFailsClosed:
             assert False, "expected a RuntimeError, not a silently-empty portfolio"
         except RuntimeError as exc:
             assert "live_account_unavailable" in str(exc)
+
+
+class TestRiskHealthDerivedFromState:
+    """ADR-0074: `risk_health` is computed for real, from `state`'s own
+    running REJECT rate, ONLY when `state` is supplied -- otherwise the
+    caller's own placeholder value passes through untouched."""
+
+    def test_without_state_the_callers_placeholder_risk_health_passes_through(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        wrong_context = replace(
+            _gate_context(session, view.current_time), risk_health=ComponentHealthStatus.UNAVAILABLE,
+        )
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, gate_context=wrong_context, **_components())[0]
+
+        # No `state` supplied -> this module never touches risk_health ->
+        # the caller's own UNAVAILABLE placeholder must still be what
+        # the gate actually evaluated, blocking the submission.
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is False
+        assert "risk_engine_not_healthy" in outcome.submission.gate_result.failed_conditions
+
+    def test_with_state_a_high_real_reject_rate_computes_unavailable_and_blocks(self) -> None:
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session()
+        # sector_by_security=None with a configured max_sector_weight
+        # deterministically REJECTs (sector_unknown, ADR-0062) -- used
+        # here purely as a reliable way to generate real REJECTs, not to
+        # test sector limits themselves.
+        risk_config = RiskConfig(max_sector_weight=0.5, max_drawdown=None, max_portfolio_volatility=None)
+        components = _components(risk_config)
+        state = LiveRunnerState()
+
+        for offset in range(4):
+            clock.index = 100 + offset
+            outcome = run_cycle(
+                ["AAA"], view.current_time, view, session, state=state,
+                gate_context=_gate_context(session, view.current_time), **components,
+                sector_by_security=None,
+            )[0]
+            assert outcome.risk_checked.status == RiskCheckStatus.REJECT
+            assert outcome.submission is None  # REJECT -> no validated_order -> never reaches submit()
+
+        assert state.risk_assessment_total == 4
+        assert state.risk_assessment_rejected == 4
+
+        # A 5th, real PASS -- now with a real sector mapping -- reaches
+        # submit() carrying a risk_health computed from 4/5 REJECTs
+        # (80% >= MonitoringConfig's own 50% unavailable threshold).
+        clock.index = 104
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, state=state,
+            gate_context=_gate_context(session, view.current_time), **components,
+            sector_by_security={"AAA": "Technology"},
+        )[0]
+
+        assert state.risk_assessment_total == 5
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is False
+        assert "risk_engine_not_healthy" in outcome.submission.gate_result.failed_conditions
+
+    def test_a_custom_monitoring_config_changes_the_threshold(self) -> None:
+        """A caller-supplied `monitoring_config` with looser thresholds
+        means the same 60%-REJECT history that would DEGRADED/UNAVAILABLE
+        under the default thresholds no longer does -- proving the
+        parameter is real, not decorative."""
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session()
+        risk_config = RiskConfig(max_sector_weight=0.5, max_drawdown=None, max_portfolio_volatility=None)
+        components = _components(risk_config)
+        state = LiveRunnerState()
+        state.risk_assessment_total = 5
+        state.risk_assessment_rejected = 3  # 60% -- DEGRADED under default thresholds (>= 10%)
+
+        loose_config = MonitoringConfig(degraded_failure_rate_threshold=0.9, unavailable_failure_rate_threshold=0.95)
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, state=state,
+            gate_context=_gate_context(session, view.current_time), **components,
+            sector_by_security={"AAA": "Technology"}, monitoring_config=loose_config,
+        )[0]
+
+        assert outcome.submission is not None
+        assert "risk_engine_not_healthy" not in outcome.submission.gate_result.failed_conditions
+
+
+class TestModelStateValidDerivedFromCandidate:
+    """ADR-0074: `model_state_valid` is computed for real ONLY when BOTH
+    `candidate_id` and `model_status_repository` are supplied."""
+
+    def test_without_both_the_callers_placeholder_passes_through(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        wrong_context = replace(_gate_context(session, view.current_time), model_state_valid=False)
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, gate_context=wrong_context, **_components())[0]
+
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is False
+        assert "model_state_not_valid_for_live" in outcome.submission.gate_result.failed_conditions
+
+    def test_an_approved_passed_transition_makes_the_gate_see_a_valid_model(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        transition = make_transition(candidate_id="CAND-000001", to_status=CandidateModelStatus.APPROVED, passed=True)
+        repository = {"CAND-000001": transition}
+
+        class _FakeRepo:
+            def get_latest(self, candidate_id):
+                return repository.get(candidate_id)
+
+        wrong_context = replace(_gate_context(session, view.current_time), model_state_valid=False)  # deliberately wrong placeholder
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, gate_context=wrong_context, **_components(),
+            candidate_id="CAND-000001", model_status_repository=_FakeRepo(),
+        )[0]
+
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is True
+        assert "model_state_not_valid_for_live" not in outcome.submission.gate_result.failed_conditions
+
+    def test_an_unknown_candidate_id_correctly_blocks(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+
+        class _EmptyRepo:
+            def get_latest(self, candidate_id):
+                return None
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(),
+            candidate_id="CAND-UNKNOWN", model_status_repository=_EmptyRepo(),
+        )[0]
+
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is False
+        assert "model_state_not_valid_for_live" in outcome.submission.gate_result.failed_conditions
+
+
+class TestConfigurationIntegrityValidDerivedFromPin:
+    """ADR-0074: `configuration_integrity_valid` is computed for real
+    ONLY when `pinned_configuration_version` is supplied."""
+
+    def test_without_a_pin_the_callers_placeholder_passes_through(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        wrong_context = replace(_gate_context(session, view.current_time), configuration_integrity_valid=False)
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, gate_context=wrong_context, **_components())[0]
+
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is False
+        assert "configuration_integrity_invalid" in outcome.submission.gate_result.failed_conditions
+
+    def test_a_matching_pin_makes_the_gate_pass(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        wrong_context = replace(_gate_context(session, view.current_time), configuration_integrity_valid=False)
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, gate_context=wrong_context, **_components(),
+            pinned_configuration_version=session.config.configuration_version(),
+        )[0]
+
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is True
+
+    def test_a_stale_pin_correctly_blocks(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(),
+            pinned_configuration_version="stale-hash-from-a-prior-deployment",
+        )[0]
+
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is False
+        assert "configuration_integrity_invalid" in outcome.submission.gate_result.failed_conditions

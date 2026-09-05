@@ -21,15 +21,25 @@ submits every order, not merely re-logs it. `--resume` skips whatever
 `--paper-store` already has a real, persisted checkpoint for and
 reconstructs `PaperRunnerState.value_history` from real prior portfolio
 values rather than reprocessing or guessing. Building the scheduler
-itself remains out of scope -- e.g. a real crontab entry invoking this
-script daily after market close:
-    30 21 * * 1-5 cd /path/to/repo && python3 scripts/run_paper_trading_cycle.py \
+itself remains out of scope (this project has no server of its own to
+run one on) -- e.g. a real crontab entry invoking this script daily
+after market close (ADR-0075):
+    30 21 * * 1-5 cd /path/to/repo && flock -n /tmp/paper_trading_cycle.lock \
+        python3 scripts/run_paper_trading_cycle.py \
         --universe RESEARCH_UNIVERSE --db-path ./data/real_market_data \
         --paper-store ./data/paper_trading_store --resume \
-        --start 2024-01-02 --end "$(date +%F)" --out ./data/paper_trading_cycle_report.json
+        --start 2024-01-02 --end "$(date +%F)" --out ./data/paper_trading_cycle_report.json \
+        >> ./data/paper_trading_cycle.log 2>&1
 (`--start` only matters for a brand-new `--paper-store`; `--resume`
 makes every later invocation pick up exactly where the last one left
-off regardless of what `--start` says).
+off regardless of what `--start` says. `flock -n` refuses to start a
+second run if a previous invocation is still executing when cron fires
+again -- e.g. a slow real-network bar fetch overrunning into the next
+scheduled slot -- rather than letting two processes hold `StorageEngine`
+connections to the same DuckDB file at once, which this project's own
+single-writer design, ADR-0002, already documents as unsupported; a
+timestamped log file is where a real deployment would actually notice
+that happened, since cron itself runs unattended).
 
 Every checkpoint's real outcome is persisted through the same
 DuckDB-backed repositories `tests/integration/test_risk_lineage.py`
