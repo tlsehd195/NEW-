@@ -73,16 +73,28 @@ differences in what Live actually is, not by choice:**
      - `required_capabilities` -- depends on what order types the
        calling strategy actually issues, a caller-level fact this
        module has no way to infer.
-     - `risk_health`/`model_state_valid`/`configuration_integrity_valid`
-       -- wiring `monitoring.health`'s existing evaluators into real
-       computations for these (and deciding what "model_state_valid"
-       even means against the Candidate approval boundary this project
-       deliberately keeps automation-free) is real, separate,
-       safety-critical design work this module does not attempt --
-       the same "found a bigger gap, documented it honestly rather than
-       fabricating a fix" precedent ADR-0067 already set for
-       `value_history` (see ADR-0071 for the narrowing this point
-       describes).
+     - `model_state_valid`/`configuration_integrity_valid` -- real,
+       spec-faithful (`PHASE-16-live-trading.md` section 5) pure
+       functions now exist for BOTH (`orchestration.
+       live_safety_gate_inputs.compute_model_state_valid`/
+       `compute_configuration_integrity_valid`, ADR-0072) -- but
+       `run_cycle` still cannot call them itself: `model_state_valid`
+       needs a real `candidate_id` to fetch the latest
+       `ModelStatusTransition` for, and nothing in this codebase yet
+       ties `run_cycle`'s deterministic `predictor`/`decision_agent` to
+       any specific `CandidateModelArtifact` (a real, separate,
+       still-open architecture question, not this module's to answer);
+       `configuration_integrity_valid` needs a pinned reference hash
+       only an operator can supply. The caller computes these two and
+       passes the results in on the base `gate_context`.
+     - `risk_health` -- `monitoring.health.evaluate_health_from_failure_rate`
+       already exists and is the right generic evaluator
+       (`MonitoringComponent.RISK`), but nothing tracks a real running
+       failure-rate/sample-count for `risk_engine.assess()` calls to
+       feed it (`DeterministicPortfolioRiskEngine.assess` structurally
+       returns a REJECT rather than raising, so "failure" here would
+       have to mean something more specific than "REJECTs a lot" --
+       still an open design question, not attempted this session).
 
    `run_cycle` will neither build a `SafetyGateContext` from scratch
    nor accept `None` for it (unlike `sector_by_security`, which has a
