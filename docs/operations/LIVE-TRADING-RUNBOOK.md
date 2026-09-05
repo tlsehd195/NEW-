@@ -70,11 +70,25 @@ log, or record the value itself here or anywhere else.
 
 ## Configuration Validation
 
-1. Compute `LiveTradingConfig.configuration_version()` and record it in
-   the activation log (not this file) alongside the approval you are
-   about to give.
+1. Compute `LiveTradingConfig.configuration_version()` using
+   `python3 scripts/print_live_configuration_version.py` (ADR-0078)
+   with the exact same flags the real config will be constructed with
+   -- this computes the hash with the identical code
+   `orchestration.live_runner.run_cycle`'s `configuration_integrity_valid`
+   check will later compare against, rather than one computed by hand.
+   Record BOTH the printed hash AND the full field dump the script
+   prints alongside it in the activation log (not this file, per the
+   existing convention) -- a bare hash with no record of which fields
+   produced it cannot be verified later. That recorded hash is what
+   gets passed as `run_cycle`'s `pinned_configuration_version` going
+   forward.
 2. Confirm the running code's git commit hash matches what was reviewed
    before this activation attempt.
+3. Rotating the pin (after any reviewed config change) means
+   deliberately re-running step 1 and recording a NEW activation-log
+   entry -- never silently, and never by editing the previous entry in
+   place (the activation log is append-only, matching this project's
+   own audit-trail discipline everywhere else).
 
 ## Safety Checks (before every activation, not just the first)
 

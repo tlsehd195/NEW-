@@ -33,16 +33,16 @@ claim of financial optimality.
 | 2 | Max drawdown | `RiskConfig.max_drawdown` | `0.20` | **INHERITED** | Phase 8, pre-trade only (blocks new BUYs via `PortfolioRiskEngine.assess`, `docs/decisions/ADR-0014`); not Live-specific, never independently re-approved for real capital. |
 | 3 | Max single-position exposure | `PositionSizingConfig.max_position_weight` / `RiskConfig.max_position_weight` | `0.10` / `0.10` | **INHERITED** | Two independent checks (sizing-time and portfolio-risk-time), same Phase 8 default in both. |
 | 4 | Total portfolio exposure | `RiskConfig.max_gross_exposure` | `1.0` | **INHERITED** | `1.0` = no leverage permitted by default; Phase 8. |
-| 5 | Sector exposure | `RiskConfig.max_sector_weight` | `None` | **UNDEFINED (Session 36, ADR-0062)** | `data_infra.models.SecurityMaster` still has no sector field, but `PortfolioRiskEngine.assess` now accepts an opt-in `sector_by_security: Optional[dict[str, str]]` parameter the caller supplies per call (e.g. sourced from `data_infra.universe`'s own real, provider-confirmed sector data, ADR-0058) -- enforcement path exists and is active whenever BOTH `max_sector_weight` is set AND the caller supplies the mapping; either without the other REJECTs `sector_unknown` (fail-closed, mirroring `max_turnover`'s own pattern). No Live/Paper caller wires this parameter yet -- that integration step, plus the number itself, remain **TBD — HUMAN DECISION REQUIRED.** |
+| 5 | Sector exposure | `RiskConfig.max_sector_weight` | `None` | **UNDEFINED (Session 36, ADR-0062); proposed value on file below** | `data_infra.models.SecurityMaster` still has no sector field, but `PortfolioRiskEngine.assess` now accepts an opt-in `sector_by_security: Optional[dict[str, str]]` parameter the caller supplies per call (e.g. sourced from `data_infra.universe`'s own real, provider-confirmed sector data, ADR-0058) -- enforcement path exists and is active whenever BOTH `max_sector_weight` is set AND the caller supplies the mapping; either without the other REJECTs `sector_unknown` (fail-closed, mirroring `max_turnover`'s own pattern). `orchestration.paper_runner`/`orchestration.live_runner` now both wire this parameter through (ADR-0067/ADR-0070) whenever a caller passes `--max-sector-weight` (Paper CLI) or the equivalent. The number itself: **PROPOSED, AWAITING RATIFICATION** -- see "Session 36 continued -- Proposed values for #5/#10" below. |
 | 6 | Turnover limit | `RiskConfig.max_turnover` | `None` | **UNDEFINED** | Enforcement path exists and is active (`src/risk/engine.py` lines 304-310 -- `PortfolioRiskEngine` rejects when computed turnover exceeds `max_turnover`, whenever it is set); only the number itself is unset. **TBD — HUMAN DECISION REQUIRED.** |
 | 7 | Order frequency limit | `LiveTradingConfig.max_order_frequency_per_hour` | `None` | **UNDEFINED** | Feeds `evaluate_kill_switch_triggers`'s `abnormal_order_frequency` check only when set. **TBD — HUMAN DECISION REQUIRED.** |
 | 8 | Liquidity limit | `RiskConfig.enforce_liquidity_limit` | `True` | **INHERITED, conditional** | Only enforced on calls where the caller supplies a `liquidity_state`; if the caller omits it, the check simply does not run for that call (distinct from the regime axis itself reporting `UNKNOWN`, which always rejects). Whether every Live pre-trade call reliably supplies this is a Live-integration question, not a policy-number question -- tracked as a Known Issue below, not a DECISION REQUIRED. |
 | 9 | Minimum cash | `RiskConfig.minimum_cash_ratio` | `0.05` | **INHERITED** | Phase 8; portfolio must retain >= 5% of value as cash after any BUY. |
-| 10 | Max order notional | `RiskConfig.max_order_notional` | `None` | **UNDEFINED (Session 36, ADR-0063)** | An absolute per-order dollar/currency-unit cap now exists in `PortfolioRiskEngine.assess` (recomputed from the final, already-weight-clamped position; clamps further if it would exceed the cap) -- closes the previous "no field exists" gap. `None` still means "not enforced." **TBD — HUMAN DECISION REQUIRED** (the number itself). |
+| 10 | Max order notional | `RiskConfig.max_order_notional` | `None` | **UNDEFINED (Session 36, ADR-0063); proposed value on file below** | An absolute per-order dollar/currency-unit cap now exists in `PortfolioRiskEngine.assess` (recomputed from the final, already-weight-clamped position; clamps further if it would exceed the cap) -- closes the previous "no field exists" gap. `None` still means "not enforced." The number itself: **PROPOSED, AWAITING RATIFICATION** -- see "Session 36 continued -- Proposed values for #5/#10" below. |
 | 11 | Max consecutive failures | `LiveTradingConfig.max_consecutive_failures` | `None` (RATIFIED value: **5**, not yet code-applied) | **UNDEFINED, RATIFIED (Session 36, ADR-0063/ADR-0065)** | `LiveTradingSession.consecutive_failure_count` (ADR-0063) is a real, tested observability counter, incremented on each `BrokerError` and reset on success. The user was then asked directly whether to keep the original halt-on-first-failure default or explicitly loosen it, and chose to set the threshold to **5** -- `LiveTradingConfig.max_consecutive_failures` (ADR-0065) now makes this a real, enforced threshold: `submit` halts to `OperationalState.RECONCILIATION_REQUIRED` once the count reaches the configured value, defaulting to `None` (= 1, the ORIGINAL strictest behavior) when unset, so an existing caller that never sets this sees no change. Same "ratified but not baked into `DEFAULT_LIVE_TRADING_CONFIG`" treatment as #1/#6/#7/#10 (ADR-0060) -- a human passes `max_consecutive_failures=5` explicitly whenever a real Live config is constructed. |
 | 12 | Broker failure threshold | `KillSwitchTriggerContext.broker_health` | health-status check (`UNAVAILABLE`/`UNKNOWN` trigger) | **INHERITED, coarse** | Not a *count* of failures -- a health-*status* check fed by whatever computes `broker_health` upstream (Phase 14 `monitoring.collectors.collect_broker`). The numeric failure-rate thresholds behind that status live in `MonitoringConfig` (Phase 14), already DEFINED there, just not restated here as a duplicate number. |
 | 13 | Data failure threshold | `KillSwitchTriggerContext.data_health` | health-status check (`UNAVAILABLE`/`UNKNOWN` trigger) | **DEFINED (Phase 17 addition)** | Before this phase, `KillSwitchTriggerContext` had no `data_health` field at all -- `monitoring.collectors.collect_data_quality` (Phase 14) already computed this signal, but nothing wired it into kill-switch evaluation. Added this phase (`src/broker/live/kill_switch.py`, `Optional[ComponentHealthStatus] = None`, additive/backward-compatible) with a regression test (`tests/broker/live/test_live_kill_switch.py::TestEachTriggerIndependently::test_data_health_unavailable_triggers`). The underlying numeric thresholds (invalid-rate, staleness) are Phase 14's `MonitoringConfig`, already DEFINED. |
-| 14 | Withdrawal (cash-out) policy | *(no field exists)* | -- | **BLOCKING** | Raised by the user (conversational, not yet a phase instruction): once Live is generating real returns, when/how much capital should ever be withdrawn from the account? No field, mechanism, or even a placeholder exists anywhere in `broker.live.*`/`risk.*` for this -- there is no concept of "withdrawal" distinct from any other cash movement at all. This is deliberately a human financial-planning decision, not one this system should make on its own (see the DECISION REQUIRED block below for why). |
+| 14 | Withdrawal (cash-out) policy | *(no field exists, by policy)* | -- | **RESOLVED (Session 36 continued)** | The account owner decided: **no withdrawals, ever -- every realized gain (and any capital, for that matter) stays in the account and is reinvested.** This is not Option A/B/C from the design pass below; it is the option that makes A/B/C all moot, since there is never a withdrawal event for any of them to govern. No field, mechanism, or approval type is added to `src/` -- there is nothing to build, since the resolved policy is the ABSENCE of a withdrawal capability, not a particular shape of one. See "Session 36 continued -- #14 RESOLVED" below. |
 | 15 | Rebalancing cash buffer, Live-specific | `RiskConfig.minimum_cash_ratio` (same field as #9) | `0.05` | **INHERITED, needs Live-specific re-examination** | Also raised by the user alongside #14: separate from item #9's existing pre-trade floor (a Phase 8 backtesting default that happens to also gate Live via the same field), how much cash should the strategy proactively hold for liquidity/rebalancing once real withdrawals (per #14) are a live possibility? No such policy has ever been decided with real capital or withdrawal timing in mind -- `0.05` is inherited from backtesting, not chosen for this purpose. |
 
 ## Summary
@@ -51,9 +51,9 @@ claim of financial optimality.
 |---|---|---|
 | DEFINED | 1 | #13 |
 | INHERITED | 6 | #2, #3, #4, #8, #9, #12 |
-| INHERITED, needs Live-specific re-examination | 1 | #15 |
+| INHERITED, needs Live-specific re-examination (awaiting user decision) | 1 | #15 |
 | UNDEFINED | 6 | #1, #5, #6, #7, #10, #11 |
-| BLOCKING | 1 | #14 |
+| RESOLVED | 1 | #14 |
 
 ## DECISION REQUIRED entries
 
@@ -749,3 +749,127 @@ section to note that its own "when this would actually become
 necessary" trigger point — a human reasoning about a real Live capital
 figure in KRW terms — has now occurred, without fabricating the rate it
 still does not have.
+
+## Session 36 continued — #14 RESOLVED: no withdrawal, full reinvestment
+
+The account owner made the actual decision the design pass above
+deliberately did not make: **the account never withdraws capital.
+Every realized gain (and, for that matter, the original principal) is
+reinvested indefinitely; there is no cash-out event of any kind to
+govern.**
+
+This is not a selection among Options A/B/C from the design pass above
+— it is the choice that makes all three moot simultaneously, since
+each of A/B/C exists to answer "how does a withdrawal happen," and
+under this policy a withdrawal never happens at all:
+
+- **Option A's** automated-execution risk (an unattended system moving
+  capital OUT on a fixed schedule, including during a drawdown) —
+  moot, since nothing is ever scheduled.
+- **Option B's** proposal/approval machinery (a new `WithdrawalProposal`
+  type, its own approval flow) — moot, since there is nothing to
+  propose.
+- **Option C's** stale-balance concern (a real withdrawal happening
+  out-of-band, leaving `PortfolioAccounting` briefly wrong) — moot,
+  since no real withdrawal ever occurs for the accounting to fall
+  behind on.
+
+**No code changes as a result.** There is no field, model, or approval
+type to add, remove, or wire — the resolved policy is the continued
+ABSENCE of a withdrawal capability, exactly what this codebase already
+has today. `RiskConfig`/`LiveTradingConfig` are untouched. If this
+policy is ever revisited (e.g. the account owner later decides to
+withdraw after all), it re-opens exactly the Option A/B/C analysis
+already on file above — nothing here forecloses that, it just states
+what is actually intended for now.
+
+## Session 36 continued — #15: clarified for the account owner's decision
+
+**What this item actually is, since it's easy to conflate with #9 or
+with #14:** #9 (`RiskConfig.minimum_cash_ratio=0.05`) already forces
+every BUY to leave at least 5% of portfolio value in cash — but that
+number was picked for backtesting realism (Phase 8), never re-examined
+for what a real Live account specifically needs cash for. #14 is now
+resolved as "never withdraws" — so #15 is NOT "how much cash to keep
+on hand to fund withdrawals" (that was Option B below, and #14's
+resolution makes it inapplicable). What #15 actually asks is: **does a
+real Live account need to hold MORE (or less, or differently-timed)
+cash than the backtesting-inherited 5%, for real-world reasons
+backtesting never has to deal with** — covering trade settlement
+lag, unexpected broker fees, a corporate action cash requirement,
+or simply having enough uninvested cash to react to a bad situation
+(e.g. a manual emergency exit) without being forced to sell a position
+at a bad moment first?
+
+With #14 resolved, only two of the design pass's three options remain
+live choices (Option B, tied to a withdrawal schedule, no longer
+applies):
+
+- **Option A — keep `0.05` (5%) as-is.** Simplest: no new work, the
+  existing Phase 8 default continues to gate Live exactly as it
+  already gates Paper/Backtest. The tradeoff already on file still
+  applies even without withdrawals: `0.05` was never actually chosen
+  WITH a real Live account's own liquidity needs in mind, it just
+  happens to also apply there because it is the same field.
+- **Option C — a regime-conditional buffer**, holding more cash when
+  `regime.enums`'s existing LIQUIDITY/VOLATILITY axes report a less
+  favorable state, less otherwise. This reuses an existing, already-
+  tested signal (no new data source) but is real, unbuilt design work
+  (there is no existing mapping from "which regime state" to "what
+  buffer size" anywhere in this codebase) — and, per RULE 0.8's own
+  logic applied here, choosing a mapping now, before any real Live
+  track record exists to inform it, risks being an unvalidated,
+  invented policy dressed up as a design.
+
+**No recommendation is made here** — this remains the account owner's
+decision, same as #14 was until just now. See the question asked back
+in the same turn as this document update.
+
+## Session 36 continued — Proposed values for #5/#10 (NOT a decision)
+
+Mirroring Phase 20's own framing for #1/#6/#7: what follows is Claude's
+reasoned proposal for the account owner to ratify or revise, not a
+value this document is deciding unilaterally. **Neither number takes
+effect on its own** — a caller must explicitly pass it (`--max-sector-weight`/
+`--max-order-notional` on the Paper CLI, or the equivalent `RiskConfig`
+fields for Live) before either check enforces anything; both already
+default to `None` (disabled) everywhere in this codebase.
+
+### #5 — `RiskConfig.max_sector_weight`
+
+**Proposal: 25% (0.25) of portfolio value in any single sector.**
+
+Grounded in something this project directly observed, not a generic
+round number: `size` (a raw-IC-screened factor candidate) briefly
+reached `CANDIDATE` evidence level earlier this session before a
+concentration-report check found its held-out TEST return was 76.3%
+in a single security — an oil-price-supercycle-era energy name. The
+universe was subsequently widened (`RESEARCH_UNIVERSE_STAGE4`, ADR-0056)
+specifically to thicken the sectors that made that concentration
+possible (Energy/Industrials/Utilities/Real Estate/Materials, each to
+at least 4 names). 25% is loose enough to allow a real sector tilt
+(this is a factor-driven long-only strategy, not an index fund forced
+into ~9% equal-sector-weight neutrality across ~11 GICS sectors) while
+still structurally ruling out the kind of single-sector concentration
+already observed once in this project's own research history.
+
+### #10 — `RiskConfig.max_order_notional`
+
+**Proposal: $1,000 (USD), framed explicitly as an operational
+"fat-finger" ceiling, not a portfolio-construction limit.**
+
+This is a different kind of number than #1/#5/#6/#7, which are all
+genuine portfolio-risk parameters properly expressed relative to
+capital. A per-order absolute-dollar cap serves a narrower purpose:
+catching a sizing bug or data error that tries to place one
+catastrophically large order, regardless of what the rest of the
+portfolio looks like. With initial Live capital stated as a small
+3,000,000 KRW (Session 36, above) and the exact USD figure still
+pending real FX conversion, $1,000 is proposed as a ceiling clearly
+ABOVE any single order this account's real starting size should ever
+plausibly place -- so it should essentially never bind in ordinary
+operation, only if something is actually wrong. Explicitly flagged for
+revisiting once the account's real USD balance is confirmed (same
+"revisit once real capital exists" treatment #1 already has above) --
+a fixed dollar figure that never binds for a $2,000 account could
+easily be far too loose for a much larger one later.
