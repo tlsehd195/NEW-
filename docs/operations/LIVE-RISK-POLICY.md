@@ -945,3 +945,16 @@ period, not a structural obstacle to any of them). Unlike #1/#5/#6/#7/
 orchestration layer -- ratifying the number does not, by itself, make
 the check active in Paper or Live trading; that wiring is separate,
 future work.
+
+**A shadow-evaluation harness now exists to gather evidence before
+ratification** (`src/risk/shadow.py`, ADR-0094, the fifth and last of
+the 5 `prism-insight`-derived items): `evaluate_in_shadow` runs the
+real, currently-ratified `RiskConfig` and a candidate one (e.g.
+`reentry_cooldown_days=5`) side by side against the identical inputs,
+returning only the real result to act on while recording whether and
+how the two diverged. Not yet wired into any real orchestration path --
+building that wiring, then running it against real Paper/Live trade
+history, is the natural way to accumulate real "what would this 5-day
+cooldown have changed" evidence before the account owner is asked to
+ratify or revise the number, rather than asking them to ratify a number
+with zero real evidence behind it either way.
