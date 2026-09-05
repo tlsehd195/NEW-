@@ -47,13 +47,20 @@ the schedule to test it.
   artifact upload left off -- `--resume` means nothing is double
   submitted.
 
-## Known limitations (see ADR-0082 for the full list)
+## Known limitations (see ADR-0082/ADR-0083 for the full list)
 
-- GitHub artifacts expire after 90 days; if the workflow goes that
-  long without a successful run, the next run restores nothing and
-  silently restarts the paper trading history from empty rather than
-  erroring. Check in on the Actions tab occasionally.
-- A repository with zero commits for 60 days has its scheduled
-  workflows auto-disabled by GitHub; any commit resets this.
+- **Solved (ADR-0083)**: GitHub auto-disables a repository's scheduled
+  workflows after 60 days with no repository *commit* activity --
+  `paper_trading_cycle.yml` firing daily does NOT itself count as
+  activity for this rule, only a real commit does. `.github/workflows/
+  keepalive.yml` now makes a trivial monthly commit (a heartbeat
+  timestamp file, never touching `data/` or any DuckDB path)
+  specifically to prevent this.
+- GitHub artifacts still expire after 90 days if
+  `paper_trading_cycle.yml` itself fails on every run for that long
+  (e.g. a revoked/expired `MARKET_DATA_API_KEY`) -- the keepalive
+  workflow keeps the *opportunity* to run, not a guarantee that a run
+  succeeds. Check in on the Actions tab occasionally regardless.
 - Scheduled firing time is not exact-to-the-minute (a GitHub platform
-  characteristic, not specific to this workflow).
+  characteristic, not specific to this workflow) -- not solvable from
+  this side.
