@@ -2544,7 +2544,7 @@ addendum cannot later be read as having picked the factor's exclusion
 rules (Code P/S only, `is_10b5_1_plan == False`) after seeing whether
 they help or hurt the result.
 
-## Session 36 continued Addendum -- ML factor-combination: more data + stronger regularization, no real result yet
+## Session 36 continued Addendum -- ML factor-combination: more data + stronger regularization, real result in
 
 The second of the two directions the account owner asked to pursue in
 parallel with the insider-trading addendum above (ADR-0087): "apply ML
@@ -2563,12 +2563,42 @@ only change once per fiscal year regardless of sampling cadence, per
 CV search grid `ml_ridge` selects from) widened upward to include 500.0
 and 1000.0 alongside every existing weaker candidate.
 
-**No real result yet, same as the insider-trading addendum above**:
-this session's own network cannot run `run_long_horizon_validation.py`
-against real data. Both changes are recorded here before any such run,
-so this addendum cannot later be read as having picked these two
-specific values after seeing what they do to `ml_ols`/`ml_ridge`'s
-fold-consistency or held-out TEST result. The ML feature set itself
-(still the original 6 scores) was deliberately NOT expanded in this
-same change -- see ADR-0087's own "What this does NOT do" for why that
-is a materially larger, separately-scoped change.
+**Real result** (account owner re-ran `run_long_horizon_validation.py`
+against real data, `RESEARCH_UNIVERSE` now `RESEARCH_UNIVERSE_STAGE4`
+87 symbols, `2010-01-01`..`2023-04-28`, without `--insider-db-path` yet):
+`ml_ols` reaches 55% positive folds (33/60), DSR=0.6418, held-out TEST
+net cumret=+63.34% (Sharpe=0.60); `ml_ridge` reaches 53% (32/60),
+DSR=0.5796, held-out TEST net cumret=+76.12% (Sharpe=0.64). **Neither
+clears the 60%-fold/0.95-DSR `CANDIDATE` bar** -- the same conclusion
+as before this ADR's changes.
+
+**An honest, unflattering observation, not smoothed over**: Decision
+5's original finding was `ml_ridge` (58%) ahead of `ml_ols` (53%) --
+regularization measurably helping. This run shows the OPPOSITE
+ordering: `ml_ols` (55%) very slightly ahead of `ml_ridge` (53%). Two
+real caveats on reading too much into this: (1) the gap in both
+directions is a single fold out of 60 (58%→53% was ~3 folds; 55% vs
+53% here is ~1 fold) -- both are small enough to plausibly be noise,
+not a reversal of a real effect; (2) this is not a clean, isolated A/B
+test of the ADR-0087 change alone -- the universe itself changed
+between Decision 5's run (`RESEARCH_UNIVERSE_STAGE3`, 63 symbols) and
+this one (`RESEARCH_UNIVERSE_STAGE4`, 87 symbols), a real confound this
+comparison cannot separate out. Recorded honestly as "did not reproduce
+the earlier directional pattern in this run," not spun as either
+"regularization doesn't help" or explained away -- per RULE 0.8, a
+result that does not match the hypothesis that motivated the change is
+recorded exactly like one that does.
+
+**Overall pool conclusion unchanged** by these two ML parameter
+changes: PBO=7.14% (same as the pre-ADR-0087 31-candidate run),
+`altman_z` (63% folds, DSR=1.00, held-out TEST net=-24.67%) and
+`rank_average_ensemble` (60% folds, DSR=0.98, held-out TEST
+net=-13.63%) remain the only 2 reaching `CANDIDATE`, both still
+TEST-negative and held, not promoted -- unaffected by ADR-0087 since
+neither is `MLStrategy`-based. Zero candidates `VALIDATED`. This run
+does not yet include `insider_buying` (32nd candidate, ADR-0086) --
+real Form 4 ingestion completed separately this same session (87
+symbols, `AVB` unresolved same as the fundamentals catalog's own known
+CIK gap, 4877 transactions persisted) but the walk-forward run with
+`--insider-db-path` has not been executed yet; that result will be
+recorded separately once it lands.
