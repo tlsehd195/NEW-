@@ -157,7 +157,7 @@ layer (ADR-0011, "Alternatives Considered").
 
 ## 4. Baseline Regime Methods
 
-All five axes are deterministic and hand-verifiable (`regime/features.py`,
+All six axes are deterministic and hand-verifiable (`regime/features.py`,
 tested against hand-constructed series in `tests/regime/test_features.py`):
 
 | Axis | Method | States |
@@ -167,6 +167,20 @@ tested against hand-constructed series in `tests/regime/test_features.py`):
 | Liquidity | Recent-vs-baseline average volume ratio | LOW / NORMAL / HIGH / UNKNOWN |
 | Correlation | Rolling Pearson correlation of daily returns vs. a reference series | LOW / NORMAL / HIGH / UNKNOWN |
 | Stress | Composite of the Volatility axis's own state + trailing max drawdown (reuses `backtest.metrics.compute_max_drawdown` directly) | NORMAL / ELEVATED / HIGH / UNKNOWN |
+| Distribution | Count of IBD-style "distribution days" (decline >= threshold on volume higher than the prior day's) within a trailing window (Session 36, found comparing this project against an external repository, dragon1086/prism-insight) | NORMAL / ELEVATED / HIGH / UNKNOWN |
+
+Distribution's addition (after Phase 5's original five) is deliberate
+evidence, not a deviation, of `regime.enums.RegimeAxis`'s own docstring
+claim that this is "an example classification scheme," not a closed
+set: no other axis's code changed, `RegimeRepository`/
+`CompositeRegimeObservation`/`RegimeConditionedStrategy` needed zero
+changes (all operate on `RegimeAxis` generically, via the `axes` dict or
+`AXIS_STATE_ENUM` lookup, never a hardcoded list of five), and every
+pre-existing test asserting `set(RegimeAxis)`/`len(RegimeAxis)` continued
+to pass by construction rather than needing a hand count updated (two
+tests that *did* hardcode a literal `5` were the only ones that needed
+touching -- `tests/regime/test_detector_composite.py`,
+`tests/storage/test_regime_repository.py`).
 
 Every threshold/window lives in `regime.config.RegimeConfig`, never
 hardcoded in `features.py` — a required, non-default-encouraging design
@@ -210,7 +224,7 @@ ever does backfill.
 available — a real, computable number, never a fabricated ML confidence
 (ADR-0011 §7). `state` is stored as a plain `str` (the winning
 axis-specific Enum's `.value`); `regime.enums.AXIS_STATE_ENUM` recovers
-the typed value when needed (a single dataclass generic across five
+the typed value when needed (a single dataclass generic across six
 different Enum domains has no one correct Enum type to declare — ADR-0011
 "Negative/Trade-offs").
 
@@ -235,7 +249,7 @@ deliberately curated set of `(trend_state, volatility_state)` pairs (and
 a Stress-HIGH override) to human-readable labels like `BULL_HIGH_VOL` /
 `BEAR_HIGH_STRESS`. Any combination not in that table gets
 `composite_label = None` — never an auto-generated concatenation of all
-five states, which would produce an unbounded, unvalidated state space
+six states, which would produce an unbounded, unvalidated state space
 (the instruction's explicit warning: "가능한 상태 조합을 무한히 늘리지
 않는다").
 

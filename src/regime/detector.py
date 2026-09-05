@@ -33,7 +33,14 @@ from backtest.clock import BacktestClock
 
 from regime.config import RegimeConfig
 from regime.enums import RegimeAxis, SubjectKind, VolatilityState
-from regime.features import compute_correlation, compute_liquidity, compute_stress, compute_trend, compute_volatility
+from regime.features import (
+    compute_correlation,
+    compute_distribution_days,
+    compute_liquidity,
+    compute_stress,
+    compute_trend,
+    compute_volatility,
+)
 from regime.models import CompositeRegimeObservation, RegimeObservation
 from regime.points import PricePoint, bars_to_price_points, benchmark_to_price_points
 
@@ -105,6 +112,8 @@ class RegimeDetector:
             return cfg.correlation_window * 2
         if axis == RegimeAxis.STRESS:
             return cfg.stress_drawdown_window * 2
+        if axis == RegimeAxis.DISTRIBUTION:
+            return cfg.distribution_window * 2
         raise ValueError(f"unknown axis: {axis!r}")
 
     def _build_observation(
@@ -218,12 +227,23 @@ class RegimeDetector:
             provenance=provenance, experiment_id=experiment_id,
         )
 
+        dist_points = self._fetch_points(data, subject_id, subject_kind, self._lookback_days_for(RegimeAxis.DISTRIBUTION))
+        dist_state, dist_value, dist_reliability = compute_distribution_days(dist_points, config)
+        dist_obs = self._build_observation(
+            axis=RegimeAxis.DISTRIBUTION, subject_id=subject_id, subject_kind=subject_kind, as_of_time=as_of_time,
+            state=dist_state, value=dist_value, reliability=dist_reliability,
+            lookback_days=config.distribution_window,
+            data_version=tuple(sorted({p.data_version for p in dist_points})),
+            provenance=provenance, experiment_id=experiment_id,
+        )
+
         axes = {
             RegimeAxis.TREND: trend_obs,
             RegimeAxis.VOLATILITY: vol_obs,
             RegimeAxis.LIQUIDITY: liq_obs,
             RegimeAxis.CORRELATION: corr_obs,
             RegimeAxis.STRESS: stress_obs,
+            RegimeAxis.DISTRIBUTION: dist_obs,
         }
         composite_label = self._composite_label(trend_obs.state, vol_obs.state, stress_obs.state)
 

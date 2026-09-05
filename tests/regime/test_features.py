@@ -13,8 +13,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from regime.config import RegimeConfig
-from regime.enums import CorrelationState, LiquidityState, StressState, TrendState, VolatilityState
-from regime.features import compute_correlation, compute_liquidity, compute_stress, compute_trend, compute_volatility
+from regime.enums import CorrelationState, DistributionState, LiquidityState, StressState, TrendState, VolatilityState
+from regime.features import (
+    compute_correlation,
+    compute_distribution_days,
+    compute_liquidity,
+    compute_stress,
+    compute_trend,
+    compute_volatility,
+)
 from regime.points import PricePoint
 
 
@@ -193,3 +200,79 @@ class TestStress:
 
 def prices_to_points(prices) -> list[PricePoint]:
     return _points(prices)
+
+
+def _alternating_decline_series(num_points: int) -> tuple[list[float], list[float]]:
+    """Every odd index is a -1% decline on double the prior day's
+    volume (a "distribution day" by `compute_distribution_days`'s own
+    definition); every even index recovers on a quarter of the prior
+    day's volume (never itself a distribution day, whether or not it
+    happens to be a decline). For `num_points` points, exactly
+    `(num_points - 1) // 2` distribution days occur -- easy to
+    hand-verify without a formula: odd indices 1, 3, 5, ... up to
+    `num_points - 1`."""
+    prices = [100.0]
+    volumes = [1_000.0]
+    for i in range(1, num_points):
+        if i % 2 == 1:
+            prices.append(prices[-1] * 0.99)
+            volumes.append(volumes[-1] * 2)
+        else:
+            prices.append(prices[-1] / 0.99)
+            volumes.append(volumes[-1] / 4)
+    return prices, volumes
+
+
+class TestDistributionDays:
+    def test_no_declines_classified_normal(self) -> None:
+        config = RegimeConfig(distribution_window=10)
+        prices = [100.0 + i * 0.1 for i in range(11)]  # monotonically rising, no decline days at all
+        state, value, reliability = compute_distribution_days(_points(prices), config)
+        assert state == DistributionState.NORMAL
+        assert value == 0.0
+        assert reliability == 1.0
+
+    def test_five_distribution_days_classified_elevated(self) -> None:
+        config = RegimeConfig(distribution_window=10, distribution_warning_count=5, distribution_high_count=7)
+        prices, volumes = _alternating_decline_series(11)  # odd indices 1,3,5,7,9 -> 5 distribution days
+        state, value, _ = compute_distribution_days(_points(prices, volumes=volumes), config)
+        assert value == 5.0
+        assert state == DistributionState.ELEVATED
+
+    def test_seven_distribution_days_classified_high(self) -> None:
+        config = RegimeConfig(distribution_window=14, distribution_warning_count=5, distribution_high_count=7)
+        prices, volumes = _alternating_decline_series(15)  # odd indices 1,3,...,13 -> 7 distribution days
+        state, value, _ = compute_distribution_days(_points(prices, volumes=volumes), config)
+        assert value == 7.0
+        assert state == DistributionState.HIGH
+
+    def test_decline_without_higher_volume_does_not_count(self) -> None:
+        """A decline on LOWER or EQUAL volume than the prior day is not
+        institutional distribution by this definition -- must not be
+        counted, however sharp the price move."""
+        config = RegimeConfig(distribution_window=10)
+        prices = [100.0] + [95.0] * 10  # one sharp decline, then flat -- only 1 decline transition at all
+        volumes = [2_000.0] + [1_000.0] * 10  # every day's volume is <= the prior day's
+        state, value, _ = compute_distribution_days(_points(prices, volumes=volumes), config)
+        assert value == 0.0
+        assert state == DistributionState.NORMAL
+
+    def test_no_volume_data_is_unknown_not_guessed(self) -> None:
+        """A benchmark-derived series has no volume at all (Phase 1's
+        BenchmarkPoint has no volume field) -- must be honestly UNKNOWN,
+        mirroring `compute_liquidity`'s own handling of the same gap."""
+        config = RegimeConfig(distribution_window=10)
+        prices = [100.0] * 11
+        points = [PricePoint(p.timestamp, p.price, None, p.data_version) for p in _points(prices)]
+        state, value, reliability = compute_distribution_days(points, config)
+        assert state == DistributionState.UNKNOWN
+        assert value is None
+        assert reliability == 0.0
+
+    def test_insufficient_history_is_unknown(self) -> None:
+        config = RegimeConfig(distribution_window=25)
+        prices = [100.0] * 5
+        state, value, reliability = compute_distribution_days(_points(prices), config)
+        assert state == DistributionState.UNKNOWN
+        assert value is None
+        assert reliability < 1.0
