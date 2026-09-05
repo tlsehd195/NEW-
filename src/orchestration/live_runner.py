@@ -113,6 +113,19 @@ differences in what Live actually is, not by choice:**
    itself -- `SafetyGateContext` has no such fallback anywhere in this
    codebase, so `None` is not offered here at all).
 
+**Reentry cooldown (Session 36 continued, ADR-0093/ADR-0095): now
+sourced from real Trade Journal history, opt-in, mirroring `paper_
+runner`'s own identical wiring.** `run_cycle` accepts an optional
+`trade_journal_repository` -- when supplied, `_last_exit_time_by_
+security` queries each security's own trade history (point-in-time
+safe, `end=as_of_time`) and builds `last_exit_time_by_security` for
+`risk_engine.assess`'s own opt-in parameter (`RiskConfig.reentry_
+cooldown_days`, ratified at 5 trading days but still `None` by
+default). Only a FULL exit counts (`side == SELL` AND `position_after
+== 0.0`). `None` (the default, omitted) means the check is simply not
+evaluated for this call -- same opt-in contract `sector_by_security`
+already has.
+
 Still deliberately NOT "a real, running Trading Engine loop" (no timer/
 scheduler) -- same scope boundary `paper_runner`'s own module docstring
 states, `docs/specifications/PHASE-15-paper-trading.md` section 1.1 (its
@@ -126,6 +139,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Protocol, Sequence
 
 from backtest.asof import AsOfDataView
+from backtest.enums import OrderSide
 from backtest.portfolio import PortfolioView, PositionView
 
 from broker.live.safety_gate import SafetyGateContext
@@ -156,6 +170,7 @@ from risk.models import PositionSizingResult, RiskCheckedPosition
 from risk.sizing import PositionSizer
 
 from trade_journal.enums import TradeProvenance
+from trade_journal.models import TradeRecord
 
 # Mirrors paper_runner.py's own reference-price lookback exactly -- kept
 # as a separate constant (not imported from paper_runner) per this
@@ -181,6 +196,13 @@ class SizingRepository(Protocol):
 
 class RiskRepository(Protocol):
     def record(self, risk_checked: RiskCheckedPosition) -> None: ...
+
+
+class TradeJournalReader(Protocol):
+    def list_trades(
+        self, *, security_id: Optional[str] = None, provenance: Optional[TradeProvenance] = None,
+        start: Optional[datetime] = None, end: Optional[datetime] = None,
+    ) -> list[TradeRecord]: ...
 
 
 @dataclass
@@ -279,6 +301,24 @@ def _compute_risk_health(state: LiveRunnerState, monitoring_config: MonitoringCo
     return health.status
 
 
+def _last_exit_time_by_security(
+    security_ids: Sequence[str], as_of_time: datetime, repository: TradeJournalReader,
+) -> dict[str, datetime]:
+    """Live-side equivalent of `paper_runner._last_exit_time_by_security`
+    -- identical logic, kept as a separate function per this module's
+    own no-cross-import discipline (module docstring). `provenance` is
+    always `TradeProvenance.LIVE_TRADING` here, unlike Paper's
+    caller-suppliable one, matching every other hardcoded provenance
+    value already in this module."""
+    result: dict[str, datetime] = {}
+    for security_id in security_ids:
+        trades = repository.list_trades(security_id=security_id, provenance=TradeProvenance.LIVE_TRADING, end=as_of_time)
+        exits = [t for t in trades if t.side == OrderSide.SELL and t.position_after == 0.0]
+        if exits:
+            result[security_id] = max(t.timestamp for t in exits)
+    return result
+
+
 def run_cycle(
     security_ids: Sequence[str],
     as_of_time: datetime,
@@ -292,6 +332,7 @@ def run_cycle(
     risk_engine: PortfolioRiskEngine,
     gate_context: SafetyGateContext,
     sector_by_security: Optional[dict[str, str]] = None,
+    trade_journal_repository: Optional[TradeJournalReader] = None,
     state: Optional[LiveRunnerState] = None,
     prediction_repository: Optional[PredictionRepository] = None,
     regime_repository: Optional[RegimeRepository] = None,
@@ -353,6 +394,10 @@ def run_cycle(
         value_history = tuple(state.value_history) + (portfolio.portfolio_value,)
         state.value_history.append(portfolio.portfolio_value)
 
+    last_exit_time_by_security: Optional[dict[str, datetime]] = None
+    if trade_journal_repository is not None:
+        last_exit_time_by_security = _last_exit_time_by_security(security_ids, as_of_time, trade_journal_repository)
+
     outcomes = []
     for security_id in security_ids:
         current_price = _reference_price(view, security_id, as_of_time)
@@ -381,6 +426,7 @@ def run_cycle(
         risk_checked = risk_engine.assess(
             security_id, as_of_time, sizing, portfolio, current_price=current_price,
             sector_by_security=sector_by_security, value_history=value_history,
+            last_exit_time_by_security=last_exit_time_by_security,
             provenance=TradeProvenance.LIVE_TRADING, experiment_id=experiment_id,
         )
         if risk_repository is not None:

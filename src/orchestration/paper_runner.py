@@ -50,6 +50,24 @@ untouched here) -- these five parameters cover exactly the five stages
 that session does not already persist. All default to `None` (skip),
 matching `broker.pipeline.submit_validated_order`'s own "persist only
 if a repository is supplied" precedent.
+
+**Reentry cooldown (Session 36 continued, ADR-0093/ADR-0095): now
+sourced from real Trade Journal history, opt-in.** `run_cycle` accepts
+an optional `trade_journal_repository` -- when supplied, `run_cycle`
+queries each security's own trade history via `list_trades(security_id=
+..., end=as_of_time)` (point-in-time safe -- a trade dated after this
+checkpoint is never queried) and builds `last_exit_time_by_security`
+for `risk_engine.assess`'s own opt-in parameter (`RiskConfig.
+reentry_cooldown_days`, ratified at 5 trading days but still `None` by
+default). Only a FULL exit counts (`side == SELL` AND `position_after
+== 0.0`) -- a partial trim that still leaves a nonzero position is
+ordinary rebalancing, not the "reentry" this concept is about. `None`
+(the default, omitted) means exactly what it already means to `risk_
+engine.assess` directly: the check is not evaluated for this call,
+mirroring `sector_by_security=None`'s own precedent of "opt-in, not
+fail-closed by default" -- see `RiskConfig.reentry_cooldown_days`'s own
+docstring for why this mirrors `liquidity_state`, not `sector_by_
+security`'s fail-closed pattern.
 """
 
 from __future__ import annotations
@@ -59,6 +77,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Protocol, Sequence
 
 from backtest.asof import AsOfDataView
+from backtest.enums import OrderSide
 from backtest.portfolio import PortfolioView, PositionView
 
 from broker.models import BrokerOrderResponse, OrderValidationResult
@@ -79,6 +98,7 @@ from risk.models import PositionSizingResult, RiskCheckedPosition
 from risk.sizing import PositionSizer
 
 from trade_journal.enums import TradeProvenance
+from trade_journal.models import TradeRecord
 
 # Mirrors backtest.engine.BacktestEngine's own 1-day reference-price
 # lookback exactly (src/backtest/engine.py) for the checkpoint-only
@@ -106,6 +126,13 @@ class SizingRepository(Protocol):
 
 class RiskRepository(Protocol):
     def record(self, risk_checked: RiskCheckedPosition) -> None: ...
+
+
+class TradeJournalReader(Protocol):
+    def list_trades(
+        self, *, security_id: Optional[str] = None, provenance: Optional[TradeProvenance] = None,
+        start: Optional[datetime] = None, end: Optional[datetime] = None,
+    ) -> list[TradeRecord]: ...
 
 
 @dataclass
@@ -167,6 +194,30 @@ def _portfolio_view(account, view: AsOfDataView, as_of_time: datetime) -> Portfo
     )
 
 
+def _last_exit_time_by_security(
+    security_ids: Sequence[str], as_of_time: datetime, repository: TradeJournalReader, provenance: TradeProvenance,
+) -> dict[str, datetime]:
+    """Real exit history for the reentry-cooldown check (ADR-0093/
+    ADR-0095), one `list_trades` query per security bounded by `end=
+    as_of_time` -- point-in-time safe, a trade dated after this
+    checkpoint is never queried at all. Only a FULL exit counts (`side
+    == SELL` AND `position_after == 0.0`) -- a partial trim that still
+    leaves a nonzero position is ordinary rebalancing, not the
+    "reentry" this concept is about. A security with no full exit on
+    record is simply absent from the returned mapping -- the ordinary
+    case (never exited, or a resumed session with no journal yet), not
+    a data gap; see `RiskConfig.reentry_cooldown_days`'s own docstring
+    for why `risk_engine.assess` treats an absent entry as PASS, not a
+    fail-closed REJECT."""
+    result: dict[str, datetime] = {}
+    for security_id in security_ids:
+        trades = repository.list_trades(security_id=security_id, provenance=provenance, end=as_of_time)
+        exits = [t for t in trades if t.side == OrderSide.SELL and t.position_after == 0.0]
+        if exits:
+            result[security_id] = max(t.timestamp for t in exits)
+    return result
+
+
 def run_cycle(
     security_ids: Sequence[str],
     as_of_time: datetime,
@@ -179,6 +230,7 @@ def run_cycle(
     position_sizer: PositionSizer,
     risk_engine: PortfolioRiskEngine,
     sector_by_security: Optional[dict[str, str]] = None,
+    trade_journal_repository: Optional[TradeJournalReader] = None,
     state: Optional[PaperRunnerState] = None,
     prediction_repository: Optional[PredictionRepository] = None,
     regime_repository: Optional[RegimeRepository] = None,
@@ -213,7 +265,14 @@ def run_cycle(
     persist that stage's real output through the exact repository
     classes `tests/integration/test_risk_lineage.py` already uses --
     `PaperTradingSession.submit` already persists its own order/fill/
-    status records independently of these."""
+    status records independently of these.
+
+    `trade_journal_repository`, when supplied, is queried once per
+    security for real exit history and passed to `risk_engine.assess`
+    as `last_exit_time_by_security` (see module docstring) -- `None`
+    (the default) means the reentry-cooldown check is simply not
+    evaluated for this call, same opt-in contract `sector_by_security`
+    already has."""
     account = session.account_summary(as_of=as_of_time)
     portfolio = _portfolio_view(account, view, as_of_time)
 
@@ -221,6 +280,12 @@ def run_cycle(
     if state is not None:
         value_history = tuple(state.value_history) + (portfolio.portfolio_value,)
         state.value_history.append(portfolio.portfolio_value)
+
+    last_exit_time_by_security: Optional[dict[str, datetime]] = None
+    if trade_journal_repository is not None:
+        last_exit_time_by_security = _last_exit_time_by_security(
+            security_ids, as_of_time, trade_journal_repository, provenance,
+        )
 
     outcomes = []
     for security_id in security_ids:
@@ -250,6 +315,7 @@ def run_cycle(
         risk_checked = risk_engine.assess(
             security_id, as_of_time, sizing, portfolio, current_price=current_price,
             sector_by_security=sector_by_security, value_history=value_history,
+            last_exit_time_by_security=last_exit_time_by_security,
             provenance=provenance, experiment_id=experiment_id,
         )
         if risk_repository is not None:
