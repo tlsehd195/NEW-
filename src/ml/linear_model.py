@@ -122,7 +122,18 @@ class LinearRegressionModel:
 # multicollinearity artifact among the correlated profitability
 # features (`roe`/`roa`/`net_margin`/`leverage`) -- genuine
 # regularization is the standard fix for exactly this instability.
-CANDIDATE_RIDGES: tuple[float, ...] = (0.001, 0.01, 0.1, 1.0, 10.0, 100.0)
+# Decision 5's own real result confirmed this helps: `ml_ridge` showed
+# measurably better fold-consistency than unregularized `ml_ols`
+# (58% vs 53%), on data Decision 5's own writeup called "little" --
+# ADR-0087 (the account owner's "strengthen regularization" direction,
+# paired with `MLStrategyParameters.train_window_months` extended to 84
+# months for the complementary "more data" direction) widens this grid
+# upward so the CV search can select a materially stronger penalty than
+# 100.0 if the now-longer training history warrants one. Extending
+# upward only (never removing the original weaker candidates) keeps
+# every prior real result's chosen ridge value still reachable by this
+# same grid -- fixed here before any new result exists, per RULE 0.8.
+CANDIDATE_RIDGES: tuple[float, ...] = (0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 500.0, 1000.0)
 
 
 def select_ridge_via_expanding_window_cv(

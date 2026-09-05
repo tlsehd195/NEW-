@@ -150,6 +150,12 @@ class TestParameterValidation:
         with pytest.raises(ValueError):
             MLStrategyParameters(train_window_months=0)
 
+    def test_default_train_window_is_84_months_adr_0087(self) -> None:
+        # ADR-0087: the account owner's "give the model more data"
+        # direction -- extended from 60 (5 fiscal-year snapshots) to 84
+        # (7), paired with linear_model.py's widened CANDIDATE_RIDGES.
+        assert MLStrategyParameters().train_window_months == 84
+
 
 class TestPluggableModelBuilder:
     """ADR-0043 Decision 5: MLStrategy's model family is swappable via

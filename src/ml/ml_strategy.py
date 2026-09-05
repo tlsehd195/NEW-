@@ -104,15 +104,21 @@ class MLStrategyParameters:
     # Own internal fit-lookback -- decoupled from run_walk_forward_
     # evaluation's own train_window_months (which stays a rule-based-
     # strategy-only "documentation parameter", see module docstring).
-    # 5 years covers 5 distinct fiscal-year fundamentals snapshots.
     # Was temporarily 36 months (ADR-0043 Decision 3) purely because
     # refitting from scratch at every one of a walk-forward
     # evaluation's 70-100+ folds was too slow without caching; the
-    # shared feature cache (Decision 5) removes most of that marginal
-    # cost by reusing overlapping folds' already-computed training
-    # samples, so this reverts to the statistically preferable value --
-    # fixed before any fold's result is seen, not tuned against one.
-    train_window_months: int = 60
+    # shared feature cache (Decision 5) removed most of that marginal
+    # cost, so Decision 5 reverted this to 60 (5 fiscal-year snapshots).
+    # ADR-0087 extends it further to 84 (7 fiscal-year snapshots) --
+    # the account owner's own "give the model more data" direction,
+    # decided together with linear_model.py's widened CANDIDATE_RIDGES
+    # grid (ADR-0043 Decision 5's own real finding was that
+    # regularization measurably helped fold-consistency specifically
+    # because the original fit had "little data"; more history and a
+    # wider regularization search are the two complementary responses
+    # to that same finding, fixed here before either change's own
+    # result is seen, never tuned against one).
+    train_window_months: int = 84
 
     def __post_init__(self) -> None:
         if self.rebalance_months not in REBALANCE_MONTHS_RANGE:

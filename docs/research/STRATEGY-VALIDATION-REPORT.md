@@ -2543,3 +2543,32 @@ real data. Recorded here, before that run, specifically so this
 addendum cannot later be read as having picked the factor's exclusion
 rules (Code P/S only, `is_10b5_1_plan == False`) after seeing whether
 they help or hurt the result.
+
+## Session 36 continued Addendum -- ML factor-combination: more data + stronger regularization, no real result yet
+
+The second of the two directions the account owner asked to pursue in
+parallel with the insider-trading addendum above (ADR-0087): "apply ML
+to factor combination -- strengthen regularization + increase data,"
+following on ADR-0043 Decision 5's own real finding that `ml_ridge`
+(regularized) beat `ml_ols` (unregularized) on fold-consistency (58%
+vs 53%) on data that Decision 5's own writeup called "little."
+
+Two changes, decided together, before either's own result exists:
+`MLStrategyParameters.train_window_months` (the `ml_ols`/`ml_ridge`
+candidates' own in-strategy fit lookback) extended from 60 to 84
+months (5 to 7 fiscal-year fundamentals snapshots) -- genuinely more
+historical rows, not denser resampling of the same window (fundamentals
+only change once per fiscal year regardless of sampling cadence, per
+`ml_strategy.py`'s own docstring). `linear_model.CANDIDATE_RIDGES` (the
+CV search grid `ml_ridge` selects from) widened upward to include 500.0
+and 1000.0 alongside every existing weaker candidate.
+
+**No real result yet, same as the insider-trading addendum above**:
+this session's own network cannot run `run_long_horizon_validation.py`
+against real data. Both changes are recorded here before any such run,
+so this addendum cannot later be read as having picked these two
+specific values after seeing what they do to `ml_ols`/`ml_ridge`'s
+fold-consistency or held-out TEST result. The ML feature set itself
+(still the original 6 scores) was deliberately NOT expanded in this
+same change -- see ADR-0087's own "What this does NOT do" for why that
+is a materially larger, separately-scoped change.
