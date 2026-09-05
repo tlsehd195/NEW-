@@ -9,11 +9,27 @@ explicitly deferred ("wiring [Regime/Prediction/Decision/Sizing/Risk]
 into an always-on scheduled process is a later phase's concern") and
 `orchestration.paper_runner` (ADR-0067) itself deliberately stopped
 short of building: `run_cycle` is a per-checkpoint function, not a
-loop. This script IS that loop -- still not "always-on" (it runs once,
-over a fixed historical-to-recent window, then exits; a real always-on
-process would need a real external scheduler, e.g. cron, calling this
-script or its equivalent repeatedly, which remains genuinely out of
-scope here).
+loop. This script IS that loop -- still not "always-on" by itself (it
+runs once, over a fixed window, then exits; a real external scheduler,
+e.g. cron, must call it repeatedly). ADR-0073 (Session 36 continued)
+made that repeated invocation actually SAFE via `--resume`: without it,
+re-running this script over a range it already processed re-derives
+fresh decision/sizing/risk lineage IDs every time (`build_validated_
+order`'s idempotent `client_order_id` only protects a single process's
+own retry, not two independent invocations) and genuinely double-
+submits every order, not merely re-logs it. `--resume` skips whatever
+`--paper-store` already has a real, persisted checkpoint for and
+reconstructs `PaperRunnerState.value_history` from real prior portfolio
+values rather than reprocessing or guessing. Building the scheduler
+itself remains out of scope -- e.g. a real crontab entry invoking this
+script daily after market close:
+    30 21 * * 1-5 cd /path/to/repo && python3 scripts/run_paper_trading_cycle.py \
+        --universe RESEARCH_UNIVERSE --db-path ./data/real_market_data \
+        --paper-store ./data/paper_trading_store --resume \
+        --start 2024-01-02 --end "$(date +%F)" --out ./data/paper_trading_cycle_report.json
+(`--start` only matters for a brand-new `--paper-store`; `--resume`
+makes every later invocation pick up exactly where the last one left
+off regardless of what `--start` says).
 
 Every checkpoint's real outcome is persisted through the same
 DuckDB-backed repositories `tests/integration/test_risk_lineage.py`
@@ -52,6 +68,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -103,6 +120,52 @@ def _parse_date(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
 
+def _last_processed_checkpoint(prediction_repository, representative_security_id: str) -> Optional[datetime]:
+    """The latest `as_of_time` this store has a real, persisted
+    prediction for `representative_security_id` -- `run_cycle` records
+    one prediction per security every checkpoint uniformly, so any one
+    security's own history is a faithful proxy for "which checkpoints
+    has this store's Paper session already lived through," without
+    needing to check all of them. `None` on a fresh/empty store (no
+    prior run to resume from)."""
+    records = prediction_repository.list_all(security_id=representative_security_id)
+    if not records:
+        return None
+    return max(r.as_of_time for r in records)
+
+
+def _next_starting_id(record_ids) -> int:
+    """1 for an empty/fresh store; otherwise one past the highest
+    numeric suffix already used across EVERY security this store has
+    ever recorded for this ID kind (`predictor`/`decision_agent`/
+    `position_sizer`/`risk_engine` each allocate from ONE shared counter
+    across all securities in a cycle, not per-security -- checking only
+    one security's own records would undercount how many IDs were
+    really handed out). Every one of this project's ID formats is
+    `<PREFIX...>-NNNNNN` -- the numeric suffix is always the last
+    hyphen-separated segment, regardless of how many hyphens the prefix
+    itself has (e.g. "DEC-OUT-000042")."""
+    ids = list(record_ids)
+    if not ids:
+        return 1
+    return max(int(rid.rsplit("-", 1)[1]) for rid in ids) + 1
+
+
+def _reconstruct_value_history(risk_repository, representative_security_id: str, up_to: datetime) -> list:
+    """Real, already-persisted portfolio values for every checkpoint up
+    to and including `up_to`, in chronological order -- reconstructed
+    from `RiskCheckedPosition.risk_state.portfolio_value` (one real
+    snapshot per checkpoint, shared across every security assessed that
+    cycle) rather than guessed or interpolated. Never fabricates a
+    value for a checkpoint whose `risk_state` is unexpectedly absent --
+    that checkpoint is simply skipped, matching this project's fail-
+    closed discipline (a caller resuming with a resulting short history
+    sees `max_drawdown`/`max_portfolio_volatility` correctly stay
+    "unknown" for longer, never a fabricated gap-filled series)."""
+    records = risk_repository.list_all(security_id=representative_security_id, end=up_to)
+    return [r.risk_state.portfolio_value for r in records if r.risk_state is not None]
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="PILOT_UNIVERSE")
@@ -115,6 +178,17 @@ def main(argv=None) -> int:
     parser.add_argument("--max-order-notional", type=float, default=None)
     parser.add_argument("--max-drawdown", type=float, default=None, help="Disabled by default -- see module docstring")
     parser.add_argument("--max-portfolio-volatility", type=float, default=None)
+    parser.add_argument(
+        "--resume", action="store_true",
+        help=(
+            "Safe to invoke repeatedly (e.g. from an external cron) with the same --start/--end/"
+            "--paper-store: checkpoints already recorded in --paper-store are skipped rather than "
+            "reprocessed (each run's fresh decision/sizing/risk IDs would otherwise make every "
+            "resubmission a genuinely new order, not a deduplicated retry -- see ADR-0073). "
+            "value_history is reconstructed from real, already-persisted portfolio values, never "
+            "guessed. Without this flag, re-running an already-processed range double-submits."
+        ),
+    )
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
 
@@ -140,9 +214,6 @@ def main(argv=None) -> int:
         return 1
     print(f"Fetched {len(bars)} real bars.", flush=True)
 
-    clock = BacktestClock(checkpoints)
-    view = AsOfDataView(repository, clock)
-
     market_data_source = InMemoryPaperMarketDataSource(bars)
     paper_config = PaperTradingConfig(initial_cash=args.initial_capital)
 
@@ -150,9 +221,13 @@ def main(argv=None) -> int:
     order_repository = DuckDBPaperOrderRepository(store_engine)
     fill_repository = DuckDBPaperFillRepository(store_engine)
     status_repository = DuckDBOrderStatusEventRepository(store_engine)
-    session = PaperTradingSession(
+    # `restore()` replays whatever this store already has (nothing, on a
+    # brand-new store) -- strictly more correct than the plain
+    # constructor for every case, not only --resume (ADR-0073).
+    session = PaperTradingSession.restore(
         paper_config, market_data_source,
         order_repository=order_repository, fill_repository=fill_repository, status_repository=status_repository,
+        as_of=args.end,
     )
 
     prediction_repository = DuckDBPredictionRepository(store_engine)
@@ -161,18 +236,78 @@ def main(argv=None) -> int:
     sizing_repository = DuckDBPositionSizingRepository(store_engine)
     risk_repository = DuckDBRiskRepository(store_engine)
 
+    # Any --resume filtering of `checkpoints` MUST happen before `clock`/
+    # `view` are built below -- `clock.index` is an index into whatever
+    # list `clock` was constructed from, so building it from the
+    # unfiltered range and then shortening `checkpoints` afterward would
+    # silently misalign every subsequent `clock.index = i` in the main
+    # loop with the wrong calendar date.
+    state = PaperRunnerState()
+    if args.resume:
+        last_processed = _last_processed_checkpoint(prediction_repository, security_ids[0])
+        if last_processed is not None:
+            before_count = len(checkpoints)
+            checkpoints = [c for c in checkpoints if c > last_processed]
+            state.value_history.extend(_reconstruct_value_history(risk_repository, security_ids[0], last_processed))
+            print(
+                f"--resume: last processed checkpoint was {last_processed.date()} -- "
+                f"skipping {before_count - len(checkpoints)}/{before_count} already-done checkpoint(s), "
+                f"value_history seeded with {len(state.value_history)} real prior point(s).",
+                flush=True,
+            )
+            if not checkpoints:
+                print("--resume: nothing new to process in [--start, --end] -- exiting.", flush=True)
+                final_account = session.account_summary(as_of=last_processed)
+                report = {
+                    "note": "Nothing new to process -- every requested checkpoint was already recorded.",
+                    "universe": args.universe, "checkpoints_run": 0,
+                    "final_cash": final_account.cash,
+                    "final_positions": {sid: pos.quantity for sid, pos in final_account.positions.items() if pos.available},
+                }
+                args.out.parent.mkdir(parents=True, exist_ok=True)
+                args.out.write_text(json.dumps(report, indent=2))
+                data_engine.close()
+                store_engine.close()
+                return 0
+
+    clock = BacktestClock(checkpoints)
+    view = AsOfDataView(repository, clock)
+
+    # Every component below allocates its own IDs (prediction_id/
+    # composite_id/decision_id/sizing_id/risk_id) from a counter that
+    # starts at 1 in a fresh process -- on a store that already has
+    # persisted records (--resume or otherwise), a fresh counter WILL
+    # collide with an ID a prior invocation already used, since each
+    # repository's table enforces a real primary-key uniqueness
+    # constraint on that ID, not just on natural_key (ADR-0073). Seeding
+    # every counter from this store's own real persisted max, always --
+    # not only under --resume -- makes ANY second invocation against a
+    # non-empty --paper-store safe, matching the same "always correct,
+    # never just a --resume special case" choice already made for
+    # `PaperTradingSession.restore()` above.
+    next_prediction_id = _next_starting_id(r.prediction_id for r in prediction_repository.list_all())
+    next_composite_id = _next_starting_id(r.composite_id for r in regime_repository.list_composites())
+    # `record_composite` also persists each axis's own `RegimeObservation`
+    # (a SEPARATE, separately primary-keyed table, `regime_observations`)
+    # -- both counters must be seeded, not just the composite's.
+    next_observation_id = _next_starting_id(r.regime_id for r in regime_repository.list_observations())
+    next_decision_id = _next_starting_id(r.decision_id for r in decision_repository.list_all())
+    next_sizing_id = _next_starting_id(r.sizing_id for r in sizing_repository.list_all())
+    next_risk_id = _next_starting_id(r.risk_id for r in risk_repository.list_all())
+
     risk_config = RiskConfig(
         max_sector_weight=args.max_sector_weight, max_order_notional=args.max_order_notional,
         max_drawdown=args.max_drawdown, max_portfolio_volatility=args.max_portfolio_volatility,
     )
     components = dict(
-        predictor=DriftPredictor(PredictionConfig(lookback_days=20)),
-        regime_detector=RegimeDetector(RegimeConfig()),
-        decision_agent=BaselineRuleDecisionAgent(DecisionConfig()),
-        position_sizer=DeterministicPositionSizer(PositionSizingConfig()),
-        risk_engine=DeterministicPortfolioRiskEngine(risk_config),
+        predictor=DriftPredictor(PredictionConfig(lookback_days=20), starting_id=next_prediction_id),
+        regime_detector=RegimeDetector(
+            RegimeConfig(), starting_observation_id=next_observation_id, starting_composite_id=next_composite_id,
+        ),
+        decision_agent=BaselineRuleDecisionAgent(DecisionConfig(), starting_id=next_decision_id),
+        position_sizer=DeterministicPositionSizer(PositionSizingConfig(), starting_id=next_sizing_id),
+        risk_engine=DeterministicPortfolioRiskEngine(risk_config, starting_id=next_risk_id),
     )
-    state = PaperRunnerState()
 
     warmup_checkpoints = [c for c in checkpoints if (c - args.start).days < _WARMUP_DAYS]
     print(f"Running {len(checkpoints)} checkpoint(s) ({len(warmup_checkpoints)} within DriftPredictor's own warmup window) ...", flush=True)

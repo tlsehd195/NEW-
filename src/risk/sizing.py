@@ -68,8 +68,8 @@ class PositionSizer(Protocol):
 
 
 class _IdAllocator:
-    def __init__(self) -> None:
-        self._next_id = 1
+    def __init__(self, start: int = 1) -> None:
+        self._next_id = start
 
     def allocate(self) -> str:
         sid = f"SIZE-{self._next_id:06d}"
@@ -85,9 +85,9 @@ class DeterministicPositionSizer:
 
     version = "deterministic_position_sizer_v1"
 
-    def __init__(self, config: PositionSizingConfig = PositionSizingConfig()) -> None:
+    def __init__(self, config: PositionSizingConfig = PositionSizingConfig(), *, starting_id: int = 1) -> None:
         self._config = config
-        self._ids = _IdAllocator()
+        self._ids = _IdAllocator(starting_id)
 
     def size(
         self,

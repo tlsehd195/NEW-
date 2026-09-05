@@ -159,3 +159,118 @@ class TestEndToEndAgainstASeededCatalog:
             "--out", str(out_path),
         ])
         assert rc == 1
+
+
+class TestResume:
+    """ADR-0073: `--resume` is what makes it safe to invoke this script
+    repeatedly (e.g. from a real external cron) over an overlapping
+    range -- without it, a second invocation re-derives fresh decision/
+    sizing/risk lineage IDs for checkpoints it already processed and
+    genuinely double-submits every order (client_order_id's own
+    idempotency only protects a single process's retry, not two
+    separate invocations)."""
+
+    def test_resume_skips_already_processed_checkpoints_not_reprocessing_them(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        def _run(out_name, *, resume, end):
+            out_path = tmp_path / out_name
+            argv = [
+                "--universe", "TEST_UNIVERSE",
+                "--db-path", str(db_path),
+                "--paper-store", str(paper_store),
+                "--start", "2024-02-01", "--end", end,
+                "--out", str(out_path),
+            ]
+            if resume:
+                argv.append("--resume")
+            assert module.main(argv) == 0
+            return json.loads(out_path.read_text())
+
+        first = _run("first.json", resume=False, end="2024-02-15")
+        second = _run("second.json", resume=True, end="2024-02-29")
+
+        # The second run's own [--start, --end] spans the whole month,
+        # but it must only have actually RUN the checkpoints the first
+        # run had not already recorded -- i.e. exactly (full-month
+        # trading days) minus (however many the first run already did),
+        # never the full month over again.
+        full_month_days = len(trading_days(date(2024, 2, 1), date(2024, 2, 29)))
+        assert second["checkpoints_run"] > 0
+        assert second["checkpoints_run"] == full_month_days - first["checkpoints_run"]
+
+        store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        prediction_repo = DuckDBPredictionRepository(store_engine)
+        total_predictions = len(prediction_repo.list_all(security_id="AAA"))
+        store_engine.close()
+        # Never double-counted: total persisted predictions equals
+        # exactly the sum of the two runs' own checkpoint counts, never
+        # more (which would mean the overlapping days got reprocessed).
+        assert total_predictions == first["checkpoints_run"] + second["checkpoints_run"]
+
+    def test_resume_with_nothing_new_reports_zero_checkpoints_and_does_not_crash(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        def _run(out_name, *, resume):
+            out_path = tmp_path / out_name
+            argv = [
+                "--universe", "TEST_UNIVERSE",
+                "--db-path", str(db_path),
+                "--paper-store", str(paper_store),
+                "--start", "2024-02-01", "--end", "2024-02-15",
+                "--out", str(out_path),
+            ]
+            if resume:
+                argv.append("--resume")
+            assert module.main(argv) == 0
+            return json.loads(out_path.read_text())
+
+        first = _run("first.json", resume=False)
+        second = _run("second.json", resume=True)  # identical range, already fully done
+
+        assert first["checkpoints_run"] > 0
+        assert second["checkpoints_run"] == 0
+
+    def test_resume_reconstructs_value_history_across_invocations(self, tmp_path) -> None:
+        """`state.value_history` must reflect the FULL real history
+        across both invocations, not just the second one's own new
+        checkpoints -- otherwise a resumed run's max_drawdown/
+        max_portfolio_volatility checks would incorrectly reset to
+        "insufficient history" every time the scheduler happens to
+        restart the process."""
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        def _run(out_name, *, resume, end):
+            out_path = tmp_path / out_name
+            argv = [
+                "--universe", "TEST_UNIVERSE",
+                "--db-path", str(db_path),
+                "--paper-store", str(paper_store),
+                "--start", "2024-02-01", "--end", end,
+                "--out", str(out_path),
+            ]
+            if resume:
+                argv.append("--resume")
+            assert module.main(argv) == 0
+            return json.loads(out_path.read_text())
+
+        first = _run("first.json", resume=False, end="2024-02-08")
+        second = _run("second.json", resume=True, end="2024-02-15")
+
+        assert first["value_history_length"] > 0
+        # The second run's in-process value_history starts seeded with
+        # every real prior point PLUS this run's own new checkpoints --
+        # never reset to only the new ones.
+        assert second["value_history_length"] == first["value_history_length"] + second["checkpoints_run"]
