@@ -180,6 +180,38 @@ class TestFetchForm4FilingList:
         assert filings[0]["filing_date"] == utc(2026, 9, 3)
         assert filings[0]["filing_href"].endswith("000114036126035636/")
 
+    def test_before_date_is_passed_through_as_the_dateb_query_param(self) -> None:
+        # ADR-0088: pagination relies on this parameter actually
+        # reaching EDGAR's dateb query field.
+        calls = []
+
+        class _StubTransport:
+            def get(self, path, *, timeout):
+                calls.append(path)
+                return SecEdgarTransportResponse(status_code=200, body=None, raw_text=_REAL_SHAPE_ATOM_FEED, headers={})
+
+        provider = _provider()
+        provider.fetch_form4_filing_list("0000320193", _StubTransport(), before_date="2023-06-01")
+        assert calls == [
+            "/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4&dateb=2023-06-01&owner=include&count=40&output=atom"
+        ]
+
+    def test_before_date_none_omits_the_dateb_value_exactly_as_before(self) -> None:
+        # Backward-compatible default -- no before_date reproduces the
+        # exact pre-ADR-0088 single-page query shape.
+        calls = []
+
+        class _StubTransport:
+            def get(self, path, *, timeout):
+                calls.append(path)
+                return SecEdgarTransportResponse(status_code=200, body=None, raw_text=_REAL_SHAPE_ATOM_FEED, headers={})
+
+        provider = _provider()
+        provider.fetch_form4_filing_list("0000320193", _StubTransport())
+        assert calls == [
+            "/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4&dateb=&owner=include&count=40&output=atom"
+        ]
+
     def test_empty_response_yields_no_filings_not_an_error(self) -> None:
         class _StubTransport:
             def get(self, path, *, timeout):

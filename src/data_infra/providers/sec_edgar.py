@@ -285,7 +285,7 @@ class SecEdgarFundamentalsProvider:
         return records
 
     def fetch_form4_filing_list(
-        self, cik: str, transport: SecEdgarHttpTransport, *, count: int = 40
+        self, cik: str, transport: SecEdgarHttpTransport, *, count: int = 40, before_date: Optional[str] = None
     ) -> list[dict]:
         """`GET /cgi-bin/browse-edgar?action=getcompany&CIK=...&type=4&
         owner=include&output=atom` -- EDGAR's Atom feed listing an
@@ -299,10 +299,28 @@ class SecEdgarFundamentalsProvider:
         both live on `www.sec.gov`. Returns one dict per filing:
         `{"accession_number", "filing_date", "filing_href"}`, oldest-
         first order not guaranteed (EDGAR returns newest-first; callers
-        needing chronological order should sort)."""
+        needing chronological order should sort).
+
+        `before_date` (ADR-0088, Tier 2 -- EDGAR's own long-documented
+        `dateb` parameter, never exercised against a real paginated
+        response this session, unlike the un-paginated single-page shape
+        Tier 1 above covers): a `"YYYY-MM-DD"` string restricting results
+        to filings at or before that date, EDGAR's own mechanism for
+        paging backward through a filer's full history one `count`-sized
+        page at a time -- a single un-paginated call caps out at
+        whatever `count` EDGAR accepts per page (observed real-usage
+        limitation, ADR-0088: a company with an active insider-trading
+        history can have far more Form 4 filings than fit in one page,
+        so a caller needing deep history must call this repeatedly,
+        each time with `before_date` set to the OLDEST `filing_date`
+        already seen, exactly `ingest_insider_transactions.py`'s own
+        `_fetch_paginated_filing_list` helper does). `None` (the
+        default) omits the parameter entirely, reproducing this
+        method's exact pre-ADR-0088 single-page behavior."""
+        dateb_param = before_date or ""
         path = (
             f"/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=4"
-            f"&dateb=&owner=include&count={count}&output=atom"
+            f"&dateb={dateb_param}&owner=include&count={count}&output=atom"
         )
         response = transport.get(path, timeout=self._config.timeout_seconds)
         if not response.raw_text:

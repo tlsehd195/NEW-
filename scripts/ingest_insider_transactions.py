@@ -43,11 +43,27 @@ own docstring already gives -- see that module for the full argument,
 unchanged here.
 
 Rate limiting: identical fixed delay to `ingest_fundamentals_data.py`,
-but applied per FILING (not per symbol) -- a Form 4 ingestion run makes
-`2 + 2*filings_per_symbol` real requests per symbol (ticker map is
-fetched once for the whole run, then filing-list + index.json + XML
-document per filing), several times more requests per symbol than the
-one-request-per-symbol company-facts script.
+applied per FILING (not per symbol) -- a Form 4 ingestion run makes
+roughly `2 + 2*filings_seen` real requests per symbol (ticker map is
+fetched once for the whole run, then filing-list pages + index.json +
+XML document per filing), several times more requests per symbol than
+the one-request-per-symbol company-facts script.
+
+**Pagination (ADR-0088, added after a real run surfaced the gap)**: a
+single un-paginated `fetch_form4_filing_list` call caps out at
+whatever `count` EDGAR returns per page -- the first real run of this
+script (Session 36 continued, default `count=40`) turned out to only
+reach back to 2023-09 for every one of 87 real large-cap symbols
+(`insider_buying`'s raw IC screen against the standard 2010-2023-04-28
+window then found ZERO observations, since none of the ingested data
+existed in that window at all). `--min-filing-date` (default
+`2009-06-01`, giving the trailing-6-month `insider_buying_score`
+window margin before the project's standard 2010-01-01 raw-IC start)
+now drives a real pagination loop (`_fetch_paginated_filing_list`,
+using `fetch_form4_filing_list`'s new `before_date` parameter) that
+keeps fetching pages, oldest-filing-date-first, until either that
+target date is reached or `--max-filings-per-symbol` (a safety cap
+against an extremely active filer's history) is hit.
 """
 
 from __future__ import annotations
@@ -58,6 +74,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -80,18 +97,69 @@ _KNOWN_CIK_OVERRIDES = {"XOM": "0000034088"}
 
 _WWW_HOST = "https://www.sec.gov"
 _REQUEST_DELAY_SECONDS = 0.3
-_DEFAULT_FILINGS_PER_SYMBOL = 40
+_DEFAULT_PAGE_SIZE = 100
+# Margin before this project's standard 2010-01-01 raw-IC-screening
+# start date -- insider_buying_score looks back a trailing 6 months
+# from its own as_of_time, so history must reach a bit earlier than
+# 2010-01-01 itself for the first few real rebalance dates in that
+# window to see any data at all.
+_DEFAULT_MIN_FILING_DATE = "2009-06-01"
+# Safety cap, not a target -- an extremely active filer (many insiders,
+# frequent trading) could otherwise make one symbol's pagination run
+# for a very long time; this stops it well short of that regardless of
+# how far --min-filing-date asks to go back.
+_DEFAULT_MAX_FILINGS_PER_SYMBOL = 3000
 
 
 def _parse_date(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
 
+def _fetch_paginated_filing_list(
+    provider, cik: str, transport, *, page_size: int, min_filing_date: datetime, max_filings: int,
+) -> list[dict]:
+    """Walks EDGAR's Form 4 filing list backward in time, oldest-first
+    within each page (ADR-0088) -- see module docstring for why a
+    single un-paginated call is not enough. Stops once the oldest
+    filing seen so far is at or before `min_filing_date`, once a page
+    comes back with nothing new (either genuinely exhausted history, or
+    a page boundary that keeps re-returning the same filings -- both
+    read the same way: no more progress is possible), or once
+    `max_filings` accumulated filings is reached, whichever comes
+    first. Deduplicates by `accession_number` across pages, since
+    EDGAR's own `dateb` boundary semantics (Tier 2, unverified this
+    session) may inclusively re-return the oldest filing(s) from the
+    prior page."""
+    all_filings: list[dict] = []
+    seen_accessions: set[str] = set()
+    before_date: Optional[str] = None
+    while len(all_filings) < max_filings:
+        page = provider.fetch_form4_filing_list(cik, transport, count=page_size, before_date=before_date)
+        new_filings = [f for f in page if f["accession_number"] not in seen_accessions]
+        if not new_filings:
+            break
+        for f in new_filings:
+            seen_accessions.add(f["accession_number"])
+        all_filings.extend(new_filings)
+        oldest = min(f["filing_date"] for f in new_filings)
+        if oldest <= min_filing_date:
+            break
+        if len(page) < page_size:
+            break  # EDGAR returned a partial page -- history is exhausted
+        before_date = oldest.date().isoformat()
+    return all_filings
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE", help="Named universe from src/data_infra/universe.py (default: RESEARCH_UNIVERSE)")
     parser.add_argument("--symbols", nargs="+", default=None, help="Explicit symbol list, overriding --universe entirely (advanced/ad-hoc use)")
-    parser.add_argument("--filings-per-symbol", type=int, default=_DEFAULT_FILINGS_PER_SYMBOL, help=f"Most recent Form 4 filings to fetch per symbol (default: {_DEFAULT_FILINGS_PER_SYMBOL})")
+    parser.add_argument(
+        "--min-filing-date", type=_parse_date, default=_parse_date(_DEFAULT_MIN_FILING_DATE),
+        help=f"YYYY-MM-DD. Paginate backward through each symbol's Form 4 history until a filing at or before this date is reached (default: {_DEFAULT_MIN_FILING_DATE}, ADR-0088 -- see module docstring for why a single un-paginated page is not enough).",
+    )
+    parser.add_argument("--page-size", type=int, default=_DEFAULT_PAGE_SIZE, help=f"Filings requested per EDGAR page (default: {_DEFAULT_PAGE_SIZE})")
+    parser.add_argument("--max-filings-per-symbol", type=int, default=_DEFAULT_MAX_FILINGS_PER_SYMBOL, help=f"Safety cap on total filings fetched per symbol regardless of --min-filing-date (default: {_DEFAULT_MAX_FILINGS_PER_SYMBOL})")
     parser.add_argument("--user-agent", required=True, help="Descriptive contact string SEC's fair-access policy requires, e.g. 'YourProjectName you@example.com' -- no default")
     parser.add_argument("--as-of", required=True, type=_parse_date, help="YYYY-MM-DD, stands in for this run's real-world timestamp (retrieved_at/ingestion_time) -- never derived from wall-clock time")
     parser.add_argument("--db-path", required=True, type=Path, help="Directory for the DuckDB catalog (created if it does not exist)")
@@ -158,11 +226,14 @@ def main(argv=None) -> int:
                 })
                 continue
 
-            print(f"  [{i}/{len(symbols)}] {symbol} (CIK {cik}, source={cik_source}): fetching Form 4 filing list...", flush=True)
+            print(f"  [{i}/{len(symbols)}] {symbol} (CIK {cik}, source={cik_source}): fetching Form 4 filing list (paginating back to {args.min_filing_date.date()})...", flush=True)
             symbol_transactions = 0
             filing_errors = []
             try:
-                filings = provider.fetch_form4_filing_list(cik, www_transport, count=args.filings_per_symbol)
+                filings = _fetch_paginated_filing_list(
+                    provider, cik, www_transport, page_size=args.page_size,
+                    min_filing_date=args.min_filing_date, max_filings=args.max_filings_per_symbol,
+                )
             except (TransientProviderError, PermanentProviderError) as exc:
                 per_symbol_results.append({
                     "security_id": symbol, "cik": cik, "cik_source": cik_source, "filings_seen": 0,
@@ -207,7 +278,9 @@ def main(argv=None) -> int:
         checksum = compute_data_version(
             {
                 "symbols": sorted(symbols),
-                "filings_per_symbol": args.filings_per_symbol,
+                "min_filing_date": args.min_filing_date.date().isoformat(),
+                "page_size": args.page_size,
+                "max_filings_per_symbol": args.max_filings_per_symbol,
                 "per_symbol_transaction_counts": {r["security_id"]: r["transactions_persisted"] for r in per_symbol_results},
             }
         )
@@ -225,7 +298,9 @@ def main(argv=None) -> int:
             "universe_name": args.universe if args.symbols is None else None,
             "symbols": list(symbols),
             "symbol_count": len(symbols),
-            "filings_per_symbol": args.filings_per_symbol,
+            "min_filing_date": args.min_filing_date.date().isoformat(),
+            "page_size": args.page_size,
+            "max_filings_per_symbol": args.max_filings_per_symbol,
             "as_of": args.as_of.isoformat(),
             "cik_overrides": dict(cik_overrides),
             "unresolved_symbols": unresolved_symbols,

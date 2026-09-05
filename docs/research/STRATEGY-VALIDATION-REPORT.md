@@ -2535,14 +2535,33 @@ walk-forward pool (`_INSIDER_FACTOR_CANDIDATES`, the pool's 32nd
 candidate) -- the identical RULE 0.8 discipline every candidate in this
 document already follows.
 
-**No real result yet**: this session's own network cannot reach
-`sec.gov`. The account owner needs to run `scripts/
-ingest_insider_transactions.py` in an environment with real internet
-access before `--score insider_buying` can compute anything against
-real data. Recorded here, before that run, specifically so this
-addendum cannot later be read as having picked the factor's exclusion
-rules (Code P/S only, `is_10b5_1_plan == False`) after seeing whether
-they help or hurt the result.
+**Still no raw IC result -- but a real, structural gap found and fixed
+along the way (ADR-0088)**: the account owner ran real ingestion (87
+symbols, 4877 transactions, `AVB` unresolved same as the fundamentals
+catalog's own known CIK gap) and then the raw-IC screen at this
+project's standard `--start 2010-01-01`. Result: `observations=0`.
+Diagnosed directly against the real catalog rather than guessed at:
+the ingested data's ENTIRE date range (2023-09-15..2026-09-04) sits
+almost completely inside `strategy_research.locked_windows.TEST_1`
+(2023-04-28..2026-08-27) -- `compute_fundamentals_ic_from_catalog.py`'s
+own TEST-1 refusal correctly restricted the raw-IC request to before
+that window, and that pre-TEST-1 range had zero rows of insider data
+at all. Root cause: `fetch_form4_filing_list` made exactly one EDGAR
+request per symbol (the default 40 most recent filings), which for 87
+actively-traded large-caps only reached back a few years from "now,"
+nowhere near 2010. Fixed by adding real pagination (`before_date` on
+`fetch_form4_filing_list`, a new `_fetch_paginated_filing_list` helper
+in the ingestion script walking backward via EDGAR's own `dateb`
+parameter until a `--min-filing-date` target, default 2009-06-01, is
+reached or a safety cap is hit) -- see ADR-0088 for the full account
+and its own test coverage. **Still no real IC result**: the account
+owner needs to re-run the now-fixed `ingest_insider_transactions.py`
+in their own environment before `--score insider_buying` can compute
+anything meaningful. Recorded here, before that re-run, specifically
+so this addendum cannot later be read as having picked the factor's
+exclusion rules (Code P/S only, `is_10b5_1_plan == False`) OR the new
+pagination target date after seeing whether either helps or hurts the
+result.
 
 ## Session 36 continued Addendum -- ML factor-combination: more data + stronger regularization, real result in
 

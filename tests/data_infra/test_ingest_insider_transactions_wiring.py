@@ -87,9 +87,17 @@ class TestSingleHostTransportUsedThroughout:
     def test_ticker_map_and_form4_calls_all_use_www_transport(self) -> None:
         source = _source()
         assert "provider.fetch_ticker_map(www_transport)" in source
-        assert "provider.fetch_form4_filing_list(cik, www_transport" in source
+        # Filing-list fetching goes through _fetch_paginated_filing_list
+        # (ADR-0088), which itself calls fetch_form4_filing_list with
+        # www_transport -- checked directly on that helper below rather
+        # than at this call site.
+        assert "_fetch_paginated_filing_list(\n                    provider, cik, www_transport" in source
         assert "provider.fetch_form4_index(cik, accession_number, www_transport)" in source
         assert "provider.fetch_form4_document(cik, accession_number, filename, www_transport)" in source
+
+    def test_paginated_filing_list_helper_itself_uses_the_passed_transport(self) -> None:
+        source = _source()
+        assert "provider.fetch_form4_filing_list(cik, transport, count=page_size, before_date=before_date)" in source
 
     def test_provider_constructed_with_www_transport_not_a_data_sec_gov_one(self) -> None:
         source = _source()
@@ -100,7 +108,8 @@ class TestManifestReportsWhatEdgarActuallyReturned:
     def test_manifest_has_the_expected_keys(self) -> None:
         keys = _manifest_keys(_tree())
         assert {
-            "data_status", "provider", "symbols", "filings_per_symbol", "unresolved_symbols",
+            "data_status", "provider", "symbols", "min_filing_date", "page_size",
+            "max_filings_per_symbol", "unresolved_symbols",
             "total_transactions_persisted", "per_symbol_results", "content_checksum",
         } <= keys
 
