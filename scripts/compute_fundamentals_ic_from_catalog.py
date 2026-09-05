@@ -36,7 +36,11 @@ rule), or `sue` (Session 36 continued, ADR-0084 -- Foster, Olsen &
 Shevlin 1984 Standardized Unexpected Earnings; the first genuinely new
 literature category since the Phase 33 20-candidate batch, needing
 quarterly `EarningsPerShareDiluted` rather than any concept an earlier
-score already used) -- using
+score already used), or `rd_expenditure` (Session 36 continued, found via
+a GitHub/web search for borrowable strategies -- Chan, Lakonishok &
+Sougiannis 2001 R&D expenditure anomaly, wired through
+`compute_hybrid_ic_series` since it needs price too, and needing one new
+XBRL concept, `ResearchAndDevelopmentExpense`) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` (or, for
 `shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`; or,
 for `quality_minus_junk`/`value_composite`/`combined_factor`,
@@ -96,6 +100,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     net_margin_score,
     piotroski_f_score,
     quality_minus_junk_score,
+    rd_expenditure_score,
     roa_score,
     roe_score,
     sales_yield_score,
@@ -166,6 +171,13 @@ _HYBRID_SCORES = {
     "book_to_market": book_to_market_score,
     "sales_yield": sales_yield_score,
     "cashflow_yield": cashflow_yield_score,
+    # Session 36 continued -- Chan, Lakonishok & Sougiannis 2001 R&D
+    # expenditure anomaly, found via a GitHub/web search for borrowable
+    # strategies (paperswithbacktest/awesome-systematic-trading). Wired
+    # in before any real IC result exists, per RULE 0.8. Needs
+    # `ResearchAndDevelopmentExpense` -- see `ingest_fundamentals_data.py`'s
+    # now-extended `_DEFAULT_CONCEPTS`.
+    "rd_expenditure": rd_expenditure_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 12) -- scores whose score_fn is

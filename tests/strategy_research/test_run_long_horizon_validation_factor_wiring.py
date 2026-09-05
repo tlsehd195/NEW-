@@ -134,12 +134,14 @@ class TestUniverseFactorFactoryNoLateBindingBug:
 class TestCandidateTables:
     """The 5 module-level candidate tables together must reproduce
     exactly the 20 names in PROJECT_STATUS.md's raw-IC-screening table
-    (ADR-0051), plus the 5 Session 36 additions wired in afterward
+    (ADR-0051), plus the 7 Session 36 additions wired in afterward
     (`idiosyncratic_volatility`, ADR-0053; `combined_factor`, ADR-0054;
     `sue`, ADR-0084; `insider_buying`, ADR-0086; `rs_rating`, found via
-    the dragon1086/prism-insight comparison) -- 25 total -- no name
-    collisions with each other, or with the 8 pre-existing candidates
-    already in `strategy_specs` before ADR-0051."""
+    the dragon1086/prism-insight comparison; `residual_momentum` and
+    `rd_expenditure`, found via a GitHub/web search for borrowable
+    strategies, paperswithbacktest/awesome-systematic-trading) -- 27
+    total -- no name collisions with each other, or with the 8
+    pre-existing candidates already in `strategy_specs` before ADR-0051."""
 
     _EXPECTED_NAMES = {
         "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
@@ -149,6 +151,7 @@ class TestCandidateTables:
         "cashflow_yield", "size", "altman_z",
         "quality_minus_junk", "value_composite",
         "idiosyncratic_volatility", "combined_factor", "sue", "insider_buying", "rs_rating",
+        "residual_momentum", "rd_expenditure",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",

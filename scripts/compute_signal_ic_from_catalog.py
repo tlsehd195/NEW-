@@ -19,7 +19,10 @@ ADR-0043 Decision 16 -- close/trailing-52-week-high), or
 `idiosyncratic_volatility_score` (Ang, Hodrick, Xing & Zhang 2006,
 Session 36 -- negative of the trailing month's CAPM-residual return
 standard deviation, distinct from both `low_volatility_score` (total
-vol) and `low_beta_score` (systematic co-movement)) -- using
+vol) and `low_beta_score` (systematic co-movement)), or
+`residual_momentum_score` (Blitz, Huij & Martens 2011, Session 36
+continued -- standardized MEAN of trailing-year CAPM-residual returns,
+distinct from `idiosyncratic_volatility_score`'s residual STD) -- using
 `strategy_research.signal_ic.compute_ic_series` against a live DuckDB
 catalog.
 
@@ -72,6 +75,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     low_beta_score,
     low_volatility_score,
     max_effect_score,
+    residual_momentum_score,
     rs_rating_score,
     short_term_reversal_score,
 )
@@ -103,6 +107,11 @@ _PRICE_ONLY_SCORES = {
     # (dragon1086/prism-insight). Wired in before any real IC result
     # exists, per RULE 0.8.
     "rs_rating": rs_rating_score,
+    # Session 36 continued -- Blitz, Huij & Martens 2011 Residual
+    # Momentum, found via a GitHub/web search for borrowable strategies
+    # (paperswithbacktest/awesome-systematic-trading). Wired in before
+    # any real IC result exists, per RULE 0.8.
+    "residual_momentum": residual_momentum_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 

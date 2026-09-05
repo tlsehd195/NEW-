@@ -2668,3 +2668,50 @@ real IC or walk-forward result exists for it** -- the same discipline
 every candidate in this document already follows. No real result
 recorded yet; the account owner has not run either script against real
 data with this candidate.
+
+## Session 36 continued Addendum -- Residual Momentum and R&D Expenditure Anomaly, wired blind (ADR-0098)
+
+Following the account owner's separate request to search GitHub/the web
+more broadly for similar projects sorted by star count and identify any
+borrowable strategies, `paperswithbacktest/awesome-systematic-trading`
+(13.4k stars, a curated database of published academic-paper-backed
+systematic trading strategies) was cross-referenced against this
+project's ~30+ already-implemented factors, surfacing two genuinely new,
+low-cost candidates -- both authorized for implementation by the
+account owner's follow-up "저기서 찾은거 적용하고" ("apply what was found").
+
+**`residual_momentum_score`** (Blitz, Huij & Martens 2011) -- momentum
+computed on CAPM-residual returns rather than raw returns, hypothesized
+to outperform and be more stable than raw momentum since a share of raw
+momentum's own crash risk is systematic (beta-driven) rather than
+stock-specific. Beta/alpha are estimated on an EARLIER, non-overlapping
+252-trading-day window and applied out-of-sample to a FOLLOWING
+63-trading-day formation window -- a real estimator subtlety caught by
+reasoning about the math (not an empirical peek, RULE 0.8 compliant):
+fitting and scoring residuals on the SAME window would give every
+security a score of ~0 by construction (an OLS identity -- intercept
+-including regression residuals always sum to zero over their own
+estimation sample). Distinct from `idiosyncratic_volatility_score`
+(same market-regression machinery, but that factor keeps only the
+residual STANDARD DEVIATION, discarding sign/mean entirely).
+
+**`rd_expenditure_score`** (Chan, Lakonishok & Sougiannis 2001) --
+`ResearchAndDevelopmentExpense / market_cap`, hypothesized positively
+related to forward returns since GAAP expenses R&D immediately rather
+than capitalizing it, understating R&D-intensive firms' book value and
+near-term earnings relative to the growth that spending is building.
+Needs one new XBRL concept (`ResearchAndDevelopmentExpense`, added to
+`ingest_fundamentals_data.py`'s `_DEFAULT_CONCEPTS` -- zero additional
+real network requests, the same pattern `EarningsPerShareDiluted`
+already established for `sue_score`). A genuinely absent tag reads as
+`0.0` (real zero R&D spending, e.g. banks/retailers), never `None`, via
+`_fy_flow_or_zero` -- the same convention `shareholder_yield_score`'s
+dividend/buyback/issuance concepts already use.
+
+Wired into `compute_signal_ic_from_catalog.py`/`compute_fundamentals_ic_
+from_catalog.py` (`--strategy residual_momentum` / `--score
+rd_expenditure`) and `run_long_horizon_validation.py`'s
+`_PRICE_FACTOR_CANDIDATES`/`_HYBRID_FACTOR_CANDIDATES` (the pool's 34th
+and 35th candidates) **before any real IC or walk-forward result exists
+for either** -- the same discipline every candidate in this document
+already follows. No real result recorded yet.

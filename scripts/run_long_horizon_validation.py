@@ -151,6 +151,8 @@ from strategy_research.factor_scores import (  # noqa: E402
     max_effect_score,
     piotroski_f_score,
     quality_minus_junk_score,
+    rd_expenditure_score,
+    residual_momentum_score,
     rs_rating_score,
     sales_yield_score,
     shareholder_yield_score,
@@ -246,6 +248,11 @@ _PRICE_FACTOR_CANDIDATES = (
     # invariant for both Spearman IC and top-N portfolio sorting, so it
     # is mathematically redundant here (see factor_scores.py docstring).
     ("rs_rating", "O'Neil/IBD Relative Strength Rating, price-only", rs_rating_score),
+    # Session 36 continued -- Blitz, Huij & Martens 2011 Residual
+    # Momentum, found via a GitHub/web search for borrowable strategies
+    # (paperswithbacktest/awesome-systematic-trading). Wired in before
+    # any real walk-forward result exists, per RULE 0.8.
+    ("residual_momentum", "Blitz, Huij & Martens 2011 residual momentum, price-only", residual_momentum_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),
@@ -269,6 +276,13 @@ _HYBRID_FACTOR_CANDIDATES = (
     ("cashflow_yield", "O'Shaughnessy price-to-cashflow yield, fundamentals+price", cashflow_yield_score),
     ("size", "Banz 1981 size effect (SMB basis), fundamentals+price", size_score),
     ("altman_z", "Altman 1968 Z-Score as a stock-selection signal, fundamentals+price", altman_z_score),
+    # Session 36 continued -- Chan, Lakonishok & Sougiannis 2001 R&D
+    # expenditure anomaly, found via a GitHub/web search for borrowable
+    # strategies (paperswithbacktest/awesome-systematic-trading). Wired
+    # in before any real walk-forward result exists, per RULE 0.8. Needs
+    # `ResearchAndDevelopmentExpense` -- see `ingest_fundamentals_data.py`'s
+    # now-extended `_DEFAULT_CONCEPTS`.
+    ("rd_expenditure", "Chan, Lakonishok & Sougiannis 2001 R&D expenditure anomaly, fundamentals+price", rd_expenditure_score),
 )
 _UNIVERSE_FACTOR_CANDIDATES = (
     ("quality_minus_junk", "Asness, Frazzini & Pedersen quality-minus-junk (3-pillar simplification), cross-sectional", quality_minus_junk_score),

@@ -1775,3 +1775,203 @@ def rs_rating_score(security_id: str, as_of_time: datetime, data: AsOfDataView) 
     if r63 is None or r126 is None or r189 is None or r252 is None:
         return None
     return 2.0 * r63 + r126 + r189 + r252
+
+
+_RESIDUAL_MOMENTUM_ESTIMATION_DAYS = 252
+_RESIDUAL_MOMENTUM_FORMATION_DAYS = 63
+_RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS = 200
+_RESIDUAL_MOMENTUM_MIN_FORMATION_OBSERVATIONS = 40
+
+
+def residual_momentum_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView,
+    *, estimation_days: int = _RESIDUAL_MOMENTUM_ESTIMATION_DAYS, formation_days: int = _RESIDUAL_MOMENTUM_FORMATION_DAYS,
+) -> Optional[float]:
+    """HYPOTHESIS -- Residual Momentum (Blitz, Huij & Martens 2011,
+    "Residual Momentum," Journal of Financial Economics 108(3): 506-521):
+    momentum computed on a security's CAPM-RESIDUAL returns (the part of
+    its return left over after removing co-movement with the market)
+    outperforms and is more stable than momentum computed on raw total
+    returns, because a large share of raw momentum's own well-documented
+    "crash risk" comes from systematic (market-beta-driven) reversals
+    rather than genuine stock-specific continuation. Found during the
+    same GitHub/web search (Session 36 continued, `paperswithbacktest/
+    awesome-systematic-trading`) that also surfaced `rd_expenditure_score`
+    below -- both chosen and their construction fixed BEFORE seeing any
+    result (RULE 0.8).
+
+    **A genuinely different construct from every momentum-adjacent factor
+    already in this module, not a re-parameterization of one**:
+    `long_term_reversal_score`/this project's own `_momentum_score`
+    (`long_term_momentum.py`) compute cumulative RAW price return, no
+    market adjustment at all. `idiosyncratic_volatility_score` regresses
+    out the market the same way this factor does, but keeps only the
+    STANDARD DEVIATION of the residuals (a pure risk measure, sign and
+    mean discarded); this factor keeps the residuals' own MEAN
+    (standardized by their volatility), discarding nothing about their
+    direction -- the two scores can and do disagree on which securities
+    they favor, since a stock can have a strongly positive residual
+    momentum while also being unusually volatile, or vice versa.
+
+    **A real estimator subtlety, caught by reasoning about the math
+    before any test was run against it (still RULE 0.8 -- this is not an
+    empirical peek, it is a correctness fact about OLS itself)**: fitting
+    alpha/beta by OLS on a sample and then computing residuals on THAT
+    SAME sample always yields a residual MEAN of exactly zero, by
+    construction (an intercept-including OLS regression's own residuals
+    always sum to zero over its own estimation sample) -- so a first
+    draft of this factor that estimated beta/alpha and computed
+    "momentum" residuals over one identical window would have produced a
+    score of ~0 for every security, always, regardless of any real
+    signal. The literature's own answer (and this implementation's) is
+    an OUT-OF-SAMPLE split: alpha/beta are estimated over an EARLIER,
+    non-overlapping `estimation_days` window (default 252, ~12 months),
+    then applied to compute residuals over the immediately FOLLOWING
+    `formation_days` window (default 63, ~1 quarter -- the same "R63"
+    unit `rs_rating_score` already uses, chosen for consistency with
+    this module's existing vocabulary rather than the original paper's
+    own 11-month formation window, which needs more paired history per
+    security than this project's universe reliably offers). Score =
+    `mean(formation-window residuals) / std(formation-window residuals)`,
+    a t-statistic-like standardized average out-of-sample residual return
+    -- this standardization-by-own-volatility step is the paper's own
+    core mechanism for reducing momentum crash risk, not a cosmetic
+    normalization, and is only meaningful here because the residuals it
+    is computed over are genuinely out-of-sample.
+
+    Needs at least `_RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS` (200
+    of the nominal 252 estimation-window returns) and
+    `_RESIDUAL_MOMENTUM_MIN_FORMATION_OBSERVATIONS` (40 of the nominal 63
+    formation-window returns) of paired security/benchmark daily returns,
+    both floors below their nominal window sizes to tolerate real data
+    gaps (matching this module's existing practice), with non-zero
+    benchmark return variance in the estimation window and non-zero
+    residual volatility in the formation window; `None` (never a
+    fabricated score) below any of those."""
+    total_days = estimation_days + formation_days
+    padded_days = int(total_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), total_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), total_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 2:
+        return None
+    all_security_returns = compute_returns([security_closes[d] for d in common_dates])
+    all_benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    n = len(all_security_returns)
+    if n != len(all_benchmark_returns) or n < _RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS + _RESIDUAL_MOMENTUM_MIN_FORMATION_OBSERVATIONS:
+        return None
+
+    # Non-overlapping, chronologically EARLIER estimation slice and
+    # LATER formation slice -- the formation slice always ends at the
+    # most recent paired return (closest to as_of_time).
+    formation_count = min(formation_days, n - _RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS)
+    estimation_security = all_security_returns[:-formation_count]
+    estimation_benchmark = all_benchmark_returns[:-formation_count]
+    formation_security = all_security_returns[-formation_count:]
+    formation_benchmark = all_benchmark_returns[-formation_count:]
+    if len(estimation_security) < _RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS or len(formation_security) < _RESIDUAL_MOMENTUM_MIN_FORMATION_OBSERVATIONS:
+        return None
+
+    estimation_security_mean = sum(estimation_security) / len(estimation_security)
+    estimation_benchmark_mean = sum(estimation_benchmark) / len(estimation_benchmark)
+    covariance = sum(
+        (s - estimation_security_mean) * (b - estimation_benchmark_mean)
+        for s, b in zip(estimation_security, estimation_benchmark)
+    ) / (len(estimation_security) - 1)
+    benchmark_variance = sum(
+        (b - estimation_benchmark_mean) ** 2 for b in estimation_benchmark
+    ) / (len(estimation_benchmark) - 1)
+    if benchmark_variance == 0:
+        return None
+    beta = covariance / benchmark_variance
+    alpha = estimation_security_mean - beta * estimation_benchmark_mean
+
+    formation_residuals = [s - alpha - beta * b for s, b in zip(formation_security, formation_benchmark)]
+    residual_mean = sum(formation_residuals) / len(formation_residuals)
+    residual_variance = sum((r - residual_mean) ** 2 for r in formation_residuals) / (len(formation_residuals) - 1)
+    residual_std = residual_variance ** 0.5
+    if residual_std == 0:
+        return None
+    return residual_mean / residual_std
+
+
+def rd_expenditure_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> Optional[float]:
+    """HYPOTHESIS -- the R&D expenditure anomaly (Chan, Lakonishok &
+    Sougiannis 2001, "The Stock Market Valuation of Research and
+    Development Expenditures," The Journal of Finance 56(6): 2431-2456):
+    firms with HIGHER research & development spending relative to market
+    value earn higher subsequent returns, hypothesized because US GAAP
+    requires R&D to be EXPENSED immediately (never capitalized as an
+    asset, unlike physical capital investment), which understates the
+    book value and near-term earnings of R&D-intensive firms relative to
+    the future growth that spending is actually building -- the market
+    is hypothesized to underappreciate this in the same expensed-not-
+    capitalized sense `sloan_accruals_score`'s own accrual/cash-flow
+    distinction concerns a different accounting choice. Found via the
+    same GitHub/web search (Session 36 continued,
+    `paperswithbacktest/awesome-systematic-trading`) that also surfaced
+    `residual_momentum_score` above.
+
+    Score = `ResearchAndDevelopmentExpense / market_cap` ("R&D-to-market",
+    the standard scaling used across the later factor-zoo replication
+    literature for this anomaly, e.g. Green, Hand & Zhang 2017's own
+    "rd_mve" -- a documented alternative to Chan, Lakonishok & Sougiannis'
+    own R&D-CAPITAL/market-value construction, which amortizes multiple
+    years of past R&D spending into a stock rather than using the single
+    latest fiscal year's flow. A single-year flow is used here for the
+    identical reason `shareholder_yield_score`'s numerator uses single
+    -year flows rather than amortized stocks: no new infrastructure is
+    needed beyond what this module's other market-cap-scaled ratios
+    already build). Same market-cap denominator construction as
+    `sales_yield_score`/`book_to_market_score` (`_latest_price`, raw
+    `close`, times latest fiscal-year-end `CommonStockSharesOutstanding`).
+
+    **The numerator reads a genuinely absent `ResearchAndDevelopmentExpense`
+    tag as `0.0`, not `None`, via `_fy_flow_or_zero`** -- the identical
+    reasoning that helper's own docstring already gives for
+    `shareholder_yield_score`'s dividend/buyback/issuance concepts: a
+    company that did no R&D in a given fiscal year (true for many
+    non-technology large-caps in this project's universe -- retailers,
+    banks, utilities) does not file a `ResearchAndDevelopmentExpense`
+    tag worth `$0`, it simply omits it, and reading that omission as "no
+    R&D was spent" is the financially correct interpretation, not a
+    fabrication. This means a genuine zero-R&D company gets a real score
+    of exactly `0.0` here (the lowest possible under this module's
+    higher-is-better convention), never a missing-data `None` -- an
+    intended, not accidental, consequence of the hypothesis itself
+    (zero R&D spending should rank least attractive under this factor).
+
+    **Needs one new XBRL concept beyond what any existing factor in this
+    module ingests**: `ResearchAndDevelopmentExpense`, added to
+    `ingest_fundamentals_data.py`'s `_DEFAULT_CONCEPTS` -- the identical
+    "zero additional real network requests" pattern `EarningsPerShareDiluted`
+    already established for `sue_score` (ADR-0084): concepts are parsed
+    from a company's existing SEC EDGAR `companyfacts` JSON response
+    already being fetched for every other concept, not a separate request
+    per concept. `None` (never a fabricated ratio) only when the share
+    count or price is unknown, or market cap is non-positive -- the same
+    missing-data guards `sales_yield_score`/`book_to_market_score`
+    already apply."""
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    market_cap = price * shares_record.value
+    if market_cap <= 0:
+        return None
+    rd_expense = _fy_flow_or_zero(fundamentals_repository, security_id, "ResearchAndDevelopmentExpense", as_of_time)
+    return rd_expense / market_cap

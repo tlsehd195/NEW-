@@ -125,6 +125,14 @@ _DEFAULT_CONCEPTS = (
     # `EarningsPerShareDiluted` is reported at both granularities under
     # this same tag, same as `NetIncomeLoss` already is.
     "EarningsPerShareDiluted",
+    # Session 36 continued addition -- the 1 concept
+    # `strategy_research.factor_scores.rd_expenditure_score` needs,
+    # found via a GitHub/web search for borrowable strategies
+    # (paperswithbacktest/awesome-systematic-trading -- Chan, Lakonishok
+    # & Sougiannis 2001 R&D expenditure anomaly). Same zero-extra-request
+    # justification as every earlier concept addition above -- FY-only,
+    # like every concept before `EarningsPerShareDiluted`.
+    "ResearchAndDevelopmentExpense",
 )
 
 _REQUEST_DELAY_SECONDS = 0.3

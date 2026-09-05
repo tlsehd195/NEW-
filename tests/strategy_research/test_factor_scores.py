@@ -46,6 +46,8 @@ from strategy_research.factor_scores import (
     net_margin_score,
     piotroski_f_score,
     quality_minus_junk_score,
+    rd_expenditure_score,
+    residual_momentum_score,
     roa_score,
     roe_score,
     rs_rating_score,
@@ -397,6 +399,76 @@ class TestIdiosyncraticVolatilityScore:
         data = _view(repo, as_of_time)
 
         assert idiosyncratic_volatility_score("NOBENCH", as_of_time, data) is None
+
+
+class TestResidualMomentumScore:
+    """Session 36 continued -- Blitz, Huij & Martens 2011 Residual
+    Momentum, found via a GitHub/web search for borrowable strategies
+    (paperswithbacktest/awesome-systematic-trading). Beta/alpha are
+    estimated on an EARLIER window and applied out-of-sample to a LATER
+    formation window -- fitting and scoring on the identical window would
+    make the residual mean exactly zero by construction (an OLS identity,
+    not a data issue), so every fixture here gives WINNER/LOSER an
+    IDENTICAL price path to SPY during the estimation portion (beta=1,
+    alpha=0 by construction) and only diverges during the tail formation
+    portion."""
+
+    _FORMATION_TAIL_BARS = 64  # 63 formation returns, matching _RESIDUAL_MOMENTUM_FORMATION_DAYS
+
+    def _build_closes(self, days, spy_closes, *, formation_epsilon_fn):
+        """`formation_epsilon_fn(t)` (t = 0..62) gives the extra daily
+        return WINNER/LOSER earns on top of SPY's own daily return during
+        the last `_FORMATION_TAIL_BARS - 1` return steps; `None` closes
+        (before the boundary) exactly mirror `spy_closes`."""
+        boundary = len(days) - self._FORMATION_TAIL_BARS
+        closes = list(spy_closes[:boundary])
+        for i in range(boundary, len(days)):
+            spy_return = spy_closes[i] / spy_closes[i - 1] - 1.0
+            epsilon = formation_epsilon_fn(i - boundary - 1) if i > boundary else 0.0
+            closes.append(closes[-1] * (1.0 + spy_return + epsilon))
+        return closes
+
+    def test_a_recent_out_of_sample_winner_scores_higher_than_a_recent_out_of_sample_loser(self) -> None:
+        days = trading_days(date(2018, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        winner_closes = self._build_closes(
+            days, spy_closes, formation_epsilon_fn=lambda t: 0.01 + 0.005 * math.sin(t * 5.0),
+        )
+        loser_closes = self._build_closes(
+            days, spy_closes, formation_epsilon_fn=lambda t: -0.01 + 0.005 * math.sin(t * 5.0),
+        )
+        repo = InMemoryDataRepository()
+        repo.append_bars(make_bars(BENCHMARK_SYMBOL, days, spy_closes))
+        repo.append_bars(make_bars("WINNER", days, winner_closes))
+        repo.append_bars(make_bars("LOSER", days, loser_closes))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        winner_score = residual_momentum_score("WINNER", as_of_time, data)
+        loser_score = residual_momentum_score("LOSER", as_of_time, data)
+
+        assert winner_score is not None and loser_score is not None
+        assert winner_score > 0 > loser_score
+        assert winner_score > loser_score
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 3, 1))  # far fewer than the combined 240-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 3, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 2, 26)
+        data = _view(repo, as_of_time)
+
+        assert residual_momentum_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2018, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert residual_momentum_score("NOBENCH", as_of_time, data) is None
 
 
 class TestIlliquidityScore:
@@ -1433,6 +1505,78 @@ class TestSalesYieldScore:
         price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
 
         assert sales_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+class TestRdExpenditureScore:
+    """Session 36 continued -- Chan, Lakonishok & Sougiannis 2001 R&D
+    expenditure anomaly, found via a GitHub/web search for borrowable
+    strategies (paperswithbacktest/awesome-systematic-trading).
+    `ResearchAndDevelopmentExpense / market_cap`, same market-cap
+    construction as `sales_yield_score`. A genuinely absent tag reads as
+    0.0 (real zero R&D spending), never `None` -- the same
+    `_fy_flow_or_zero` reasoning `shareholder_yield_score` already uses
+    for its own dividend/buyback/issuance concepts."""
+
+    def test_computes_rd_expense_over_market_cap(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "rd", concept="ResearchAndDevelopmentExpense", value=150.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = rd_expenditure_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(0.015)  # 150 / (10*1000)
+
+    def test_a_genuinely_absent_concept_reads_as_zero_not_a_missing_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        # No ResearchAndDevelopmentExpense tag at all -- a real company
+        # (e.g. a bank or retailer) that genuinely did no R&D, per
+        # `_fy_flow_or_zero`'s own SEC EDGAR omission-convention docstring.
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = rd_expenditure_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(0.0)
+
+    def test_higher_rd_intensity_scores_higher(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        # Distinct record_ids across both securities -- `provenance_
+        # source_record_id` is this table's natural key (`ON CONFLICT
+        # DO NOTHING`), not scoped by security_id, so a repeated id
+        # across two securities silently drops the second insert.
+        fundamentals_repo.add_fundamental(_fy_record("HIGH", "rd_high", concept="ResearchAndDevelopmentExpense", value=400.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("HIGH", "shares_high", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("LOW", "rd_low", concept="ResearchAndDevelopmentExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("LOW", "shares_low", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[
+            _price_bar("HIGH", "p1", close=10.0, timestamp=_utc(2023, 5, 25)),
+            _price_bar("LOW", "p2", close=10.0, timestamp=_utc(2023, 5, 25)),
+        ])
+
+        high_score = rd_expenditure_score("HIGH", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        low_score = rd_expenditure_score("LOW", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+
+        assert high_score is not None and low_score is not None
+        assert high_score > low_score
+
+    def test_missing_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "rd", concept="ResearchAndDevelopmentExpense", value=150.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert rd_expenditure_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_missing_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "rd", concept="ResearchAndDevelopmentExpense", value=150.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[])
+
+        assert rd_expenditure_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
 
 
 class TestCashflowYieldScore:
