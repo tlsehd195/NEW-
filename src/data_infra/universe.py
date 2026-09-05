@@ -34,12 +34,43 @@ ingestion (`scripts/ingest_real_market_data.py`) actually runs against
 a live provider and that provider's response includes exchange/sector
 data, a future phase should populate these fields from that real
 response -- not from this module's authors' background knowledge.
+
+**Session 36 (ADR-0058) fulfilled this promise for `sector`/`exchange`**:
+`_REAL_SEC_SECTOR_AND_EXCHANGE` below holds real SEC EDGAR SIC data,
+fetched via `scripts/fetch_sector_classifications.py` in the user's own
+real environment, not from background knowledge -- the first fields in
+this module ever populated from a real provider response. `AVB`'s CIK
+lookup did not resolve on the original fetch run and was left `None`
+via `_real_symbol_metadata`'s own "unresolved -> honest default"
+fallback; the user later re-ran the same script with an explicit
+`--cik-overrides AVB:0000915912` and got a real result, now applied
+below -- all 87 `RESEARCH_UNIVERSE_STAGE4` symbols have a real,
+provider-confirmed `sector`/`exchange` as of this session.
+
+**Session 36 continued (ADR-0061) partially fulfills this promise for
+`listed_from`**: `_SP500_PIT_CONFIRMED_LISTED_FROM` below holds real
+S&P 500 index-membership join dates for 32 symbols, computed by
+`scripts/compute_sp500_pit_listed_from.py` from the real, MIT-licensed
+`hanshof/sp500_constituents` scrape (ADR-0037). This is a genuine,
+real-data-sourced improvement, moving `audit_survivorship`'s
+classification of the universes below from `CURRENT-UNIVERSE-ONLY`
+toward `PARTIALLY_MITIGATED` -- but it is NOT a claim that
+survivorship bias is resolved: every symbol in these universes was
+selected because it is a CURRENT holding, so this data can only ever
+confirm WHEN a still-surviving symbol joined the index, never restore
+a company that was removed and is therefore absent from these universes
+entirely (ADR-0037 Decision 3's limitation, unchanged). `listed_to` is
+never set from this data -- every one of these symbols is still an
+S&P 500 member as of the source dataset's last snapshot, so a
+`listed_to` value would be a fabricated delisting. See
+`_real_symbol_metadata`'s own docstring for the ticker-vs-corporate-
+identity caveat that applies to every `listed_from` value below.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Sequence
 
 from data_infra.enums import InstrumentType, SecurityStatus
@@ -110,6 +141,182 @@ class UniverseDefinition:
         return tuple(s.symbol for s in self.symbols)
 
 
+# Session 36 (ADR-0058) -- REAL, provider-sourced sector/exchange data,
+# fetched via `scripts/fetch_sector_classifications.py` against SEC
+# EDGAR's `/submissions/` endpoint in the user's own real environment
+# on 2026-09-04 (86 of Stage 4's 87 symbols; AVB's ticker-map CIK
+# lookup did not resolve on that run, so it was simply absent here --
+# not a guess, not a zero). AVB was resolved in a follow-up re-run with
+# an explicit --cik-overrides AVB:0000915912, appended separately below
+# with its own provenance comment -- all 87 symbols now real. `sector`
+# is the SEC's own SIC classification TEXT (`sicDescription`), NOT a
+# GICS sector label -- see
+# `SecEdgarFundamentalsProvider.normalize_submissions`'s own docstring
+# for why the two taxonomies must not be conflated. Every symbol below
+# still keeps `source="manual_curation"` in its own `SymbolMetadata`
+# entry (unchanged) -- that field describes this universe's SYMBOL
+# SELECTION provenance (hand-curated, per every prior stage's own
+# discipline), a genuinely different question from "is this one field's
+# VALUE real" that `sector`/`exchange` being provider-sourced answers
+# separately. This is the first field in this module ever populated
+# from real, verified provider data rather than left `None` -- the
+# module's own honesty discipline (see module docstring) is why every
+# entry below waited this long rather than being filled from background
+# knowledge.
+_REAL_SEC_SECTOR_AND_EXCHANGE: dict[str, tuple[str, Optional[str]]] = {
+    "AAPL": ("Electronic Computers", "Nasdaq"),
+    "MSFT": ("Services-Prepackaged Software", "Nasdaq"),
+    "NVDA": ("Semiconductors & Related Devices", "Nasdaq"),
+    "AMZN": ("Retail-Catalog & Mail-Order Houses", "Nasdaq"),
+    "GOOGL": ("Services-Computer Programming, Data Processing, Etc.", "Nasdaq"),
+    "META": ("Services-Computer Programming, Data Processing, Etc.", "Nasdaq"),
+    "AVGO": ("Semiconductors & Related Devices", "Nasdaq"),
+    "TSLA": ("Motor Vehicles & Passenger Car Bodies", "Nasdaq"),
+    "JPM": ("National Commercial Banks", "NYSE"),
+    "V": ("Services-Business Services, NEC", "NYSE"),
+    "MA": ("Services-Business Services, NEC", "NYSE"),
+    "COST": ("Retail-Variety Stores", "Nasdaq"),
+    "WMT": ("Retail-Variety Stores", "Nasdaq"),
+    "JNJ": ("Pharmaceutical Preparations", "NYSE"),
+    "XOM": ("Petroleum Refining", None),
+    "CAT": ("Construction Machinery & Equip", "NYSE"),
+    "HON": ("Aircraft Engines & Engine Parts", "Nasdaq"),
+    "UPS": ("Trucking & Courier Services (No Air)", "NYSE"),
+    "BA": ("Aircraft", "NYSE"),
+    "UNH": ("Hospital & Medical Service Plans", "NYSE"),
+    "PFE": ("Pharmaceutical Preparations", "NYSE"),
+    "ABBV": ("Pharmaceutical Preparations", "NYSE"),
+    "MRK": ("Pharmaceutical Preparations", "NYSE"),
+    "BAC": ("National Commercial Banks", "NYSE"),
+    "GS": ("Security Brokers, Dealers & Flotation Companies", "NYSE"),
+    "PG": ("Soap, Detergents, Cleang Preparations, Perfumes, Cosmetics", "NYSE"),
+    "KO": ("Beverages", "NYSE"),
+    "PEP": ("Beverages", "Nasdaq"),
+    "HD": ("Retail-Lumber & Other Building Materials Dealers", "NYSE"),
+    "MCD": ("Retail-Eating  Places", "NYSE"),
+    "NKE": ("Rubber & Plastics Footwear", "NYSE"),
+    "CVX": ("Petroleum Refining", "NYSE"),
+    "VZ": ("Telephone Communications (No Radiotelephone)", "NYSE"),
+    "T": ("Telephone Communications (No Radiotelephone)", "NYSE"),
+    "DIS": ("Services-Miscellaneous Amusement & Recreation", "NYSE"),
+    "ORCL": ("Services-Prepackaged Software", "NYSE"),
+    "IBM": ("Computer & office Equipment", "NYSE"),
+    "CSCO": ("Computer Communications Equipment", "Nasdaq"),
+    "NEE": ("Electric Services", "NYSE"),
+    "PLD": ("Real Estate Investment Trusts", "NYSE"),
+    "AMT": ("Real Estate Investment Trusts", "NYSE"),
+    "EQIX": ("Real Estate Investment Trusts", "Nasdaq"),
+    "SPG": ("Real Estate Investment Trusts", "NYSE"),
+    "LIN": ("Industrial Inorganic Chemicals", "Nasdaq"),
+    "APD": ("Industrial Inorganic Chemicals", "NYSE"),
+    "ECL": ("Soap, Detergents, Cleang Preparations, Perfumes, Cosmetics", "NYSE"),
+    "NEM": ("Gold and Silver Ores", "NYSE"),
+    "DUK": ("Electric & Other Services Combined", "NYSE"),
+    "SO": ("Electric Services", "NYSE"),
+    "D": ("Electric Services", "NYSE"),
+    "SLB": ("Oil & Gas Field Services, NEC", "NYSE"),
+    "COP": ("Petroleum Refining", "NYSE"),
+    "MS": ("Security Brokers, Dealers & Flotation Companies", "NYSE"),
+    "WFC": ("National Commercial Banks", "NYSE"),
+    "AXP": ("Finance Services", "NYSE"),
+    "LLY": ("Pharmaceutical Preparations", "NYSE"),
+    "TMO": ("Measuring & Controlling Devices, NEC", "NYSE"),
+    "ABT": ("Pharmaceutical Preparations", "NYSE"),
+    "ADBE": ("Services-Prepackaged Software", "Nasdaq"),
+    "CRM": ("Services-Prepackaged Software", "NYSE"),
+    "QCOM": ("Radio & Tv Broadcasting & Communications Equipment", "Nasdaq"),
+    "LOW": ("Retail-Lumber & Other Building Materials Dealers", "NYSE"),
+    "PM": ("Cigarettes", "NYSE"),
+    "PSX": ("Petroleum Refining", "NYSE"),
+    "VLO": ("Petroleum Refining", "NYSE"),
+    "OXY": ("Crude Petroleum & Natural Gas", "NYSE"),
+    "WMB": ("Natural Gas Transmission", "NYSE"),
+    "KMI": ("Natural Gas Transmission", "NYSE"),
+    "GE": ("Electronic & Other Electrical Equipment (No Computer Equip)", "NYSE"),
+    "RTX": ("Aircraft Engines & Engine Parts", "NYSE"),
+    "LMT": ("Guided Missiles & Space Vehicles & Parts", "NYSE"),
+    "DE": ("Farm Machinery & Equipment", "NYSE"),
+    "EMR": ("Electronic & Other Electrical Equipment (No Computer Equip)", "NYSE"),
+    "AEP": ("Electric Services", None),
+    "EXC": ("Electric & Other Services Combined", "Nasdaq"),
+    "SRE": ("Gas & Other Services Combined", "NYSE"),
+    "XEL": ("Electric & Other Services Combined", "Nasdaq"),
+    "ED": ("Electric & Other Services Combined", "NYSE"),
+    "O": ("Real Estate Investment Trusts", "NYSE"),
+    "PSA": ("Real Estate Investment Trusts", "NYSE"),
+    "WELL": ("Real Estate Investment Trusts", "NYSE"),
+    "DLR": ("Real Estate Investment Trusts", "NYSE"),
+    "SHW": ("Retail-Building Materials, Hardware, Garden Supply", "NYSE"),
+    "FCX": ("Metal Mining", "NYSE"),
+    "DOW": ("Plastic Materials, Synth Resins & Nonvulcan Elastomers", "NYSE"),
+    "NUE": ("Steel Works, Blast Furnaces & Rolling Mills (Coke Ovens)", "NYSE"),
+    # AVB -- unresolved on the original Session 36 fetch run (ADR-0058/
+    # ADR-0059); resolved this session via the user re-running
+    # scripts/fetch_sector_classifications.py with an explicit
+    # --cik-overrides AVB:0000915912 (the real CIK found for the
+    # earlier fundamentals-ingestion gap). Real SEC EDGAR response.
+    "AVB": ("Real Estate Investment Trusts", "NYSE"),
+}
+
+
+# Real S&P 500 index-membership join dates (ADR-0061), computed by
+# `scripts/compute_sp500_pit_listed_from.py` from the real, MIT-
+# licensed `hanshof/sp500_constituents` scrape (ADR-0037). Only the 32
+# symbols (of 87 in RESEARCH_UNIVERSE_STAGE4) for which the source data
+# was NOT left-censored -- i.e. the symbol was NOT already present in
+# the dataset's very first (1996-01-02) snapshot, so its apparent join
+# date is a real, dateable event rather than "unknown, predates the
+# dataset." Every one of these 32 symbols is still an S&P 500 member as
+# of the source dataset's last snapshot (2025-08-23) -- none has a
+# `listed_to` value, since none has actually left the index.
+#
+# **Ticker-vs-corporate-identity caveat (see module docstring):** this
+# dataset tracks TICKER STRINGS, not durable corporate identity. For a
+# ticker that changed name, or was newly issued after a merger/spinoff/
+# restructuring, `listed_from` reflects when THAT TICKER STRING first
+# appeared in an S&P 500 snapshot -- which is not always the same thing
+# as "when this business first became part of the S&P 500" (e.g. a
+# renamed ticker for an already-included company would show the RENAME
+# date here, not the company's true original inclusion date). This
+# project does not attempt to classify which of the 32 symbols below
+# fall into that category from background knowledge -- doing so without
+# a verified source would itself be exactly the fabrication this
+# project's discipline forbids. Every value here is a REAL date from a
+# REAL, licensed dataset; it is the INTERPRETATION ("this is when the
+# company itself joined") that carries this caveat, not the date itself.
+_SP500_PIT_CONFIRMED_LISTED_FROM: dict[str, str] = {
+    "ABBV": "2013-01-02", "ADBE": "1997-05-06", "AMT": "2007-11-19", "AMZN": "2005-11-21",
+    "AVB": "2007-01-10", "AVGO": "2014-05-08", "CRM": "2008-09-15", "DLR": "2016-05-18",
+    "DOW": "2023-05-17", "EQIX": "2015-03-23", "GOOGL": "2006-04-03", "GS": "2002-07-22",
+    "KMI": "2000-12-12", "LIN": "2018-11-06", "MA": "2008-07-18", "META": "2022-06-09",
+    "NVDA": "2001-11-30", "O": "2015-04-07", "PLD": "2003-07-17", "PM": "2008-03-31",
+    "PSA": "2005-08-19", "PSX": "2012-05-01", "QCOM": "1999-07-22", "RTX": "2020-04-03",
+    "SPG": "2002-06-26", "SRE": "1998-06-29", "TMO": "1997-01-02", "TSLA": "2020-12-21",
+    "UPS": "2002-07-22", "V": "2009-12-21", "VLO": "2004-04-29", "WELL": "2009-01-30",
+}
+
+
+def _real_symbol_metadata(symbol: str) -> SymbolMetadata:
+    """Builds one `SymbolMetadata` using `_REAL_SEC_SECTOR_AND_EXCHANGE`
+    when this symbol was actually resolved (real `sector`/`exchange`),
+    or the honest all-`None` default otherwise (e.g. any symbol never
+    actually fetched) -- never a fabricated value for a symbol this
+    session did not actually confirm. Separately merges in a real
+    `listed_from` from `_SP500_PIT_CONFIRMED_LISTED_FROM` when
+    available (ADR-0061) -- an independent data source from `sector`/
+    `exchange`, so a symbol can have either, both, or neither
+    populated. `listed_to` is never set here (see that dict's own
+    comment for why)."""
+    found = _REAL_SEC_SECTOR_AND_EXCHANGE.get(symbol)
+    sector, exchange = found if found is not None else (None, None)
+    listed_from_str = _SP500_PIT_CONFIRMED_LISTED_FROM.get(symbol)
+    listed_from = (
+        datetime.strptime(listed_from_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if listed_from_str is not None else None
+    )
+    return SymbolMetadata(symbol=symbol, sector=sector, exchange=exchange, listed_from=listed_from)
+
+
 # -- PILOT_UNIVERSE v1 -- Phase 22's original 16-symbol US long-term
 # pilot universe (docs/operations/MARKET-DATA-PROVIDER.md), preserved
 # here unchanged as ONE named, versioned universe -- not the system's
@@ -128,7 +335,7 @@ PILOT_UNIVERSE_V1 = UniverseDefinition(
         "survivorship limitations)."
     ),
     symbols=tuple(
-        SymbolMetadata(symbol=s)
+        _real_symbol_metadata(s)
         for s in (
             "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "TSLA",
             "JPM", "V", "MA", "COST", "WMT", "JNJ", "XOM",
@@ -223,7 +430,7 @@ RESEARCH_UNIVERSE_STAGE2 = UniverseDefinition(
     ),
     symbols=PILOT_UNIVERSE_V1.symbols
     + tuple(
-        SymbolMetadata(symbol=s)
+        _real_symbol_metadata(s)
         for s in (
             # Industrials
             "CAT", "HON", "UPS", "BA",
@@ -303,7 +510,7 @@ RESEARCH_UNIVERSE_STAGE3 = UniverseDefinition(
     ),
     symbols=RESEARCH_UNIVERSE_STAGE2.symbols
     + tuple(
-        SymbolMetadata(symbol=s)
+        _real_symbol_metadata(s)
         for s in (
             # Real Estate (absent from Stage 2)
             "PLD", "AMT", "EQIX", "SPG",
@@ -323,6 +530,85 @@ RESEARCH_UNIVERSE_STAGE3 = UniverseDefinition(
             "LOW",
             # Consumer Staples
             "PM",
+        )
+    ),
+)
+
+
+# -- RESEARCH_UNIVERSE Stage 4 -- built as part of Session 36's
+# explicit "전부 다 진행하는건?" 3-part request (universe expansion is
+# item #3, alongside factor combination and sector neutralization).
+# Same discipline as every prior stage, unchanged: hand-curated
+# (`source="manual_curation"`), NOT presented as a verified live index
+# membership snapshot.
+#
+# Selection criterion, fixed BEFORE any Stage 4 backtest is ever run
+# (RULE 0.8): deepen the 5 GICS-style sectors Stage 3 leaves thinnest
+# among its own explicitly-curated (Stage 2 + Stage 3) additions --
+# Energy, Industrials, Utilities, Real Estate, Materials, each sitting
+# at exactly 4 explicitly-tracked symbols after Stage 3 (see the
+# section comments on Stage 2/Stage 3 above for the per-sector tallies
+# this counts). This is not an arbitrary choice: Energy's thinness is
+# the DIRECTLY DIAGNOSED root cause of a real finding this same session
+# -- `size_score` reaching walk-forward CANDIDATE at top_n=5 turned out
+# to be SLB (Energy's only other liquid name besides XOM/CVX at the
+# time) supplying 76.3% of its positive TEST PnL, a concentration
+# artifact rather than a genuine size effect (`docs/research/
+# STRATEGY-VALIDATION-REPORT.md`'s "Phase 33 Addendum" section E). The
+# other 4 sectors are included because they are equally thin by the
+# same count, not because any of them individually showed a problem --
+# this is pre-registered breadth, not a reaction to something observed
+# in this stage's own future backtest.
+#
+# Request-budget arithmetic (reuses the same confirmed Tiingo free-tier
+# numbers Stage 2/Stage 3 already established -- 50 requests/hour,
+# 1,000 requests/day, 2.00 GB/month; re-check the user's actual account
+# limits before running if they may have changed): 24 new symbols x 2
+# requests/symbol (price + corporate actions,
+# `scripts/ingest_real_market_data.py`, unmodified) = 48 requests,
+# fitting inside the confirmed 50-requests/hour cap in a SINGLE hourly
+# window -- identical shape to Stage 2's and Stage 3's own additions.
+#
+# NOT YET the active `RESEARCH_UNIVERSE` binding any script resolves by
+# default (`scripts/compute_signal_ic_from_catalog.py`/
+# `compute_fundamentals_ic_from_catalog.py`/`run_long_horizon_
+# validation.py` all still import `RESEARCH_UNIVERSE_STAGE3` by name)
+# -- switching those imports to Stage 4 requires the user to first run
+# real ingestion for these 24 new symbols in their own environment
+# (this session/environment has no network access to do so), the same
+# sequencing every prior stage already followed.
+RESEARCH_UNIVERSE_STAGE4 = UniverseDefinition(
+    name="RESEARCH_UNIVERSE",
+    version="stage4",
+    role="RESEARCH",
+    description=(
+        "Stage 4 of the research universe: Stage 3's 63 symbols plus 24 additional "
+        "hand-curated large-cap US companies deepening the 5 sectors Stage 3 leaves "
+        "thinnest (Energy, Industrials, Utilities, Real Estate, Materials -- each at 4 "
+        "explicitly-curated symbols after Stage 3). Energy specifically was the diagnosed "
+        "root cause of a real Session 36 finding: size_score's walk-forward CANDIDATE "
+        "result at top_n=5 turned out to be SLB alone supplying 76.3% of its positive TEST "
+        "PnL, a concentration artifact rather than a genuine size effect. Selection was "
+        "fixed before any Stage 4 backtest was run (RULE 0.8). Addresses cross-sectional "
+        "breadth/concentration risk only -- NOT survivorship bias (every symbol still has "
+        "listed_from=listed_to=None, same as every prior stage; see this definition's own "
+        "module-level comment)."
+    ),
+    symbols=RESEARCH_UNIVERSE_STAGE3.symbols
+    + tuple(
+        _real_symbol_metadata(s)
+        for s in (
+            # Energy (4 symbols after Stage 3 -- the diagnosed SLB
+            # concentration root cause; deepened most deliberately)
+            "PSX", "VLO", "OXY", "WMB", "KMI",
+            # Industrials (4 symbols, unchanged since Stage 2)
+            "GE", "RTX", "LMT", "DE", "EMR",
+            # Utilities (4 symbols after Stage 3)
+            "AEP", "EXC", "SRE", "XEL", "ED",
+            # Real Estate (4 symbols, all from Stage 3)
+            "O", "PSA", "WELL", "DLR", "AVB",
+            # Materials (4 symbols, all from Stage 3)
+            "SHW", "FCX", "DOW", "NUE",
         )
     ),
 )

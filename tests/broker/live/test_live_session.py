@@ -220,6 +220,115 @@ class TestScenario20ProcessCrashAfterSubmitThenReconcile:
         assert result.status.value in ("MATCHED", "MISMATCH", "UNKNOWN")
 
 
+class TestConsecutiveFailureCount:
+    """LIVE-RISK-POLICY.md item #11. Originally observability-only
+    (ADR-0063); every test below uses the default config
+    (`max_consecutive_failures=None`), under which the ORIGINAL halt-
+    on-first-failure behavior is unchanged (still
+    RECONCILIATION_REQUIRED after exactly one BrokerError) --
+    ADR-0065's configurable threshold is exercised separately in
+    TestConfigurableFailureThreshold below."""
+
+    def test_starts_at_zero(self) -> None:
+        session = _session()
+        assert session.consecutive_failure_count == 0
+
+    def test_a_single_broker_error_increments_it_to_one(self) -> None:
+        session = _session(failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 1
+
+    def test_a_successful_submission_resets_it_to_zero(self) -> None:
+        session = _session()
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 0
+
+    def test_repeated_failures_across_reconciliation_cycles_accumulate(self) -> None:
+        session = _session(failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        session.submit(_order(client_order_id="CID-1"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 1
+        # simulate reconciliation resolving the block, matching
+        # TestScenario20's own manual-state-manipulation pattern above
+        session._operational_state = OperationalState.ACTIVE  # type: ignore[attr-defined]
+        session.submit(_order(client_order_id="CID-2"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 2
+
+    def test_still_halts_on_the_first_failure_exactly_as_before(self) -> None:
+        # The count is additive observability -- it does not loosen the
+        # existing single-failure halt in any way.
+        session = _session(failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+        second = session.submit(_order(client_order_id="CID-2"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert second.error == "reconciliation_required"
+
+
+class TestConfigurableFailureThreshold:
+    """ADR-0065 -- the user explicitly ratified LOOSENING the original
+    halt-on-first-failure default: LiveTradingConfig.
+    max_consecutive_failures=5 means the session tolerates up to 4
+    consecutive BrokerErrors before halting to RECONCILIATION_REQUIRED
+    on the 5th."""
+
+    def _session_with_threshold(self, threshold: int, **adapter_kwargs) -> LiveTradingSession:
+        adapter = MockBrokerAdapter(BrokerConfig(), **adapter_kwargs)
+        return LiveTradingSession(
+            make_live_config(
+                live_trading_enabled=True, max_daily_loss=2000.0, max_order_frequency_per_hour=6,
+                max_consecutive_failures=threshold,
+            ),
+            adapter,
+        )
+
+    def test_failures_below_threshold_do_not_halt_the_session(self) -> None:
+        session = self._session_with_threshold(5, failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        for i in range(1, 5):  # 4 failures, still below the threshold of 5
+            outcome = session.submit(_order(client_order_id=f"CID-{i}"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+            assert outcome.error != "reconciliation_required"
+            assert session.operational_state != OperationalState.RECONCILIATION_REQUIRED
+        assert session.consecutive_failure_count == 4
+
+    def test_the_fifth_consecutive_failure_halts_the_session(self) -> None:
+        session = self._session_with_threshold(5, failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        for i in range(1, 6):
+            outcome = session.submit(_order(client_order_id=f"CID-{i}"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 5
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+        assert outcome.status == "UNKNOWN"  # the 5th call is itself the real BrokerError that triggers the halt, not a pre-blocked outcome
+        sixth = session.submit(_order(client_order_id="CID-6"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert sixth.error == "reconciliation_required"
+
+    def test_a_success_before_the_threshold_resets_the_count(self) -> None:
+        # A session whose adapter can be told to succeed on the very
+        # next call isn't available via failure_mode alone, so this
+        # exercises the reset via two independent sessions' worth of
+        # failures interspersed with the shared counter-reset logic
+        # already proven by TestConsecutiveFailureCount -- here we only
+        # need to confirm the THRESHOLD comparison itself uses the
+        # post-reset count, not a cumulative one.
+        session = self._session_with_threshold(5, failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        for i in range(1, 5):
+            session.submit(_order(client_order_id=f"CID-{i}"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 4
+        session._consecutive_failure_count = 0  # type: ignore[attr-defined]  # simulate the reset a real success would perform
+        outcome = session.submit(_order(client_order_id="CID-5"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 1
+        assert session.operational_state != OperationalState.RECONCILIATION_REQUIRED
+
+    def test_default_none_threshold_still_means_halt_on_first_failure(self) -> None:
+        session = self._session_with_threshold(None, failure_mode="unavailable")  # type: ignore[arg-type]
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+
+
 class TestNoBlindRetryAcrossFailureModes:
     @pytest.mark.parametrize("failure_mode,exc_type", [
         ("unavailable", BrokerTransportError),

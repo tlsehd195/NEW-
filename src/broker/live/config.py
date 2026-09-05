@@ -40,6 +40,17 @@ class LiveTradingConfig:
     max_daily_loss: Optional[float] = None
     max_order_frequency_per_hour: Optional[int] = None
 
+    # -- max_consecutive_failures (LIVE-RISK-POLICY.md item #11,
+    # ADR-0065): `None` means "halt on the very first BrokerError" --
+    # LiveTradingSession's own original, stricter behavior, preserved
+    # exactly as the default so an existing caller that never sets this
+    # sees no change. Setting a value explicitly LOOSENS that default
+    # (tolerates up to N-1 consecutive failures before halting to
+    # RECONCILIATION_REQUIRED) -- a real capital-risk trade-off, only
+    # ever taken on an explicit human decision (see ADR-0065 for the
+    # user's own ratified value).
+    max_consecutive_failures: Optional[int] = None
+
     # Cancel-on-kill-switch automation (Session 36 -- the user explicitly
     # decided this should be automatic, resolving the long-open "DECISION
     # REQUIRED" this project had repeatedly cited without ever actually
@@ -63,6 +74,8 @@ class LiveTradingConfig:
             raise ValueError("LiveTradingConfig.max_daily_loss must be positive if set")
         if self.max_order_frequency_per_hour is not None and self.max_order_frequency_per_hour <= 0:
             raise ValueError("LiveTradingConfig.max_order_frequency_per_hour must be positive if set")
+        if self.max_consecutive_failures is not None and self.max_consecutive_failures < 1:
+            raise ValueError("LiveTradingConfig.max_consecutive_failures must be >= 1 if set")
 
     def configuration_version(self) -> str:
         return compute_data_version(asdict(self))

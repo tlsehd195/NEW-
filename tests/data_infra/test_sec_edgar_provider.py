@@ -181,6 +181,67 @@ class TestSameAccnMultiplePeriodsAreAllPreservedNotCollapsed:
         assert len(ids) == 2  # a repository keying on this natural key would never collapse them
 
 
+class TestFiledEarlierThanEndEntryIsSkippedNotCrashed:
+    """Regression guard: a REAL Stage 4 ingestion run (LMT) crashed this
+    script with `FundamentalRecord.__post_init__`'s own ValueError
+    ("available_time must not be earlier than period_end") -- SEC does
+    NOT validate filer-submitted XBRL for logical date consistency, so a
+    small number of real entries genuinely have `filed` earlier than
+    `end` (almost certainly a filer-side tagging error, not a bug in
+    this normalize() function). The single malformed entry must be
+    skipped, same "skip rather than fabricate" discipline as a missing
+    required field -- never raised, never silently accepted."""
+
+    def test_an_entry_with_filed_before_end_is_skipped(self) -> None:
+        raw = {
+            "facts": {"us-gaap": {"Assets": {"units": {"USD": [
+                # filed (2020-01-01) is BEFORE end (2020-12-31) -- the
+                # real, observed malformed shape.
+                {"end": "2020-12-31", "val": 100.0, "accn": "BAD-ACCN", "fy": 2020, "fp": "FY", "form": "10-K", "filed": "2020-01-01"},
+            ]}}}}
+        }
+        provider = _provider()
+
+        records = provider.normalize_company_facts(
+            "LMT", raw, ["Assets"], retrieved_at=utc(2024, 1, 1), ingestion_time=utc(2024, 1, 1),
+        )
+
+        assert records == []
+
+    def test_a_good_entry_alongside_a_bad_one_still_survives(self) -> None:
+        raw = {
+            "facts": {"us-gaap": {"Assets": {"units": {"USD": [
+                {"end": "2020-12-31", "val": 100.0, "accn": "BAD-ACCN", "fy": 2020, "fp": "FY", "form": "10-K", "filed": "2020-01-01"},
+                {"end": "2019-12-31", "val": 90.0, "accn": "GOOD-ACCN", "fy": 2019, "fp": "FY", "form": "10-K", "filed": "2020-02-01"},
+            ]}}}}
+        }
+        provider = _provider()
+
+        records = provider.normalize_company_facts(
+            "LMT", raw, ["Assets"], retrieved_at=utc(2024, 1, 1), ingestion_time=utc(2024, 1, 1),
+        )
+
+        assert len(records) == 1
+        assert records[0].period_end == utc(2019, 12, 31)
+
+    def test_filed_exactly_equal_to_end_is_not_skipped(self) -> None:
+        # The boundary case -- FundamentalRecord.__post_init__ itself
+        # only rejects STRICTLY earlier (`<`), so filed == end must
+        # still be accepted here, not over-corrected into a stricter cap.
+        raw = {
+            "facts": {"us-gaap": {"Assets": {"units": {"USD": [
+                {"end": "2020-12-31", "val": 100.0, "accn": "SAME-DAY", "fy": 2020, "fp": "FY", "form": "10-K", "filed": "2020-12-31"},
+            ]}}}}
+        }
+        provider = _provider()
+
+        records = provider.normalize_company_facts(
+            "LMT", raw, ["Assets"], retrieved_at=utc(2024, 1, 1), ingestion_time=utc(2024, 1, 1),
+        )
+
+        assert len(records) == 1
+
+
 class TestFetchCompanyFacts:
     def test_builds_the_correct_zero_padded_cik_path(self) -> None:
         calls = []
@@ -226,6 +287,92 @@ class TestFetchTickerMap:
         provider = SecEdgarFundamentalsProvider(SecEdgarConfig(), transport=None)
         with pytest.raises(PermanentProviderError):
             provider.fetch_ticker_map(_StubTransport())
+
+
+_SAMPLE_SUBMISSIONS = {
+    "cik": "1524472",
+    "entityType": "operating",
+    "sic": "1311",
+    "sicDescription": "CRUDE PETROLEUM AND NATURAL GAS",
+    "name": "Sample Energy Co",
+    "tickers": ["SAMP"],
+    "exchanges": ["NYSE"],
+}
+
+
+class TestFetchSubmissions:
+    def test_builds_the_correct_zero_padded_cik_path(self) -> None:
+        calls = []
+
+        class _StubTransport:
+            def get(self, path, *, timeout):
+                calls.append(path)
+                return SecEdgarTransportResponse(status_code=200, body=_SAMPLE_SUBMISSIONS, raw_text=None, headers={})
+
+        provider = SecEdgarFundamentalsProvider(SecEdgarConfig(), _StubTransport())
+        provider.fetch_submissions("0001524472")
+        assert calls == ["/submissions/CIK0001524472.json"]
+
+    def test_unexpected_shape_raises_permanent_provider_error(self) -> None:
+        class _StubTransport:
+            def get(self, path, *, timeout):
+                return SecEdgarTransportResponse(status_code=200, body=["not", "a", "dict"], raw_text=None, headers={})
+
+        provider = SecEdgarFundamentalsProvider(SecEdgarConfig(), _StubTransport())
+        with pytest.raises(PermanentProviderError):
+            provider.fetch_submissions("0001524472")
+
+
+class TestNormalizeSubmissions:
+    """The gap `TiingoDataProvider.normalize_symbol_metadata`'s own
+    docstring explicitly flags -- Tiingo's metadata endpoint never
+    supplies `sector`. EDGAR's submissions response DOES document a
+    real classification (`sicDescription`), so this is the one place
+    in this project a `SymbolMetadata.sector` value can honestly be
+    populated from an actual provider response rather than left `None`."""
+
+    def test_maps_sic_description_onto_sector(self) -> None:
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", _SAMPLE_SUBMISSIONS)
+        assert metadata.sector == "CRUDE PETROLEUM AND NATURAL GAS"
+
+    def test_maps_the_first_exchange(self) -> None:
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", _SAMPLE_SUBMISSIONS)
+        assert metadata.exchange == "NYSE"
+
+    def test_source_is_sec_edgar(self) -> None:
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", _SAMPLE_SUBMISSIONS)
+        assert metadata.source == "sec_edgar"
+
+    def test_missing_sic_description_leaves_sector_none_not_fabricated(self) -> None:
+        raw = {"cik": "1524472", "exchanges": ["NYSE"]}
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", raw)
+        assert metadata.sector is None
+
+    def test_empty_exchanges_list_leaves_exchange_none(self) -> None:
+        raw = {"sicDescription": "CRUDE PETROLEUM AND NATURAL GAS", "exchanges": []}
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", raw)
+        assert metadata.exchange is None
+
+    def test_exchanges_list_with_a_leading_empty_string_skips_to_the_next_real_value(self) -> None:
+        # A real, documented EDGAR quirk: some filers' exchanges list
+        # carries an empty-string placeholder entry.
+        raw = {"sicDescription": "CRUDE PETROLEUM AND NATURAL GAS", "exchanges": ["", "NYSE"]}
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", raw)
+        assert metadata.exchange == "NYSE"
+
+    def test_market_cap_bucket_and_listed_dates_stay_none(self) -> None:
+        # EDGAR's submissions shape does not name these -- never guessed.
+        provider = _provider()
+        metadata = provider.normalize_submissions("SAMP", _SAMPLE_SUBMISSIONS)
+        assert metadata.market_cap_bucket is None
+        assert metadata.listed_from is None
+        assert metadata.listed_to is None
 
 
 class TestResolveCik:

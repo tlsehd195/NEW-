@@ -1,0 +1,127 @@
+# Scheduled Paper Trading cycle (ADR-0082, supersedes the Oracle Cloud
+# VM plan in ADR-0081 as the active hosting choice). Runs
+# scripts/run_paper_trading_cycle.py --resume daily, matching the
+# crontab line ADR-0075 already documents, but on a GitHub-hosted
+# runner instead of a self-managed VM.
+#
+# State persistence (the reason GitHub Actions was originally set
+# aside): GitHub Actions runners are ephemeral, so the market-data
+# catalog (--db-path) and the paper trading ledger (--paper-store) --
+# both DuckDB-backed directories -- would not survive between runs on
+# their own. This workflow round-trips both as GitHub Actions
+# artifacts (restored at the start of each run, re-uploaded at the
+# end) rather than committing them into git, preserving this repo's
+# existing policy of never tracking *.duckdb/*.parquet files (see
+# .gitignore). See ADR-0082 for the full design and its disclosed
+# limitations (artifact retention, cron timing, re-ingestion cost).
+name: Paper Trading Daily Cycle
+
+on:
+  schedule:
+    # 22:00 UTC, Mon-Fri. Deliberately later than ADR-0075's
+    # un-timezone-qualified "21:30" example: 22:00 UTC is safely after
+    # the latest possible US market close (21:00 UTC during EST)
+    # year-round, rather than assuming a specific DST offset.
+    - cron: "0 22 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  UNIVERSE: RESEARCH_UNIVERSE
+  START_DATE: "2024-01-02"
+  MARKET_DATA_DIR: data/real_market_data
+  PAPER_STORE_DIR: data/paper_trading_store
+
+jobs:
+  run-cycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Restore previous market-data catalog artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$MARKET_DATA_DIR" "$PAPER_STORE_DIR"
+          ART_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.name=="market-data-catalog" and .expired==false)] | sort_by(.created_at) | last | .id // empty')
+          if [ -n "$ART_ID" ]; then
+            echo "Restoring market-data-catalog artifact $ART_ID"
+            curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ART_ID/zip" -o catalog.zip
+            unzip -o -q catalog.zip -d "$MARKET_DATA_DIR"
+            rm -f catalog.zip
+          else
+            echo "No prior market-data-catalog artifact found -- starting fresh"
+          fi
+
+      - name: Restore previous paper-trading-store artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ART_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.name=="paper-trading-store" and .expired==false)] | sort_by(.created_at) | last | .id // empty')
+          if [ -n "$ART_ID" ]; then
+            echo "Restoring paper-trading-store artifact $ART_ID"
+            curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ART_ID/zip" -o store.zip
+            unzip -o -q store.zip -d "$PAPER_STORE_DIR"
+            rm -f store.zip
+          else
+            echo "No prior paper-trading-store artifact found -- starting fresh"
+          fi
+
+      - name: Ingest latest market data
+        env:
+          MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
+        run: |
+          python3 scripts/ingest_real_market_data.py \
+            --universe "$UNIVERSE" \
+            --start "$START_DATE" --end "$(date -u +%F)" \
+            --db-path "$MARKET_DATA_DIR" \
+            --manifest-out "$MARKET_DATA_DIR/ingestion_manifest.json"
+
+      - name: Run paper trading cycle (--resume)
+        run: |
+          python3 scripts/run_paper_trading_cycle.py \
+            --universe "$UNIVERSE" --db-path "$MARKET_DATA_DIR" \
+            --paper-store "$PAPER_STORE_DIR" --resume \
+            --start "$START_DATE" --end "$(date -u +%F)" \
+            --max-sector-weight 0.25 --max-order-notional 1000 \
+            --out paper_trading_cycle_report.json
+
+      - name: Upload updated market-data catalog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-data-catalog
+          path: ${{ env.MARKET_DATA_DIR }}
+          retention-days: 90
+
+      - name: Upload updated paper-trading store
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-trading-store
+          path: ${{ env.PAPER_STORE_DIR }}
+          retention-days: 90
+
+      - name: Upload this run's report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-trading-cycle-report-${{ github.run_id }}
+          path: paper_trading_cycle_report.json
+          retention-days: 90

@@ -56,6 +56,16 @@ sell anything not in the new top-N target, equal-weight-buy anything in
 target not already held, `COST_SAFETY_MARGIN` reserved cash headroom,
 `None`-scored securities excluded from ranking rather than fabricated
 with a stand-in value.
+
+**Session 36 addition**: all four also share `_select_target`, an
+optional sector-neutralization cap on top of the plain top-N slice --
+see that function's own docstring for the concentration artifact
+(`size_score`'s SLB-dominated TEST PnL) it exists to prevent
+structurally. Opt-in only (`FactorStrategyParameters.sector_by_security`
++ `max_per_sector`, both `None` by default) -- no existing candidate's
+behavior changes unless a caller supplies real, provider-sourced sector
+data (e.g. `SecEdgarFundamentalsProvider.normalize_submissions`) and
+explicitly asks for a cap.
 """
 
 from __future__ import annotations
@@ -84,12 +94,67 @@ UniverseScoreFn = Callable[[Sequence[str], datetime, object, object], dict]
 class FactorStrategyParameters:
     top_n: int = 5
     rebalance_months: int = 3
+    # Session 36 sector-neutralization addition (see _select_target's own
+    # docstring for the full reasoning). Both default to None, meaning
+    # "no cap" -- byte-for-byte the same selection every existing
+    # candidate already uses. A caller opts in by supplying BOTH: a
+    # security -> sector map (real, provider-sourced values only, e.g.
+    # from SecEdgarFundamentalsProvider.normalize_submissions -- never
+    # fabricated, per universe.py's own honesty discipline) and a
+    # max_per_sector integer.
+    sector_by_security: Optional[dict[str, str]] = None
+    max_per_sector: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.rebalance_months not in REBALANCE_MONTHS_RANGE:
             raise ValueError(f"rebalance_months must be one of {REBALANCE_MONTHS_RANGE}")
         if self.top_n < 1:
             raise ValueError("top_n must be >= 1")
+        if self.max_per_sector is not None and self.max_per_sector < 1:
+            raise ValueError("max_per_sector must be >= 1")
+
+
+def _select_target(ranked: Sequence[str], params: FactorStrategyParameters) -> set[str]:
+    """Picks the top `params.top_n` securities from `ranked` (already
+    sorted best score first), optionally capping how many of them may
+    share one sector -- Session 36's sector-neutralization capability,
+    built after `size_score` reaching walk-forward `CANDIDATE` at
+    top_n=5 turned out to be a concentration artifact (SLB, the sole
+    liquid Energy name at the time, supplying 76.3% of its positive
+    TEST PnL -- `docs/research/STRATEGY-VALIDATION-REPORT.md`'s "Phase
+    33 Addendum" section E) rather than a genuine cross-sectional size
+    effect. This exists to prevent that structurally at construction
+    time, not merely detect it after the fact the way the
+    concentration report already does.
+
+    Behaves BYTE-FOR-BYTE identically to plain `ranked[:top_n]` (every
+    existing candidate's unchanged behavior) whenever
+    `params.sector_by_security` or `params.max_per_sector` is `None` --
+    a caller must opt in with BOTH to change anything. A security with
+    no entry in `sector_by_security` (unknown/unconfirmed sector) is
+    NEVER capped and always eligible -- absence of sector data is not
+    evidence of concentration, and treating it as if it were would
+    itself fabricate a fact this project's own honesty discipline
+    (`data_infra.universe`'s module docstring) forbids. Securities are
+    still considered in `ranked`'s own score order -- a lower-ranked
+    security is only skipped, never promoted ahead of a higher-ranked
+    one, so this changes WHICH `top_n` securities are picked, never how
+    many or in what priority order."""
+    if params.sector_by_security is None or params.max_per_sector is None:
+        return set(ranked[: params.top_n])
+    target: list[str] = []
+    sector_counts: dict[str, int] = {}
+    for security_id in ranked:
+        if len(target) >= params.top_n:
+            break
+        sector = params.sector_by_security.get(security_id)
+        if sector is not None:
+            count = sector_counts.get(sector, 0)
+            if count >= params.max_per_sector:
+                continue
+            sector_counts[sector] = count + 1
+        target.append(security_id)
+    return set(target)
 
 
 def _orders_from_target(
@@ -149,7 +214,7 @@ class PriceFactorStrategy:
                 scores[security_id] = score
 
         ranked = sorted(scores, key=lambda sid: scores[sid], reverse=True)
-        target = set(ranked[: self._params.top_n])
+        target = _select_target(ranked, self._params)
         return _orders_from_target(target, portfolio, data, as_of_time)
 
 
@@ -189,7 +254,7 @@ class FundamentalsFactorStrategy:
                 scores[security_id] = score
 
         ranked = sorted(scores, key=lambda sid: scores[sid], reverse=True)
-        target = set(ranked[: self._params.top_n])
+        target = _select_target(ranked, self._params)
         return _orders_from_target(target, portfolio, data, as_of_time)
 
 
@@ -233,7 +298,7 @@ class HybridFactorStrategy:
                 scores[security_id] = score
 
         ranked = sorted(scores, key=lambda sid: scores[sid], reverse=True)
-        target = set(ranked[: self._params.top_n])
+        target = _select_target(ranked, self._params)
         return _orders_from_target(target, portfolio, data, as_of_time)
 
 
@@ -272,5 +337,5 @@ class UniverseFactorStrategy:
             self._security_ids, as_of_time, self._fundamentals_repository, self._price_repository,
         )
         ranked = sorted(scores, key=lambda sid: scores[sid], reverse=True)
-        target = set(ranked[: self._params.top_n])
+        target = _select_target(ranked, self._params)
         return _orders_from_target(target, portfolio, data, as_of_time)

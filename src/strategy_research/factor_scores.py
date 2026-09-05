@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
 from backtest.asof import AsOfDataView
+from backtest.clock import BacktestClock
 from backtest.metrics import annualized_volatility, compute_returns
 
 from data_infra.universe import BENCHMARK_SYMBOL
@@ -1475,5 +1476,107 @@ def value_composite_score(
     leg_ranks = [rank_average([component_values[sid][leg] for sid in ids]) for leg in range(5)]
     return {
         sid: sum(leg_ranks[leg][i] for leg in range(5)) / 5.0
+        for i, sid in enumerate(ids)
+    }
+
+
+_COMBINED_FACTOR_LEG_COUNT = 9
+
+
+def _combined_factor_component_values(
+    security_ids: Sequence[str], as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> dict:
+    """9-tuple of raw component scores for every security that has ALL
+    NINE available at `as_of_time`. Shared helper for
+    `combined_factor_score`.
+
+    The 9 legs are exactly the 9 (of 20 Session 36 raw-IC-screened
+    candidates) whose raw IC sign matched the direction their own
+    literature predicts (`docs/research/STRATEGY-VALIDATION-REPORT.md`'s
+    "Phase 33 Addendum", section B's table) -- `short_term_reversal`,
+    `illiquidity`, `piotroski`, `dividend_growth`, `sloan_accruals`,
+    `size`, `altman_z`, `shareholder_yield`, `quality_minus_junk`
+    (already itself a 3-leg composite). Two of the 9 (`short_term_
+    reversal_score`/`illiquidity_score`) are price-only `ScoreFn`s
+    (need an `AsOfDataView`, not the raw `price_repository` this
+    function receives -- see `signal_ic.compute_ic_series`'s identical
+    construction) -- a fresh single-checkpoint `AsOfDataView` is built
+    here for exactly that purpose, the same pattern
+    `compute_ic_series`/`compute_universe_ic_series` already establish.
+    `quality_minus_junk_score` is itself a `UniverseScoreFn` (computes
+    every security's score in one call, not per-security) -- called
+    once up front rather than inside the per-security loop below."""
+    data_view = AsOfDataView(price_repository, BacktestClock(checkpoints=(as_of_time,)))
+    quality_minus_junk_by_id = quality_minus_junk_score(security_ids, as_of_time, fundamentals_repository, price_repository)
+    values = {}
+    for sid in security_ids:
+        if sid not in quality_minus_junk_by_id:
+            continue
+        components = (
+            short_term_reversal_score(sid, as_of_time, data_view),
+            illiquidity_score(sid, as_of_time, data_view),
+            piotroski_f_score(sid, as_of_time, fundamentals_repository),
+            dividend_growth_score(sid, as_of_time, fundamentals_repository),
+            sloan_accruals_score(sid, as_of_time, fundamentals_repository),
+            size_score(sid, as_of_time, fundamentals_repository, price_repository),
+            altman_z_score(sid, as_of_time, fundamentals_repository, price_repository),
+            shareholder_yield_score(sid, as_of_time, fundamentals_repository, price_repository),
+            quality_minus_junk_by_id[sid],
+        )
+        if any(v is None for v in components):
+            continue
+        values[sid] = components
+    return values
+
+
+def combined_factor_score(
+    security_ids: Sequence[str], as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> dict:
+    """HYPOTHESIS -- combining several independently-motivated, weak
+    signals reduces noise even when none is individually strong enough
+    to trade alone (the same nonparametric rank-averaging logic
+    `strategy_research.ensemble_strategy.RankAverageEnsembleStrategy`
+    already applied to 2 factors, `ADR-0043` Decision 5, extended here
+    to 9). Averaging independent noisy signals lowers variance without
+    requiring any of them to individually clear a significance bar --
+    a genuinely different question from "does any single one of these
+    9 factors work alone" (already answered, mostly no, by Session 36's
+    real walk-forward results).
+
+    **Which 9, and why, stated precisely (this is the SAME selection
+    rule `ADR-0043` Decision 5 already established for
+    `RankAverageEnsembleStrategy`'s leverage+net_margin pair, applied
+    consistently at larger scale, not a new practice invented for this
+    function)**: every one of the 20 Session 36 raw-IC-screened
+    candidates whose raw IC SIGN matched the direction its own
+    literature predicts (`STRATEGY-VALIDATION-REPORT.md`'s "Phase 33
+    Addendum" section B) -- a binary, symmetric, pre-stated rule
+    (direction-agreement only), never a selection by IC MAGNITUDE or
+    by which candidate "looked most promising." Combining a
+    wrong-signed factor into an average can only dilute a real signal,
+    never strengthen it -- the same reasoning `ensemble_strategy.py`'s
+    own docstring already gives for excluding null factors from its
+    own, smaller combination.
+
+    Construction mirrors `quality_minus_junk_score`/`value_composite_score`
+    exactly: each of the 9 raw component scores is cross-sectionally
+    rank-averaged independently, then the 9 per-security ranks are
+    averaged into one final score. All-or-nothing on missing data, the
+    same discipline as `value_composite_score` -- a security missing
+    ANY of the 9 (a real possibility: `piotroski_f_score` alone already
+    frequently returns `None` for banks/brokers) is excluded from that
+    date's entire cross-section rather than scored on a partial subset.
+    Returns `{}` if fewer than 2 securities have all 9 (matching
+    `rank_average`'s own minimum-2-item requirement)."""
+    component_values = _combined_factor_component_values(security_ids, as_of_time, fundamentals_repository, price_repository)
+    if len(component_values) < 2:
+        return {}
+    ids = list(component_values)
+    leg_ranks = [
+        rank_average([component_values[sid][leg] for sid in ids])
+        for leg in range(_COMBINED_FACTOR_LEG_COUNT)
+    ]
+    return {
+        sid: sum(leg_ranks[leg][i] for leg in range(_COMBINED_FACTOR_LEG_COUNT)) / _COMBINED_FACTOR_LEG_COUNT
         for i, sid in enumerate(ids)
     }

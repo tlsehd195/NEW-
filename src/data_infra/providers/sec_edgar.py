@@ -30,6 +30,17 @@ established for its own unverified assumptions.
 each EDGAR fact's own `filed` date onto `FundamentalRecord.available_time`
 -- never `end` (period_end). See `data_infra.fundamentals_models`'s
 module docstring for why using `end` instead would leak the future.
+
+**Session 36 addition**: `fetch_submissions`/`normalize_submissions`
+(`data.sec.gov/submissions/CIK##########.json`) -- a second, distinct
+EDGAR endpoint from company facts, returning one filer's entity summary
+including a real SIC industry classification (`sicDescription`). The
+honest counterpart to `TiingoDataProvider.normalize_symbol_metadata`,
+whose own docstring flags that Tiingo's metadata endpoint never
+supplies `sector`; this is the one place in this project a real,
+provider-sourced `SymbolMetadata.sector` value exists, not a fabricated
+GICS mapping -- see `normalize_submissions`'s own docstring for the
+SIC-vs-GICS distinction.
 """
 
 from __future__ import annotations
@@ -46,6 +57,7 @@ from data_infra.versioning import compute_data_version
 
 _COMPANY_FACTS_PATH_TEMPLATE = "/api/xbrl/companyfacts/CIK{cik}.json"
 _TICKER_MAP_PATH = "/files/company_tickers.json"  # served from www.sec.gov, a DIFFERENT host than data.sec.gov -- see fetch_ticker_map
+_SUBMISSIONS_PATH_TEMPLATE = "/submissions/CIK{cik}.json"  # same host (data.sec.gov) as company facts -- see fetch_submissions
 
 # Only these two form types are treated as real financial-statement
 # filings for this project's purposes -- EDGAR's company-facts response
@@ -98,6 +110,66 @@ class SecEdgarFundamentalsProvider:
             raise PermanentProviderError("unexpected SEC EDGAR response shape for company_tickers.json: expected a JSON object")
         return response.body
 
+    def fetch_submissions(self, cik: str) -> dict:
+        """`GET /submissions/CIK##########.json` -- EDGAR's per-filer
+        entity summary (Tier 2 documentation, long-stable, publicly
+        documented shape): entity name, `sic`/`sicDescription` (the SEC's
+        own industry classification, the field this method exists to
+        reach), `exchanges`, `tickers`, `stateOfIncorporation`, etc.
+        Same host (`data.sec.gov`) as `fetch_company_facts`, unlike
+        `fetch_ticker_map` -- no second transport argument needed. `cik`
+        must already be the zero-padded 10-digit form, same contract as
+        `fetch_company_facts`."""
+        response = self._transport.get(
+            _SUBMISSIONS_PATH_TEMPLATE.format(cik=cik), timeout=self._config.timeout_seconds
+        )
+        if not isinstance(response.body, dict):
+            raise PermanentProviderError(f"unexpected SEC EDGAR response shape for CIK {cik} submissions: expected a JSON object")
+        return response.body
+
+    def normalize_submissions(self, security_id: str, raw: dict) -> "SymbolMetadata":
+        """Maps EDGAR's submissions response onto `SymbolMetadata` --
+        the honest counterpart to `TiingoDataProvider.normalize_symbol_
+        metadata`, whose own docstring explicitly flags that Tiingo's
+        `/tiingo/daily/<ticker>` endpoint never supplies `sector` ("not
+        part of its documented shape... never guess a value a provider
+        does not actually supply"). EDGAR's submissions response DOES
+        document a real classification field (`sicDescription`, the SEC's
+        own Standard Industrial Classification text, e.g. "CRUDE
+        PETROLEUM AND NATURAL GAS") -- mapped onto `sector` here as the
+        one genuinely provider-sourced value this project has for that
+        field, not a fabricated GICS mapping. SIC and GICS are DIFFERENT
+        taxonomies (SIC is the older, coarser, US-government scheme;
+        GICS is the newer, finer-grained, MSCI/S&P-owned one this
+        project has no licensed access to) -- `sector` here should be
+        read as "this filer's SEC-assigned SIC description," not a GICS
+        sector label, and any code comparing two securities' `sector`
+        values is comparing SIC descriptions, not GICS sectors.
+
+        `exchange` uses the first entry of EDGAR's `exchanges` list when
+        present and non-empty (a filer can in principle be listed on more
+        than one exchange; `SymbolMetadata.exchange` is a single string,
+        so only the first is kept, same "one field, take the first known
+        value" honesty tradeoff `_latest_price`/`_latest_fiscal_year_value`
+        already make elsewhere in this project for a different kind of
+        single-valued field). Every field EDGAR's own documented shape
+        does not name (`market_cap_bucket`, `listed_from`, `listed_to`)
+        stays `None`, unchanged from `SymbolMetadata`'s own default --
+        this endpoint's shape does not name a machine-readable listing
+        date."""
+        from data_infra.universe import SymbolMetadata  # local import: avoids a module-level
+
+        # providers -> universe dependency for every other use of this file.
+        sic_description = raw.get("sicDescription")
+        exchanges = raw.get("exchanges") or []
+        exchange = next((e for e in exchanges if e), None)
+        return SymbolMetadata(
+            symbol=security_id,
+            exchange=exchange,
+            sector=str(sic_description) if sic_description else None,
+            source="sec_edgar",
+        )
+
     def normalize_company_facts(
         self,
         security_id: str,
@@ -133,6 +205,27 @@ class SecEdgarFundamentalsProvider:
                         continue  # incomplete entry -- skip rather than fabricate a missing field
                     filed_time = _parse_edgar_date(entry["filed"])
                     period_end = _parse_edgar_date(entry["end"])
+                    if filed_time < period_end:
+                        # A REAL, observed EDGAR data-quality issue (found
+                        # via a real Stage 4 ingestion run, LMT): SEC does
+                        # NOT validate filer-submitted XBRL for logical
+                        # date consistency, so a small number of entries
+                        # in the wild genuinely have `filed` earlier than
+                        # `end` -- almost certainly a filer-side tagging
+                        # error (e.g. a schedule/note item mistagged under
+                        # the wrong concept or period), not a bug in this
+                        # normalize() function. `FundamentalRecord.
+                        # __post_init__` already refuses to construct such
+                        # a record (it exists specifically to catch this
+                        # class of ordering violation before storage) --
+                        # skipping the single malformed entry here, same
+                        # "skip rather than fabricate/crash" discipline as
+                        # the missing-field check just above, is the
+                        # honest choice: this one entry cannot be trusted
+                        # regardless of which of its two dates is wrong,
+                        # but it must not take down the rest of a real
+                        # ingestion run over one bad upstream data point.
+                        continue
                     period_start = _parse_edgar_date(entry["start"]) if entry.get("start") else None
                     accn = entry.get("accn", "")
                     content_fields = {

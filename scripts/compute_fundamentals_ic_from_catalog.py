@@ -26,13 +26,18 @@ value anomaly, ADR-0043 Decision 11 -- also wired through
 (Asness, Frazzini & Pedersen's quality composite, ADR-0043 Decision 12
 -- a CROSS-SECTIONAL score computed for the whole universe at once via
 the new `compute_universe_ic_series`, not per-security), `value_composite` (O'Shaughnessy's multi-ratio value composite, ADR-0043
-Decision 12 -- also cross-sectional, and also needs price), or `size`
+Decision 12 -- also cross-sectional, and also needs price), `size`
 (Banz 1981's size effect, ADR-0043 Decision 13 -- negative market cap,
-also wired through `compute_hybrid_ic_series` since it needs price) --
-using
+also wired through `compute_hybrid_ic_series` since it needs price), or
+`combined_factor` (Session 36 -- a 9-leg rank-averaged combination of
+every Session 36 raw-IC-screened candidate whose sign matched
+literature, also cross-sectional -- see `factor_scores.combined_
+factor_score`'s own docstring for the exact leg list and selection
+rule) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` (or, for
 `shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`; or,
-for `quality_minus_junk`/`value_composite`, `compute_universe_ic_series`)
+for `quality_minus_junk`/`value_composite`/`combined_factor`,
+`compute_universe_ic_series`)
 against two live DuckDB catalogs: the fundamentals catalog (ADR-0042,
 `ingest_fundamentals_data.py`'s output) and the price catalog
 (`ingest_real_market_data.py`'s output, needed for forward returns,
@@ -67,7 +72,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE3  # noqa: E402
+from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
@@ -78,6 +83,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     asset_growth_score,
     book_to_market_score,
     cashflow_yield_score,
+    combined_factor_score,
     dividend_growth_score,
     earnings_yield_score,
     gross_profitability_score,
@@ -100,7 +106,7 @@ from strategy_research.signal_ic import (  # noqa: E402
     compute_universe_ic_series,
 )
 
-_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE3}
+_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
 
 _SCORES = {
     "roe": roe_score,
@@ -150,6 +156,11 @@ _HYBRID_SCORES = {
 _UNIVERSE_SCORES = {
     "quality_minus_junk": quality_minus_junk_score,
     "value_composite": value_composite_score,
+    # Session 36 addition: combined_factor_score is UniverseScoreFn-shaped
+    # exactly like the two candidates above (see its own docstring in
+    # factor_scores.py), so it reuses this same call path with no new
+    # plumbing.
+    "combined_factor": combined_factor_score,
 }
 
 

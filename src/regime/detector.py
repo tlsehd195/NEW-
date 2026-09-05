@@ -69,10 +69,10 @@ def make_single_point_view(repository: DataRepository, as_of_time: datetime) -> 
 
 
 class RegimeDetector:
-    def __init__(self, config: RegimeConfig) -> None:
+    def __init__(self, config: RegimeConfig, *, starting_observation_id: int = 1, starting_composite_id: int = 1) -> None:
         self._config = config
-        self._next_observation_id = 1
-        self._next_composite_id = 1
+        self._next_observation_id = starting_observation_id
+        self._next_composite_id = starting_composite_id
 
     def _allocate_observation_id(self) -> str:
         oid = f"REG-{self._next_observation_id:06d}"

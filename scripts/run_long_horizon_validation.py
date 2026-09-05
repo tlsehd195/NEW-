@@ -117,7 +117,7 @@ from backtest.contribution import compute_contribution_report_from_fills  # noqa
 from backtest.strategy import BuyAndHoldStrategy  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
 from data_infra.calendar import US_EQUITY  # noqa: E402
-from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE3  # noqa: E402
+from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
@@ -137,10 +137,12 @@ from strategy_research.factor_scores import (  # noqa: E402
     asset_growth_score,
     book_to_market_score,
     cashflow_yield_score,
+    combined_factor_score,
     dividend_growth_score,
     earnings_yield_score,
     fifty_two_week_high_score,
     gross_profitability_score,
+    idiosyncratic_volatility_score,
     illiquidity_score,
     long_term_reversal_score,
     low_beta_score,
@@ -176,7 +178,7 @@ from strategy_research.walk_forward_evaluation import run_walk_forward_evaluatio
 
 from data_infra.versioning import compute_data_version  # noqa: E402
 
-_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE3}
+_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
 # Every real provider this project has ever integrated
 # (src/data_infra/providers/tiingo.py, stooq.py) stamps exactly this
 # source name onto Provenance.source -- used by the Phase 28
@@ -226,6 +228,12 @@ _PRICE_FACTOR_CANDIDATES = (
     ("illiquidity", "Amihud 2002 illiquidity premium, price+volume", illiquidity_score),
     ("fifty_two_week_high", "George & Hwang 2004 52-week-high anomaly, price-only", fifty_two_week_high_score),
     ("max_effect", "Bali, Cakici & Whitelaw 2011 MAX effect, price-only", max_effect_score),
+    # Session 36 (ADR-0053) -- real raw IC (mean_ic=-0.0151, near-zero,
+    # wrong sign vs. literature) wired in anyway, same RULE 0.8 "no
+    # post-hoc filtering by raw IC sign" discipline the 20 candidates
+    # above already established (ADR-0051's own precedent, explicitly
+    # re-applied here rather than treated as a new decision).
+    ("idiosyncratic_volatility", "Ang, Hodrick, Xing & Zhang 2006 idiosyncratic volatility anomaly, price-only", idiosyncratic_volatility_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),
@@ -246,6 +254,17 @@ _HYBRID_FACTOR_CANDIDATES = (
 _UNIVERSE_FACTOR_CANDIDATES = (
     ("quality_minus_junk", "Asness, Frazzini & Pedersen quality-minus-junk (3-pillar simplification), cross-sectional", quality_minus_junk_score),
     ("value_composite", "O'Shaughnessy value composite (5 of 6 legs), cross-sectional", value_composite_score),
+    # Session 36 (ADR-0054) -- real raw IC (mean_ic=-0.0530,
+    # observations=43/80, well below every other candidate's 49-80)
+    # wired in anyway, same RULE 0.8 discipline as idiosyncratic_
+    # volatility above. The low observation count is a real, structural
+    # consequence of this factor's own all-or-nothing 9-leg AND
+    # requirement (piotroski_f_score alone was already the sparsest of
+    # the original 20 at 49/80) -- worth reading the walk-forward result
+    # with that in mind (a possible sample-selection artifact, same
+    # class of concern the SLB/size concentration finding already
+    # raised for a different candidate), not a reason to exclude it.
+    ("combined_factor", "9-leg rank-averaged combination of every Session 36 sign-matching candidate, cross-sectional", combined_factor_score),
 )
 
 

@@ -195,3 +195,41 @@ class TestKnownCikOverridesAppliedByDefault:
 class TestScriptIsSyntacticallyValid:
     def test_parses_without_error(self) -> None:
         _tree()  # raises SyntaxError on failure
+
+
+class TestPerSymbolLoopSurvivesAValueErrorNotJustProviderErrors:
+    """Regression guard: a REAL Stage 4 ingestion run (LMT, symbol
+    12/24) crashed this ENTIRE script -- losing every already-fetched
+    symbol's progress -- on a `FundamentalRecord.__post_init__`
+    ValueError from one malformed upstream EDGAR entry, because the
+    per-symbol loop's `except` clause only caught
+    `TransientProviderError`/`PermanentProviderError`, not `ValueError`.
+    `normalize_company_facts` (`src/data_infra/providers/sec_edgar.py`)
+    now also skips the one specific malformed-entry shape found this
+    way, but this script's own `except` clause is the correct second
+    layer regardless -- checked directly here via source/AST inspection
+    (this script is never imported/executed by the automated suite, see
+    module docstring), the same discipline this file's other tests
+    already use."""
+
+    def test_the_per_symbol_except_clause_also_catches_value_error(self) -> None:
+        # Source-text check, not a generic AST walk over every
+        # ExceptHandler: this script also has an EARLIER, deliberately
+        # narrower except (TransientProviderError, PermanentProviderError)
+        # around the one-time ticker-map fetch (not per-symbol, and a
+        # ValueError there is not the bug this guards against) -- a
+        # blanket "every handler catching both provider errors must also
+        # catch ValueError" check would wrongly flag that unrelated
+        # clause too. Anchoring on the per-symbol loop's own
+        # `records_persisted` line (unique to that loop) keeps this
+        # check specific to the right except clause.
+        source = _source()
+        per_symbol_loop_start = source.index("records_persisted")
+        except_index = source.index("except (", per_symbol_loop_start)
+        line_end = source.index("\n", except_index)
+        except_line = source[except_index:line_end]
+        assert "ValueError" in except_line, (
+            f"the per-symbol except clause ({except_line!r}) catches the provider errors "
+            "but not ValueError -- a single malformed FundamentalRecord would once again "
+            "crash the entire run instead of failing just that one symbol"
+        )

@@ -3,11 +3,15 @@ call the same way `broker.paper.session.PaperTradingSession` does for
 Paper (Phase 15) -- gate check, then call, then persist -- but with two
 Live-specific differences instruction section 9/14/15/27 both demand:
 
-1. A submission exception (`BrokerError`) is never retried. The order's
-   internal status becomes `UNKNOWN` and the session transitions to
-   `OperationalState.RECONCILIATION_REQUIRED`, blocking *every* further
-   submission until `reconcile_order` resolves it -- "API 응답을 받지
-   못했다"는 "주문이 실행되지 않았다"는 뜻이 아니다.
+1. A submission exception (`BrokerError`) is never retried. The
+   order's internal status ALWAYS becomes `UNKNOWN` regardless -- "API
+   응답을 받지 못했다"는 "주문이 실행되지 않았다"는 뜻이 아니다. The
+   session transitions to `OperationalState.RECONCILIATION_REQUIRED`,
+   blocking *every* further submission, once `consecutive_failure_count`
+   reaches `LiveTradingConfig.max_consecutive_failures` (ADR-0065) --
+   by default that field is `None`, meaning the ORIGINAL behavior
+   (halt on the very first failure) still applies unless a human
+   explicitly configures a higher tolerance.
 2. `engage_kill_switch` is callable by this session itself (a
    deterministic, automatic reaction); `release_kill_switch` is not --
    see `broker.live.kill_switch`'s own module docstring.
@@ -156,10 +160,30 @@ class LiveTradingSession:
         self._operational_state = OperationalState.OFF
         self._kill_switch_ids = _IdAllocator("KSEVENT")
         self._reconciliation_ids = _IdAllocator("RECON")
+        self._consecutive_failure_count = 0
 
     @property
     def operational_state(self) -> OperationalState:
         return self._operational_state
+
+    @property
+    def consecutive_failure_count(self) -> int:
+        """Count of `BrokerError`s on `submit_order` since the last
+        successful submission, reset to 0 on every success (LIVE-RISK-
+        POLICY.md item #11). Originally built as observability-only
+        (ADR-0063); the user then explicitly ratified using it as a
+        real halt threshold via `LiveTradingConfig.
+        max_consecutive_failures` (ADR-0065) -- `submit` now halts to
+        `RECONCILIATION_REQUIRED` once this count reaches that
+        threshold (default `None` = 1, i.e. the ORIGINAL halt-on-first-
+        failure behavior, unless a human explicitly configures a
+        higher tolerance). This count only advances while a new
+        submission is actually attempted -- it does not advance while
+        blocked in `RECONCILIATION_REQUIRED` (no submission is
+        attempted then), so it reflects failures across successive
+        submit attempts over the session's life, not a live retry
+        loop."""
+        return self._consecutive_failure_count
 
     def is_kill_switch_engaged(self) -> bool:
         return is_engaged(self._kill_switch_repository)
@@ -181,7 +205,13 @@ class LiveTradingSession:
             response = self.adapter.submit_order(order, requested_at=requested_at)
         except BrokerError as exc:
             self._internal_status[order.client_order_id] = BrokerOrderStatus.UNKNOWN
-            self._operational_state = OperationalState.RECONCILIATION_REQUIRED
+            self._consecutive_failure_count += 1
+            # ADR-0065: None means "halt on the first failure" (the
+            # original, stricter behavior) -- a human must explicitly
+            # set a higher threshold to tolerate more.
+            threshold = self.config.max_consecutive_failures or 1
+            if self._consecutive_failure_count >= threshold:
+                self._operational_state = OperationalState.RECONCILIATION_REQUIRED
             return LiveSubmissionOutcome(
                 submitted=False, status="UNKNOWN", gate_result=gate_result, response=None,
                 error=f"{type(exc).__name__}: {exc}",
@@ -189,6 +219,7 @@ class LiveTradingSession:
 
         self._internal_status[order.client_order_id] = response.status
         self._operational_state = OperationalState.ACTIVE
+        self._consecutive_failure_count = 0
         return LiveSubmissionOutcome(submitted=True, status=response.status.value, gate_result=gate_result, response=response)
 
     def reconcile_order(self, client_order_id: str, *, as_of: datetime) -> ReconciliationResult:

@@ -61,8 +61,8 @@ class Predictor(Protocol):
 
 
 class _IdAllocator:
-    def __init__(self) -> None:
-        self._next_id = 1
+    def __init__(self, start: int = 1) -> None:
+        self._next_id = start
 
     def allocate(self) -> str:
         pid = f"PRED-{self._next_id:06d}"
@@ -83,9 +83,9 @@ class RandomWalkPredictor:
     version = "random_walk_v1"
     method_type = PredictionMethodType.DETERMINISTIC_BASELINE
 
-    def __init__(self, config: PredictionConfig = PredictionConfig()) -> None:
+    def __init__(self, config: PredictionConfig = PredictionConfig(), *, starting_id: int = 1) -> None:
         self._config = config
-        self._ids = _IdAllocator()
+        self._ids = _IdAllocator(starting_id)
 
     def predict(
         self,
@@ -127,9 +127,9 @@ class DriftPredictor:
     version = "drift_v1"
     method_type = PredictionMethodType.DETERMINISTIC_BASELINE
 
-    def __init__(self, config: PredictionConfig = PredictionConfig()) -> None:
+    def __init__(self, config: PredictionConfig = PredictionConfig(), *, starting_id: int = 1) -> None:
         self._config = config
-        self._ids = _IdAllocator()
+        self._ids = _IdAllocator(starting_id)
 
     def predict(
         self,
