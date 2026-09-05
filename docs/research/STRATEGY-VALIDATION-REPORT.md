@@ -2638,3 +2638,33 @@ symbols, `AVB` unresolved same as the fundamentals catalog's own known
 CIK gap, 4877 transactions persisted) but the walk-forward run with
 `--insider-db-path` has not been executed yet; that result will be
 recorded separately once it lands.
+
+## Session 36 continued Addendum -- RS Rating (O'Neil/IBD Relative Strength), wired blind
+
+Following the account owner's request to analyze an external repository
+(`dragon1086/prism-insight`, an LLM-agent-driven trading system with no
+backtesting rigor of its own -- explicitly acknowledged in its own
+README, the key philosophical contrast to this project's RULE 0.8/
+PBO-DSR discipline) and then "전부 적용" (apply everything found
+applicable), 5 items were identified; this is the first, price-only and
+requiring no new data pipeline.
+
+**`rs_rating_score`** (O'Neil/IBD Relative Strength Rating) --
+`2*R63 + R126 + R189 + R252`, a weighted sum of trailing 63/126/189/252
+trading-day returns (IBD's own quarterly weighting, most recent quarter
+double-weighted), using only price history already in the catalog. The
+raw weighted-sum score is used directly, NOT IBD's own 1-99
+percentile-rank transform: both `compute_ic_series` (Spearman rank
+correlation) and this project's top-N portfolio sorting are invariant to
+any monotonic transform of a score, so the percentile-rank step is
+mathematically redundant for this project's purposes -- a decision
+recorded in the function's own docstring before any result exists, not
+after.
+
+Wired into `compute_signal_ic_from_catalog.py` (`--strategy rs_rating`)
+and `run_long_horizon_validation.py`'s `_PRICE_FACTOR_CANDIDATES` (the
+pool's 33rd candidate, alongside `insider_buying`'s 32nd) **before any
+real IC or walk-forward result exists for it** -- the same discipline
+every candidate in this document already follows. No real result
+recorded yet; the account owner has not run either script against real
+data with this candidate.

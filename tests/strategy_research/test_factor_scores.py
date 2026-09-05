@@ -12,7 +12,7 @@ from typing import Optional
 
 import pytest
 
-from backtest_helpers import make_bars, trading_days
+from backtest_helpers import checkpoint, make_bars, trading_days
 from research_helpers import synthetic_multi_year_repository
 from storage_helpers import new_engine
 
@@ -48,6 +48,7 @@ from strategy_research.factor_scores import (
     quality_minus_junk_score,
     roa_score,
     roe_score,
+    rs_rating_score,
     sales_yield_score,
     shareholder_yield_score,
     short_term_reversal_score,
@@ -166,6 +167,72 @@ class TestLongTermReversalScore:
         data = _view(repo, as_of_time)
 
         assert long_term_reversal_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestRsRatingScore:
+    """Session 36 continued -- O'Neil/IBD Relative Strength Rating,
+    found while comparing this project against an external repository
+    (dragon1086/prism-insight). `2*R63 + R126 + R189 + R252`, weighted
+    toward the most recent quarter."""
+
+    def test_past_winner_scores_higher_than_past_loser(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        repo = synthetic_multi_year_repository(date(2016, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        winner_score = rs_rating_score("TRENDUP", as_of_time, data)
+        loser_score = rs_rating_score("TRENDDOWN", as_of_time, data)
+
+        assert winner_score is not None and loser_score is not None
+        assert winner_score > loser_score  # unlike reversal, RS Rating rewards continued strength
+
+    def test_positive_trend_scores_positive(self) -> None:
+        universe = ("TRENDUP",)
+        repo = synthetic_multi_year_repository(date(2016, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        score = rs_rating_score("TRENDUP", as_of_time, data)
+
+        assert score is not None and score > 0
+
+    def test_insufficient_history_returns_none_not_a_fabricated_score(self) -> None:
+        universe = ("TRENDUP",)
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2020, 6, 1), symbols=universe)
+        as_of_time = _utc(2020, 3, 2)  # well under 252 trading days of history
+        data = _view(repo, as_of_time)
+
+        assert rs_rating_score("TRENDUP", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        universe = ("TRENDUP",)
+        repo = synthetic_multi_year_repository(date(2016, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert rs_rating_score("NONEXISTENT", as_of_time, data) is None
+
+    def test_recent_quarter_is_weighted_more_than_older_quarters(self) -> None:
+        # A security flat for 3 quarters then sharply up in the most
+        # recent quarter must score higher than one sharply up 3
+        # quarters ago then flat since -- the "2x most recent quarter"
+        # weighting is the entire point distinguishing this from a
+        # plain equal-weighted trailing return.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        recent_spike = [100.0] * (len(days) - 63) + [100.0 * (1.01**i) for i in range(63)]
+        old_spike = [100.0 * (1.01**i) for i in range(63)] + [100.0 * (1.01**62)] * (len(days) - 63)
+        repo = InMemoryDataRepository()
+        repo.append_bars(make_bars("RECENTSPIKE", days, recent_spike))
+        repo.append_bars(make_bars("OLDSPIKE", days, old_spike))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        recent_score = rs_rating_score("RECENTSPIKE", as_of_time, data)
+        old_score = rs_rating_score("OLDSPIKE", as_of_time, data)
+
+        assert recent_score is not None and old_score is not None
+        assert recent_score > old_score
 
 
 class TestShortTermReversalScore:

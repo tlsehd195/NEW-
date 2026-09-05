@@ -72,6 +72,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     low_beta_score,
     low_volatility_score,
     max_effect_score,
+    rs_rating_score,
     short_term_reversal_score,
 )
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
@@ -97,6 +98,11 @@ _PRICE_ONLY_SCORES = {
     "fifty_two_week_high": fifty_two_week_high_score,
     "max_effect": max_effect_score,
     "idiosyncratic_volatility": idiosyncratic_volatility_score,
+    # Session 36 continued -- O'Neil/IBD Relative Strength Rating,
+    # found while comparing this project against an external repository
+    # (dragon1086/prism-insight). Wired in before any real IC result
+    # exists, per RULE 0.8.
+    "rs_rating": rs_rating_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 

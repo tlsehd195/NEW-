@@ -151,6 +151,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     max_effect_score,
     piotroski_f_score,
     quality_minus_junk_score,
+    rs_rating_score,
     sales_yield_score,
     shareholder_yield_score,
     short_term_reversal_score,
@@ -237,6 +238,14 @@ _PRICE_FACTOR_CANDIDATES = (
     # above already established (ADR-0051's own precedent, explicitly
     # re-applied here rather than treated as a new decision).
     ("idiosyncratic_volatility", "Ang, Hodrick, Xing & Zhang 2006 idiosyncratic volatility anomaly, price-only", idiosyncratic_volatility_score),
+    # Session 36 continued -- O'Neil/IBD Relative Strength Rating, found
+    # while comparing this project against an external repository
+    # (dragon1086/prism-insight). Wired in before any real walk-forward
+    # result exists, per RULE 0.8. Raw (unpercentiled) score -- IBD's
+    # 1-99 percentile-rank transform is a monotonic transform and thus
+    # invariant for both Spearman IC and top-N portfolio sorting, so it
+    # is mathematically redundant here (see factor_scores.py docstring).
+    ("rs_rating", "O'Neil/IBD Relative Strength Rating, price-only", rs_rating_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),

@@ -1715,3 +1715,63 @@ def insider_buying_score(security_id: str, as_of_time: datetime, repository: obj
     if total == 0:
         return None
     return (buy_shares - sell_shares) / total
+
+
+_RS_RATING_LOOKBACK_DAYS = 252
+
+
+def rs_rating_score(security_id: str, as_of_time: datetime, data: AsOfDataView) -> Optional[float]:
+    """HYPOTHESIS -- O'Neil/IBD Relative Strength Rating (William
+    O'Neil, "How to Make Money in Stocks," CANSLIM methodology): a
+    security's own trailing price performance, weighted toward its most
+    recent quarter, predicts continued relative outperformance --
+    momentum specifically constructed to emphasize recent strength over
+    older strength, distinct from `long_term_reversal_score`'s
+    equal-weighted `_momentum_score`. Found while auditing an external
+    project (dragon1086/prism-insight, session comparison request) whose
+    own `cores/rs_rating.py` independently implements the same
+    published O'Neil formula -- the hypothesis and formula are IBD's,
+    not that project's; this project's own implementation is built
+    fresh against the public methodology, not copied.
+
+    SCORE = `2*R63 + R126 + R189 + R252`, where `Rn = (latest_close -
+    close_n_days_ago) / close_n_days_ago` -- four trailing returns over
+    the last 1/2/3/4 quarters (63 trading days each), the most recent
+    quarter weighted 2x, exactly IBD's own published construction.
+
+    **Deliberately returns this raw weighted-return score, never IBD's
+    own 1-99 cross-sectional percentile transform**, decided before any
+    real result exists (RULE 0.8): `signal_ic.compute_ic_series`'s
+    Spearman rank correlation and simple top-N portfolio sorting are
+    BOTH invariant to any monotonic (rank-preserving) transformation of
+    a score, so percentile-ranking changes nothing this project can
+    measure -- it is IBD's own human-readability presentation choice,
+    not new information. Adding it would also require restructuring
+    this into a cross-sectional `UniverseScoreFn` (like
+    `quality_minus_junk_score`), a real complexity cost for zero
+    measurable benefit to either raw-IC screening or portfolio
+    construction, so it is not done.
+
+    Needs 252 trading days (~1 calendar year) of price history for all
+    four component returns; returns `None` (never a fabricated score)
+    for a name with less history, or if any of the four base prices is
+    non-positive."""
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=int(_RS_RATING_LOOKBACK_DAYS * 1.6)), as_of_time),
+        _RS_RATING_LOOKBACK_DAYS,
+    )
+    if len(bars) < _RS_RATING_LOOKBACK_DAYS + 1:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    latest = closes[-1]
+
+    def _trailing_return(n: int) -> Optional[float]:
+        base = closes[-1 - n]
+        if base <= 0:
+            return None
+        return (latest - base) / base
+
+    r63, r126, r189, r252 = (_trailing_return(n) for n in (63, 126, 189, 252))
+    if r63 is None or r126 is None or r189 is None or r252 is None:
+        return None
+    return 2.0 * r63 + r126 + r189 + r252
