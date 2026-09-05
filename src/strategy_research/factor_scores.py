@@ -24,7 +24,7 @@ from backtest.metrics import annualized_volatility, compute_returns
 
 from data_infra.universe import BENCHMARK_SYMBOL
 
-from strategy_research._dates import TRADING_DAYS_PER_MONTH, trim_to_lookback
+from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months, trim_to_lookback
 from strategy_research.signal_ic import rank_average
 
 
@@ -1654,3 +1654,64 @@ def sue_score(security_id: str, as_of_time: datetime, repository: object) -> Opt
     if stdev == 0:
         return None
     return trailing[-1] / stdev
+
+
+_INSIDER_BUYING_LOOKBACK_MONTHS = 6
+
+
+def insider_buying_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- (Lakonishok & Lee 2001, "Are Insider Trades
+    Informative?," Review of Financial Studies; Seyhun 1986, "Insiders'
+    profits, costs of trading, and market efficiency," Journal of
+    Financial Economics): insiders (officers, directors, 10%+ owners)
+    sometimes trade on private information about their own company's
+    prospects, so a period of net insider BUYING on the open market --
+    genuinely discretionary purchases, never option exercises, stock
+    grants, or pre-scheduled Rule 10b5-1 transactions -- predicts higher
+    subsequent returns than a period of net insider selling. This is the
+    second data pipeline built this session (ADR-0086), after the SUE
+    factor (ADR-0084): the project's first factor sourced from SEC
+    Form 4 insider-transaction filings rather than XBRL fundamentals or
+    price/volume history.
+
+    **Why only transaction codes "P"/"S" and only `is_10b5_1_plan ==
+    False`, decided BEFORE any real result was seen (RULE 0.8)**: this
+    project's own real, directly-observed Form 4 sample this session
+    (AAPL, accession 0001140361-26-035636) turned out to be a Rule
+    10b5-1 pre-scheduled sale, not a genuinely discretionary trade --
+    the literature basis above is specifically about discretionary
+    trading conveying private information, which a pre-scheduled plan
+    transaction structurally cannot (the trade was decided months
+    earlier, unrelated to whatever the insider knows today). Every
+    other transaction code (`A` grants, `M` option exercises, ...) is
+    excluded for the same underlying reason: those are compensation
+    mechanics an insider does not choose based on a view on future
+    stock performance, not a discretionary market trade.
+
+    NET_PURCHASE_RATIO = `(buy_shares - sell_shares) / (buy_shares +
+    sell_shares)`, computed over the trailing
+    `_INSIDER_BUYING_LOOKBACK_MONTHS` (6) calendar months of
+    `transaction_date` -- a share-count-weighted ratio in `[-1, 1]`,
+    following Lakonishok & Lee (2001)'s own preference for a ratio over
+    a raw transaction count (an insider who buys 10x as much dollar
+    value in one purchase should weigh more than ten insiders each
+    buying 1 share). 6 months is this project's own fixed choice, not
+    copied from one paper's exact window -- both Lakonishok & Lee and
+    Seyhun examine multi-month insider-trading windows with varying
+    specifications (3/6/12-month cuts appear across the literature); 6
+    months is a mid-range, commonly used compromise, fixed here before
+    any IC result exists, per RULE 0.8.
+
+    `None` (never a fabricated ratio) if no qualifying (Code P or S,
+    non-10b5-1) transaction exists in the trailing window at all -- "no
+    insider trading activity observed" is a genuinely different,
+    non-fabricatable state from "insiders are exactly balanced," which
+    itself legitimately returns `0.0`."""
+    window_start = add_months(as_of_time, -_INSIDER_BUYING_LOOKBACK_MONTHS)
+    transactions = repository.get_insider_transactions(security_id, as_of_time, start=window_start, end=as_of_time)
+    buy_shares = sum(t.shares for t in transactions if t.transaction_code == "P" and not t.is_10b5_1_plan)
+    sell_shares = sum(t.shares for t in transactions if t.transaction_code == "S" and not t.is_10b5_1_plan)
+    total = buy_shares + sell_shares
+    if total == 0:
+        return None
+    return (buy_shares - sell_shares) / total

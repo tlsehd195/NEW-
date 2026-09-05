@@ -32,6 +32,7 @@ from data_infra.enums import (
     SecurityStatus,
 )
 from data_infra.fundamentals_models import FundamentalRecord
+from data_infra.insider_models import InsiderTransaction
 from data_infra.models import (
     BenchmarkPoint,
     CorporateAction,
@@ -184,6 +185,51 @@ def row_to_fundamental_record(row: dict) -> FundamentalRecord:
         form_type=row["form_type"],
         value=row["value"],
         unit=row["unit"],
+        available_time=from_utc_naive(row["available_time"]),
+        ingestion_time=from_utc_naive(row["ingestion_time"]),
+        provenance=row_to_provenance(row),
+    )
+
+
+def insider_transaction_to_row(record: InsiderTransaction) -> dict:
+    row = {
+        "security_id": record.security_id,
+        "reporting_owner_cik": record.reporting_owner_cik,
+        "reporting_owner_name": record.reporting_owner_name,
+        "is_officer": record.is_officer,
+        "is_director": record.is_director,
+        "is_ten_percent_owner": record.is_ten_percent_owner,
+        "officer_title": record.officer_title,
+        "transaction_date": to_utc_naive(record.transaction_date),
+        "transaction_code": record.transaction_code,
+        "acquired_disposed_code": record.acquired_disposed_code,
+        "shares": record.shares,
+        "price_per_share": record.price_per_share,
+        "is_10b5_1_plan": record.is_10b5_1_plan,
+        "accession_number": record.accession_number,
+        "available_time": to_utc_naive(record.available_time),
+        "ingestion_time": to_utc_naive(record.ingestion_time),
+    }
+    row.update(provenance_to_row(record.provenance))
+    return row
+
+
+def row_to_insider_transaction(row: dict) -> InsiderTransaction:
+    return InsiderTransaction(
+        security_id=row["security_id"],
+        reporting_owner_cik=row["reporting_owner_cik"],
+        reporting_owner_name=row["reporting_owner_name"],
+        is_officer=bool(row["is_officer"]),
+        is_director=bool(row["is_director"]),
+        is_ten_percent_owner=bool(row["is_ten_percent_owner"]),
+        officer_title=row.get("officer_title"),
+        transaction_date=from_utc_naive(row["transaction_date"]),
+        transaction_code=row["transaction_code"],
+        acquired_disposed_code=row["acquired_disposed_code"],
+        shares=row["shares"],
+        price_per_share=row.get("price_per_share"),
+        is_10b5_1_plan=bool(row["is_10b5_1_plan"]),
+        accession_number=row["accession_number"],
         available_time=from_utc_naive(row["available_time"]),
         ingestion_time=from_utc_naive(row["ingestion_time"]),
         provenance=row_to_provenance(row),

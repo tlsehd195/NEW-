@@ -2504,3 +2504,42 @@ only 2 reaching `CANDIDATE`, both still showing strongly negative
 held-out TEST results (-24.67%/-13.63% net) and therefore still held,
 not promoted. `REAL_VALIDATION_NOT_COMPLETED` remains the correct
 classification for all 31 candidates this project has now produced.
+
+## Session 36 continued Addendum -- insider trading (SEC Form 4), pipeline built, no real result yet
+
+The second of the two new categories identified alongside SUE above
+(ADR-0086). A real, manual feasibility check the account owner ran in
+their own environment (this session's own network is still blocked to
+`sec.gov`) confirmed real EDGAR Form 4 data is fetchable end to end
+(Atom filing list -> `index.json` -> `form4.xml`, real AAPL accession
+`0001140361-26-035636`), and that real sample surfaced a concrete
+methodology requirement before any hypothesis was finalized: the
+sample was a Rule 10b5-1 pre-scheduled sale, not a genuinely
+discretionary trade, so the factor definition below excludes
+10b5-1-flagged transactions from the start rather than after seeing
+what such trades do to a result.
+
+**`insider_buying_score`** (Lakonishok & Lee 2001; Seyhun 1986) --
+`(buy_shares - sell_shares) / (buy_shares + sell_shares)` over the
+trailing 6 months of `transaction_date`, counting only open-market
+Code `P`/`S` transactions with `is_10b5_1_plan == False`. Full data
+pipeline built this session: `InsiderTransaction` model +
+`DuckDBInsiderRepository` (point-in-time-safe on the real SEC filing
+date), 5 new `SecEdgarFundamentalsProvider` Form 4 methods (Tier 1,
+verified byte-for-byte against the real captured AAPL sample), and
+`scripts/ingest_insider_transactions.py`. Wired into both research
+scripts **before any real IC result exists for it** -- `--score
+insider_buying` (`compute_fundamentals_ic_from_catalog.py`, via a new
+independent `--insider-db-path` flag) and `run_long_horizon_validation.py`'s
+walk-forward pool (`_INSIDER_FACTOR_CANDIDATES`, the pool's 32nd
+candidate) -- the identical RULE 0.8 discipline every candidate in this
+document already follows.
+
+**No real result yet**: this session's own network cannot reach
+`sec.gov`. The account owner needs to run `scripts/
+ingest_insider_transactions.py` in an environment with real internet
+access before `--score insider_buying` can compute anything against
+real data. Recorded here, before that run, specifically so this
+addendum cannot later be read as having picked the factor's exclusion
+rules (Code P/S only, `is_10b5_1_plan == False`) after seeing whether
+they help or hurt the result.

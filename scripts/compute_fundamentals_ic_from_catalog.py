@@ -80,6 +80,7 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
+from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
     altman_z_score,
@@ -90,6 +91,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     dividend_growth_score,
     earnings_yield_score,
     gross_profitability_score,
+    insider_buying_score,
     leverage_score,
     net_margin_score,
     piotroski_f_score,
@@ -126,6 +128,19 @@ _SCORES = {
     # Shevlin 1984 Standardized Unexpected Earnings, fundamentals-only
     # (needs quarterly EarningsPerShareDiluted, no price data).
     "sue": sue_score,
+}
+
+# Session 36 continued addition (ADR-0086) -- score_fn's have the
+# identical (security_id, as_of_time, repository) shape
+# `FundamentalsScoreFn`/`compute_fundamentals_ic_series` already expect,
+# but the "repository" each needs is a `DuckDBInsiderRepository` (a
+# distinct DuckDB catalog populated by `ingest_insider_transactions.py`),
+# never `fundamentals_repository` -- kept as a separate dict + separate
+# `--insider-db-path` flag rather than merged into `_SCORES`, mirroring
+# `_HYBRID_SCORES`/`_UNIVERSE_SCORES`'s own precedent of a new dict per
+# distinct repository/call shape rather than widening an existing one.
+_INSIDER_SCORES = {
+    "insider_buying": insider_buying_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 10) -- scores whose score_fn
@@ -185,8 +200,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--price-db-path", required=True, type=Path, help="DuckDB catalog from ingest_real_market_data.py (forward returns)")
     parser.add_argument("--fundamentals-db-path", required=True, type=Path, help="DuckDB catalog from ingest_fundamentals_data.py (scores)")
+    parser.add_argument(
+        "--insider-db-path", type=Path, default=None,
+        help="DuckDB catalog from ingest_insider_transactions.py (ADR-0086). Required only for --score insider_buying.",
+    )
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE")
-    parser.add_argument("--score", choices=sorted(set(_SCORES) | set(_HYBRID_SCORES) | set(_UNIVERSE_SCORES)), default="roe")
+    parser.add_argument(
+        "--score", choices=sorted(set(_SCORES) | set(_HYBRID_SCORES) | set(_UNIVERSE_SCORES) | set(_INSIDER_SCORES)),
+        default="roe",
+    )
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
     parser.add_argument(
         "--end", type=str, default=None,
@@ -204,6 +226,10 @@ def main(argv: list[str] | None = None) -> int:
         else TEST_1.start
     )
 
+    if args.score in _INSIDER_SCORES and args.insider_db_path is None:
+        print(f"ERROR: --score {args.score} requires --insider-db-path (ADR-0086).", file=sys.stderr)
+        return 1
+
     locked = overlaps_any_locked_window(start, end)
     if locked:
         names = ", ".join(w.name for w in locked)
@@ -220,10 +246,26 @@ def main(argv: list[str] | None = None) -> int:
     fundamentals_engine = StorageEngine(StorageConfig(root_dir=args.fundamentals_db_path))
     price_repository = DuckDBDataRepository(price_engine)
     fundamentals_repository = DuckDBFundamentalsRepository(fundamentals_engine)
+    insider_engine = None
+    if args.insider_db_path is not None:
+        insider_engine = StorageEngine(StorageConfig(root_dir=args.insider_db_path))
 
     rebalance_dates = _rebalance_dates(start, end, args.step_months)
 
-    if args.score in _UNIVERSE_SCORES:
+    if args.score in _INSIDER_SCORES:
+        insider_repository = DuckDBInsiderRepository(insider_engine)
+        # insider_buying_score's signature is (security_id, as_of_time,
+        # repository) -- identical shape to FundamentalsScoreFn, so
+        # compute_fundamentals_ic_series is reused unchanged, just with
+        # an insider repository in the "fundamentals_repository" slot
+        # (that parameter is `object`-typed precisely so any repository
+        # sharing this call shape can be passed through it).
+        summary = compute_fundamentals_ic_series(
+            list(universe.symbol_ids), rebalance_dates, _INSIDER_SCORES[args.score],
+            fundamentals_repository=insider_repository, price_repository=price_repository,
+            horizon_days=args.horizon_days,
+        )
+    elif args.score in _UNIVERSE_SCORES:
         summary = compute_universe_ic_series(
             list(universe.symbol_ids), rebalance_dates, _UNIVERSE_SCORES[args.score],
             fundamentals_repository=fundamentals_repository, price_repository=price_repository,

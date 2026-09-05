@@ -45,10 +45,12 @@ SIC-vs-GICS distinction.
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Optional, Sequence
 
 from data_infra.fundamentals_models import FundamentalRecord
+from data_infra.insider_models import InsiderTransaction
 from data_infra.models import Provenance
 from data_infra.provider import PermanentProviderError
 from data_infra.providers.sec_edgar_config import SecEdgarConfig
@@ -58,6 +60,7 @@ from data_infra.versioning import compute_data_version
 _COMPANY_FACTS_PATH_TEMPLATE = "/api/xbrl/companyfacts/CIK{cik}.json"
 _TICKER_MAP_PATH = "/files/company_tickers.json"  # served from www.sec.gov, a DIFFERENT host than data.sec.gov -- see fetch_ticker_map
 _SUBMISSIONS_PATH_TEMPLATE = "/submissions/CIK{cik}.json"  # same host (data.sec.gov) as company facts -- see fetch_submissions
+_ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 
 # Only these two form types are treated as real financial-statement
 # filings for this project's purposes -- EDGAR's company-facts response
@@ -280,6 +283,192 @@ class SecEdgarFundamentalsProvider:
                         )
                     )
         return records
+
+    def fetch_form4_filing_list(
+        self, cik: str, transport: SecEdgarHttpTransport, *, count: int = 40
+    ) -> list[dict]:
+        """`GET /cgi-bin/browse-edgar?action=getcompany&CIK=...&type=4&
+        owner=include&output=atom` -- EDGAR's Atom feed listing an
+        issuer's own Form 4 filings, one `<entry>` per filing (Tier 1:
+        verified against a real response this session, ADR-0086, unlike
+        every other method in this class which is Tier 2 documentation
+        only). `transport` must be a `SecEdgarHttpTransport` constructed
+        with `base_url="https://www.sec.gov"` -- a different host than
+        `data.sec.gov`, the same two-host requirement `fetch_ticker_map`
+        already documents; `/cgi-bin/browse-edgar` and `/Archives/...`
+        both live on `www.sec.gov`. Returns one dict per filing:
+        `{"accession_number", "filing_date", "filing_href"}`, oldest-
+        first order not guaranteed (EDGAR returns newest-first; callers
+        needing chronological order should sort)."""
+        path = (
+            f"/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=4"
+            f"&dateb=&owner=include&count={count}&output=atom"
+        )
+        response = transport.get(path, timeout=self._config.timeout_seconds)
+        if not response.raw_text:
+            return []
+        root = ET.fromstring(response.raw_text)
+        filings = []
+        for entry in root.findall("atom:entry", _ATOM_NS):
+            content = entry.find("atom:content", _ATOM_NS)
+            if content is None:
+                continue
+            accession = content.findtext("atom:accession-number", namespaces=_ATOM_NS)
+            filing_date_raw = content.findtext("atom:filing-date", namespaces=_ATOM_NS)
+            filing_href = content.findtext("atom:filing-href", namespaces=_ATOM_NS)
+            if not accession or not filing_date_raw:
+                continue  # incomplete entry -- skip rather than fabricate
+            filings.append({
+                "accession_number": accession,
+                "filing_date": _parse_edgar_date(filing_date_raw),
+                "filing_href": filing_href,
+            })
+        return filings
+
+    def fetch_form4_index(self, cik: str, accession_number: str, transport: SecEdgarHttpTransport) -> dict:
+        """`GET /Archives/edgar/data/{cik}/{accession-no-dashes}/index.json`
+        -- lists every file in one filing's own directory (Tier 1,
+        verified this session). **The CIK in this path is NOT zero-
+        padded**, unlike `_COMPANY_FACTS_PATH_TEMPLATE`'s -- a real,
+        directly-observed difference (verified against AAPL's real CIK
+        `0000320193` resolving only at `/Archives/edgar/data/320193/...`,
+        never the zero-padded form), not an assumption. `transport` must
+        be the `www.sec.gov` transport, same as `fetch_form4_filing_list`."""
+        accession_no_dashes = accession_number.replace("-", "")
+        cik_no_padding = str(int(cik))
+        path = f"/Archives/edgar/data/{cik_no_padding}/{accession_no_dashes}/index.json"
+        response = transport.get(path, timeout=self._config.timeout_seconds)
+        if not isinstance(response.body, dict):
+            raise PermanentProviderError(f"unexpected SEC EDGAR response shape for index.json at {path}: expected a JSON object")
+        return response.body
+
+    def select_form4_primary_document(self, index_json: dict) -> Optional[str]:
+        """Picks the one file in a Form 4 filing's `index.json` that is
+        the actual ownership-document XML. **Verified against exactly
+        ONE real filing this session** (AAPL, accession
+        0001140361-26-035636, whose only `.xml` file was named
+        `form4.xml`) -- this heuristic (the first `*.xml` file, excluding
+        XBRL-viewer rendering fragments whose names start with `R`) is
+        UNVERIFIED beyond that one real sample and may need correction
+        once run against a broader real set. Stated honestly as a Tier 1
+        finding from a single observation, not assumed to generalize the
+        way `normalize_company_facts`'s Tier 2 documentation-based
+        assumptions are labeled differently."""
+        items = index_json.get("directory", {}).get("item", [])
+        for item in items:
+            name = str(item.get("name", ""))
+            if name.lower().endswith(".xml") and not name.upper().startswith("R"):
+                return name
+        return None
+
+    def fetch_form4_document(self, cik: str, accession_number: str, filename: str, transport: SecEdgarHttpTransport) -> str:
+        """`GET /Archives/edgar/data/{cik}/{accession-no-dashes}/{filename}`
+        -- the raw ownership-document XML text (Tier 1, verified this
+        session). Same non-zero-padded CIK path convention as
+        `fetch_form4_index`; `transport` must be the `www.sec.gov`
+        transport."""
+        accession_no_dashes = accession_number.replace("-", "")
+        cik_no_padding = str(int(cik))
+        path = f"/Archives/edgar/data/{cik_no_padding}/{accession_no_dashes}/{filename}"
+        response = transport.get(path, timeout=self._config.timeout_seconds)
+        if not response.raw_text:
+            raise PermanentProviderError(f"empty response fetching Form 4 document at {path}")
+        return response.raw_text
+
+    def normalize_form4_document(
+        self,
+        security_id: str,
+        xml_text: str,
+        *,
+        accession_number: str,
+        filing_date: datetime,
+        retrieved_at: datetime,
+        ingestion_time: datetime,
+    ) -> list[InsiderTransaction]:
+        """Parses one ownership-document XML's `nonDerivativeTable`
+        into `InsiderTransaction` rows (Tier 1: schema verified against
+        one real AAPL filing this session, ADR-0086). **Deliberately
+        does not parse `derivativeTable`** (option exercises, RSU
+        vesting, and similar equity-compensation events) -- those are a
+        structurally different signal (compensation mechanics, not a
+        discretionary market trade) that this project's literature
+        basis (Lakonishok & Lee 2001; Seyhun 1986) is not about, and
+        adding them later needs its own hypothesis, not a silent scope
+        expansion of this method. `filing_date` must come from the
+        Atom feed entry that pointed at this document (`available_time`
+        here is the real SEC filing date, never anything parsed out of
+        the document's own `periodOfReport`/`transactionDate`, exactly
+        the same point-in-time discipline `InsiderTransaction`'s own
+        module docstring requires). Skips any transaction row missing a
+        required field rather than fabricating one -- same discipline
+        `normalize_company_facts` already applies to incomplete XBRL
+        entries."""
+        root = ET.fromstring(xml_text)
+        owner = root.find("reportingOwner")
+        if owner is None:
+            return []
+        owner_id = owner.find("reportingOwnerId")
+        cik = (owner_id.findtext("rptOwnerCik") or "") if owner_id is not None else ""
+        name = (owner_id.findtext("rptOwnerName") or "") if owner_id is not None else ""
+        if not cik:
+            return []
+        relationship = owner.find("reportingOwnerRelationship")
+        is_officer = relationship is not None and relationship.findtext("isOfficer") == "true"
+        is_director = relationship is not None and relationship.findtext("isDirector") == "true"
+        is_ten_percent_owner = relationship is not None and relationship.findtext("isTenPercentOwner") == "true"
+        officer_title = relationship.findtext("officerTitle") if relationship is not None else None
+        is_10b5_1_plan = root.findtext("aff10b5One") == "true"
+
+        table = root.find("nonDerivativeTable")
+        if table is None:
+            return []
+
+        transactions: list[InsiderTransaction] = []
+        for idx, txn in enumerate(table.findall("nonDerivativeTransaction")):
+            date_raw = txn.findtext("transactionDate/value")
+            coding = txn.find("transactionCoding")
+            amounts = txn.find("transactionAmounts")
+            if not date_raw or coding is None or amounts is None:
+                continue
+            code = coding.findtext("transactionCode")
+            shares_raw = amounts.findtext("transactionShares/value")
+            acquired_disposed = amounts.findtext("transactionAcquiredDisposedCode/value")
+            price_raw = amounts.findtext("transactionPricePerShare/value")
+            if not code or shares_raw is None or not acquired_disposed:
+                continue
+            content_fields = {
+                "accession_number": accession_number, "row_index": idx, "transaction_date": date_raw,
+                "transaction_code": code, "shares": shares_raw, "acquired_disposed": acquired_disposed,
+                "price": price_raw,
+            }
+            transactions.append(
+                InsiderTransaction(
+                    security_id=security_id,
+                    reporting_owner_cik=cik,
+                    reporting_owner_name=name,
+                    is_officer=is_officer,
+                    is_director=is_director,
+                    is_ten_percent_owner=is_ten_percent_owner,
+                    officer_title=officer_title,
+                    transaction_date=_parse_edgar_date(date_raw),
+                    transaction_code=code,
+                    acquired_disposed_code=acquired_disposed,
+                    shares=float(shares_raw),
+                    price_per_share=float(price_raw) if price_raw else None,
+                    is_10b5_1_plan=is_10b5_1_plan,
+                    accession_number=accession_number,
+                    available_time=filing_date,
+                    ingestion_time=ingestion_time,
+                    provenance=Provenance(
+                        source="sec_edgar",
+                        source_dataset=f"sec_edgar_form4_{security_id}",
+                        source_record_id=f"{accession_number}:{idx}",
+                        retrieved_at=retrieved_at,
+                        data_version=compute_data_version(content_fields),
+                    ),
+                )
+            )
+        return transactions
 
     def metadata(self) -> dict:
         return {

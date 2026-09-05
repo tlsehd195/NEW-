@@ -748,6 +748,40 @@ DDL_STATEMENTS: tuple[str, ...] = (
         provenance_schema_version INTEGER NOT NULL
     )
     """,
+    # -- Session 36 continued: Insider Transactions (SEC Form 4) --
+    # ADR-0086. Same low-volume, point-lookup/filter-heavy criterion as
+    # fundamental_records above. provenance_source_record_id (the
+    # accession number + transaction-row identity) is the natural key,
+    # not (security_id, transaction_date) alone -- a single Form 4
+    # filing can report multiple transaction rows for the same insider
+    # on the same date (e.g. separate open-market buys at different
+    # prices), and each is its own real, distinct transaction.
+    """
+    CREATE TABLE IF NOT EXISTS insider_transactions (
+        provenance_source_record_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        reporting_owner_cik TEXT NOT NULL,
+        reporting_owner_name TEXT NOT NULL,
+        is_officer BOOLEAN NOT NULL,
+        is_director BOOLEAN NOT NULL,
+        is_ten_percent_owner BOOLEAN NOT NULL,
+        officer_title TEXT,
+        transaction_date TIMESTAMP NOT NULL,
+        transaction_code TEXT NOT NULL,
+        acquired_disposed_code TEXT NOT NULL,
+        shares DOUBLE NOT NULL,
+        price_per_share DOUBLE,
+        is_10b5_1_plan BOOLEAN NOT NULL,
+        accession_number TEXT NOT NULL,
+        available_time TIMESTAMP NOT NULL,
+        ingestion_time TIMESTAMP NOT NULL,
+        provenance_source TEXT NOT NULL,
+        provenance_source_dataset TEXT NOT NULL,
+        provenance_retrieved_at TIMESTAMP NOT NULL,
+        provenance_data_version TEXT NOT NULL,
+        provenance_schema_version INTEGER NOT NULL
+    )
+    """,
 )
 
 

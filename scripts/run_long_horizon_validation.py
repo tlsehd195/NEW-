@@ -122,6 +122,7 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
+from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
 
 from strategy_research.classification import (  # noqa: E402
     CandidateClassification,
@@ -144,6 +145,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     gross_profitability_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
+    insider_buying_score,
     long_term_reversal_score,
     low_beta_score,
     max_effect_score,
@@ -274,6 +276,21 @@ _UNIVERSE_FACTOR_CANDIDATES = (
     # raised for a different candidate), not a reason to exclude it.
     ("combined_factor", "9-leg rank-averaged combination of every Session 36 sign-matching candidate, cross-sectional", combined_factor_score),
 )
+# Session 36 continued (ADR-0086) -- sourced from a THIRD, distinct
+# DuckDB catalog (--insider-db-path, SEC Form 4 filings via
+# ingest_insider_transactions.py) rather than --fundamentals-db-path,
+# so kept as its own tuple/CLI flag rather than merged into
+# _FUNDAMENTALS_FACTOR_CANDIDATES -- but insider_buying_score's own
+# signature is (security_id, as_of_time, repository), identical in
+# shape to every score in _FUNDAMENTALS_FACTOR_CANDIDATES, so it reuses
+# _fundamentals_factor_factory/FundamentalsFactorStrategy unchanged,
+# just with the insider repository passed in the "fundamentals_repository"
+# slot (same reuse `compute_fundamentals_ic_from_catalog.py` already
+# applies for its own _INSIDER_SCORES branch). Wired in before any real
+# IC result exists for it, same RULE 0.8 discipline as `sue` above.
+_INSIDER_FACTOR_CANDIDATES = (
+    ("insider_buying", "Lakonishok & Lee 2001 / Seyhun 1986 net insider-purchase ratio, insider-transactions-only", insider_buying_score),
+)
 
 
 def _price_factor_factory(security_ids, score_fn, version):
@@ -357,6 +374,16 @@ def main() -> int:
             "entirely and every other candidate runs exactly as before this flag existed."
         ),
     )
+    parser.add_argument(
+        "--insider-db-path", type=Path, default=None,
+        help=(
+            "Path to the DuckDB catalog scripts/ingest_insider_transactions.py already "
+            "populated (ADR-0086). Optional -- when omitted, the 'insider_buying' "
+            "candidate (SEC Form 4-based, src/strategy_research/factor_scores.py's "
+            "insider_buying_score) is skipped entirely and every other candidate runs "
+            "exactly as before this flag existed."
+        ),
+    )
     parser.add_argument("--initial-capital", type=float, default=10_000.0, help="Matches PAPER_CAPITAL_USD (broker.paper.us_longterm_config), not a currency-converted figure")
     parser.add_argument("--train-fraction", type=float, default=0.6, help="Chronological split: fraction of [start,end] reserved for TRAIN (fixed before this script's first real-data run, never tuned against a result)")
     parser.add_argument("--validation-fraction", type=float, default=0.2, help="Chronological split: fraction reserved for VALIDATION; remaining fraction is the held-out TEST window")
@@ -420,6 +447,11 @@ def main() -> int:
     if args.fundamentals_db_path is not None:
         fundamentals_engine = StorageEngine(StorageConfig(root_dir=args.fundamentals_db_path))
         fundamentals_repository = DuckDBFundamentalsRepository(fundamentals_engine)
+    insider_engine = None
+    insider_repository = None
+    if args.insider_db_path is not None:
+        insider_engine = StorageEngine(StorageConfig(root_dir=args.insider_db_path))
+        insider_repository = DuckDBInsiderRepository(insider_engine)
 
     try:
         # Real SPY TOTAL_RETURN benchmark, same construction as Phase
@@ -630,6 +662,17 @@ def main() -> int:
                     _universe_factor_factory(security_ids, fundamentals_repository, repository, score_fn, f"{name}_v1"),
                 ))
 
+        if insider_repository is not None:
+            # ADR-0086: gated independently of --fundamentals-db-path
+            # above -- a run can supply --insider-db-path alone (or
+            # both flags together), since this candidate needs only the
+            # insider-transactions catalog, never the fundamentals one.
+            for name, hypothesis, score_fn in _INSIDER_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _fundamentals_factor_factory(security_ids, insider_repository, score_fn, f"{name}_v1"),
+                ))
+
         # experiment_id: deterministic from caller-supplied run
         # configuration only (never datetime.now()/utcnow() -- rule
         # 0-11) -- the SAME configuration run twice always yields the
@@ -662,6 +705,11 @@ def main() -> int:
                 # count -- a materially different report from an
                 # otherwise-identical configuration without it.
                 "fundamentals_included": fundamentals_repository is not None,
+                # Session 36 continued (ADR-0086): a run WITH
+                # --insider-db-path adds the insider_buying candidate --
+                # same collision-prevention reasoning as
+                # fundamentals_included immediately above.
+                "insider_included": insider_repository is not None,
                 # The actual candidate set evaluated -- catches "a
                 # candidate was added/removed" (e.g. 6 vs 8 candidates
                 # above). NOT a full code-identity/git-commit hash (this
@@ -882,6 +930,8 @@ def main() -> int:
         engine.close()
         if fundamentals_engine is not None:
             fundamentals_engine.close()
+        if insider_engine is not None:
+            insider_engine.close()
 
 
 if __name__ == "__main__":
