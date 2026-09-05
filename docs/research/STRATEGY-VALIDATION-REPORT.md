@@ -2451,3 +2451,40 @@ one. `combined_factor`'s own low-`observations`/low-fold-consistency
 signature, caught the same way, is a second instance of the same
 discipline catching a would-be false positive before it was ever
 reported as one.
+
+## Session 36 continued Addendum -- SUE (Standardized Unexpected Earnings), wired blind
+
+**Primary objective**: after the account owner learned that zero of 30
+prior candidates reached `VALIDATED` and asked to resume research, find
+a genuinely NEW literature category rather than a cosmetic variant of
+something already tested. Given how exhaustively value/quality/
+momentum-reversal/low-risk/size/liquidity/financial-health/shareholder-
+yield had already been covered (30 candidates across the original
+9-candidate pool and the Phase 33 20-candidate batch), two candidates
+outside all of those categories were identified: SUE (this addendum)
+and an insider-trading signal (tracked separately, pending a data-
+feasibility check for SEC Form 4 access).
+
+**`sue_score`** (Foster, Olsen & Shevlin 1984; drift documented by
+Bernard & Thomas 1989) -- `(EPS_q - EPS_{q-4}) / stdev(trailing 8 such
+YoY differences)`, using quarterly `EarningsPerShareDiluted` newly
+added to the fundamentals ingestion default concept list (ADR-0084,
+zero additional real network requests -- the same company-facts
+response already being fetched simply was not parsed for this concept
+before). Wired into `compute_fundamentals_ic_from_catalog.py` (`--score
+sue`) and `run_long_horizon_validation.py`'s walk-forward candidate
+pool, **before any real IC result exists for it** -- the same
+"literature-fix, then test, never the other order" discipline RULE 0.8
+requires and every earlier candidate in this document already followed.
+
+**No real result yet**: this session's own outbound network is blocked
+to SEC EDGAR (the same constraint documented throughout this project),
+so raw IC screening cannot run here. The account owner needs to
+re-run `scripts/ingest_fundamentals_data.py` (now including
+`EarningsPerShareDiluted` by default) with real network access before
+`--score sue` produces anything. This paragraph is written before that
+happens, specifically so it cannot later be read as a hypothesis
+selected after seeing a favorable result.
+
+`REAL_VALIDATION_NOT_COMPLETED` remains the correct classification.
+Total candidates once a real result exists for this one: 31.

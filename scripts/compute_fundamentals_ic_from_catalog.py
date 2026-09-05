@@ -28,12 +28,15 @@ value anomaly, ADR-0043 Decision 11 -- also wired through
 the new `compute_universe_ic_series`, not per-security), `value_composite` (O'Shaughnessy's multi-ratio value composite, ADR-0043
 Decision 12 -- also cross-sectional, and also needs price), `size`
 (Banz 1981's size effect, ADR-0043 Decision 13 -- negative market cap,
-also wired through `compute_hybrid_ic_series` since it needs price), or
-`combined_factor` (Session 36 -- a 9-leg rank-averaged combination of
+also wired through `compute_hybrid_ic_series` since it needs price), `combined_factor` (Session 36 -- a 9-leg rank-averaged combination of
 every Session 36 raw-IC-screened candidate whose sign matched
 literature, also cross-sectional -- see `factor_scores.combined_
 factor_score`'s own docstring for the exact leg list and selection
-rule) -- using
+rule), or `sue` (Session 36 continued, ADR-0084 -- Foster, Olsen &
+Shevlin 1984 Standardized Unexpected Earnings; the first genuinely new
+literature category since the Phase 33 20-candidate batch, needing
+quarterly `EarningsPerShareDiluted` rather than any concept an earlier
+score already used) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` (or, for
 `shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`; or,
 for `quality_minus_junk`/`value_composite`/`combined_factor`,
@@ -97,6 +100,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     shareholder_yield_score,
     size_score,
     sloan_accruals_score,
+    sue_score,
     value_composite_score,
 )
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
@@ -118,6 +122,10 @@ _SCORES = {
     "piotroski": piotroski_f_score,
     "sloan_accruals": sloan_accruals_score,
     "dividend_growth": dividend_growth_score,
+    # Session 36 continued addition (ADR-0084) -- Foster, Olsen &
+    # Shevlin 1984 Standardized Unexpected Earnings, fundamentals-only
+    # (needs quarterly EarningsPerShareDiluted, no price data).
+    "sue": sue_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 10) -- scores whose score_fn

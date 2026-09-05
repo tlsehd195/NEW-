@@ -154,6 +154,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     short_term_reversal_score,
     size_score,
     sloan_accruals_score,
+    sue_score,
     value_composite_score,
 )
 from strategy_research.factor_strategy import (  # noqa: E402
@@ -241,6 +242,13 @@ _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("sloan_accruals", "Sloan 1996 accruals anomaly, fundamentals-only", sloan_accruals_score),
     ("dividend_growth", "dividend growth rate, fundamentals-only", dividend_growth_score),
     ("gross_profitability", "Novy-Marx 2013 gross profitability, fundamentals-only", gross_profitability_score),
+    # Session 36 continued (ADR-0084) -- Foster, Olsen & Shevlin 1984
+    # Standardized Unexpected Earnings, the first genuinely new
+    # literature category since the Phase 33 20-candidate batch. Wired
+    # in before any real IC result exists for it (RULE 0.8, same
+    # discipline ADR-0051/ADR-0053/ADR-0054 already established for
+    # every earlier candidate here).
+    ("sue", "Foster, Olsen & Shevlin 1984 standardized unexpected earnings, fundamentals-only", sue_score),
 )
 _HYBRID_FACTOR_CANDIDATES = (
     ("shareholder_yield", "O'Shaughnessy shareholder yield, fundamentals+price", shareholder_yield_score),

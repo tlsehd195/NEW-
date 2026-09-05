@@ -499,6 +499,30 @@ def _latest_fiscal_year_value(repository, security_id: str, concept: str, as_of_
     return records[-1]
 
 
+def _quarterly_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:
+    """Every quarterly (`fiscal_period` in `{"Q1", "Q2", "Q3", "Q4"}`)
+    `FundamentalRecord` for `(security_id, concept)` already knowable
+    `as_of_time`, one per distinct `period_end` (the latest-filed value
+    when a period was later restated), oldest first. `sue_score` (the
+    first score in this module to need quarter-level rather than
+    fiscal-year-level data) indexes this list by position to find "4
+    quarters ago" -- a duplicate or restated entry sharing a
+    `period_end` with an earlier filing would shift that indexing if
+    both were kept, exactly the mismatched-period risk `_fy_records`'s
+    own docstring already describes for a different reason; deduping to
+    one canonical value per `period_end` (the one with the latest
+    `available_time`, i.e. the most recently filed) avoids it here the
+    same way."""
+    by_period_end: dict = {}
+    for record in repository.get_fundamentals(security_id, concept, as_of_time):
+        if record.fiscal_period not in ("Q1", "Q2", "Q3", "Q4"):
+            continue
+        existing = by_period_end.get(record.period_end)
+        if existing is None or record.available_time > existing.available_time:
+            by_period_end[record.period_end] = record
+    return [by_period_end[period_end] for period_end in sorted(by_period_end)]
+
+
 def _fy_ratio(
     repository: object, security_id: str, as_of_time: datetime, numerator_concept: str, denominator_concept: str,
 ) -> Optional[float]:
@@ -1580,3 +1604,53 @@ def combined_factor_score(
         sid: sum(leg_ranks[leg][i] for leg in range(_COMBINED_FACTOR_LEG_COUNT)) / _COMBINED_FACTOR_LEG_COUNT
         for i, sid in enumerate(ids)
     }
+
+
+def sue_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Standardized Unexpected Earnings (Foster, Olsen &
+    Shevlin 1984, "Earnings Releases, Anomalies, and the Behavior of
+    Security Returns," The Accounting Review; the resulting
+    underreaction is documented as post-earnings-announcement drift by
+    Bernard & Thomas 1989, "Post-Earnings-Announcement Drift: Delayed
+    Price Response or Risk Premium?," Journal of Accounting Research):
+    a company whose most recently reported quarterly earnings surprised
+    positively relative to its own seasonal pattern (the same quarter
+    one year earlier) tends to keep drifting upward for several months
+    afterward, since the market underreacts to the announcement itself
+    rather than repricing it all at once. The first genuinely new
+    literature category tested in this project since the Session 36
+    Phase 33 20-candidate batch (`STRATEGY-VALIDATION-REPORT.md`) --
+    every earlier fundamentals factor here is a point-in-time ratio or
+    a single year-over-year change, never an earnings-SURPRISE measure.
+
+    SUE = `(EPS_q - EPS_{q-4}) / stdev(the trailing 8 such YoY
+    differences)`, i.e. this quarter's year-over-year earnings change,
+    standardized by how volatile that change has historically been for
+    this specific company -- the original paper's own seasonal-random-
+    walk definition of "expected earnings" (no analyst consensus
+    estimate needed, unlike an I/B/E/S-consensus-based SUE variant this
+    project has no data access to and does not claim to compute).
+
+    Needs `EarningsPerShareDiluted` at QUARTERLY granularity
+    (`_quarterly_records`, not `_fy_records` -- the first score in this
+    module needing quarter-level rather than fiscal-year-level data).
+    `None` (never a fabricated score, never a fabricated "expected
+    earnings") if fewer than 12 quarters are known yet (8 trailing YoY
+    diffs each need the value 4 quarters earlier, so the 8th diff needs
+    history back to 12 quarters ago), or the trailing 8 diffs have zero
+    variance (undefined z-score -- e.g. a company with perfectly flat
+    YoY earnings for 2 straight years)."""
+    records = _quarterly_records(repository, security_id, "EarningsPerShareDiluted", as_of_time)
+    if len(records) < 12:
+        return None
+    values = [record.value for record in records]
+    yoy_diffs = [values[i] - values[i - 4] for i in range(4, len(values))]
+    trailing = yoy_diffs[-8:]
+    if len(trailing) < 8:
+        return None
+    mean = sum(trailing) / len(trailing)
+    variance = sum((diff - mean) ** 2 for diff in trailing) / (len(trailing) - 1)
+    stdev = variance ** 0.5
+    if stdev == 0:
+        return None
+    return trailing[-1] / stdev
