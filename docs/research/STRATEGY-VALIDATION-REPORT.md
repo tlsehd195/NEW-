@@ -2477,14 +2477,30 @@ pool, **before any real IC result exists for it** -- the same
 "literature-fix, then test, never the other order" discipline RULE 0.8
 requires and every earlier candidate in this document already followed.
 
-**No real result yet**: this session's own outbound network is blocked
-to SEC EDGAR (the same constraint documented throughout this project),
-so raw IC screening cannot run here. The account owner needs to
-re-run `scripts/ingest_fundamentals_data.py` (now including
-`EarningsPerShareDiluted` by default) with real network access before
-`--score sue` produces anything. This paragraph is written before that
-happens, specifically so it cannot later be read as a hypothesis
-selected after seeing a favorable result.
+**Real raw IC result** (account owner re-ran `ingest_fundamentals_data.py`
+with `EarningsPerShareDiluted` now included, then `compute_fundamentals_
+ic_from_catalog.py --score sue`, real 87-symbol `RESEARCH_UNIVERSE_STAGE4`,
+2010-01-01 to `TEST_1.start`): `mean_ic=+0.0189`, `positive_ic_ratio=
+48.53%`, `observations=68` (fewer than most candidates' 79-80, a real
+consequence of needing 12 quarters of history before scoring anything).
+Sign matches the literature-predicted direction, but the magnitude is
+near-zero and the positive-ratio is below 50% -- the same "direction
+right, consistency weak" signature several earlier near-zero candidates
+(`shareholder_yield`, `altman_z`'s own raw screen) already showed.
 
-`REAL_VALIDATION_NOT_COMPLETED` remains the correct classification.
-Total candidates once a real result exists for this one: 31.
+**Real walk-forward/PBO/DSR result** (same run as the rest of the
+31-candidate pool, `--start 2010-01-01 --end 2023-04-28`,
+`RESEARCH_UNIVERSE_STAGE4`, real data): `sue` reaches
+`ROBUSTNESS_PENDING`, not `CANDIDATE` -- `positive_fold_ratio=43.33%`
+(well below the 60% bar) and `deflated_sharpe_ratio=0.419` (well below
+the 0.95 bar). Held-out TEST: net cumulative return -10.26%, Sharpe
+-0.04 (effectively zero), 92 trades. A literature-backed hypothesis,
+real new data, and a real validation run that still does not clear the
+bar -- the 31st candidate to land here, not the exception.
+
+Overall pool result unchanged by adding `sue`: PBO=7.14% (same as the
+30-candidate run), and `altman_z`/`rank_average_ensemble` remain the
+only 2 reaching `CANDIDATE`, both still showing strongly negative
+held-out TEST results (-24.67%/-13.63% net) and therefore still held,
+not promoted. `REAL_VALIDATION_NOT_COMPLETED` remains the correct
+classification for all 31 candidates this project has now produced.
