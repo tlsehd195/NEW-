@@ -67,6 +67,23 @@ def test_ingestion_step_uses_ratified_universe_and_key_reference():
     assert "$MARKET_DATA_DIR" in text
 
 
+def test_ingestion_requests_the_incremental_start_not_the_full_fixed_range():
+    # ADR-0085: a real run re-requesting the full $START_DATE..today
+    # range every day exhausted the provider's rate limit partway
+    # through (10 symbols, including SPY, got zero bars). The
+    # ingestion step must use the computed incremental start, not
+    # $START_DATE directly.
+    steps = _steps(_load())
+    start_step = next(s for s in steps if s.get("id") == "ingest_start")
+    assert "compute_incremental_ingestion_start.py" in start_step.get("run", "")
+    assert "--fallback-start \"$START_DATE\"" in start_step.get("run", "")
+
+    ingest_step = next(s for s in steps if "ingest_real_market_data.py" in s.get("run", ""))
+    ingest_run = ingest_step.get("run", "")
+    assert "steps.ingest_start.outputs.start" in ingest_run
+    assert '--start "$START_DATE"' not in ingest_run
+
+
 def test_cycle_step_uses_resume_and_ratified_risk_limits():
     steps = _steps(_load())
     text = _run_text(steps)

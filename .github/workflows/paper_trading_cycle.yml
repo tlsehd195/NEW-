@@ -13,7 +13,12 @@
 # end) rather than committing them into git, preserving this repo's
 # existing policy of never tracking *.duckdb/*.parquet files (see
 # .gitignore). See ADR-0082 for the full design and its disclosed
-# limitations (artifact retention, cron timing, re-ingestion cost).
+# limitations (artifact retention, cron timing), and ADR-0085 for why
+# ingestion requests only an incremental window (not the full range)
+# from the restored catalog's own last known bar forward -- a real run
+# found that always re-requesting the full ~2.5-year range exhausted
+# the provider's rate limit partway through, leaving 10 symbols
+# (including SPY) with zero bars that day.
 name: Paper Trading Daily Cycle
 
 on:
@@ -83,13 +88,18 @@ jobs:
             echo "No prior paper-trading-store artifact found -- starting fresh"
           fi
 
+      - name: Determine incremental ingestion start date
+        id: ingest_start
+        run: |
+          echo "start=$(python3 scripts/compute_incremental_ingestion_start.py --db-path "$MARKET_DATA_DIR" --fallback-start "$START_DATE")" >> "$GITHUB_OUTPUT"
+
       - name: Ingest latest market data
         env:
           MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
         run: |
           python3 scripts/ingest_real_market_data.py \
             --universe "$UNIVERSE" \
-            --start "$START_DATE" --end "$(date -u +%F)" \
+            --start "${{ steps.ingest_start.outputs.start }}" --end "$(date -u +%F)" \
             --db-path "$MARKET_DATA_DIR" \
             --manifest-out "$MARKET_DATA_DIR/ingestion_manifest.json"
 
