@@ -134,15 +134,19 @@ class TestUniverseFactorFactoryNoLateBindingBug:
 class TestCandidateTables:
     """The 6 module-level candidate tables together must reproduce
     exactly the 20 names in PROJECT_STATUS.md's raw-IC-screening table
-    (ADR-0051), plus the 9 Session 36 additions wired in afterward
+    (ADR-0051), plus the 11 Session 36 additions wired in afterward
     (`idiosyncratic_volatility`, ADR-0053; `combined_factor`, ADR-0054;
     `sue`, ADR-0084; `insider_buying`, ADR-0086; `rs_rating`, found via
     the dragon1086/prism-insight comparison; `residual_momentum`,
     `rd_expenditure`, `return_seasonality` and `short_interest`, found
     via a GitHub/web search for borrowable strategies, paperswithbacktest/
-    awesome-systematic-trading) -- 29 total -- no name collisions with
-    each other, or with the 8 pre-existing candidates already in
-    `strategy_specs` before ADR-0051."""
+    awesome-systematic-trading; `net_stock_issuance` and
+    `net_operating_assets`, found via a further GitHub/web search
+    -- bkelly-lab/ReplicationCrisis surfaced these themes, built from
+    the original underlying papers since that repository's own exact
+    formulas could not be verified from this sandbox) -- 31 total -- no
+    name collisions with each other, or with the 8 pre-existing
+    candidates already in `strategy_specs` before ADR-0051."""
 
     _EXPECTED_NAMES = {
         "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
@@ -153,6 +157,7 @@ class TestCandidateTables:
         "quality_minus_junk", "value_composite",
         "idiosyncratic_volatility", "combined_factor", "sue", "insider_buying", "rs_rating",
         "residual_momentum", "rd_expenditure", "return_seasonality", "short_interest",
+        "net_stock_issuance", "net_operating_assets",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
@@ -169,7 +174,7 @@ class TestCandidateTables:
             names.extend(name for name, _hypothesis, _score_fn in table)
         return names
 
-    def test_all_29_expected_names_present_exactly_once(self) -> None:
+    def test_all_31_expected_names_present_exactly_once(self) -> None:
         module = _load_script()
         names = self._all_new_candidate_names(module)
         assert len(names) == len(set(names)), "duplicate candidate name across the 6 tables"

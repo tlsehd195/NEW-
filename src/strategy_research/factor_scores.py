@@ -15,6 +15,7 @@ untested ones.
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timedelta
 from typing import Optional, Sequence
 
@@ -2122,3 +2123,123 @@ def short_interest_score(security_id: str, as_of_time: datetime, repository: obj
     if latest is None or latest.days_to_cover is None:
         return None
     return -latest.days_to_cover
+
+
+def net_stock_issuance_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the Net Stock Issuance anomaly (Pontiff & Woodgate
+    2008, "Share Issuance and Cross-Sectional Returns," The Journal of
+    Finance 63(2): 921-945; Fama & French 2008, "Dissecting Anomalies,"
+    The Journal of Finance 63(4): 1653-1678): companies that issue new
+    shares (diluting existing holders) earn systematically LOWER
+    subsequent returns than companies that reduce shares outstanding
+    (via buybacks), and this predictive power was found to be even
+    stronger than size, book-to-market, or momentum individually in the
+    post-1970 US sample. Found via a further GitHub/web search for
+    borrowable strategies, continuing the same search thread as
+    ADR-0098/ADR-0099, specifically triggered by the user's "다른 프로젝트
+    더 찾아봐" follow-up: `bkelly-lab/ReplicationCrisis` (Jensen, Kelly &
+    Pedersen 2023, Journal of Finance -- the single highest-quality
+    academic source found this session) surfaces "net issuance"/"debt
+    issuance" as one of its 13 factor themes, but its own exact
+    construction lives in SAS scripts and a binary spreadsheet this
+    session's blocked network access to `nber.org`/`jkpfactors.com`
+    could not verify -- rather than guess THAT repository's exact
+    formula, this factor is built instead from the original, independently
+    well-documented Pontiff & Woodgate/Fama & French construction, which
+    multiple accessible sources converge on identically.
+
+    Per Fama & French (2008a)'s own definition (the standard operational
+    form used across this literature): NET STOCK ISSUANCE = the change
+    in LOG split-adjusted shares outstanding across the two most recent
+    fiscal years, using `CommonStockSharesOutstanding` -- a concept
+    already ingested for `shareholder_yield_score`/`book_to_market_score`
+    (ADR-0043 Decision 10/12), needing ZERO new data. Structurally the
+    same "single year-over-year change" shape `asset_growth_score`/
+    `dividend_growth_score` already use, applied to a different concept.
+
+    Score is the NEGATIVE of `ln(current FY shares / prior FY shares)`,
+    so a security that REDUCED its share count (net buybacks exceeding
+    any issuance) scores higher (more attractive) -- matches this
+    module's convention. `None` (never a fabricated value) unless at
+    least two distinct fiscal years' `CommonStockSharesOutstanding` are
+    both already known as of `as_of_time`, or either value is
+    non-positive."""
+    records = _fy_records(repository, security_id, "CommonStockSharesOutstanding", as_of_time)
+    if len(records) < 2:
+        return None
+    current, prior = records[-1], records[-2]
+    if prior.value <= 0 or current.value <= 0:
+        return None
+    net_issuance = math.log(current.value / prior.value)
+    return -net_issuance
+
+
+def net_operating_assets_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the Net Operating Assets anomaly (Hirshleifer, Hou,
+    Teoh & Zhang 2004, "Do Investors Overvalue Firms With Bloated
+    Balance Sheets?," Journal of Accounting and Economics 38: 297-331):
+    firms whose balance sheets have accumulated a large gap between
+    operating income and free cash flow -- reflected in a high level of
+    NET OPERATING ASSETS relative to total assets -- earn systematically
+    LOWER subsequent returns, hypothesized because investors' limited
+    attention overweights accounting operating performance relative to
+    the (less salient) cash flow it is actually backed by. Found via the
+    same further GitHub/web search as `net_stock_issuance_score` above,
+    also one of `bkelly-lab/ReplicationCrisis`'s 13 factor themes and
+    subject to the identical "cannot verify that repository's own exact
+    formula from this sandbox" limitation -- built instead from the
+    original Hirshleifer et al. construction.
+
+    NOA = Operating Assets (Total Assets minus Cash) minus Operating
+    Liabilities (Total Liabilities minus interest-bearing debt), scaled
+    by the PRIOR fiscal year's Total Assets (Hirshleifer et al.'s own
+    lagged-denominator convention, mirroring `asset_growth_score`'s own
+    year-over-year shape). Since `Assets - Liabilities ==
+    StockholdersEquity` by the balance-sheet identity, this project
+    computes the algebraically equivalent `(StockholdersEquity - Cash +
+    LongTermDebtNoncurrent) / prior_fy_Assets`.
+
+    **Two documented simplifications of the original paper's own 5/6-line
+    -item construction, decided BEFORE any result exists (RULE 0.8),
+    matching this module's existing precedent for similar shortcuts**:
+    (1) "interest-bearing debt" uses only `LongTermDebtNoncurrent`
+    (already ingested for `piotroski_f_score`), never a separate
+    short-term-debt concept this project does not ingest -- the same
+    simplification `leverage_score` already makes by using total
+    `Liabilities` rather than a full debt breakdown. (2) minority
+    interest and preferred stock (present in Hirshleifer et al.'s own
+    formula) are omitted entirely rather than approximated -- most
+    large-cap non-financial names in this project's universe carry
+    neither in material size, and `piotroski_f_score`/`leverage_score`
+    already omit them from their own balance-sheet ratios for the same
+    reason.
+
+    **Needs one new XBRL concept beyond what any existing factor in this
+    module ingests**: `CashAndCashEquivalentsAtCarryingValue`, added to
+    `ingest_fundamentals_data.py`'s `_DEFAULT_CONCEPTS` -- the same
+    "zero additional real network requests" pattern every prior concept
+    addition here already established.
+
+    Score is the NEGATIVE of the NOA ratio, so a LOWER (hypothesized
+    more attractive) net-operating-assets level produces a HIGHER
+    score, matching this module's convention. `None` (never a
+    fabricated ratio) unless `StockholdersEquity`, `CashAndCashEquivalents
+    AtCarryingValue`, and at least two distinct fiscal years' `Assets`
+    are all known, or the prior fiscal year's `Assets` is non-positive.
+    `LongTermDebtNoncurrent` reads as `0.0` (never `None`) when absent --
+    the same `_fy_flow_or_zero`-style reasoning already applied to
+    `shareholder_yield_score`'s own concepts: a company with no
+    long-term debt tag simply has none, a real `$0`, not a data gap."""
+    equity_record = _latest_fiscal_year_value(repository, security_id, "StockholdersEquity", as_of_time)
+    cash_record = _latest_fiscal_year_value(repository, security_id, "CashAndCashEquivalentsAtCarryingValue", as_of_time)
+    if equity_record is None or cash_record is None:
+        return None
+    asset_records = _fy_records(repository, security_id, "Assets", as_of_time)
+    if len(asset_records) < 2:
+        return None
+    prior_assets = asset_records[-2].value
+    if prior_assets <= 0:
+        return None
+    long_term_debt = _fy_flow_or_zero(repository, security_id, "LongTermDebtNoncurrent", as_of_time)
+    noa = (equity_record.value - cash_record.value + long_term_debt) / prior_assets
+    return -noa

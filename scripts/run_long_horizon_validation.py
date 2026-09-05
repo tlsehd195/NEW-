@@ -150,6 +150,8 @@ from strategy_research.factor_scores import (  # noqa: E402
     long_term_reversal_score,
     low_beta_score,
     max_effect_score,
+    net_operating_assets_score,
+    net_stock_issuance_score,
     piotroski_f_score,
     quality_minus_junk_score,
     rd_expenditure_score,
@@ -274,6 +276,16 @@ _FUNDAMENTALS_FACTOR_CANDIDATES = (
     # discipline ADR-0051/ADR-0053/ADR-0054 already established for
     # every earlier candidate here).
     ("sue", "Foster, Olsen & Shevlin 1984 standardized unexpected earnings, fundamentals-only", sue_score),
+    # Session 36 continued -- Pontiff & Woodgate 2008 / Fama & French
+    # 2008 net stock issuance and Hirshleifer, Hou, Teoh & Zhang 2004
+    # net operating assets, both found via a further GitHub/web search
+    # for borrowable strategies (bkelly-lab/ReplicationCrisis surfaced
+    # these as 2 of its 13 factor themes; built from the original
+    # papers since that repository's own exact formulas could not be
+    # verified from this sandbox). Wired in before any real
+    # walk-forward result exists for either, per RULE 0.8.
+    ("net_stock_issuance", "Pontiff & Woodgate 2008 / Fama & French 2008 net stock issuance, fundamentals-only", net_stock_issuance_score),
+    ("net_operating_assets", "Hirshleifer, Hou, Teoh & Zhang 2004 net operating assets, fundamentals-only", net_operating_assets_score),
 )
 _HYBRID_FACTOR_CANDIDATES = (
     ("shareholder_yield", "O'Shaughnessy shareholder yield, fundamentals+price", shareholder_yield_score),

@@ -40,11 +40,15 @@ score already used), `rd_expenditure` (Session 36 continued, found via
 a GitHub/web search for borrowable strategies -- Chan, Lakonishok &
 Sougiannis 2001 R&D expenditure anomaly, wired through
 `compute_hybrid_ic_series` since it needs price too, and needing one new
-XBRL concept, `ResearchAndDevelopmentExpense`), or `short_interest`
+XBRL concept, `ResearchAndDevelopmentExpense`), `short_interest`
 (Session 36 continued, ADR-0099 -- Asquith, Pathak & Ritter 2005 short
 interest anomaly, sourced from a FOURTH, distinct DuckDB catalog,
 `--short-interest-db-path`, populated by `ingest_short_interest_data.py`
-from a local FINRA-derived CSV) -- using
+from a local FINRA-derived CSV), `net_stock_issuance` (Pontiff &
+Woodgate 2008 / Fama & French 2008, fundamentals-only, zero new data),
+or `net_operating_assets` (Hirshleifer, Hou, Teoh & Zhang 2004,
+fundamentals-only, needs one new XBRL concept,
+`CashAndCashEquivalentsAtCarryingValue`) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` (or, for
 `shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`; or,
 for `quality_minus_junk`/`value_composite`/`combined_factor`,
@@ -103,6 +107,8 @@ from strategy_research.factor_scores import (  # noqa: E402
     insider_buying_score,
     leverage_score,
     net_margin_score,
+    net_operating_assets_score,
+    net_stock_issuance_score,
     piotroski_f_score,
     quality_minus_junk_score,
     rd_expenditure_score,
@@ -135,6 +141,17 @@ _SCORES = {
     "piotroski": piotroski_f_score,
     "sloan_accruals": sloan_accruals_score,
     "dividend_growth": dividend_growth_score,
+    # Session 36 continued additions -- Pontiff & Woodgate 2008 / Fama &
+    # French 2008 net stock issuance, and Hirshleifer, Hou, Teoh & Zhang
+    # 2004 net operating assets, both found via a further GitHub/web
+    # search for borrowable strategies (bkelly-lab/ReplicationCrisis
+    # surfaced these as 2 of its 13 factor themes; that repository's own
+    # exact formulas could not be verified from this sandbox, so these
+    # are built from the original, independently-documented papers
+    # instead). Both fundamentals-only, same _fy_records-based
+    # year-over-year shape as asset_growth_score/dividend_growth_score.
+    "net_stock_issuance": net_stock_issuance_score,
+    "net_operating_assets": net_operating_assets_score,
     # Session 36 continued addition (ADR-0084) -- Foster, Olsen &
     # Shevlin 1984 Standardized Unexpected Earnings, fundamentals-only
     # (needs quarterly EarningsPerShareDiluted, no price data).

@@ -133,6 +133,14 @@ _DEFAULT_CONCEPTS = (
     # justification as every earlier concept addition above -- FY-only,
     # like every concept before `EarningsPerShareDiluted`.
     "ResearchAndDevelopmentExpense",
+    # Session 36 continued addition -- the 1 concept
+    # `strategy_research.factor_scores.net_operating_assets_score`
+    # needs beyond what earlier scores already ingest (Hirshleifer, Hou,
+    # Teoh & Zhang 2004 net operating assets anomaly, found via a
+    # further GitHub/web search for borrowable strategies). Same
+    # zero-extra-request justification as every earlier concept
+    # addition above -- FY-only.
+    "CashAndCashEquivalentsAtCarryingValue",
 )
 
 _REQUEST_DELAY_SECONDS = 0.3

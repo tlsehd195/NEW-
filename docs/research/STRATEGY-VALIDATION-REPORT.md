@@ -2771,3 +2771,42 @@ this document already follows. No real result recorded yet; the short
 interest candidate additionally requires the account owner to acquire
 real FINRA data externally and preprocess it into this project's CSV
 schema before any real result can exist for it at all.
+
+## Session 36 continued Addendum -- Net Stock Issuance and Net Operating Assets, wired blind (ADR-0100)
+
+The user's follow-up "다른 프로젝트 더 찾아봐" ("find more other projects")
+surfaced `bkelly-lab/ReplicationCrisis` (Jensen, Kelly & Pedersen 2023,
+Journal of Finance) -- the highest-quality academic source found this
+session, clustering 153 characteristics into 13 themes across 93
+countries. That repository's own exact formulas live in SAS scripts
+and a binary spreadsheet, and its documentation sites
+(`jkpfactors.com`/`nber.org`) are blocked from this sandboxed session's
+network -- rather than guess its exact construction, this project built
+2 of its 13 themes from their own original, independently-verifiable
+underlying papers instead.
+
+**`net_stock_issuance_score`** (Pontiff & Woodgate 2008; Fama & French
+2008) -- the change in log split-adjusted shares outstanding across
+the two most recent fiscal years, using `CommonStockSharesOutstanding`
+(already ingested). Zero new data needed. Score is the negative of the
+log change: net buybacks score higher, net issuance scores lower.
+
+**`net_operating_assets_score`** (Hirshleifer, Hou, Teoh & Zhang 2004)
+-- `(StockholdersEquity - Cash + LongTermDebtNoncurrent) /
+prior_fy_Assets`, the algebraic equivalent of "Operating Assets minus
+Operating Liabilities, scaled by lagged Total Assets" via the
+balance-sheet identity. Needs one new XBRL concept
+(`CashAndCashEquivalentsAtCarryingValue`). Two documented
+simplifications versus the original paper's fuller construction:
+interest-bearing debt uses only `LongTermDebtNoncurrent` (matching
+`leverage_score`'s own precedent), and minority interest/preferred
+stock are omitted (matching `piotroski_f_score`/`leverage_score`'s own
+precedent) rather than approximated.
+
+Wired into `compute_fundamentals_ic_from_catalog.py`'s `_SCORES`
+(`--score net_stock_issuance` / `--score net_operating_assets`) and
+`run_long_horizon_validation.py`'s `_FUNDAMENTALS_FACTOR_CANDIDATES`
+(the pool's 38th and 39th candidates) **before any real IC or
+walk-forward result exists for either** -- the same discipline every
+candidate in this document already follows. No real result recorded
+yet.
