@@ -33,6 +33,7 @@ from data_infra.enums import (
 )
 from data_infra.fundamentals_models import FundamentalRecord
 from data_infra.insider_models import InsiderTransaction
+from data_infra.short_interest_models import ShortInterestRecord
 from data_infra.models import (
     BenchmarkPoint,
     CorporateAction,
@@ -230,6 +231,33 @@ def row_to_insider_transaction(row: dict) -> InsiderTransaction:
         price_per_share=row.get("price_per_share"),
         is_10b5_1_plan=bool(row["is_10b5_1_plan"]),
         accession_number=row["accession_number"],
+        available_time=from_utc_naive(row["available_time"]),
+        ingestion_time=from_utc_naive(row["ingestion_time"]),
+        provenance=row_to_provenance(row),
+    )
+
+
+def short_interest_record_to_row(record: ShortInterestRecord) -> dict:
+    row = {
+        "security_id": record.security_id,
+        "settlement_date": to_utc_naive(record.settlement_date),
+        "short_interest_quantity": record.short_interest_quantity,
+        "average_daily_volume": record.average_daily_volume,
+        "days_to_cover": record.days_to_cover,
+        "available_time": to_utc_naive(record.available_time),
+        "ingestion_time": to_utc_naive(record.ingestion_time),
+    }
+    row.update(provenance_to_row(record.provenance))
+    return row
+
+
+def row_to_short_interest_record(row: dict) -> ShortInterestRecord:
+    return ShortInterestRecord(
+        security_id=row["security_id"],
+        settlement_date=from_utc_naive(row["settlement_date"]),
+        short_interest_quantity=row["short_interest_quantity"],
+        average_daily_volume=row.get("average_daily_volume"),
+        days_to_cover=row.get("days_to_cover"),
         available_time=from_utc_naive(row["available_time"]),
         ingestion_time=from_utc_naive(row["ingestion_time"]),
         provenance=row_to_provenance(row),

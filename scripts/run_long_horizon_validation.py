@@ -123,6 +123,7 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
+from storage.short_interest_repository import DuckDBShortInterestRepository  # noqa: E402
 
 from strategy_research.classification import (  # noqa: E402
     CandidateClassification,
@@ -153,9 +154,11 @@ from strategy_research.factor_scores import (  # noqa: E402
     quality_minus_junk_score,
     rd_expenditure_score,
     residual_momentum_score,
+    return_seasonality_score,
     rs_rating_score,
     sales_yield_score,
     shareholder_yield_score,
+    short_interest_score,
     short_term_reversal_score,
     size_score,
     sloan_accruals_score,
@@ -253,6 +256,10 @@ _PRICE_FACTOR_CANDIDATES = (
     # (paperswithbacktest/awesome-systematic-trading). Wired in before
     # any real walk-forward result exists, per RULE 0.8.
     ("residual_momentum", "Blitz, Huij & Martens 2011 residual momentum, price-only", residual_momentum_score),
+    # Session 36 continued -- Heston & Sadka 2008 Return Seasonality,
+    # found via the same GitHub/web search. Wired in before any real
+    # walk-forward result exists, per RULE 0.8.
+    ("return_seasonality", "Heston & Sadka 2008 return seasonality, price-only", return_seasonality_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),
@@ -313,6 +320,16 @@ _UNIVERSE_FACTOR_CANDIDATES = (
 # IC result exists for it, same RULE 0.8 discipline as `sue` above.
 _INSIDER_FACTOR_CANDIDATES = (
     ("insider_buying", "Lakonishok & Lee 2001 / Seyhun 1986 net insider-purchase ratio, insider-transactions-only", insider_buying_score),
+)
+# Session 36 continued (ADR-0099) -- same reasoning as
+# _INSIDER_FACTOR_CANDIDATES immediately above, sourced from a FOURTH,
+# distinct DuckDB catalog (--short-interest-db-path, a local FINRA-
+# derived CSV via ingest_short_interest_data.py) rather than any
+# existing --*-db-path flag. short_interest_score's own signature is
+# also (security_id, as_of_time, repository), so it reuses
+# _fundamentals_factor_factory unchanged, same as insider_buying above.
+_SHORT_INTEREST_FACTOR_CANDIDATES = (
+    ("short_interest", "Asquith, Pathak & Ritter 2005 short interest anomaly, short-interest-reports-only", short_interest_score),
 )
 
 
@@ -407,6 +424,16 @@ def main() -> int:
             "exactly as before this flag existed."
         ),
     )
+    parser.add_argument(
+        "--short-interest-db-path", type=Path, default=None,
+        help=(
+            "Path to the DuckDB catalog scripts/ingest_short_interest_data.py already "
+            "populated (ADR-0099). Optional -- when omitted, the 'short_interest' "
+            "candidate (FINRA-based, src/strategy_research/factor_scores.py's "
+            "short_interest_score) is skipped entirely and every other candidate runs "
+            "exactly as before this flag existed."
+        ),
+    )
     parser.add_argument("--initial-capital", type=float, default=10_000.0, help="Matches PAPER_CAPITAL_USD (broker.paper.us_longterm_config), not a currency-converted figure")
     parser.add_argument("--train-fraction", type=float, default=0.6, help="Chronological split: fraction of [start,end] reserved for TRAIN (fixed before this script's first real-data run, never tuned against a result)")
     parser.add_argument("--validation-fraction", type=float, default=0.2, help="Chronological split: fraction reserved for VALIDATION; remaining fraction is the held-out TEST window")
@@ -475,6 +502,11 @@ def main() -> int:
     if args.insider_db_path is not None:
         insider_engine = StorageEngine(StorageConfig(root_dir=args.insider_db_path))
         insider_repository = DuckDBInsiderRepository(insider_engine)
+    short_interest_engine = None
+    short_interest_repository = None
+    if args.short_interest_db_path is not None:
+        short_interest_engine = StorageEngine(StorageConfig(root_dir=args.short_interest_db_path))
+        short_interest_repository = DuckDBShortInterestRepository(short_interest_engine)
 
     try:
         # Real SPY TOTAL_RETURN benchmark, same construction as Phase
@@ -696,6 +728,17 @@ def main() -> int:
                     _fundamentals_factor_factory(security_ids, insider_repository, score_fn, f"{name}_v1"),
                 ))
 
+        if short_interest_repository is not None:
+            # ADR-0099: gated independently of every other --*-db-path
+            # flag, same reasoning as insider_repository immediately
+            # above -- this candidate needs only the short-interest
+            # catalog.
+            for name, hypothesis, score_fn in _SHORT_INTEREST_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _fundamentals_factor_factory(security_ids, short_interest_repository, score_fn, f"{name}_v1"),
+                ))
+
         # experiment_id: deterministic from caller-supplied run
         # configuration only (never datetime.now()/utcnow() -- rule
         # 0-11) -- the SAME configuration run twice always yields the
@@ -733,6 +776,9 @@ def main() -> int:
                 # same collision-prevention reasoning as
                 # fundamentals_included immediately above.
                 "insider_included": insider_repository is not None,
+                # Session 36 continued (ADR-0099): identical collision-
+                # prevention reasoning for --short-interest-db-path.
+                "short_interest_included": short_interest_repository is not None,
                 # The actual candidate set evaluated -- catches "a
                 # candidate was added/removed" (e.g. 6 vs 8 candidates
                 # above). NOT a full code-identity/git-commit hash (this
@@ -955,6 +1001,8 @@ def main() -> int:
             fundamentals_engine.close()
         if insider_engine is not None:
             insider_engine.close()
+        if short_interest_engine is not None:
+            short_interest_engine.close()
 
 
 if __name__ == "__main__":

@@ -36,11 +36,15 @@ rule), or `sue` (Session 36 continued, ADR-0084 -- Foster, Olsen &
 Shevlin 1984 Standardized Unexpected Earnings; the first genuinely new
 literature category since the Phase 33 20-candidate batch, needing
 quarterly `EarningsPerShareDiluted` rather than any concept an earlier
-score already used), or `rd_expenditure` (Session 36 continued, found via
+score already used), `rd_expenditure` (Session 36 continued, found via
 a GitHub/web search for borrowable strategies -- Chan, Lakonishok &
 Sougiannis 2001 R&D expenditure anomaly, wired through
 `compute_hybrid_ic_series` since it needs price too, and needing one new
-XBRL concept, `ResearchAndDevelopmentExpense`) -- using
+XBRL concept, `ResearchAndDevelopmentExpense`), or `short_interest`
+(Session 36 continued, ADR-0099 -- Asquith, Pathak & Ritter 2005 short
+interest anomaly, sourced from a FOURTH, distinct DuckDB catalog,
+`--short-interest-db-path`, populated by `ingest_short_interest_data.py`
+from a local FINRA-derived CSV) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` (or, for
 `shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`; or,
 for `quality_minus_junk`/`value_composite`/`combined_factor`,
@@ -85,6 +89,7 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
+from storage.short_interest_repository import DuckDBShortInterestRepository  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
     altman_z_score,
@@ -105,6 +110,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     roe_score,
     sales_yield_score,
     shareholder_yield_score,
+    short_interest_score,
     size_score,
     sloan_accruals_score,
     sue_score,
@@ -146,6 +152,18 @@ _SCORES = {
 # distinct repository/call shape rather than widening an existing one.
 _INSIDER_SCORES = {
     "insider_buying": insider_buying_score,
+}
+
+# Session 36 continued addition (ADR-0099) -- same reasoning as
+# _INSIDER_SCORES immediately above, applied to a THIRD, distinct
+# repository type (`DuckDBShortInterestRepository`, populated by
+# `ingest_short_interest_data.py` from a local FINRA-derived CSV, never
+# a live network fetch -- see short_interest_score's own docstring for
+# why). Kept as its own dict + `--short-interest-db-path` flag for the
+# identical reason _INSIDER_SCORES is its own dict rather than merged
+# into _SCORES.
+_SHORT_INTEREST_SCORES = {
+    "short_interest": short_interest_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 10) -- scores whose score_fn
@@ -216,9 +234,14 @@ def main(argv: list[str] | None = None) -> int:
         "--insider-db-path", type=Path, default=None,
         help="DuckDB catalog from ingest_insider_transactions.py (ADR-0086). Required only for --score insider_buying.",
     )
+    parser.add_argument(
+        "--short-interest-db-path", type=Path, default=None,
+        help="DuckDB catalog from ingest_short_interest_data.py (ADR-0099). Required only for --score short_interest.",
+    )
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE")
     parser.add_argument(
-        "--score", choices=sorted(set(_SCORES) | set(_HYBRID_SCORES) | set(_UNIVERSE_SCORES) | set(_INSIDER_SCORES)),
+        "--score",
+        choices=sorted(set(_SCORES) | set(_HYBRID_SCORES) | set(_UNIVERSE_SCORES) | set(_INSIDER_SCORES) | set(_SHORT_INTEREST_SCORES)),
         default="roe",
     )
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
@@ -242,6 +265,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: --score {args.score} requires --insider-db-path (ADR-0086).", file=sys.stderr)
         return 1
 
+    if args.score in _SHORT_INTEREST_SCORES and args.short_interest_db_path is None:
+        print(f"ERROR: --score {args.score} requires --short-interest-db-path (ADR-0099).", file=sys.stderr)
+        return 1
+
     locked = overlaps_any_locked_window(start, end)
     if locked:
         names = ", ".join(w.name for w in locked)
@@ -261,6 +288,9 @@ def main(argv: list[str] | None = None) -> int:
     insider_engine = None
     if args.insider_db_path is not None:
         insider_engine = StorageEngine(StorageConfig(root_dir=args.insider_db_path))
+    short_interest_engine = None
+    if args.short_interest_db_path is not None:
+        short_interest_engine = StorageEngine(StorageConfig(root_dir=args.short_interest_db_path))
 
     rebalance_dates = _rebalance_dates(start, end, args.step_months)
 
@@ -275,6 +305,16 @@ def main(argv: list[str] | None = None) -> int:
         summary = compute_fundamentals_ic_series(
             list(universe.symbol_ids), rebalance_dates, _INSIDER_SCORES[args.score],
             fundamentals_repository=insider_repository, price_repository=price_repository,
+            horizon_days=args.horizon_days,
+        )
+    elif args.score in _SHORT_INTEREST_SCORES:
+        # Same reuse as _INSIDER_SCORES immediately above -- short_
+        # interest_score's signature is also (security_id, as_of_time,
+        # repository).
+        short_interest_repository = DuckDBShortInterestRepository(short_interest_engine)
+        summary = compute_fundamentals_ic_series(
+            list(universe.symbol_ids), rebalance_dates, _SHORT_INTEREST_SCORES[args.score],
+            fundamentals_repository=short_interest_repository, price_repository=price_repository,
             horizon_days=args.horizon_days,
         )
     elif args.score in _UNIVERSE_SCORES:

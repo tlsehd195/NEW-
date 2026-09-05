@@ -15,7 +15,7 @@ untested ones.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional, Sequence
 
 from backtest.asof import AsOfDataView
@@ -1975,3 +1975,150 @@ def rd_expenditure_score(
         return None
     rd_expense = _fy_flow_or_zero(fundamentals_repository, security_id, "ResearchAndDevelopmentExpense", as_of_time)
     return rd_expense / market_cap
+
+
+_RETURN_SEASONALITY_LOOKBACK_YEARS = 5
+_RETURN_SEASONALITY_MIN_YEARS = 2
+
+
+def return_seasonality_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView,
+    *, lookback_years: int = _RETURN_SEASONALITY_LOOKBACK_YEARS, min_years: int = _RETURN_SEASONALITY_MIN_YEARS,
+) -> Optional[float]:
+    """HYPOTHESIS -- Return Seasonality (Heston & Sadka 2008, "Seasonality
+    in the Cross-Section of Stock Returns," Journal of Financial
+    Economics 87(2): 418-445): a security's own historical tendency to
+    over- or under-perform in a given CALENDAR MONTH, across multiple
+    prior years, predicts its performance in that SAME calendar month
+    going forward -- e.g. a stock that has historically done well every
+    March tends to do relatively well again this March. Found via the
+    same GitHub/web search that also surfaced `residual_momentum_score`/
+    `rd_expenditure_score` (ADR-0098) -- `paperswithbacktest/awesome-
+    systematic-trading`'s own `12-month-cycle-in-cross-section-of-stocks-
+    returns.py` independently confirmed this as a real, separately
+    replicated effect (that file's own "return exactly 12 months ago
+    predicts this month" construction is the k=1 special case of the
+    more general same-calendar-month averaging built here).
+
+    **A genuinely different COMPUTATIONAL SHAPE from every other factor
+    in this module, not a re-parameterization of one**: every other
+    price-only factor here reads one CONTIGUOUS trailing window of
+    trading days. This factor instead groups a security's own price
+    history by CALENDAR MONTH across multiple, non-contiguous prior
+    years and averages only the months sharing `as_of_time`'s own month
+    number -- e.g. computed in March 2023, it looks at March 2022, March
+    2021, ..., ignoring every other month in between. No other factor in
+    this module has this shape.
+
+    **Construction**: for each of the trailing `lookback_years` (default
+    5 -- a documented simplification of Heston & Sadka's own much longer
+    sample, chosen since this project's own real universe has far less
+    trailing history available than their multi-decade sample, the same
+    "adapt the academic window to what this project's data can actually
+    support" reasoning `residual_momentum_score`'s own `formation_days`
+    default already uses), find the calendar month with the SAME month
+    number as `as_of_time`, `k` years back, and compute that historical
+    month's own total return as `close_at_end_of_that_month /
+    close_at_end_of_the_PRECEDING_month - 1` (the standard "monthly
+    return" definition, anchored to month-END closes so a month with a
+    partial trading-day gap at either end does not distort the ratio).
+    Score = the simple average of however many of those `lookback_years`
+    historical same-month returns are actually available (never
+    fabricated for a missing year -- a year with no data for either the
+    target month or its preceding month is skipped entirely, not
+    treated as a zero return).
+
+    Needs at least `min_years` (default 2) valid historical same-month
+    observations; `None` (never a fabricated score) below that -- a
+    materially higher floor, proportionally, than this module's
+    contiguous-window factors, since a same-calendar-month average from
+    only 1 prior year is barely more informative than that single
+    month's own raw return, not yet a genuine "seasonality" signal."""
+    padded_days = lookback_years * 366 + 40
+    bars = data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time)
+    if not bars:
+        return None
+    closes_by_month: dict[tuple[int, int], list[tuple[date, float]]] = {}
+    for bar in bars:
+        bar_date = bar.timestamp.date()
+        key = (bar_date.year, bar_date.month)
+        closes_by_month.setdefault(key, []).append((bar_date, bar.adjusted_close or bar.close))
+    for entries in closes_by_month.values():
+        entries.sort(key=lambda pair: pair[0])
+
+    target_month = as_of_time.month
+    historical_returns: list[float] = []
+    for years_back in range(1, lookback_years + 1):
+        target_year = as_of_time.year - years_back
+        preceding_month, preceding_year = (target_month - 1, target_year) if target_month > 1 else (12, target_year - 1)
+        target_entries = closes_by_month.get((target_year, target_month))
+        preceding_entries = closes_by_month.get((preceding_year, preceding_month))
+        if not target_entries or not preceding_entries:
+            continue
+        baseline_price = preceding_entries[-1][1]
+        end_price = target_entries[-1][1]
+        if baseline_price is None or baseline_price <= 0 or end_price is None:
+            continue
+        historical_returns.append(end_price / baseline_price - 1.0)
+
+    if len(historical_returns) < min_years:
+        return None
+    return sum(historical_returns) / len(historical_returns)
+
+
+def short_interest_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the Short Interest Anomaly (Asquith, Pathak & Ritter
+    2005, "Short Interest, Institutional Ownership, and Stock Returns,"
+    Journal of Financial Economics 78(2): 243-276; Boehmer, Jones &
+    Zhang 2008, "Which Shorts Are Informed?," The Journal of Finance):
+    heavily shorted stocks earn systematically LOWER subsequent returns,
+    hypothesized because short sellers are, on average, more informed
+    than the typical market participant -- a large or growing short
+    position reflects a real, aggregated negative view worth taking
+    seriously as a signal, not noise. Flagged as the lowest-priority of
+    the four GitHub/web-search-derived candidates (ADR-0098's own
+    STRATEGY-VALIDATION-REPORT addendum) specifically because it was the
+    only one needing a genuinely NEW data source -- built now (ADR-0099)
+    following the user's explicit "proceed with the candidates" ("후보들
+    진행") instruction covering all remaining ones, not because the data
+    -feasibility concern was resolved by seeing any result.
+
+    **Data source, and the one real, stated limitation new to this
+    factor**: `repository` is a `storage.short_interest_repository.
+    DuckDBShortInterestRepository`, populated by `scripts.ingest_short_
+    interest_data` from a LOCAL FILE the user produces from FINRA Rule
+    4560 reporting -- not a live network fetch this project's own
+    provider layer performs (see `data_infra.short_interest_models`'s
+    own module docstring for why: this sandboxed session cannot reach
+    `finra.org` to verify FINRA's real bulk-file format, the identical
+    limitation `data_infra.providers.file_import.LocalFileDataProvider`
+    already states for real market-data acquisition). `available_time`
+    on every record is deliberately later than its own `settlement_date`
+    by a conservative fixed lag (FINRA's own published "7 business days"
+    public-dissemination schedule, rounded up to an 11-calendar-day
+    upper bound) -- never the settlement date itself, the same
+    look-ahead discipline `InsiderTransaction.available_time` already
+    applies to Form 4 filing dates.
+
+    **Construction, a deliberate engineering simplification chosen
+    BEFORE any result exists (RULE 0.8)**: score is the NEGATIVE of the
+    most recent available `days_to_cover` (short interest quantity
+    divided by average daily trading volume, FINRA's own published
+    field, not recomputed here) rather than short interest scaled by
+    shares outstanding (Asquith, Pathak & Ritter's own primary
+    construction) -- `days_to_cover` needs only this one dedicated
+    repository (mirrors `insider_buying_score`'s own single-repository
+    shape, reused through `compute_fundamentals_ic_series`'s
+    `fundamentals_repository` slot exactly the way that factor's own
+    docstring already describes), while a shares-outstanding-scaled
+    ratio would need a SECOND repository (fundamentals, for
+    `CommonStockSharesOutstanding`) and a new two-repository CLI wiring
+    shape this module does not otherwise need. `None` (never a
+    fabricated score) if no report exists yet with `available_time <=
+    as_of_time`, or if that latest report's own `days_to_cover` is
+    `None` (FINRA does not always publish it, e.g. for a name with zero
+    recorded average daily volume that reporting period)."""
+    latest = repository.get_latest_short_interest(security_id, as_of_time)
+    if latest is None or latest.days_to_cover is None:
+        return None
+    return -latest.days_to_cover

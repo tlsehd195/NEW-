@@ -48,6 +48,7 @@ from strategy_research.factor_scores import (
     quality_minus_junk_score,
     rd_expenditure_score,
     residual_momentum_score,
+    return_seasonality_score,
     roa_score,
     roe_score,
     rs_rating_score,
@@ -1577,6 +1578,67 @@ class TestRdExpenditureScore:
         price_repo = InMemoryDataRepository(bars=[])
 
         assert rd_expenditure_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+class TestReturnSeasonalityScore:
+    """Session 36 continued -- Heston & Sadka 2008 Return Seasonality,
+    found via a GitHub/web search for borrowable strategies
+    (paperswithbacktest/awesome-systematic-trading, independently
+    confirmed by that repo's own `12-month-cycle-in-cross-section-of-
+    stocks-returns.py`, the k=1 special case of this factor's more
+    general same-calendar-month averaging). A genuinely different
+    computational shape from every other factor here -- groups price
+    history by CALENDAR MONTH across non-contiguous prior years, rather
+    than reading one contiguous trailing window."""
+
+    def _seasonal_closes(self, days, *, seasonal_month: int, seasonal_return: float, base: float = 100.0):
+        price = base
+        seen_years: set[int] = set()
+        closes = []
+        for d in days:
+            if d.month == seasonal_month and d.year not in seen_years:
+                price *= 1.0 + seasonal_return
+                seen_years.add(d.year)
+            closes.append(price)
+        return closes
+
+    def test_a_security_with_a_real_march_seasonal_pattern_scores_higher_than_a_flat_one(self) -> None:
+        days = trading_days(date(2015, 6, 1), date(2021, 3, 20))
+        seasonal_closes = self._seasonal_closes(days, seasonal_month=3, seasonal_return=0.05)
+        flat_closes = [100.0] * len(days)
+        repo = InMemoryDataRepository()
+        repo.append_bars(make_bars("MARCHJUMPER", days, seasonal_closes))
+        repo.append_bars(make_bars("FLAT", days, flat_closes))
+        as_of_time = checkpoint(days[-1])  # a day in March 2021
+        data = _view(repo, as_of_time)
+
+        seasonal_score = return_seasonality_score("MARCHJUMPER", as_of_time, data)
+        flat_score = return_seasonality_score("FLAT", as_of_time, data)
+
+        assert seasonal_score is not None and flat_score is not None
+        assert seasonal_score == pytest.approx(0.05, abs=1e-9)  # exact same-ratio every year, by construction
+        assert flat_score == pytest.approx(0.0, abs=1e-9)
+        assert seasonal_score > flat_score
+
+    def test_fewer_than_min_years_of_same_month_history_returns_none(self) -> None:
+        # Only one prior March exists (2020) before as_of_time in March
+        # 2021 -- below the default min_years=2 floor.
+        days = trading_days(date(2019, 6, 1), date(2021, 3, 20))
+        closes = self._seasonal_closes(days, seasonal_month=3, seasonal_return=0.05)
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, closes)))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert return_seasonality_score("THIN", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2015, 6, 1), date(2021, 3, 20))
+        closes = self._seasonal_closes(days, seasonal_month=3, seasonal_return=0.05)
+        repo = InMemoryDataRepository(bars=list(make_bars("MARCHJUMPER", days, closes)))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert return_seasonality_score("NONEXISTENT", as_of_time, data) is None
 
 
 class TestCashflowYieldScore:

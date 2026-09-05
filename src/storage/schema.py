@@ -782,6 +782,28 @@ DDL_STATEMENTS: tuple[str, ...] = (
         provenance_schema_version INTEGER NOT NULL
     )
     """,
+    # Session 36 continued -- FINRA Rule 4560 equity short interest
+    # reports (data_infra.short_interest_models.ShortInterestRecord).
+    # Natural key = provenance_source_record_id (one row per security
+    # per settlement date), same idempotent-insert shape as
+    # insider_transactions/fundamental_records above.
+    """
+    CREATE TABLE IF NOT EXISTS short_interest_records (
+        provenance_source_record_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        settlement_date TIMESTAMP NOT NULL,
+        short_interest_quantity DOUBLE NOT NULL,
+        average_daily_volume DOUBLE,
+        days_to_cover DOUBLE,
+        available_time TIMESTAMP NOT NULL,
+        ingestion_time TIMESTAMP NOT NULL,
+        provenance_source TEXT NOT NULL,
+        provenance_source_dataset TEXT NOT NULL,
+        provenance_retrieved_at TIMESTAMP NOT NULL,
+        provenance_data_version TEXT NOT NULL,
+        provenance_schema_version INTEGER NOT NULL
+    )
+    """,
 )
 
 

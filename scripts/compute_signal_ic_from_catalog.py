@@ -19,10 +19,13 @@ ADR-0043 Decision 16 -- close/trailing-52-week-high), or
 `idiosyncratic_volatility_score` (Ang, Hodrick, Xing & Zhang 2006,
 Session 36 -- negative of the trailing month's CAPM-residual return
 standard deviation, distinct from both `low_volatility_score` (total
-vol) and `low_beta_score` (systematic co-movement)), or
-`residual_momentum_score` (Blitz, Huij & Martens 2011, Session 36
+vol) and `low_beta_score` (systematic co-movement)), `residual_momentum_score` (Blitz, Huij & Martens 2011, Session 36
 continued -- standardized MEAN of trailing-year CAPM-residual returns,
-distinct from `idiosyncratic_volatility_score`'s residual STD) -- using
+distinct from `idiosyncratic_volatility_score`'s residual STD), or
+`return_seasonality_score` (Heston & Sadka 2008, Session 36 continued --
+average same-calendar-month return across multiple prior years, a
+genuinely different computational shape from every contiguous-window
+factor above) -- using
 `strategy_research.signal_ic.compute_ic_series` against a live DuckDB
 catalog.
 
@@ -76,6 +79,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     low_volatility_score,
     max_effect_score,
     residual_momentum_score,
+    return_seasonality_score,
     rs_rating_score,
     short_term_reversal_score,
 )
@@ -112,6 +116,10 @@ _PRICE_ONLY_SCORES = {
     # (paperswithbacktest/awesome-systematic-trading). Wired in before
     # any real IC result exists, per RULE 0.8.
     "residual_momentum": residual_momentum_score,
+    # Session 36 continued -- Heston & Sadka 2008 Return Seasonality,
+    # found via the same GitHub/web search. Wired in before any real IC
+    # result exists, per RULE 0.8.
+    "return_seasonality": return_seasonality_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 

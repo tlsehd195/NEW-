@@ -2715,3 +2715,59 @@ rd_expenditure`) and `run_long_horizon_validation.py`'s
 and 35th candidates) **before any real IC or walk-forward result exists
 for either** -- the same discipline every candidate in this document
 already follows. No real result recorded yet.
+
+## Session 36 continued Addendum -- Return Seasonality and Short Interest Anomaly, wired blind (ADR-0099)
+
+The user's follow-up "후보들 진행" ("proceed with the candidates")
+authorized building the two remaining GitHub/web-search-derived
+candidates ADR-0098 had flagged but not yet built.
+
+**`return_seasonality_score`** (Heston & Sadka 2008) -- a security's
+own historical tendency to over/underperform in the SAME calendar month
+across multiple prior years (default 5), averaged. A genuinely
+different computational shape from every other factor in this module:
+it groups price history by calendar month across non-contiguous years
+rather than reading one contiguous trailing window. Price-only, zero
+new data needed. Independently corroborated by `paperswithbacktest/
+awesome-systematic-trading`'s own `12-month-cycle-in-cross-section-of-
+stocks-returns.py` (the k=1 special case of this factor's more general
+averaging).
+
+**`short_interest_score`** (Asquith, Pathak & Ritter 2005) -- the
+NEGATIVE of the most recent `days_to_cover` (short interest quantity /
+average daily volume). The one candidate needing a genuinely NEW data
+source: since this sandboxed session cannot reach `finra.org` to
+observe FINRA's real bulk-file format, a live scraper was NOT built
+(guessing an unverified schema would violate this project's "never
+fabricate provider capabilities" discipline). Instead, mirroring
+`LocalFileDataProvider`'s own established precedent (Phase 31), a new
+`ShortInterestRecord` model + `DuckDBShortInterestRepository` +
+project-owned CSV import schema (`data_infra.providers.short_interest_
+file_import`) + local-file-only CLI (`scripts/ingest_short_interest_
+data.py`, no network call, safe to test directly) were built. A
+report's `available_time` is always `settlement_date` plus a
+conservative 11-calendar-day upper bound on FINRA's own published
+"7 business days" public-dissemination lag -- never the settlement date
+itself.
+
+Also rejected from the same search round, with reasons recorded rather
+than silently dropped: `earnings-quality-factor.py` (overlaps
+substantially with already-implemented `roe`/`sloan_accruals`/
+`leverage`, not a genuinely new anomaly), `payday-anomaly.py` (an
+INDEX-level market-timing signal, not a per-stock factor -- does not
+fit this project's cross-sectional stock-selection architecture -- and
+its own citation is a trading-blog page, not a peer-reviewed paper),
+`consistent-momentum-strategy.py` (no clear peer-reviewed academic
+citation in the source, below this project's citation-quality bar).
+
+Wired into `compute_signal_ic_from_catalog.py` (`--strategy
+return_seasonality`) / `compute_fundamentals_ic_from_catalog.py`
+(`--score short_interest`, requiring a new `--short-interest-db-path`
+flag) and `run_long_horizon_validation.py`'s
+`_PRICE_FACTOR_CANDIDATES`/new `_SHORT_INTEREST_FACTOR_CANDIDATES` (the
+pool's 36th and 37th candidates) **before any real IC or walk-forward
+result exists for either** -- the same discipline every candidate in
+this document already follows. No real result recorded yet; the short
+interest candidate additionally requires the account owner to acquire
+real FINRA data externally and preprocess it into this project's CSV
+schema before any real result can exist for it at all.
