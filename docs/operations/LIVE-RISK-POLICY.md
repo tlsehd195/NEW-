@@ -44,6 +44,7 @@ claim of financial optimality.
 | 13 | Data failure threshold | `KillSwitchTriggerContext.data_health` | health-status check (`UNAVAILABLE`/`UNKNOWN` trigger) | **DEFINED (Phase 17 addition)** | Before this phase, `KillSwitchTriggerContext` had no `data_health` field at all -- `monitoring.collectors.collect_data_quality` (Phase 14) already computed this signal, but nothing wired it into kill-switch evaluation. Added this phase (`src/broker/live/kill_switch.py`, `Optional[ComponentHealthStatus] = None`, additive/backward-compatible) with a regression test (`tests/broker/live/test_live_kill_switch.py::TestEachTriggerIndependently::test_data_health_unavailable_triggers`). The underlying numeric thresholds (invalid-rate, staleness) are Phase 14's `MonitoringConfig`, already DEFINED. |
 | 14 | Withdrawal (cash-out) policy | *(no field exists, by policy)* | -- | **RESOLVED (Session 36 continued)** | The account owner decided: **no withdrawals, ever -- every realized gain (and any capital, for that matter) stays in the account and is reinvested.** This is not Option A/B/C from the design pass below; it is the option that makes A/B/C all moot, since there is never a withdrawal event for any of them to govern. No field, mechanism, or approval type is added to `src/` -- there is nothing to build, since the resolved policy is the ABSENCE of a withdrawal capability, not a particular shape of one. See "Session 36 continued -- #14 RESOLVED" below. |
 | 15 | Rebalancing cash buffer, Live-specific | `RiskConfig.minimum_cash_ratio` (same field as #9) | `0.05` | **RESOLVED, interim (Session 36 continued)** | The account owner decided: keep the inherited `0.05` (5%) floor as-is for now (Option A) -- explicitly a placeholder, not a final answer. A concrete follow-up is on record: once a real Live track record accumulates, revisit with a regime-conditional buffer (Option C, `regime.enums`'s existing LIQUIDITY/VOLATILITY axes) that increases the cash floor in unfavorable market conditions. Deliberately NOT built now -- designing that mapping ahead of any real Live data would be exactly the premature, unvalidated policy-tuning RULE 0.8 warns against. See "Session 36 continued -- #15 RESOLVED (interim)" below. |
+| 16 | Reentry cooldown | `RiskConfig.reentry_cooldown_days` | `None` (PROPOSED value: **5 trading days**, not yet ratified) | **UNDEFINED, PROPOSED (Session 36 continued, ADR-0093)** | Found comparing this project against an external repository (dragon1086/prism-insight). Enforcement path exists and is active in `PortfolioRiskEngine.assess` via a new opt-in `last_exit_time_by_security: Optional[dict[str, datetime]]` parameter -- REJECTs a new BUY only when the caller supplies a recent exit for that security AND it falls within `reentry_cooldown_days`; a security absent from the mapping (the ordinary case -- never exited, or exited outside the window) is unaffected, mirroring `enforce_liquidity_limit`'s own "opt-in per call, simply skipped if omitted" pattern rather than `max_sector_weight`'s fail-closed-on-missing-entry pattern (see `RiskConfig.reentry_cooldown_days`'s own docstring for why). A new `TradeRecord.exit_reason: Optional[str] = None` field (additive) now lets a producer record WHY a position was exited, plumbed through `InMemoryTradeJournalRepository`/`DuckDBTradeJournalRepository`/both Paper and Live `build_trade_record` bridges -- but no caller yet populates `last_exit_time_by_security` from real trade history at any orchestration layer (`orchestration.paper_runner`/`orchestration.live_runner`); that wiring, and the choice of which `exit_reason`s should even count toward the cooldown, is future work. **TBD -- HUMAN DECISION REQUIRED** on the number itself. |
 
 ## Summary
 
@@ -51,7 +52,7 @@ claim of financial optimality.
 |---|---|---|
 | DEFINED | 1 | #13 |
 | INHERITED | 6 | #2, #3, #4, #8, #9, #12 |
-| UNDEFINED | 6 | #1, #5, #6, #7, #10, #11 |
+| UNDEFINED | 7 | #1, #5, #6, #7, #10, #11, #16 |
 | RESOLVED | 2 | #14, #15 |
 
 ## DECISION REQUIRED entries
@@ -908,3 +909,39 @@ paths) -- a human passes `max_sector_weight=0.25`/
 is constructed. `max_order_notional`'s own "revisit once real capital
 is confirmed" caveat (ADR-0076) still stands -- ratifying the number
 now does not freeze it against that future revisit.
+
+## Session 36 continued — Proposed value for #16 (NOT a decision)
+
+Fourth of the 5 items identified from comparing this project against
+`dragon1086/prism-insight` (see ADR-0093 for the full technical
+account). Mirroring the exact framing #1/#5/#6/#7/#10 already
+established: what follows is Claude's reasoned proposal for the
+account owner to ratify or revise, not a value this document is
+deciding unilaterally. **This number takes effect on nothing by
+itself** -- `RiskConfig.reentry_cooldown_days` defaults to `None`
+(disabled), and even once set, the check only ever fires on a call
+where the caller also supplies `last_exit_time_by_security` -- which no
+orchestration code does yet (see the table row above).
+
+### #16 — `RiskConfig.reentry_cooldown_days`
+
+**Proposal: 5 trading days.**
+
+The underlying idea (from `prism-insight`'s own use of a cooldown after
+an exit) is to avoid immediately re-buying a security this system just
+sold, before enough new information has actually arrived to justify
+reversing course -- a guard against whipsaw churn, not a claim that 5
+days is empirically optimal for this project's own data (no such study
+exists, nor should one be run before ratification -- that would be the
+same post-hoc-tuning RULE 0.8 forbids). 5 trading days (roughly one
+calendar week) is proposed as a round, conservative starting point:
+long enough that a same-day or next-day reversal driven by noise rather
+than a genuine new signal is blocked, short enough that it does not
+meaningfully constrain a strategy that trades on a `test_window_months`-
+scale cadence (this project's walk-forward candidates rebalance every 1-2
+months, so a 5-day cooldown is a small fraction of the normal holding
+period, not a structural obstacle to any of them). Unlike #1/#5/#6/#7/
+#10, this limit is not yet wired to any real trade history at any
+orchestration layer -- ratifying the number does not, by itself, make
+the check active in Paper or Live trading; that wiring is separate,
+future work.

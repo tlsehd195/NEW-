@@ -64,6 +64,7 @@ class PortfolioRiskEngine(Protocol):
         turnover: Optional[float] = None,
         liquidity_state: Optional[str] = None,
         sector_by_security: Optional[dict[str, str]] = None,
+        last_exit_time_by_security: Optional[dict[str, datetime]] = None,
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         experiment_id: Optional[str] = None,
     ) -> RiskCheckedPosition: ...
@@ -169,6 +170,7 @@ class DeterministicPortfolioRiskEngine:
         turnover: Optional[float] = None,
         liquidity_state: Optional[str] = None,
         sector_by_security: Optional[dict[str, str]] = None,
+        last_exit_time_by_security: Optional[dict[str, datetime]] = None,
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         experiment_id: Optional[str] = None,
     ) -> RiskCheckedPosition:
@@ -382,6 +384,26 @@ class DeterministicPortfolioRiskEngine:
                     RiskCheckStatus.REJECT, "liquidity_limit_breached", breached=tuple(breached) + ("liquidity_limit",),
                     final_target_weight=0.0, final_target_quantity=0.0, risk_state=risk_state,
                 )
+
+        # reentry_cooldown -- only evaluated when the caller supplies
+        # last_exit_time_by_security for this call, mirroring
+        # liquidity_limit's own opt-in pattern (see RiskConfig.
+        # reentry_cooldown_days's own docstring for why this is NOT the
+        # sector_limit fail-closed-on-missing-entry pattern: "no recorded
+        # recent exit for this security" is the ordinary case, not a data
+        # gap). Blocks only a NEW BUY, exactly like every other limit in
+        # this function -- a security with no entry in the mapping (never
+        # exited, or exited longer ago than the cooldown) is unaffected.
+        if config.reentry_cooldown_days is not None and last_exit_time_by_security is not None:
+            last_exit_time = last_exit_time_by_security.get(security_id)
+            if last_exit_time is not None:
+                days_since_exit = (as_of_time - last_exit_time).total_seconds() / 86400.0
+                if days_since_exit < config.reentry_cooldown_days:
+                    return build(
+                        RiskCheckStatus.REJECT, "reentry_cooldown_breached",
+                        breached=tuple(breached) + ("reentry_cooldown",),
+                        final_target_weight=0.0, final_target_quantity=0.0, risk_state=risk_state,
+                    )
 
         if weight <= 0:
             return build(

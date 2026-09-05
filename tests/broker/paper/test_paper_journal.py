@@ -59,3 +59,13 @@ class TestBuildTradeRecord:
         )
         assert record_with_pnl.realized_pnl == 12.5
         assert record_with_pnl.realized_return == 0.05
+
+    def test_exit_reason_passed_through_only_when_supplied(self) -> None:
+        record_no_reason = build_trade_record(_fill_record(), trade_id="T1", decision_id="DEC-1", position_after=10.0)
+        assert record_no_reason.exit_reason is None
+
+        record_with_reason = build_trade_record(
+            _fill_record(side=OrderSide.SELL), trade_id="T2", decision_id="DEC-1", position_after=0.0,
+            exit_reason="risk_limit_breach",
+        )
+        assert record_with_reason.exit_reason == "risk_limit_breach"
