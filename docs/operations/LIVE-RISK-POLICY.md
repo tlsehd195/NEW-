@@ -43,7 +43,7 @@ claim of financial optimality.
 | 12 | Broker failure threshold | `KillSwitchTriggerContext.broker_health` | health-status check (`UNAVAILABLE`/`UNKNOWN` trigger) | **INHERITED, coarse** | Not a *count* of failures -- a health-*status* check fed by whatever computes `broker_health` upstream (Phase 14 `monitoring.collectors.collect_broker`). The numeric failure-rate thresholds behind that status live in `MonitoringConfig` (Phase 14), already DEFINED there, just not restated here as a duplicate number. |
 | 13 | Data failure threshold | `KillSwitchTriggerContext.data_health` | health-status check (`UNAVAILABLE`/`UNKNOWN` trigger) | **DEFINED (Phase 17 addition)** | Before this phase, `KillSwitchTriggerContext` had no `data_health` field at all -- `monitoring.collectors.collect_data_quality` (Phase 14) already computed this signal, but nothing wired it into kill-switch evaluation. Added this phase (`src/broker/live/kill_switch.py`, `Optional[ComponentHealthStatus] = None`, additive/backward-compatible) with a regression test (`tests/broker/live/test_live_kill_switch.py::TestEachTriggerIndependently::test_data_health_unavailable_triggers`). The underlying numeric thresholds (invalid-rate, staleness) are Phase 14's `MonitoringConfig`, already DEFINED. |
 | 14 | Withdrawal (cash-out) policy | *(no field exists, by policy)* | -- | **RESOLVED (Session 36 continued)** | The account owner decided: **no withdrawals, ever -- every realized gain (and any capital, for that matter) stays in the account and is reinvested.** This is not Option A/B/C from the design pass below; it is the option that makes A/B/C all moot, since there is never a withdrawal event for any of them to govern. No field, mechanism, or approval type is added to `src/` -- there is nothing to build, since the resolved policy is the ABSENCE of a withdrawal capability, not a particular shape of one. See "Session 36 continued -- #14 RESOLVED" below. |
-| 15 | Rebalancing cash buffer, Live-specific | `RiskConfig.minimum_cash_ratio` (same field as #9) | `0.05` | **INHERITED, needs Live-specific re-examination** | Also raised by the user alongside #14: separate from item #9's existing pre-trade floor (a Phase 8 backtesting default that happens to also gate Live via the same field), how much cash should the strategy proactively hold for liquidity/rebalancing once real withdrawals (per #14) are a live possibility? No such policy has ever been decided with real capital or withdrawal timing in mind -- `0.05` is inherited from backtesting, not chosen for this purpose. |
+| 15 | Rebalancing cash buffer, Live-specific | `RiskConfig.minimum_cash_ratio` (same field as #9) | `0.05` | **RESOLVED, interim (Session 36 continued)** | The account owner decided: keep the inherited `0.05` (5%) floor as-is for now (Option A) -- explicitly a placeholder, not a final answer. A concrete follow-up is on record: once a real Live track record accumulates, revisit with a regime-conditional buffer (Option C, `regime.enums`'s existing LIQUIDITY/VOLATILITY axes) that increases the cash floor in unfavorable market conditions. Deliberately NOT built now -- designing that mapping ahead of any real Live data would be exactly the premature, unvalidated policy-tuning RULE 0.8 warns against. See "Session 36 continued -- #15 RESOLVED (interim)" below. |
 
 ## Summary
 
@@ -51,9 +51,8 @@ claim of financial optimality.
 |---|---|---|
 | DEFINED | 1 | #13 |
 | INHERITED | 6 | #2, #3, #4, #8, #9, #12 |
-| INHERITED, needs Live-specific re-examination (awaiting user decision) | 1 | #15 |
 | UNDEFINED | 6 | #1, #5, #6, #7, #10, #11 |
-| RESOLVED | 1 | #14 |
+| RESOLVED | 2 | #14, #15 |
 
 ## DECISION REQUIRED entries
 
@@ -873,3 +872,20 @@ revisiting once the account's real USD balance is confirmed (same
 "revisit once real capital exists" treatment #1 already has above) --
 a fixed dollar figure that never binds for a $2,000 account could
 easily be far too loose for a much larger one later.
+
+## Session 36 continued — #15 RESOLVED (interim): keep 5%, revisit with real data
+
+The account owner decided: **Option A for now (keep `minimum_cash_ratio=0.05`
+unchanged) -- explicitly not a final answer.** On record as a concrete
+follow-up, not a vague "someday": once a real Live track record
+accumulates, revisit with **Option C, a regime-conditional buffer**
+that automatically increases the cash floor when `regime.enums`'s
+existing LIQUIDITY/VOLATILITY axes report a less favorable state.
+
+**Deliberately not built now.** Designing the actual mapping from
+"which regime state" to "how much extra cash" before any real Live
+data exists to inform it would be exactly the premature, unvalidated
+policy-tuning RULE 0.8 warns against in the strategy-research context
+-- the same caution applies here. The trigger for revisiting this is
+explicit: real Live operating history, not a fixed calendar date or
+this session ending.
