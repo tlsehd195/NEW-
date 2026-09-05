@@ -51,23 +51,47 @@ that session does not already persist. All default to `None` (skip),
 matching `broker.pipeline.submit_validated_order`'s own "persist only
 if a repository is supplied" precedent.
 
-**Reentry cooldown (Session 36 continued, ADR-0093/ADR-0095): now
-sourced from real Trade Journal history, opt-in.** `run_cycle` accepts
-an optional `trade_journal_repository` -- when supplied, `run_cycle`
-queries each security's own trade history via `list_trades(security_id=
-..., end=as_of_time)` (point-in-time safe -- a trade dated after this
-checkpoint is never queried) and builds `last_exit_time_by_security`
-for `risk_engine.assess`'s own opt-in parameter (`RiskConfig.
-reentry_cooldown_days`, ratified at 5 trading days but still `None` by
-default). Only a FULL exit counts (`side == SELL` AND `position_after
-== 0.0`) -- a partial trim that still leaves a nonzero position is
-ordinary rebalancing, not the "reentry" this concept is about. `None`
-(the default, omitted) means exactly what it already means to `risk_
-engine.assess` directly: the check is not evaluated for this call,
-mirroring `sector_by_security=None`'s own precedent of "opt-in, not
-fail-closed by default" -- see `RiskConfig.reentry_cooldown_days`'s own
-docstring for why this mirrors `liquidity_state`, not `sector_by_
-security`'s fail-closed pattern.
+**Reentry cooldown (Session 36 continued, ADR-0093/ADR-0095/ADR-0096):
+now sourced from real Trade Journal history, opt-in, READ AND WRITE.**
+`run_cycle` accepts an optional `trade_journal_repository` -- when
+supplied, it is used TWICE per cycle:
+
+1. READ, once per security before that security's own chain runs:
+   `list_trades(security_id=..., end=as_of_time)` (point-in-time safe
+   -- a trade dated after this checkpoint is never queried) builds
+   `last_exit_time_by_security` for `risk_engine.assess`'s own opt-in
+   parameter (`RiskConfig.reentry_cooldown_days`, ratified at 5 trading
+   days but still `None` by default). Only a FULL exit counts (`side ==
+   SELL` AND `position_after == 0.0`) -- a partial trim that still
+   leaves a nonzero position is ordinary rebalancing, not the "reentry"
+   this concept is about.
+2. WRITE, once per real fill this cycle actually produces (ADR-0096,
+   closing a real, previously-undiscovered gap: this function used to
+   discard `session.submit()`'s own fills entirely -- nothing in this
+   codebase's production path had ever populated the Trade Journal from
+   a Paper Trading run before this): each `PaperFillRecord` from
+   `session.submit()` is turned into a real `TradeRecord` via `record_
+   trade(decision_id=decision.decision_id, fill=fill_record.fill,
+   position_after=<running position after this fill>, provenance=...)`.
+   **A real, documented cross-system linkage limitation, not hidden**:
+   `decision.decision_id` is a `decision.models.DecisionOutput`'s own
+   ID (Phase 7's decision pipeline, already persisted separately via
+   `decision_repository` if supplied) -- it does NOT correspond to a
+   row in the Trade Journal's OWN `decisions` table (Phase 3's
+   `DecisionSnapshot`), since this function has never called `record_
+   decision` on `trade_journal_repository`. `TradeRecord.decision_id`
+   is therefore a real, factual link to "which Phase 7 decision
+   produced this trade," but NOT joinable back through `trade_journal.
+   repository.get_decision(decision_id)` -- a caller needing that join
+   must bridge the two decision concepts itself; this function does not
+   fabricate a `DecisionSnapshot` to paper over the gap.
+
+`None` (the default, omitted) means exactly what it already means to
+`risk_engine.assess` directly for the read side, and simply skips all
+persistence for the write side (matching the five `*_repository`
+parameters' own "persist only if supplied" contract) -- a caller that
+has not wired up a Trade Journal repository sees no behavior change at
+all, same as before ADR-0096.
 """
 
 from __future__ import annotations
@@ -128,11 +152,24 @@ class RiskRepository(Protocol):
     def record(self, risk_checked: RiskCheckedPosition) -> None: ...
 
 
-class TradeJournalReader(Protocol):
+class TradeJournalRepositoryLike(Protocol):
+    """Read+write, deliberately narrow (only the two methods `run_cycle`
+    actually calls, mirroring every other narrow Protocol in this
+    module) -- satisfied structurally by both `trade_journal.repository.
+    InMemoryTradeJournalRepository` and `storage.trade_journal_repository.
+    DuckDBTradeJournalRepository` without either needing to reference
+    this Protocol at all."""
+
     def list_trades(
         self, *, security_id: Optional[str] = None, provenance: Optional[TradeProvenance] = None,
         start: Optional[datetime] = None, end: Optional[datetime] = None,
     ) -> list[TradeRecord]: ...
+
+    def record_trade(
+        self, *, decision_id: str, fill, position_after: float,
+        provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
+        experiment_id: Optional[str] = None,
+    ) -> TradeRecord: ...
 
 
 @dataclass
@@ -195,7 +232,7 @@ def _portfolio_view(account, view: AsOfDataView, as_of_time: datetime) -> Portfo
 
 
 def _last_exit_time_by_security(
-    security_ids: Sequence[str], as_of_time: datetime, repository: TradeJournalReader, provenance: TradeProvenance,
+    security_ids: Sequence[str], as_of_time: datetime, repository: TradeJournalRepositoryLike, provenance: TradeProvenance,
 ) -> dict[str, datetime]:
     """Real exit history for the reentry-cooldown check (ADR-0093/
     ADR-0095), one `list_trades` query per security bounded by `end=
@@ -230,7 +267,7 @@ def run_cycle(
     position_sizer: PositionSizer,
     risk_engine: PortfolioRiskEngine,
     sector_by_security: Optional[dict[str, str]] = None,
-    trade_journal_repository: Optional[TradeJournalReader] = None,
+    trade_journal_repository: Optional[TradeJournalRepositoryLike] = None,
     state: Optional[PaperRunnerState] = None,
     prediction_repository: Optional[PredictionRepository] = None,
     regime_repository: Optional[RegimeRepository] = None,
@@ -327,7 +364,22 @@ def run_cycle(
         )
         submission: Optional[BrokerOrderResponse] = None
         if validation.validated_order is not None:
-            submission, _fills = session.submit(validation.validated_order, requested_at=as_of_time)
+            submission, fills = session.submit(validation.validated_order, requested_at=as_of_time)
+            if trade_journal_repository is not None:
+                # Cumulative, not re-queried per fill: a partial fill's
+                # own resulting position is exactly current_quantity plus
+                # every signed fill quantity seen so far this order --
+                # deriving it this way needs no extra broker/session
+                # query and cannot be stale relative to what was just
+                # submitted.
+                running_quantity = current_quantity
+                for fill_record in fills:
+                    signed = fill_record.fill.quantity if fill_record.fill.side == OrderSide.BUY else -fill_record.fill.quantity
+                    running_quantity += signed
+                    trade_journal_repository.record_trade(
+                        decision_id=decision.decision_id, fill=fill_record.fill, position_after=running_quantity,
+                        provenance=provenance, experiment_id=experiment_id,
+                    )
 
         outcomes.append(CycleOutcome(
             security_id=security_id, prediction=prediction, regime=regime, decision=decision,

@@ -305,6 +305,64 @@ class TestSectorLimitPropagatesThroughTheWholeChain:
         assert outcome.submission is not None
 
 
+class TestTradeJournalWriteSide:
+    """Session 36 continued -- ADR-0096: `run_cycle` now WRITES a real
+    `TradeRecord` for every real FILLED/PARTIAL_FILLED response,
+    mirroring `paper_runner`'s own identical wiring -- this project's
+    Live Trading pipeline had never once populated the Trade Journal in
+    its production code path before this either."""
+
+    def test_a_filled_buy_is_recorded_as_a_real_trade(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        journal = InMemoryTradeJournalRepository()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.submission is not None and outcome.submission.status == BrokerOrderStatus.FILLED.value
+        trades = journal.list_trades(security_id="AAA")
+        assert len(trades) == 1
+        trade = trades[0]
+        assert trade.side == OrderSide.BUY
+        assert trade.quantity == outcome.submission.response.filled_quantity
+        assert trade.decision_id == outcome.decision.decision_id
+        assert trade.position_after == outcome.submission.response.filled_quantity
+        assert trade.provenance == TradeProvenance.LIVE_TRADING
+
+    def test_a_blocked_order_writes_no_trade(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_sector_weight=0.5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+        journal = InMemoryTradeJournalRepository()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(risk_config),
+            sector_by_security=None, trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.submission is None
+        assert journal.list_trades() == []
+
+    def test_omitted_trade_journal_repository_writes_nothing_and_does_not_crash(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(),
+        )[0]
+
+        assert outcome.submission is not None and outcome.submission.status == BrokerOrderStatus.FILLED.value
+
+
 class TestReentryCooldownPropagatesThroughTheWholeChain:
     """Session 36 continued -- ADR-0093/ADR-0095/ADR-0096:
     `last_exit_time_by_security` is now sourced from a REAL

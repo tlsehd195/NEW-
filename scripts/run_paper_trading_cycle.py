@@ -61,6 +61,21 @@ min_history_for_volatility`, default 5) -- both default to `None`
 (disabled) here, since a fresh run has no prior history to seed from
 and this script does not fabricate one.
 
+**Trade Journal (Session 36 continued, ADR-0096): always populated.**
+Every real fill this run produces is now also recorded as a real
+`trade_journal.models.TradeRecord` in `--paper-store` (via `orchestration.
+paper_runner.run_cycle`'s own `trade_journal_repository` parameter) --
+closing a real, previously-undiscovered gap: before ADR-0096, this
+script's own Paper Trading runs never populated the Trade Journal at
+all (only `broker.paper.*`'s own order/fill repositories). This is
+unconditional, unlike `--reentry-cooldown-days` below -- the Trade
+Journal itself has no "off" switch, only the risk limit that reads it
+does. `--reentry-cooldown-days` (`RiskConfig.reentry_cooldown_days`,
+ratified at 5 trading days -- ADR-0095 -- but `None`/disabled by
+default here, same treatment as every other ratified risk limit)
+supplies that real exit history to `PortfolioRiskEngine.assess`'s
+reentry-cooldown check when set.
+
 Usage (run in an environment with a real DuckDB catalog already
 populated by scripts/ingest_real_market_data.py):
     python3 scripts/run_paper_trading_cycle.py \\
@@ -117,6 +132,7 @@ from storage.broker_repository import DuckDBOrderStatusEventRepository  # noqa: 
 from storage.prediction_repository import DuckDBPredictionRepository  # noqa: E402
 from storage.regime_repository import DuckDBRegimeRepository  # noqa: E402
 from storage.risk_repository import DuckDBPositionSizingRepository, DuckDBRiskRepository  # noqa: E402
+from storage.trade_journal_repository import DuckDBTradeJournalRepository  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
 
@@ -189,6 +205,15 @@ def main(argv=None) -> int:
     parser.add_argument("--max-drawdown", type=float, default=None, help="Disabled by default -- see module docstring")
     parser.add_argument("--max-portfolio-volatility", type=float, default=None)
     parser.add_argument(
+        "--reentry-cooldown-days", type=int, default=None,
+        help=(
+            "Disabled by default (RiskConfig.reentry_cooldown_days, ratified at 5 -- ADR-0095 -- "
+            "but not baked in as this flag's own default, same treatment as every other ratified "
+            "risk limit). When set, this run's own Trade Journal (always populated in --paper-store "
+            "as of ADR-0096, regardless of this flag) supplies real exit history to the cooldown check."
+        ),
+    )
+    parser.add_argument(
         "--resume", action="store_true",
         help=(
             "Safe to invoke repeatedly (e.g. from an external cron) with the same --start/--end/"
@@ -245,6 +270,14 @@ def main(argv=None) -> int:
     decision_repository = DuckDBDecisionRepository(store_engine)
     sizing_repository = DuckDBPositionSizingRepository(store_engine)
     risk_repository = DuckDBRiskRepository(store_engine)
+    # Always populated (ADR-0096), same "on by default, opt-in only for
+    # the *risk limit itself*" treatment `--reentry-cooldown-days` gets
+    # below -- DuckDB's own `nextval('trade_id_seq')` sequence (see
+    # storage.trade_journal_repository) persists correctly across
+    # separate process invocations against the same --paper-store, so
+    # this needs no ID-seeding logic the way the Python-counter-based
+    # repositories above do.
+    trade_journal_repository = DuckDBTradeJournalRepository(store_engine)
 
     # Any --resume filtering of `checkpoints` MUST happen before `clock`/
     # `view` are built below -- `clock.index` is an index into whatever
@@ -308,6 +341,7 @@ def main(argv=None) -> int:
     risk_config = RiskConfig(
         max_sector_weight=args.max_sector_weight, max_order_notional=args.max_order_notional,
         max_drawdown=args.max_drawdown, max_portfolio_volatility=args.max_portfolio_volatility,
+        reentry_cooldown_days=args.reentry_cooldown_days,
     )
     components = dict(
         predictor=DriftPredictor(PredictionConfig(lookback_days=20), starting_id=next_prediction_id),
@@ -331,7 +365,7 @@ def main(argv=None) -> int:
             sector_by_security=sector_by_security if args.max_sector_weight is not None else None,
             prediction_repository=prediction_repository, regime_repository=regime_repository,
             decision_repository=decision_repository, sizing_repository=sizing_repository,
-            risk_repository=risk_repository, **components,
+            risk_repository=risk_repository, trade_journal_repository=trade_journal_repository, **components,
         )
         for outcome in outcomes:
             if outcome.submission is not None:
@@ -356,6 +390,7 @@ def main(argv=None) -> int:
         "risk_config": {
             "max_sector_weight": args.max_sector_weight, "max_order_notional": args.max_order_notional,
             "max_drawdown": args.max_drawdown, "max_portfolio_volatility": args.max_portfolio_volatility,
+            "reentry_cooldown_days": args.reentry_cooldown_days,
         },
     })
 
@@ -379,6 +414,7 @@ def main(argv=None) -> int:
         "risk_config": {
             "max_sector_weight": args.max_sector_weight, "max_order_notional": args.max_order_notional,
             "max_drawdown": args.max_drawdown, "max_portfolio_volatility": args.max_portfolio_volatility,
+            "reentry_cooldown_days": args.reentry_cooldown_days,
         },
         "content_checksum": checksum,
     }

@@ -26,6 +26,7 @@ from storage.data_repository import DuckDBDataRepository
 from storage.engine import StorageEngine
 from storage.paper_repository import DuckDBPaperFillRepository, DuckDBPaperOrderRepository
 from storage.prediction_repository import DuckDBPredictionRepository
+from storage.trade_journal_repository import DuckDBTradeJournalRepository
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run_paper_trading_cycle.py"
 
@@ -40,6 +41,28 @@ def _load_module():
 
 def _seed_catalog(db_path: Path) -> None:
     days = trading_days(date(2024, 1, 2), date(2024, 4, 30))
+    prices = [100.0 * (1.006 ** i) for i in range(len(days))]
+    bars = make_bars("AAA", days, prices)
+    engine = StorageEngine(StorageConfig(root_dir=db_path))
+    repository = DuckDBDataRepository(engine)
+    repository.add_security(make_security("AAA", "AAA"))
+    repository.append_bars(bars)
+    engine.close()
+
+
+def _seed_long_catalog(db_path: Path) -> None:
+    """Session 36 continued -- ADR-0096's own trade-journal-write test
+    needs a REAL fill, unlike every pre-existing test in this file
+    (none of which assert one happens at all). `_seed_catalog`'s own
+    ~85 trading days is never enough on its own: `RegimeDetector`'s
+    default `RegimeConfig.trend_long_window=100` keeps TREND
+    permanently `UNKNOWN` (and `BaselineRuleDecisionAgent` never BUYs
+    on an unknown trend) until more than 100 real trading days of
+    history exist before the requested `--start` -- confirmed by
+    directly instrumenting `run_cycle` against `_seed_catalog`'s own
+    fixture, which produces `NO_TRADE`/`regime_trend_unknown` for
+    every single checkpoint, never a BUY."""
+    days = trading_days(date(2024, 1, 2), date(2024, 7, 31))
     prices = [100.0 * (1.006 ** i) for i in range(len(days))]
     bars = make_bars("AAA", days, prices)
     engine = StorageEngine(StorageConfig(root_dir=db_path))
@@ -90,6 +113,59 @@ class TestEndToEndAgainstASeededCatalog:
         prediction_repo = DuckDBPredictionRepository(store_engine)
         assert len(prediction_repo.list_all(security_id="AAA")) == report["checkpoints_run"]
         store_engine.close()
+
+    def test_a_run_populates_the_real_trade_journal(self, tmp_path) -> None:
+        """Session 36 continued -- ADR-0096: before this, this script
+        never populated the Trade Journal at all."""
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            # Past both DriftPredictor's 20-day lookback AND
+            # RegimeDetector's default 100-trading-day trend_long_window
+            # -- see _seed_long_catalog's own docstring for why anything
+            # earlier never produces a real BUY at all (TREND stays
+            # UNKNOWN, confirmed by directly instrumenting run_cycle).
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())
+        assert report["total_orders_with_a_fill"] > 0
+
+        store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        trade_journal = DuckDBTradeJournalRepository(store_engine)
+        trades = trade_journal.list_trades(security_id="AAA")
+        assert len(trades) == report["total_orders_with_a_fill"]
+        store_engine.close()
+
+    def test_reentry_cooldown_days_is_reflected_in_the_report_and_defaults_to_disabled(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        out_path = tmp_path / "report.json"
+        _seed_catalog(db_path)
+
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            "--start", "2024-02-01", "--end", "2024-02-10",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())
+        assert report["risk_config"]["reentry_cooldown_days"] is None
 
     def test_a_run_with_sector_limit_configured_uses_the_universes_real_sector_data(self, tmp_path) -> None:
         db_path = tmp_path / "market_data"

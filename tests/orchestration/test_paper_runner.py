@@ -278,6 +278,62 @@ class TestReentryCooldownPropagatesThroughTheWholeChain:
         assert outcome.submission is not None
 
 
+class TestTradeJournalWriteSide:
+    """Session 36 continued -- ADR-0096: `run_cycle` now WRITES a real
+    `TradeRecord` for every real fill, closing the gap that this
+    project's Paper Trading pipeline had never once populated the Trade
+    Journal in its production code path before this."""
+
+    def test_a_filled_buy_is_recorded_as_a_real_trade(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.submission is not None and outcome.submission.filled_quantity
+        trades = journal.list_trades(security_id="AAA")
+        assert len(trades) == 1
+        trade = trades[0]
+        assert trade.side == OrderSide.BUY
+        assert trade.quantity == outcome.submission.filled_quantity
+        assert trade.decision_id == outcome.decision.decision_id
+        assert trade.position_after == outcome.submission.filled_quantity  # started from an empty portfolio
+        assert trade.provenance == TradeProvenance.PAPER_TRADING
+
+    def test_a_rejected_order_writes_no_trade(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_sector_weight=0.5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+        journal = InMemoryTradeJournalRepository()
+
+        # Same "configured but no mapping supplied" REJECT this project's
+        # own TestSectorLimitPropagatesThroughTheWholeChain already
+        # establishes -- reused here to reliably exercise a REJECT rather
+        # than a merely-reduced BUY.
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(risk_config),
+            sector_by_security=None, trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.submission is None
+        assert journal.list_trades() == []
+
+    def test_omitted_trade_journal_repository_writes_nothing_and_does_not_crash(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, **_components())[0]
+
+        assert outcome.submission is not None and outcome.submission.filled_quantity
+
+
 class TestValueHistoryState:
     """Session 36 continued -- PaperRunnerState lets max_drawdown/
     max_portfolio_volatility actually become evaluable, closing the
