@@ -53,6 +53,7 @@ from strategy_research.factor_scores import (
     short_term_reversal_score,
     size_score,
     sloan_accruals_score,
+    sue_score,
     value_composite_score,
 )
 
@@ -463,14 +464,15 @@ def _fy_record(security_id, record_id, *, concept, value, period_end, available_
     )
 
 
-def _q_record(security_id, record_id, *, concept, value, period_end):
+def _q_record(security_id, record_id, *, concept, value, period_end, available_time=None, fiscal_period="Q2"):
+    available_time = available_time or period_end
     return FundamentalRecord(
         security_id=security_id, concept=concept, period_end=period_end, fiscal_year=period_end.year,
-        fiscal_period="Q2", form_type="10-Q", value=value, unit="USD",
-        available_time=period_end, ingestion_time=period_end,
+        fiscal_period=fiscal_period, form_type="10-Q", value=value, unit="USD",
+        available_time=available_time, ingestion_time=available_time,
         provenance=Provenance(
             source="sec_edgar", source_dataset=f"sec_edgar_companyfacts_{security_id}",
-            source_record_id=record_id, retrieved_at=period_end, data_version="v1",
+            source_record_id=record_id, retrieved_at=available_time, data_version="v1",
         ),
     )
 
@@ -1744,3 +1746,101 @@ class TestCombinedFactorScore:
         scores = combined_factor_score(["GOOD"], _utc(2023, 6, 1), fundamentals_repository=None, price_repository=None)
 
         assert scores == {}
+
+
+def _add_quarterly_eps(repo, security_id, values, *, start=_utc(2020, 3, 31), available_times=None) -> None:
+    """Adds one `EarningsPerShareDiluted` record per element of `values`,
+    spaced exactly 3 months apart starting at `start` -- the spacing
+    `sue_score`'s positional "4 quarters ago" indexing assumes.
+    `available_times`, if given, overrides the default (filed the same
+    day as `period_end`) per index, for point-in-time tests."""
+    for i, value in enumerate(values):
+        period_end = _utc(start.year + (start.month - 1 + 3 * i) // 12, (start.month - 1 + 3 * i) % 12 + 1, 28)
+        available_time = available_times[i] if available_times and available_times[i] is not None else None
+        repo.add_fundamental(_q_record(
+            security_id, f"{security_id}:eps:{i}", concept="EarningsPerShareDiluted",
+            value=value, period_end=period_end, available_time=available_time,
+        ))
+
+
+class TestSueScore:
+    """Session 36 continued -- ADR-0084: Foster, Olsen & Shevlin 1984
+    Standardized Unexpected Earnings. The first score in this module
+    needing QUARTERLY (not fiscal-year) fundamentals data."""
+
+    _STEADY_THEN_POSITIVE_SURPRISE = [
+        1.00, 1.05, 1.10, 1.15, 1.10, 1.15, 1.20, 1.25, 1.20, 1.25, 1.30, 2.00,
+    ]
+    _STEADY_THEN_NEGATIVE_SURPRISE = [
+        1.00, 1.05, 1.10, 1.15, 1.10, 1.15, 1.20, 1.25, 1.20, 1.25, 1.30, 0.50,
+    ]
+
+    def test_a_large_positive_yoy_surprise_scores_clearly_positive(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_quarterly_eps(repo, "AAA", self._STEADY_THEN_POSITIVE_SURPRISE)
+
+        score = sue_score("AAA", _utc(2023, 2, 1), repo)
+        assert score is not None and score > 2.0
+
+    def test_a_large_negative_yoy_surprise_scores_clearly_negative(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_quarterly_eps(repo, "AAA", self._STEADY_THEN_NEGATIVE_SURPRISE)
+
+        score = sue_score("AAA", _utc(2023, 2, 1), repo)
+        assert score is not None and score < -1.0
+
+    def test_perfectly_flat_yoy_earnings_returns_none_not_a_fabricated_zscore(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_quarterly_eps(repo, "AAA", [1.00] * 12)
+
+        assert sue_score("AAA", _utc(2023, 2, 1), repo) is None
+
+    def test_fewer_than_twelve_quarters_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _add_quarterly_eps(repo, "AAA", self._STEADY_THEN_POSITIVE_SURPRISE[:11])
+
+        assert sue_score("AAA", _utc(2023, 2, 1), repo) is None
+
+    def test_a_not_yet_filed_latest_quarter_is_excluded_point_in_time(self, tmp_path) -> None:
+        # The 12th quarter is real data but filed AFTER as_of_time --
+        # as of that moment only 11 quarters are actually knowable, so
+        # this must behave exactly like the 11-quarter case (None), not
+        # leak the future quarter's value.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        available_times = [None] * 11 + [_utc(2023, 6, 1)]
+        _add_quarterly_eps(repo, "AAA", self._STEADY_THEN_POSITIVE_SURPRISE, available_times=available_times)
+
+        assert sue_score("AAA", _utc(2023, 2, 1), repo) is None
+
+    def test_a_superseded_earlier_filing_for_the_same_period_is_ignored(self, tmp_path) -> None:
+        # _quarterly_records must keep only the LATEST-available_time
+        # record per period_end -- an earlier, since-superseded filing
+        # sharing a period_end with the "official" one already in the
+        # sequence must not be kept as a second, separate entry (which
+        # would shift every later quarter's positional "4 quarters ago"
+        # lookup off by one).
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        # Index 8's period_end is 2022-03-28 -- filed with a realistic
+        # ~2-week lag (2022-04-15) instead of the default same-day
+        # available_time, to leave room for a bogus preliminary filing
+        # dated in between the two.
+        available_times = [None] * 8 + [_utc(2022, 4, 15)] + [None] * 3
+        _add_quarterly_eps(repo, "AAA", self._STEADY_THEN_POSITIVE_SURPRISE, available_times=available_times)
+        clean_score = sue_score("AAA", _utc(2023, 2, 1), repo)
+
+        # A bogus, earlier-filed (but still >= period_end) preliminary
+        # value for that same period_end -- superseded by the official
+        # 2022-04-15 filing above.
+        repo.add_fundamental(_q_record(
+            "AAA", "AAA:eps:8:superseded", concept="EarningsPerShareDiluted",
+            value=999.0, period_end=_utc(2022, 3, 28), available_time=_utc(2022, 3, 30),
+        ))
+
+        score_with_superseded_entry = sue_score("AAA", _utc(2023, 2, 1), repo)
+        assert score_with_superseded_entry == clean_score

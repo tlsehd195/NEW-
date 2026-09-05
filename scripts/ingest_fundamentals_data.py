@@ -113,6 +113,18 @@ _DEFAULT_CONCEPTS = (
     # what earlier scores already ingest. Same zero-extra-request
     # justification as every earlier concept addition above.
     "RetainedEarningsAccumulatedDeficit", "OperatingIncomeLoss",
+    # Session 36 continued addition (ADR-0084) -- the 1 concept
+    # `strategy_research.factor_scores.sue_score` needs. Same
+    # zero-extra-request justification as every earlier concept
+    # addition above: `SecEdgarFundamentalsProvider.fetch_company_facts`
+    # already fetches one company's entire company-facts JSON per
+    # request regardless of concept count, so this only adds local
+    # parsing of a response already being fetched, never a new
+    # network call. Unlike every earlier concept here, `sue_score`
+    # is the first to actually need QUARTERLY (not "FY") records --
+    # `EarningsPerShareDiluted` is reported at both granularities under
+    # this same tag, same as `NetIncomeLoss` already is.
+    "EarningsPerShareDiluted",
 )
 
 _REQUEST_DELAY_SECONDS = 0.3

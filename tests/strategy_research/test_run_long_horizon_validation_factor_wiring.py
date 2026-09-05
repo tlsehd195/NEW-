@@ -134,10 +134,11 @@ class TestUniverseFactorFactoryNoLateBindingBug:
 class TestCandidateTables:
     """The 4 module-level candidate tables together must reproduce
     exactly the 20 names in PROJECT_STATUS.md's raw-IC-screening table
-    (ADR-0051), plus the 2 Session 36 additions wired in afterward
-    (`idiosyncratic_volatility`, ADR-0053; `combined_factor`, ADR-0054)
-    -- 22 total -- no name collisions with each other, or with the 8
-    pre-existing candidates already in `strategy_specs` before ADR-0051."""
+    (ADR-0051), plus the 3 Session 36 additions wired in afterward
+    (`idiosyncratic_volatility`, ADR-0053; `combined_factor`, ADR-0054;
+    `sue`, ADR-0084) -- 23 total -- no name collisions with each other,
+    or with the 8 pre-existing candidates already in `strategy_specs`
+    before ADR-0051."""
 
     _EXPECTED_NAMES = {
         "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
@@ -146,7 +147,7 @@ class TestCandidateTables:
         "shareholder_yield", "earnings_yield", "book_to_market", "sales_yield",
         "cashflow_yield", "size", "altman_z",
         "quality_minus_junk", "value_composite",
-        "idiosyncratic_volatility", "combined_factor",
+        "idiosyncratic_volatility", "combined_factor", "sue",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
@@ -162,7 +163,7 @@ class TestCandidateTables:
             names.extend(name for name, _hypothesis, _score_fn in table)
         return names
 
-    def test_all_22_expected_names_present_exactly_once(self) -> None:
+    def test_all_23_expected_names_present_exactly_once(self) -> None:
         module = _load_script()
         names = self._all_new_candidate_names(module)
         assert len(names) == len(set(names)), "duplicate candidate name across the 4 tables"
