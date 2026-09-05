@@ -2554,14 +2554,31 @@ nowhere near 2010. Fixed by adding real pagination (`before_date` on
 in the ingestion script walking backward via EDGAR's own `dateb`
 parameter until a `--min-filing-date` target, default 2009-06-01, is
 reached or a safety cap is hit) -- see ADR-0088 for the full account
-and its own test coverage. **Still no real IC result**: the account
-owner needs to re-run the now-fixed `ingest_insider_transactions.py`
-in their own environment before `--score insider_buying` can compute
-anything meaningful. Recorded here, before that re-run, specifically
-so this addendum cannot later be read as having picked the factor's
-exclusion rules (Code P/S only, `is_10b5_1_plan == False`) OR the new
-pagination target date after seeing whether either helps or hurts the
-result.
+and its own test coverage.
+
+**ADR-0088's own fix did not work -- caught by re-running it for
+real, not assumed correct**: the account owner re-ingested (13798
+transactions, up from 4877) and re-ran the raw-IC screen. STILL
+`observations=0`. A live diagnostic (fetching AAPL's real filing list
+twice, once un-paginated and once with `dateb` set to the oldest date
+already seen) proved `dateb` does not filter this endpoint's atom
+response at all -- the two responses were byte-for-byte identical, 0
+new filings. ADR-0089 replaces it with `start` (EDGAR's classic
+0-based offset), verified for real before being trusted the same way:
+`start=100` against AAPL's live history returned exactly the next 100
+filings, 0 overlap with `start=0`. This is the second real, structural
+gap this single feature surfaced from actual use (after the TEST-1-
+overlap discovery above) -- both caught by re-running the real
+pipeline and checking the real database rather than trusting that a
+fix labeled "done" actually worked.
+
+**Still no real IC result**: the account owner needs to re-run the
+now-corrected `ingest_insider_transactions.py` in their own
+environment before `--score insider_buying` can compute anything
+meaningful. Recorded here, before that re-run, specifically so this
+addendum cannot later be read as having picked the factor's exclusion
+rules (Code P/S only, `is_10b5_1_plan == False`) OR the pagination
+mechanism after seeing whether either helps or hurts the result.
 
 ## Session 36 continued Addendum -- ML factor-combination: more data + stronger regularization, real result in
 

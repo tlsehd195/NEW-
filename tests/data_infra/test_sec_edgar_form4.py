@@ -165,7 +165,7 @@ class TestFetchForm4FilingList:
         provider = _provider()
         provider.fetch_form4_filing_list("0000320193", _StubTransport())
         assert calls == [
-            "/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4&dateb=&owner=include&count=40&output=atom"
+            "/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4&dateb=&owner=include&count=40&start=0&output=atom"
         ]
 
     def test_parses_every_entry(self) -> None:
@@ -180,9 +180,11 @@ class TestFetchForm4FilingList:
         assert filings[0]["filing_date"] == utc(2026, 9, 3)
         assert filings[0]["filing_href"].endswith("000114036126035636/")
 
-    def test_before_date_is_passed_through_as_the_dateb_query_param(self) -> None:
-        # ADR-0088: pagination relies on this parameter actually
-        # reaching EDGAR's dateb query field.
+    def test_start_offset_is_passed_through_as_the_start_query_param(self) -> None:
+        # ADR-0089: pagination relies on this parameter actually
+        # reaching EDGAR's real offset mechanism -- `dateb` (ADR-0088's
+        # first attempt) was verified this session to NOT filter this
+        # endpoint's atom response at all.
         calls = []
 
         class _StubTransport:
@@ -191,14 +193,12 @@ class TestFetchForm4FilingList:
                 return SecEdgarTransportResponse(status_code=200, body=None, raw_text=_REAL_SHAPE_ATOM_FEED, headers={})
 
         provider = _provider()
-        provider.fetch_form4_filing_list("0000320193", _StubTransport(), before_date="2023-06-01")
+        provider.fetch_form4_filing_list("0000320193", _StubTransport(), start=100)
         assert calls == [
-            "/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4&dateb=2023-06-01&owner=include&count=40&output=atom"
+            "/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4&dateb=&owner=include&count=40&start=100&output=atom"
         ]
 
-    def test_before_date_none_omits_the_dateb_value_exactly_as_before(self) -> None:
-        # Backward-compatible default -- no before_date reproduces the
-        # exact pre-ADR-0088 single-page query shape.
+    def test_start_zero_is_the_default(self) -> None:
         calls = []
 
         class _StubTransport:
@@ -209,7 +209,7 @@ class TestFetchForm4FilingList:
         provider = _provider()
         provider.fetch_form4_filing_list("0000320193", _StubTransport())
         assert calls == [
-            "/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4&dateb=&owner=include&count=40&output=atom"
+            "/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4&dateb=&owner=include&count=40&start=0&output=atom"
         ]
 
     def test_empty_response_yields_no_filings_not_an_error(self) -> None:

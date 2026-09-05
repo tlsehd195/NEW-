@@ -97,7 +97,7 @@ class TestSingleHostTransportUsedThroughout:
 
     def test_paginated_filing_list_helper_itself_uses_the_passed_transport(self) -> None:
         source = _source()
-        assert "provider.fetch_form4_filing_list(cik, transport, count=page_size, before_date=before_date)" in source
+        assert "provider.fetch_form4_filing_list(cik, transport, count=page_size, start=start)" in source
 
     def test_provider_constructed_with_www_transport_not_a_data_sec_gov_one(self) -> None:
         source = _source()

@@ -49,21 +49,28 @@ fetched once for the whole run, then filing-list pages + index.json +
 XML document per filing), several times more requests per symbol than
 the one-request-per-symbol company-facts script.
 
-**Pagination (ADR-0088, added after a real run surfaced the gap)**: a
-single un-paginated `fetch_form4_filing_list` call caps out at
-whatever `count` EDGAR returns per page -- the first real run of this
-script (Session 36 continued, default `count=40`) turned out to only
-reach back to 2023-09 for every one of 87 real large-cap symbols
+**Pagination (ADR-0088, corrected for real by ADR-0089)**: a single
+un-paginated `fetch_form4_filing_list` call caps out at whatever
+`count` EDGAR returns per page -- the first real run of this script
+(Session 36 continued, default `count=40`) turned out to only reach
+back to 2023-09 for every one of 87 real large-cap symbols
 (`insider_buying`'s raw IC screen against the standard 2010-2023-04-28
 window then found ZERO observations, since none of the ingested data
-existed in that window at all). `--min-filing-date` (default
-`2009-06-01`, giving the trailing-6-month `insider_buying_score`
-window margin before the project's standard 2010-01-01 raw-IC start)
-now drives a real pagination loop (`_fetch_paginated_filing_list`,
-using `fetch_form4_filing_list`'s new `before_date` parameter) that
-keeps fetching pages, oldest-filing-date-first, until either that
-target date is reached or `--max-filings-per-symbol` (a safety cap
-against an extremely active filer's history) is hit.
+existed in that window at all). ADR-0088's first fix used EDGAR's
+`dateb` parameter to page backward -- a real second re-ingestion run
+still found ZERO observations, and a direct diagnostic proved why:
+`dateb` does not filter this endpoint's `output=atom` response at all
+(every "next page" request came back byte-for-byte identical to the
+first). ADR-0089 replaces it with `start` (a plain 0-based offset),
+verified for real against AAPL's live filing history before being
+trusted (`start=100` returned exactly the next 100 filings, zero
+overlap with `start=0`). `--min-filing-date` (default `2009-06-01`,
+giving the trailing-6-month `insider_buying_score` window margin
+before the project's standard 2010-01-01 raw-IC start) drives
+`_fetch_paginated_filing_list`, which now walks `start` forward by
+`--page-size` each call until either that target date is reached or
+`--max-filings-per-symbol` (a safety cap against an extremely active
+filer's history) is hit.
 """
 
 from __future__ import annotations
@@ -74,7 +81,6 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -118,23 +124,31 @@ def _parse_date(value: str) -> datetime:
 def _fetch_paginated_filing_list(
     provider, cik: str, transport, *, page_size: int, min_filing_date: datetime, max_filings: int,
 ) -> list[dict]:
-    """Walks EDGAR's Form 4 filing list backward in time, oldest-first
-    within each page (ADR-0088) -- see module docstring for why a
-    single un-paginated call is not enough. Stops once the oldest
-    filing seen so far is at or before `min_filing_date`, once a page
-    comes back with nothing new (either genuinely exhausted history, or
-    a page boundary that keeps re-returning the same filings -- both
-    read the same way: no more progress is possible), or once
+    """Walks EDGAR's Form 4 filing list backward in time using the
+    `start` offset (ADR-0089) -- see module docstring for why a single
+    un-paginated call is not enough, and for the real diagnostic that
+    corrected the original ADR-0088 design (`dateb` does not filter
+    this endpoint's `output=atom` response at all -- a real re-
+    ingestion run's raw IC screen came back with zero observations,
+    traced to every page coming back byte-for-byte identical to the
+    first; `start`, EDGAR's plain 0-based offset into the same newest-
+    first ordering, was then verified for real: `start=100` returned
+    exactly the next 100 filings with zero overlap against `start=0`).
+    Stops once the oldest filing seen so far is at or before
+    `min_filing_date`, once a page comes back with nothing new (either
+    genuinely exhausted history, or -- defensively, in case `start`'s
+    real behavior has some other boundary quirk not yet observed -- a
+    page that repeats prior filings), a partial page (fewer than
+    `page_size`, meaning EDGAR has no more history left), or once
     `max_filings` accumulated filings is reached, whichever comes
-    first. Deduplicates by `accession_number` across pages, since
-    EDGAR's own `dateb` boundary semantics (Tier 2, unverified this
-    session) may inclusively re-return the oldest filing(s) from the
-    prior page."""
+    first. Deduplicates by `accession_number` across pages regardless,
+    as a defensive measure that costs nothing when pages are already
+    disjoint (the normal, now-verified case)."""
     all_filings: list[dict] = []
     seen_accessions: set[str] = set()
-    before_date: Optional[str] = None
+    start = 0
     while len(all_filings) < max_filings:
-        page = provider.fetch_form4_filing_list(cik, transport, count=page_size, before_date=before_date)
+        page = provider.fetch_form4_filing_list(cik, transport, count=page_size, start=start)
         new_filings = [f for f in page if f["accession_number"] not in seen_accessions]
         if not new_filings:
             break
@@ -146,7 +160,7 @@ def _fetch_paginated_filing_list(
             break
         if len(page) < page_size:
             break  # EDGAR returned a partial page -- history is exhausted
-        before_date = oldest.date().isoformat()
+        start += page_size
     return all_filings
 
 

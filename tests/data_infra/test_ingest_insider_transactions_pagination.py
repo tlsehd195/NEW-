@@ -1,5 +1,5 @@
 """Real, executable tests for `_fetch_paginated_filing_list`
-(`scripts/ingest_insider_transactions.py`, ADR-0088) -- unlike
+(`scripts/ingest_insider_transactions.py`, ADR-0089) -- unlike
 `test_ingest_insider_transactions_wiring.py`'s AST/source-text-only
 discipline (necessary for the rest of that script, which makes real
 network calls inside `main()`), this one function takes its
@@ -17,7 +17,15 @@ verified by matching source text the way the rest of that script's
 simpler wiring can -- exactly the same reasoning
 `test_run_long_horizon_validation_factor_wiring.py`'s own docstring
 gives for testing the late-binding-closure behavior of its factory
-functions directly rather than trusting source-text matching alone."""
+functions directly rather than trusting source-text matching alone.
+
+**ADR-0089 note**: this file originally keyed stub pages by a
+`before_date` string (ADR-0088's design). A real re-ingestion run
+proved EDGAR's `dateb` parameter does not filter this endpoint's atom
+response at all -- every "next page" request came back byte-for-byte
+identical to the first. `_fetch_paginated_filing_list` now walks a
+`start` integer offset instead (verified for real against AAPL's live
+filing history), so this file's stub keys by `start` instead."""
 
 from __future__ import annotations
 
@@ -41,18 +49,18 @@ def _filing(accession: str, filing_date) -> dict:
 
 
 class _StubProvider:
-    """Returns one pre-built page per call, keyed by the `before_date`
-    the caller passes -- `None` for the very first call, then whatever
-    string the real function derives from the prior page's oldest
-    filing. Records every call for assertions."""
+    """Returns one pre-built page per call, keyed by the `start` offset
+    the caller passes -- `0` for the very first call, then whatever
+    the real function derives (`start += page_size` each time). Records
+    every call for assertions."""
 
-    def __init__(self, pages_by_before_date: dict) -> None:
-        self._pages = pages_by_before_date
+    def __init__(self, pages_by_start: dict) -> None:
+        self._pages = pages_by_start
         self.calls: list[tuple] = []
 
-    def fetch_form4_filing_list(self, cik, transport, *, count, before_date=None):
-        self.calls.append((cik, transport, count, before_date))
-        return self._pages.get(before_date, [])
+    def fetch_form4_filing_list(self, cik, transport, *, count, start=0):
+        self.calls.append((cik, transport, count, start))
+        return self._pages.get(start, [])
 
 
 class TestPaginationAccumulatesAcrossPages:
@@ -60,7 +68,7 @@ class TestPaginationAccumulatesAcrossPages:
         module = _load_script()
         page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
         page2 = [_filing("A3", utc(2023, 4, 1)), _filing("A4", utc(2023, 3, 1))]
-        provider = _StubProvider({None: page1, "2023-05-01": page2})
+        provider = _StubProvider({0: page1, 2: page2})
 
         filings = module._fetch_paginated_filing_list(
             provider, "CIK", "transport-token", page_size=2,
@@ -69,18 +77,18 @@ class TestPaginationAccumulatesAcrossPages:
 
         assert {f["accession_number"] for f in filings} == {"A1", "A2", "A3", "A4"}
 
-    def test_second_page_request_uses_the_oldest_filing_date_from_the_first(self) -> None:
+    def test_second_page_request_advances_start_by_page_size(self) -> None:
         module = _load_script()
         page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
-        provider = _StubProvider({None: page1, "2023-05-01": []})
+        provider = _StubProvider({0: page1, 2: []})
 
         module._fetch_paginated_filing_list(
             provider, "CIK", "transport-token", page_size=2,
             min_filing_date=utc(2020, 1, 1), max_filings=100,
         )
 
-        before_dates_requested = [call[3] for call in provider.calls]
-        assert before_dates_requested == [None, "2023-05-01"]
+        starts_requested = [call[3] for call in provider.calls]
+        assert starts_requested == [0, 2]
 
 
 class TestStopsOnceMinFilingDateReached:
@@ -88,7 +96,7 @@ class TestStopsOnceMinFilingDateReached:
         module = _load_script()
         page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
         page2 = [_filing("A3", utc(2010, 1, 1)), _filing("A4", utc(2009, 1, 1))]
-        provider = _StubProvider({None: page1, "2023-05-01": page2})
+        provider = _StubProvider({0: page1, 2: page2})
 
         filings = module._fetch_paginated_filing_list(
             provider, "CIK", "transport-token", page_size=2,
@@ -101,7 +109,7 @@ class TestStopsOnceMinFilingDateReached:
     def test_oldest_filing_exactly_equal_to_min_filing_date_still_stops(self) -> None:
         module = _load_script()
         page1 = [_filing("A1", utc(2010, 1, 1))]
-        provider = _StubProvider({None: page1})
+        provider = _StubProvider({0: page1})
 
         module._fetch_paginated_filing_list(
             provider, "CIK", "transport-token", page_size=10,
@@ -115,7 +123,7 @@ class TestStopsOnPartialPage:
     def test_a_page_smaller_than_page_size_means_history_is_exhausted(self) -> None:
         module = _load_script()
         page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]  # only 2, page_size=5
-        provider = _StubProvider({None: page1})
+        provider = _StubProvider({0: page1})
 
         filings = module._fetch_paginated_filing_list(
             provider, "CIK", "transport-token", page_size=5,
@@ -128,13 +136,14 @@ class TestStopsOnPartialPage:
 
 class TestStopsWhenNoNewFilingsReturned:
     def test_a_page_with_only_already_seen_accessions_stops_the_loop(self) -> None:
-        # Real, documented uncertainty this guards against: EDGAR's own
-        # dateb boundary semantics (Tier 2, unverified) might inclusively
-        # re-return the boundary filing(s) forever if not for the
-        # dedup-then-stop-on-no-progress check.
+        # Defensive guard, kept even after ADR-0089's real verification
+        # that `start` pages are genuinely disjoint: if some other
+        # boundary quirk ever causes a page to repeat prior filings,
+        # this dedup-then-stop-on-no-progress check prevents an
+        # infinite loop rather than trusting the offset alone.
         module = _load_script()
         page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
-        provider = _StubProvider({None: page1, "2023-05-01": page1})  # same filings again
+        provider = _StubProvider({0: page1, 2: page1})  # same filings again
 
         filings = module._fetch_paginated_filing_list(
             provider, "CIK", "transport-token", page_size=2,
@@ -150,7 +159,7 @@ class TestMaxFilingsSafetyCap:
         module = _load_script()
         page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
         page2 = [_filing("A3", utc(2023, 4, 1)), _filing("A4", utc(2023, 3, 1))]
-        provider = _StubProvider({None: page1, "2023-05-01": page2, "2023-03-01": [_filing("A5", utc(2023, 2, 1))]})
+        provider = _StubProvider({0: page1, 2: page2, 4: [_filing("A5", utc(2023, 2, 1))]})
 
         filings = module._fetch_paginated_filing_list(
             provider, "CIK", "transport-token", page_size=2,
@@ -163,7 +172,7 @@ class TestMaxFilingsSafetyCap:
 class TestNoFilingsAtAll:
     def test_empty_first_page_returns_an_empty_list_not_an_error(self) -> None:
         module = _load_script()
-        provider = _StubProvider({None: []})
+        provider = _StubProvider({0: []})
 
         filings = module._fetch_paginated_filing_list(
             provider, "CIK", "transport-token", page_size=40,
