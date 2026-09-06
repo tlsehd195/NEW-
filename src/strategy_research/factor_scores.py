@@ -1855,6 +1855,138 @@ def altman_z_score(
     return 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + 1.0 * x5
 
 
+def merton_distance_to_default_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+    *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- Merton (1974, "On the Pricing of Corporate Debt:
+    The Risk Structure of Interest Rates," The Journal of Finance
+    29(2): 449-470)'s structural (option-theoretic) model of corporate
+    default: a firm's equity is a call option on its assets with strike
+    equal to its debt's face value, so a firm's own "distance to
+    default" (how many standard deviations of asset-value movement
+    separate it from the point where assets fall below debt) is a
+    market-implied credit-risk measure -- Merton's own Nobel-cited
+    option-pricing framework applied to credit risk, and (per the
+    account owner's continued "S급" instruction) a genuinely different
+    FAMILY from `altman_z_score`/`ohlson_o_score` already in this
+    module: those are pure ACCOUNTING-RATIO discriminant/logit models;
+    this is a MARKET-based structural model using price, volatility and
+    the firm's own capital structure -- a security can have a healthy
+    Altman Z/Ohlson O yet a poor (or vice versa) market-implied distance
+    to default, since the market-based measure reacts to price/
+    volatility information the accounting ratios never see between
+    filings.
+
+    **Construction is Bharath & Shumway (2008, "Forecasting Default
+    with the Merton Distance to Default Model," The Review of Financial
+    Studies 21(3): 1339-1369)'s own "naive" simplification**, not the
+    full Merton model: the full model requires iteratively solving two
+    simultaneous nonlinear equations for unobservable asset value and
+    asset volatility (a numerical procedure this module's other
+    "deliberate simplification" precedents, e.g. `low_beta_score`'s
+    single-window beta, already establish this project prefers avoiding
+    for a screening-stage factor); Bharath & Shumway's own finding is
+    that this closed-form "naive" version predicts default AT LEAST AS
+    WELL as the fully-solved iterative model in their own out-of-sample
+    tests, so it is not merely a shortcut but an independently validated
+    substitute. Formula (verified via WebSearch against two independent
+    sources, this session's established citation-verification
+    discipline, rather than reconstructed from memory alone):
+
+    `naiveDD = [ln((E+F)/F) + (r - 0.5*sigma_V^2)*T] / (sigma_V*sqrt(T))`
+
+    where `E` = market value of equity (`_latest_price * CommonStockSharesOutstanding`,
+    identical construction to `altman_z_score`'s own X4), `F` = face
+    value of debt (`Liabilities`, the same simplification `altman_z_score`'s
+    own X4 denominator already uses rather than a more refined
+    short-term-plus-half-long-term-debt split), `r` = the security's own
+    trailing 1-year raw return (Bharath & Shumway's own "naive" stand-in
+    for an unobservable risk-adjusted expected return), `T` = 1 year,
+    and `sigma_V = (E/(E+F))*sigma_E + (F/(E+F))*sigma_D` with `sigma_E`
+    = trailing annualized equity return volatility (`backtest.metrics.
+    annualized_volatility`, the same building block `low_volatility_score`
+    already uses) and `sigma_D = 0.05 + 0.25*sigma_E` (Bharath & Shumway's
+    own published "naive" debt-volatility heuristic, not derived, a
+    number this session verified rather than guessed).
+
+    Cited alongside Vassalou & Xing (2004, "Default Risk in Equity
+    Returns," The Journal of Finance 59(2): 831-868), the paper that
+    established default risk (via the full Merton DD) as
+    return-relevant information in the cross-section -- their own
+    finding is more nuanced than a simple monotonic relationship
+    (default risk is priced mainly WITHIN small-cap/high-book-to-market
+    segments, and interacts with the size and value effects rather than
+    standing alone), a conditional/interaction structure this
+    single-variable score does not attempt to replicate. Score is
+    instead the RAW naive DD (not negated) for the same reason
+    `altman_z_score` is not negated: `Dichev (1998)`/`Campbell,
+    Hilscher & Szilagyi (2008)`'s broader distress-risk-anomaly finding
+    already established in this module (distressed firms earn LOWER,
+    not higher, subsequent returns) means a HIGHER distance to default
+    (safer, healthier) is hypothesized more attractive here too --
+    applying this module's own already-established distress-anomaly
+    sign convention for internal consistency, not a claim that
+    Vassalou-Xing's own more nuanced result implies a simple monotonic
+    relationship on its own.
+
+    Needs zero new fundamentals data (`Liabilities`/
+    `CommonStockSharesOutstanding` already ingested for `altman_z_score`/
+    `size_score`) plus ordinary price history already available to every
+    other price-based factor. `None` (never a fabricated score) unless
+    `Liabilities`/`CommonStockSharesOutstanding` are both known and
+    positive, a current price is known, and at least 20 valid daily
+    returns exist over the trailing `lookback_days` (matching
+    `illiquidity_score`'s own floor) with positive equity volatility."""
+    liabilities_record = _latest_fiscal_year_value(fundamentals_repository, security_id, "Liabilities", as_of_time)
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if liabilities_record is None or liabilities_record.value <= 0:
+        return None
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    face_value_debt = liabilities_record.value
+    market_value_equity = price * shares_record.value
+    if market_value_equity <= 0:
+        return None
+
+    bars = trim_to_lookback(
+        price_repository.get_bars(
+            security_id, as_of_time - timedelta(days=int(lookback_days * 1.6)), as_of_time, as_of_time=as_of_time,
+        ),
+        lookback_days,
+    )
+    if len(bars) < 2:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    returns = compute_returns(closes)
+    if len(returns) < 20:
+        return None
+    equity_volatility = annualized_volatility(returns)
+    if equity_volatility <= 0:
+        return None
+    trailing_return = closes[-1] / closes[0] - 1.0
+
+    total_value = market_value_equity + face_value_debt
+    equity_weight = market_value_equity / total_value
+    debt_weight = face_value_debt / total_value
+    debt_volatility = 0.05 + 0.25 * equity_volatility
+    asset_volatility = equity_weight * equity_volatility + debt_weight * debt_volatility
+    if asset_volatility <= 0:
+        return None
+
+    time_horizon = 1.0
+    numerator = math.log(total_value / face_value_debt) + (trailing_return - 0.5 * asset_volatility ** 2) * time_horizon
+    denominator = asset_volatility * math.sqrt(time_horizon)
+    if denominator == 0:
+        return None
+    return numerator / denominator
+
+
 def _quality_component_values(
     security_ids: Sequence[str], as_of_time: datetime, repository: object,
 ) -> dict:

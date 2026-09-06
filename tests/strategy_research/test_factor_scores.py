@@ -52,6 +52,7 @@ from strategy_research.factor_scores import (
     low_beta_score,
     low_volatility_score,
     max_effect_score,
+    merton_distance_to_default_score,
     net_margin_score,
     net_operating_assets_score,
     net_stock_issuance_score,
@@ -2276,6 +2277,77 @@ class TestAltmanZScore:
         price_repo = InMemoryDataRepository(bars=[])
 
         assert altman_z_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+class TestMertonDistanceToDefaultScore:
+    """Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    Merton (1974)'s structural credit-risk model via Bharath & Shumway
+    (2008)'s own "naive" distance-to-default simplification. Score is
+    RAW (not negated) -- a higher distance to default (safer) is more
+    attractive, matching `altman_z_score`'s own distress-anomaly
+    direction. A genuinely different FAMILY from `altman_z_score`/
+    `ohlson_o_score`: market-based (price + volatility + capital
+    structure), not accounting-ratio discriminant/logit."""
+
+    def _price_bars(self, security_id: str, *, close_level: float = 100.0, amplitude: float = 0.01):
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        closes = [close_level * (1.0001 ** i) * (1.0 + amplitude * math.sin(i / 5.0)) for i in range(len(days))]
+        return list(make_bars(security_id, days, closes))
+
+    def test_lower_leverage_scores_higher_than_higher_leverage(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        # Identical price history and shares outstanding for both -- only
+        # Liabilities (face value of debt) differs, isolating leverage's
+        # own effect on distance to default.
+        fundamentals_repo.add_fundamental(_fy_record("LOWLEV", "LOWLEV:shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("LOWLEV", "LOWLEV:liab", concept="Liabilities", value=1000.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("HIGHLEV", "HIGHLEV:shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("HIGHLEV", "HIGHLEV:liab", concept="Liabilities", value=50000.0, period_end=_utc(2019, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=self._price_bars("LOWLEV") + self._price_bars("HIGHLEV"))
+        as_of_time = _utc(2020, 5, 29)
+
+        lowlev_score = merton_distance_to_default_score("LOWLEV", as_of_time, fundamentals_repo, price_repo)
+        highlev_score = merton_distance_to_default_score("HIGHLEV", as_of_time, fundamentals_repo, price_repo)
+
+        assert lowlev_score is not None and highlev_score is not None
+        assert lowlev_score > highlev_score  # less leverage -> further from default -> higher (more attractive) score
+
+    def test_missing_liabilities_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=self._price_bars("AAA"))
+
+        assert merton_distance_to_default_score("AAA", _utc(2020, 5, 29), fundamentals_repo, price_repo) is None
+
+    def test_zero_liabilities_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "liab", concept="Liabilities", value=0.0, period_end=_utc(2019, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=self._price_bars("AAA"))
+
+        assert merton_distance_to_default_score("AAA", _utc(2020, 5, 29), fundamentals_repo, price_repo) is None
+
+    def test_missing_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "liab", concept="Liabilities", value=1000.0, period_end=_utc(2019, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[])
+
+        assert merton_distance_to_default_score("AAA", _utc(2020, 5, 29), fundamentals_repo, price_repo) is None
+
+    def test_insufficient_price_history_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "liab", concept="Liabilities", value=1000.0, period_end=_utc(2019, 12, 31)))
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 20-observation floor
+        price_repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days))))
+
+        assert merton_distance_to_default_score("AAA", _utc(2020, 1, 19), fundamentals_repo, price_repo) is None
 
 
 def _ohlson_fixture(repo, security_id, *, assets=1000.0, liabilities=600.0, current_assets=400.0,

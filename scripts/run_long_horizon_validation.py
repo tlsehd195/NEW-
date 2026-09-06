@@ -161,6 +161,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     long_term_reversal_score,
     low_beta_score,
     max_effect_score,
+    merton_distance_to_default_score,
     net_operating_assets_score,
     net_stock_issuance_score,
     ohlson_o_score,
@@ -387,6 +388,14 @@ _HYBRID_FACTOR_CANDIDATES = (
     # volume (already a required PriceBar field), fundamentals+price.
     # Wired in before any real walk-forward result exists, per RULE 0.8.
     ("share_turnover", "Datar, Naik & Radcliffe 1998 share turnover liquidity anomaly, fundamentals+price", share_turnover_score),
+    # Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    # Merton 1974 structural credit-risk model via Bharath & Shumway
+    # 2008's naive distance-to-default simplification, fundamentals+
+    # price, zero new data, a genuinely different FAMILY from
+    # altman_z/ohlson_o (market-based structural model, not an
+    # accounting-ratio discriminant/logit model). Wired in before any
+    # real walk-forward result exists, per RULE 0.8.
+    ("merton_dd", "Merton 1974 / Bharath & Shumway 2008 naive distance-to-default, fundamentals+price", merton_distance_to_default_score),
 )
 _UNIVERSE_FACTOR_CANDIDATES = (
     ("quality_minus_junk", "Asness, Frazzini & Pedersen quality-minus-junk (3-pillar simplification), cross-sectional", quality_minus_junk_score),

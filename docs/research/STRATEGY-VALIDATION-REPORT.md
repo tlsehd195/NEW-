@@ -3113,6 +3113,41 @@ Wired into `compute_fundamentals_ic_from_catalog.py` and
 `run_long_horizon_validation.py` (`_EXPECTED_NAMES` extended to 44)
 before any real result exists. No real result recorded yet.
 
+## Session 36 continued Addendum -- Merton Distance-to-Default, a third distress-risk family (ADR-0109)
+
+Continuing the S-tier round, the account owner asked again to keep
+finding candidates ("더 찾아봐"), now against this session's own
+explicit integrated criteria (canonical-family check by name,
+most-foundational/most-cited, genuinely distinct construction,
+verifiable via reliable sources, implementable without fabrication
+risk). **Merton (1974), "On the Pricing of Corporate Debt," The
+Journal of Finance 29(2): 449-470** is the foundational structural
+credit-risk model underlying the "distance to default" literature -- a
+genuinely different FAMILY from `altman_z_score`/`ohlson_o_score`
+(market-based structural model using price/volatility/capital
+structure, not an accounting-ratio discriminant/logit model). The full
+model needs an iterative numerical solve this project judged too heavy
+for a screening factor; **Bharath & Shumway (2008), "Forecasting
+Default with the Merton Distance to Default Model," RFS 21(3):
+1339-1369** resolves this with a closed-form "naive" simplification
+their own out-of-sample tests find performs at least as well as the
+full iterative model. **Vassalou & Xing (2004), "Default Risk in
+Equity Returns," JF 59(2): 831-868** is cited for the underlying
+return-relevance hypothesis, honestly noted as more conditional/nuanced
+(priced mainly within small-cap/high-BM segments) than a univariate
+score can replicate.
+
+`merton_distance_to_default_score` (hybrid) computes Bharath-Shumway's
+naive DD formula, all components WebSearch-verified against
+independent sources, reusing `Liabilities`/`CommonStockSharesOutstanding`
+(already ingested for `altman_z_score`) and ordinary price history --
+zero new data. RAW (not negated), applying this module's own
+established distress-anomaly convention for internal consistency.
+
+Wired into `compute_fundamentals_ic_from_catalog.py` and
+`run_long_horizon_validation.py` (`_EXPECTED_NAMES` extended to 45)
+before any real result exists. No real result recorded yet.
+
 ## Outstanding real results not yet received (tracked so they are not lost)
 
 Two real-data runs remain outstanding in the account owner's own
@@ -3135,8 +3170,8 @@ later, not blocking):
    `institutional_ownership_change`, `idiosyncratic_skewness`,
    `downside_beta`, `share_turnover`, `high_volume_return_premium`,
    `asset_turnover_change`, `industry_momentum`, `coskewness`,
-   `ohlson_o`) -- not yet executed for real against the account owner's
-   own DuckDB catalogs.
+   `ohlson_o`, `merton_dd`) -- not yet executed for real against the
+   account owner's own DuckDB catalogs.
 3. **`institutional_ownership_change_score` needs its own new data
    acquisition first** -- unlike every other pending factor above (a
    re-run of an existing pipeline), this one needs the account owner to

@@ -112,6 +112,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     insider_buying_score,
     institutional_ownership_change_score,
     leverage_score,
+    merton_distance_to_default_score,
     net_margin_score,
     net_operating_assets_score,
     net_stock_issuance_score,
@@ -271,6 +272,16 @@ _HYBRID_SCORES = {
     # volume (already a required PriceBar field) -- zero new data. Wired
     # in before any real IC result exists, per RULE 0.8.
     "share_turnover": share_turnover_score,
+    # Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    # Merton 1974 structural credit-risk model, via Bharath & Shumway
+    # 2008's own "naive" distance-to-default simplification. Hybrid
+    # (fundamentals+price), needs zero new data (Liabilities/
+    # CommonStockSharesOutstanding already ingested for altman_z_score/
+    # size_score, plus ordinary price history). A genuinely different
+    # FAMILY from altman_z_score/ohlson_o_score (market-based structural
+    # model, not an accounting-ratio discriminant/logit model). Wired
+    # in before any real IC result exists, per RULE 0.8.
+    "merton_dd": merton_distance_to_default_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 12) -- scores whose score_fn is
