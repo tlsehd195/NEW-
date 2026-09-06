@@ -2845,3 +2845,54 @@ Wired into `compute_fundamentals_ic_from_catalog.py`'s `_SCORES`
 walk-forward result exists for either** -- the same discipline every
 candidate in this document already follows. No real result recorded
 yet.
+
+## Session 36 continued Addendum -- Operating Leverage and Abnormal Corporate Investment, wired blind (ADR-0101)
+
+Per the account owner's explicit "2번 진행해" instruction, this session
+continued mining the JKP "Global Factor Data Documentation" PDF itself
+(now readable, unlike when ADR-0100 was first written) for further
+single-paper-cited candidates.
+
+**`operating_leverage_score`** (Novy-Marx 2011, Review of Finance) --
+`(COGS + XSGA) / Assets`, RAW (not negated): Novy-Marx's own central
+finding is a POSITIVE risk-return relation (more fixed-cost intensity =
+more operating risk = higher expected return), the opposite sign
+convention from every other risk factor already in this module. Needs
+one new XBRL concept (`SellingGeneralAndAdministrativeExpense`).
+
+**`abnormal_investment_score`** (Titman, Wei & Xie 2004, Journal of
+Financial and Quantitative Analysis) -- current fiscal year's
+capex/sales ratio versus its own trailing 3-fiscal-year average,
+NEGATED (overinvestment predicts lower subsequent returns). Needs one
+new XBRL concept (`PaymentsToAcquirePropertyPlantAndEquipment`).
+
+Wired into `compute_fundamentals_ic_from_catalog.py`'s `_SCORES`
+(`--score operating_leverage` / `--score abnormal_investment`) and
+`run_long_horizon_validation.py`'s `_FUNDAMENTALS_FACTOR_CANDIDATES`
+(the pool's 40th and 41st candidates) **before any real IC or
+walk-forward result exists for either**. No real result recorded yet.
+
+## Outstanding real results not yet received (tracked so they are not lost)
+
+Two real-data runs remain outstanding in the account owner's own
+Codespace environment, explicitly deferred as of this session ("코드스페이스에서
+하는거 오늘 안에 못 끝내니까 난중에 보네도 되지?" -- confirmed OK to send
+later, not blocking):
+
+1. **`insider_buying_score` real raw IC** -- per the addendum above
+   ("Session 36 continued Addendum -- insider trading"), the account
+   owner still needs to re-run the now-corrected (`start`-offset-based
+   pagination, ADR-0089) `ingest_insider_transactions.py` and then
+   `compute_fundamentals_ic_from_catalog.py --score insider_buying`
+   before this factor has any real IC result at all.
+2. **Full `run_long_horizon_validation.py` walk-forward/PBO/DSR run**
+   including all factors added since the last real 28-candidate run
+   (`sue`, `insider_buying`, `rs_rating`, `residual_momentum`,
+   `rd_expenditure`, `return_seasonality`, `short_interest`,
+   `net_stock_issuance`, `net_operating_assets`, `operating_leverage`,
+   `abnormal_investment`) -- not yet executed for real against the
+   account owner's own DuckDB catalogs.
+
+Recorded here explicitly (per the account owner's own request) so
+neither item is silently dropped while this session continues other
+work in parallel.

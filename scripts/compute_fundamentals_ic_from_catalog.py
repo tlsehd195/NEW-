@@ -96,6 +96,7 @@ from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
 from storage.short_interest_repository import DuckDBShortInterestRepository  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
+    abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
     book_to_market_score,
@@ -109,6 +110,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     net_margin_score,
     net_operating_assets_score,
     net_stock_issuance_score,
+    operating_leverage_score,
     piotroski_f_score,
     quality_minus_junk_score,
     rd_expenditure_score,
@@ -152,6 +154,14 @@ _SCORES = {
     # year-over-year shape as asset_growth_score/dividend_growth_score.
     "net_stock_issuance": net_stock_issuance_score,
     "net_operating_assets": net_operating_assets_score,
+    # Session 36 continued additions -- Novy-Marx 2011 operating leverage
+    # and Titman, Wei & Xie 2004 abnormal corporate investment, both
+    # found by continuing this session's mining of the JKP "Global
+    # Factor Data Documentation" PDF per the account owner's "2번
+    # 진행해" instruction. Both fundamentals-only, single-paper-cited
+    # JKP constructions used directly (verified against the PDF).
+    "operating_leverage": operating_leverage_score,
+    "abnormal_investment": abnormal_investment_score,
     # Session 36 continued addition (ADR-0084) -- Foster, Olsen &
     # Shevlin 1984 Standardized Unexpected Earnings, fundamentals-only
     # (needs quarterly EarningsPerShareDiluted, no price data).

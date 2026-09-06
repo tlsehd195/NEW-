@@ -141,6 +141,15 @@ _DEFAULT_CONCEPTS = (
     # zero-extra-request justification as every earlier concept
     # addition above -- FY-only.
     "CashAndCashEquivalentsAtCarryingValue",
+    # Session 36 continued addition -- the 2 concepts
+    # `strategy_research.factor_scores.operating_leverage_score`
+    # (Novy-Marx 2011) and `abnormal_investment_score` (Titman, Wei &
+    # Xie 2004) need, found by continuing this session's mining of the
+    # JKP "Global Factor Data Documentation" PDF per the account owner's
+    # "2번 진행해" instruction. Same zero-extra-request justification as
+    # every earlier concept addition above -- FY-only.
+    "SellingGeneralAndAdministrativeExpense",
+    "PaymentsToAcquirePropertyPlantAndEquipment",
 )
 
 _REQUEST_DELAY_SECONDS = 0.3

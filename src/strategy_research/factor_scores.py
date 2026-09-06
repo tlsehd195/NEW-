@@ -2243,3 +2243,116 @@ def net_operating_assets_score(security_id: str, as_of_time: datetime, repositor
     long_term_debt = _fy_flow_or_zero(repository, security_id, "LongTermDebtNoncurrent", as_of_time)
     noa = (equity_record.value - cash_record.value + long_term_debt) / assets_record.value
     return -noa
+
+
+def operating_leverage_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Novy-Marx (2011)'s Operating Leverage anomaly
+    ("Operating Leverage," Review of Finance 15(1): 103-134): firms with
+    HIGHER fixed-cost intensity (operating expenses large relative to
+    total assets) bear more OPERATING risk -- their profits are more
+    sensitive to revenue fluctuations -- and are hypothesized to command
+    a HIGHER expected return as compensation. This is a POSITIVE risk-
+    return relation, the OPPOSITE sign convention from every other
+    "risk"-flavored factor already in this module (e.g. `leverage_score`,
+    where MORE financial leverage LOWERS the score, since it there
+    reflects lower quality rather than a priced risk premium). Novy-
+    Marx's own central finding is that this operating-leverage premium is
+    strongest when interacted with value, but the plain univariate
+    relation he documents is unconditionally positive.
+
+    Found by continuing this session's mining of the account owner's own
+    copy of Jensen, Kelly & Pedersen's "Global Factor Data Documentation"
+    PDF (the same source that corrected `net_operating_assets_score`'s
+    denominator earlier this session) per the account owner's "2번
+    진행해" instruction to keep searching that document's ~150-factor
+    catalogue for further candidates. JKP's own `opex_at` is a direct,
+    single-paper-cited (Novy-Marx 2011) construction -- unlike
+    `net_stock_issuance_score`/`net_operating_assets_score`, it needs no
+    original-paper workaround.
+
+    JKP's own formula: `opex_at = OPEX*_t / AT*_t`, where `OPEX* = COGS +
+    XSGA` is JKP's own STATED FALLBACK for when its preferred `XOPR`
+    (total operating expense) tag is unavailable -- this project has
+    never ingested `XOPR`, so this fallback form is used directly (the
+    same "use JKP's own documented fallback, not its preferred tag" shape
+    `net_operating_assets_score`'s own IVAO/DLC omissions already
+    followed). Needs ONE new XBRL concept, `SellingGeneralAndAdministrat
+    iveExpense` -- `CostOfGoodsAndServicesSold` and `Assets` are already
+    ingested for `gross_profitability_score`/`roa_score`.
+
+    Score is the RAW `opex_at` ratio (deliberately NOT negated, per the
+    positive risk-return relation stated above). `None` (never a
+    fabricated ratio) unless `CostOfGoodsAndServicesSold`,
+    `SellingGeneralAndAdministrativeExpense` and `Assets` are all known,
+    or `Assets` is non-positive."""
+    cogs_record = _latest_fiscal_year_value(repository, security_id, "CostOfGoodsAndServicesSold", as_of_time)
+    sga_record = _latest_fiscal_year_value(repository, security_id, "SellingGeneralAndAdministrativeExpense", as_of_time)
+    assets_record = _latest_fiscal_year_value(repository, security_id, "Assets", as_of_time)
+    if cogs_record is None or sga_record is None or assets_record is None:
+        return None
+    if assets_record.value <= 0:
+        return None
+    opex = cogs_record.value + sga_record.value
+    return opex / assets_record.value
+
+
+def abnormal_investment_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Titman, Wei & Xie (2004)'s Abnormal Corporate
+    Investment anomaly ("Capital Investments and Stock Returns," Journal
+    of Financial and Quantitative Analysis 39(4): 677-700): firms whose
+    capital expenditure has grown ABNORMALLY fast relative to their OWN
+    recent (3-fiscal-year trailing) capex-to-sales history earn
+    systematically LOWER subsequent returns, hypothesized to reflect
+    empire-building / overinvestment that the market only gradually
+    recognizes as value-destroying.
+
+    Found by continuing this session's mining of the JKP "Global Factor
+    Data Documentation" PDF per the account owner's "2번 진행해"
+    instruction. JKP's own `capex_abn` is a direct, single-paper-cited
+    (Titman, Wei & Xie 2004) construction, used here directly (verified
+    against the PDF's exact formula) rather than needing an original-
+    paper workaround.
+
+    JKP's own formula: `capex_abn_t = CAPX_SALE_t / avg(CAPX_SALE_{t-12},
+    CAPX_SALE_{t-24}, CAPX_SALE_{t-36}) - 1`, where `CAPX_SALE = CAPX /
+    SALE*`, sampled MONTHLY. This project substitutes annual fiscal-year
+    granularity for JKP's monthly sampling -- the same monthly-to-FY
+    substitution this module already makes throughout (e.g.
+    `residual_momentum_score`, `sue_score`) -- so `t-12/t-24/t-36`
+    (months) become the 3 fiscal years immediately prior to the current
+    one, and the current ratio is compared against their average. Needs
+    ONE new XBRL concept, `PaymentsToAcquirePropertyPlantAndEquipment`
+    (CAPX) -- `Revenues` (SALE*) is already ingested for
+    `sales_yield_score`/`gross_profitability_score`.
+
+    Score is the NEGATIVE of `capex_abn`, so a firm whose CURRENT
+    capex/sales ratio is abnormally HIGH relative to its own trailing
+    3-year average scores LOWER (matches this module's convention that a
+    higher score always ranks a security as more attractive). `None`
+    (never a fabricated ratio) unless at least 4 fiscal years with BOTH
+    `PaymentsToAcquirePropertyPlantAndEquipment` and `Revenues` already
+    known (matched by `period_end`) exist as of `as_of_time`, any of
+    those 4 years' `Revenues` is non-positive, or the trailing 3-year
+    average CAPX/SALE ratio is exactly zero."""
+    capex_records = _fy_records(repository, security_id, "PaymentsToAcquirePropertyPlantAndEquipment", as_of_time)
+    sales_records = _fy_records(repository, security_id, "Revenues", as_of_time)
+    if len(capex_records) < 4 or len(sales_records) < 4:
+        return None
+    capex_by_period = {r.period_end: r.value for r in capex_records}
+    sales_by_period = {r.period_end: r.value for r in sales_records}
+    common_periods = sorted(set(capex_by_period) & set(sales_by_period))
+    if len(common_periods) < 4:
+        return None
+    last_four_periods = common_periods[-4:]
+    ratios = []
+    for period in last_four_periods:
+        sales = sales_by_period[period]
+        if sales <= 0:
+            return None
+        ratios.append(capex_by_period[period] / sales)
+    current_ratio = ratios[-1]
+    trailing_average = sum(ratios[:-1]) / 3.0
+    if trailing_average == 0:
+        return None
+    capex_abn = current_ratio / trailing_average - 1.0
+    return -capex_abn

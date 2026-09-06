@@ -135,6 +135,7 @@ from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pb
 from ml.ml_strategy import MLStrategy, MLStrategyParameters, ridge_cv_builder  # noqa: E402
 from strategy_research.ensemble_strategy import RankAverageEnsembleParameters, RankAverageEnsembleStrategy  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
+    abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
     book_to_market_score,
@@ -152,6 +153,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     max_effect_score,
     net_operating_assets_score,
     net_stock_issuance_score,
+    operating_leverage_score,
     piotroski_f_score,
     quality_minus_junk_score,
     rd_expenditure_score,
@@ -286,6 +288,18 @@ _FUNDAMENTALS_FACTOR_CANDIDATES = (
     # walk-forward result exists for either, per RULE 0.8.
     ("net_stock_issuance", "Pontiff & Woodgate 2008 / Fama & French 2008 net stock issuance, fundamentals-only", net_stock_issuance_score),
     ("net_operating_assets", "Hirshleifer, Hou, Teoh & Zhang 2004 net operating assets, fundamentals-only", net_operating_assets_score),
+    # Session 36 continued -- Novy-Marx 2011 operating leverage and
+    # Titman, Wei & Xie 2004 abnormal corporate investment, both found
+    # by continuing this session's mining of the JKP "Global Factor Data
+    # Documentation" PDF per the account owner's "2번 진행해" instruction
+    # to keep searching that document's ~150-factor catalogue. Both are
+    # single-paper-cited JKP constructions used directly (verified
+    # against the PDF's exact formulas), unlike net_stock_issuance/
+    # net_operating_assets which needed an original-paper workaround.
+    # Wired in before any real walk-forward result exists for either,
+    # per RULE 0.8.
+    ("operating_leverage", "Novy-Marx 2011 operating leverage, fundamentals-only", operating_leverage_score),
+    ("abnormal_investment", "Titman, Wei & Xie 2004 abnormal corporate investment, fundamentals-only", abnormal_investment_score),
 )
 _HYBRID_FACTOR_CANDIDATES = (
     ("shareholder_yield", "O'Shaughnessy shareholder yield, fundamentals+price", shareholder_yield_score),

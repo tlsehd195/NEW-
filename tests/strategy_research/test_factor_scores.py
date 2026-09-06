@@ -27,6 +27,7 @@ from data_infra.universe import BENCHMARK_SYMBOL
 from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
 from strategy_research.factor_scores import (
+    abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
     book_to_market_score,
@@ -46,6 +47,7 @@ from strategy_research.factor_scores import (
     net_margin_score,
     net_operating_assets_score,
     net_stock_issuance_score,
+    operating_leverage_score,
     piotroski_f_score,
     quality_minus_junk_score,
     rd_expenditure_score,
@@ -2258,3 +2260,175 @@ class TestSueScore:
 
         score_with_superseded_entry = sue_score("AAA", _utc(2023, 2, 1), repo)
         assert score_with_superseded_entry == clean_score
+
+
+class TestOperatingLeverageScore:
+    """Session 36 continued -- Novy-Marx (2011)'s operating leverage
+    anomaly, found by continuing this session's mining of the JKP
+    "Global Factor Data Documentation" PDF. `opex_at = (COGS + XSGA) /
+    Assets`, RAW (not negated) since the paper's own relation is a
+    POSITIVE risk-return one -- the opposite sign convention from
+    `leverage_score`."""
+
+    def test_computes_opex_over_assets(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "sga", concept="SellingGeneralAndAdministrativeExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        # (60 + 20) / 200 = 0.4, RAW (not negated)
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) == pytest.approx(0.4)
+
+    def test_higher_operating_leverage_scores_higher_not_lower(self, tmp_path) -> None:
+        # The opposite sign convention from every other "risk" factor in
+        # this module -- Novy-Marx's own finding is a POSITIVE
+        # risk-return relation, so higher operating leverage must score
+        # HIGHER, not lower.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("LOW", "LOW:cogs", concept="CostOfGoodsAndServicesSold", value=10.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW", "LOW:sga", concept="SellingGeneralAndAdministrativeExpense", value=10.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW", "LOW:assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:sga", concept="SellingGeneralAndAdministrativeExpense", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        low_score = operating_leverage_score("LOW", _utc(2023, 6, 1), repo)
+        high_score = operating_leverage_score("HIGH", _utc(2023, 6, 1), repo)
+        assert high_score > low_score
+
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "sga", concept="SellingGeneralAndAdministrativeExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=0.0, period_end=_utc(2022, 12, 31)))
+
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_sga_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_cogs_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "sga", concept="SellingGeneralAndAdministrativeExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "sga", concept="SellingGeneralAndAdministrativeExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestAbnormalInvestmentScore:
+    """Session 36 continued -- Titman, Wei & Xie (2004)'s Abnormal
+    Corporate Investment anomaly, found by continuing this session's
+    mining of the JKP "Global Factor Data Documentation" PDF. `capex_abn
+    = CAPX_SALE_t / avg(CAPX_SALE 3 prior fiscal years) - 1`, NEGATED
+    (higher abnormal investment -> lower, less attractive score)."""
+
+    def _add_capex_and_sales(self, repo, security_id: str, capex_values, sales_values, start_year: int = 2020) -> None:
+        for offset, (capex, sales) in enumerate(zip(capex_values, sales_values)):
+            year = start_year + offset
+            repo.add_fundamental(_fy_record(
+                security_id, f"{security_id}:capex:{year}", concept="PaymentsToAcquirePropertyPlantAndEquipment",
+                value=capex, period_end=_utc(year, 12, 31),
+            ))
+            repo.add_fundamental(_fy_record(
+                security_id, f"{security_id}:sales:{year}", concept="Revenues",
+                value=sales, period_end=_utc(year, 12, 31),
+            ))
+
+    def test_computes_capex_abn_ratio(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        # capex/sales ratios: 2020=0.10, 2021=0.10, 2022=0.10, 2023=0.20
+        # trailing 3yr avg = 0.10, current = 0.20 -> capex_abn = 0.20/0.10 - 1 = 1.0
+        self._add_capex_and_sales(
+            repo, "AAA",
+            capex_values=[10.0, 10.0, 10.0, 20.0],
+            sales_values=[100.0, 100.0, 100.0, 100.0],
+        )
+
+        score = abnormal_investment_score("AAA", _utc(2024, 6, 1), repo)
+        assert score == pytest.approx(-1.0)
+
+    def test_below_trend_investment_produces_a_positive_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        # current ratio (0.05) BELOW the 0.10 trailing average -> capex_abn = -0.5 -> score = +0.5
+        self._add_capex_and_sales(
+            repo, "AAA",
+            capex_values=[10.0, 10.0, 10.0, 5.0],
+            sales_values=[100.0, 100.0, 100.0, 100.0],
+        )
+
+        score = abnormal_investment_score("AAA", _utc(2024, 6, 1), repo)
+        assert score == pytest.approx(0.5)
+
+    def test_fewer_than_four_fiscal_years_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        self._add_capex_and_sales(
+            repo, "AAA",
+            capex_values=[10.0, 10.0, 10.0],
+            sales_values=[100.0, 100.0, 100.0],
+        )
+
+        assert abnormal_investment_score("AAA", _utc(2024, 6, 1), repo) is None
+
+    def test_a_non_positive_sales_year_within_the_window_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        self._add_capex_and_sales(
+            repo, "AAA",
+            capex_values=[10.0, 10.0, 10.0, 20.0],
+            sales_values=[100.0, 100.0, 0.0, 100.0],
+        )
+
+        assert abnormal_investment_score("AAA", _utc(2024, 6, 1), repo) is None
+
+    def test_missing_capex_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for offset in range(4):
+            year = 2020 + offset
+            repo.add_fundamental(_fy_record(
+                "AAA", f"AAA:sales:{year}", concept="Revenues", value=100.0, period_end=_utc(year, 12, 31),
+            ))
+
+        assert abnormal_investment_score("AAA", _utc(2024, 6, 1), repo) is None
+
+    def test_a_not_yet_filed_latest_fiscal_year_is_excluded_point_in_time(self, tmp_path) -> None:
+        # As of an as_of_time before the 4th fiscal year's figures are
+        # filed, only 3 fiscal years are knowable -- must behave exactly
+        # like the 3-year case (None), never leak the future year's data.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        capex_values = [10.0, 10.0, 10.0, 20.0]
+        sales_values = [100.0, 100.0, 100.0, 100.0]
+        for offset, (capex, sales) in enumerate(zip(capex_values, sales_values)):
+            year = 2020 + offset
+            available_time = _utc(year + 2, 2, 1) if offset == 3 else _utc(year + 1, 2, 1)
+            repo.add_fundamental(_fy_record(
+                "AAA", f"AAA:capex:{year}", concept="PaymentsToAcquirePropertyPlantAndEquipment",
+                value=capex, period_end=_utc(year, 12, 31), available_time=available_time,
+            ))
+            repo.add_fundamental(_fy_record(
+                "AAA", f"AAA:sales:{year}", concept="Revenues",
+                value=sales, period_end=_utc(year, 12, 31), available_time=available_time,
+            ))
+
+        assert abnormal_investment_score("AAA", _utc(2023, 6, 1), repo) is None
