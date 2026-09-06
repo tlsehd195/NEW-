@@ -842,9 +842,15 @@ class TestNetOperatingAssetsScore:
     """Session 36 continued -- Hirshleifer, Hou, Teoh & Zhang 2004 net
     operating assets anomaly, found via a further GitHub/web search for
     borrowable strategies. `(StockholdersEquity - Cash +
-    LongTermDebtNoncurrent) / prior_fy_Assets`, algebraically equivalent
-    to `(Assets - Cash) - (Liabilities - LongTermDebtNoncurrent)` via the
-    balance-sheet identity `Assets - Liabilities == StockholdersEquity`."""
+    LongTermDebtNoncurrent) / Assets`, all from the SAME fiscal year --
+    algebraically equivalent to `(Assets - Cash) - (Liabilities -
+    LongTermDebtNoncurrent)` via the balance-sheet identity `Assets -
+    Liabilities == StockholdersEquity`. Denominator corrected to the
+    CONTEMPORANEOUS (not prior) fiscal year's Assets after the account
+    owner supplied JKP's own "Global Factor Data Documentation" PDF,
+    whose own `noa_at = NOA*_t / AT*_t` uses same-year scaling -- a real
+    RULE 0.8-compliant correction from better documentation, made before
+    any real IC result exists for this factor."""
 
     def test_computes_the_noa_ratio(self, tmp_path) -> None:
         engine = new_engine(tmp_path)
@@ -852,10 +858,9 @@ class TestNetOperatingAssetsScore:
         repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
         repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
         repo.add_fundamental(_fy_record("AAA", "ltd", concept="LongTermDebtNoncurrent", value=10.0, period_end=_utc(2022, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=150.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
 
-        # NOA = (60 - 20 + 10) / 100 (PRIOR fy assets) = 0.5 -> score = -0.5
+        # NOA = (60 - 20 + 10) / 100 (SAME fy assets) = 0.5 -> score = -0.5
         score = net_operating_assets_score("AAA", _utc(2023, 6, 1), repo)
         assert score == pytest.approx(-0.5)
 
@@ -864,8 +869,7 @@ class TestNetOperatingAssetsScore:
         repo = DuckDBFundamentalsRepository(engine)
         repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
         repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=150.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
 
         # NOA = (60 - 20 + 0) / 100 = 0.4 -> score = -0.4
         score = net_operating_assets_score("AAA", _utc(2023, 6, 1), repo)
@@ -876,12 +880,10 @@ class TestNetOperatingAssetsScore:
         repo = DuckDBFundamentalsRepository(engine)
         repo.add_fundamental(_fy_record("LOW", "LOW:eq", concept="StockholdersEquity", value=30.0, period_end=_utc(2022, 12, 31)))
         repo.add_fundamental(_fy_record("LOW", "LOW:cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
-        repo.add_fundamental(_fy_record("LOW", "LOW:assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
-        repo.add_fundamental(_fy_record("LOW", "LOW:assets_2022", concept="Assets", value=150.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW", "LOW:assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
         repo.add_fundamental(_fy_record("HIGH", "HIGH:eq", concept="StockholdersEquity", value=80.0, period_end=_utc(2022, 12, 31)))
         repo.add_fundamental(_fy_record("HIGH", "HIGH:cash", concept="CashAndCashEquivalentsAtCarryingValue", value=5.0, period_end=_utc(2022, 12, 31)))
-        repo.add_fundamental(_fy_record("HIGH", "HIGH:assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
-        repo.add_fundamental(_fy_record("HIGH", "HIGH:assets_2022", concept="Assets", value=150.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
 
         low_score = net_operating_assets_score("LOW", _utc(2023, 6, 1), repo)
         high_score = net_operating_assets_score("HIGH", _utc(2023, 6, 1), repo)
@@ -891,8 +893,7 @@ class TestNetOperatingAssetsScore:
         engine = new_engine(tmp_path)
         repo = DuckDBFundamentalsRepository(engine)
         repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=150.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
 
         assert net_operating_assets_score("AAA", _utc(2023, 6, 1), repo) is None
 
@@ -900,27 +901,24 @@ class TestNetOperatingAssetsScore:
         engine = new_engine(tmp_path)
         repo = DuckDBFundamentalsRepository(engine)
         repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=150.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
 
         assert net_operating_assets_score("AAA", _utc(2023, 6, 1), repo) is None
 
-    def test_only_one_fiscal_year_of_assets_returns_none(self, tmp_path) -> None:
+    def test_missing_assets_returns_none(self, tmp_path) -> None:
         engine = new_engine(tmp_path)
         repo = DuckDBFundamentalsRepository(engine)
         repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
         repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=150.0, period_end=_utc(2022, 12, 31)))
 
         assert net_operating_assets_score("AAA", _utc(2023, 6, 1), repo) is None
 
-    def test_zero_or_negative_prior_year_assets_returns_none(self, tmp_path) -> None:
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
         engine = new_engine(tmp_path)
         repo = DuckDBFundamentalsRepository(engine)
         repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
         repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=0.0, period_end=_utc(2021, 12, 31)))
-        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=150.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=0.0, period_end=_utc(2022, 12, 31)))
 
         assert net_operating_assets_score("AAA", _utc(2023, 6, 1), repo) is None
 

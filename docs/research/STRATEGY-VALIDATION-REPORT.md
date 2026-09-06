@@ -2738,6 +2738,19 @@ and 35th candidates) **before any real IC or walk-forward result exists
 for either** -- the same discipline every candidate in this document
 already follows. No real result recorded yet.
 
+**Correction (same session, ADR-0100 amendment)**: the account owner
+independently obtained and supplied `bkelly-lab/jkp-data`'s "Global
+Factor Data Documentation" PDF, resolving the earlier data-source
+limitation for `net_operating_assets_score`. Cross-checking against
+JKP's own verified `noa_at = NOA*_t / AT*_t` (same-fiscal-year scaling)
+found this factor's first draft had incorrectly scaled by the PRIOR
+fiscal year's `Assets` -- corrected to the SAME fiscal year, a genuine
+RULE 0.8-compliant fix from better documentation made before any real
+IC result existed for it. `net_stock_issuance_score` was cross-checked
+too and left unchanged -- it already follows the independently
+well-established Fama & French share-count convention, a legitimate
+measure distinct from JKP's own dollar-value alternative.
+
 ## Session 36 continued Addendum -- Return Seasonality and Short Interest Anomaly, wired blind (ADR-0099)
 
 The user's follow-up "후보들 진행" ("proceed with the candidates")

@@ -2183,36 +2183,40 @@ def net_operating_assets_score(security_id: str, as_of_time: datetime, repositor
     NET OPERATING ASSETS relative to total assets -- earn systematically
     LOWER subsequent returns, hypothesized because investors' limited
     attention overweights accounting operating performance relative to
-    the (less salient) cash flow it is actually backed by. Found via the
-    same further GitHub/web search as `net_stock_issuance_score` above,
-    also one of `bkelly-lab/ReplicationCrisis`'s 13 factor themes and
-    subject to the identical "cannot verify that repository's own exact
-    formula from this sandbox" limitation -- built instead from the
-    original Hirshleifer et al. construction.
+    the (less salient) cash flow it is actually backed by. Found via a
+    further GitHub/web search for borrowable strategies -- one of
+    `bkelly-lab/ReplicationCrisis`'s 13 factor themes.
 
-    NOA = Operating Assets (Total Assets minus Cash) minus Operating
-    Liabilities (Total Liabilities minus interest-bearing debt), scaled
-    by the PRIOR fiscal year's Total Assets (Hirshleifer et al.'s own
-    lagged-denominator convention, mirroring `asset_growth_score`'s own
-    year-over-year shape). Since `Assets - Liabilities ==
-    StockholdersEquity` by the balance-sheet identity, this project
-    computes the algebraically equivalent `(StockholdersEquity - Cash +
-    LongTermDebtNoncurrent) / prior_fy_Assets`.
+    **Construction verified against the account owner's own copy of
+    Jensen, Kelly & Pedersen's "Global Factor Data Documentation" PDF**
+    (supplied after this factor's first draft, corrected here before any
+    real IC result exists for it -- a genuine RULE 0.8-compliant
+    correction from better documentation, not empirical tuning): JKP's
+    own `noa_at = NOA*_t / AT*_t`, where `NOA* = OA* - OL*`, `OA* = AT* -
+    CHE - IVAO` (total assets minus cash minus other investments/
+    advances) and `OL* = LT - DLC - DLTT` (total liabilities minus
+    short-term debt minus long-term debt) -- both scaled by the SAME
+    (contemporaneous, not lagged) fiscal year's Total Assets. This
+    project's FIRST DRAFT of this factor (before the documentation was
+    available) instead scaled by the PRIOR fiscal year's Assets,
+    incorrectly recalling Hirshleifer et al.'s own convention as lagged
+    -- fixed here to match the now-verified contemporaneous denominator.
 
-    **Two documented simplifications of the original paper's own 5/6-line
-    -item construction, decided BEFORE any result exists (RULE 0.8),
-    matching this module's existing precedent for similar shortcuts**:
-    (1) "interest-bearing debt" uses only `LongTermDebtNoncurrent`
-    (already ingested for `piotroski_f_score`), never a separate
-    short-term-debt concept this project does not ingest -- the same
-    simplification `leverage_score` already makes by using total
-    `Liabilities` rather than a full debt breakdown. (2) minority
-    interest and preferred stock (present in Hirshleifer et al.'s own
-    formula) are omitted entirely rather than approximated -- most
-    large-cap non-financial names in this project's universe carry
-    neither in material size, and `piotroski_f_score`/`leverage_score`
-    already omit them from their own balance-sheet ratios for the same
-    reason.
+    Substituting `AT* - LT == StockholdersEquity` (the balance-sheet
+    identity) into JKP's own `OA* - OL*` expansion gives the
+    algebraically equivalent `StockholdersEquity - CHE - IVAO + DLC +
+    DLTT`, scaled by the SAME fiscal year's `Assets`. This project
+    computes `(StockholdersEquity - Cash + LongTermDebtNoncurrent) /
+    Assets` (same fiscal year for all three) -- two documented gaps
+    versus JKP's own full construction, decided BEFORE any result exists
+    (RULE 0.8): (1) `IVAO` (other investments/advances) is omitted --
+    this project has no XBRL concept for it, and it is immaterial for
+    most large-cap non-financial names, the same materiality argument
+    `piotroski_f_score`/`leverage_score` already make for their own
+    balance-sheet simplifications; (2) `DLC` (short-term interest-bearing
+    debt) is omitted for the identical reason -- `leverage_score` already
+    simplifies its own debt figure the same way, using total `Liabilities`
+    rather than a full debt breakdown.
 
     **Needs one new XBRL concept beyond what any existing factor in this
     module ingests**: `CashAndCashEquivalentsAtCarryingValue`, added to
@@ -2224,22 +2228,18 @@ def net_operating_assets_score(security_id: str, as_of_time: datetime, repositor
     more attractive) net-operating-assets level produces a HIGHER
     score, matching this module's convention. `None` (never a
     fabricated ratio) unless `StockholdersEquity`, `CashAndCashEquivalents
-    AtCarryingValue`, and at least two distinct fiscal years' `Assets`
-    are all known, or the prior fiscal year's `Assets` is non-positive.
-    `LongTermDebtNoncurrent` reads as `0.0` (never `None`) when absent --
-    the same `_fy_flow_or_zero`-style reasoning already applied to
-    `shareholder_yield_score`'s own concepts: a company with no
-    long-term debt tag simply has none, a real `$0`, not a data gap."""
+    AtCarryingValue`, and `Assets` are all known, or `Assets` is
+    non-positive. `LongTermDebtNoncurrent` reads as `0.0` (never `None`)
+    when absent -- the same `_fy_flow_or_zero`-style reasoning already
+    applied to `shareholder_yield_score`'s own concepts: a company with
+    no long-term debt tag simply has none, a real `$0`, not a data gap."""
     equity_record = _latest_fiscal_year_value(repository, security_id, "StockholdersEquity", as_of_time)
     cash_record = _latest_fiscal_year_value(repository, security_id, "CashAndCashEquivalentsAtCarryingValue", as_of_time)
-    if equity_record is None or cash_record is None:
+    assets_record = _latest_fiscal_year_value(repository, security_id, "Assets", as_of_time)
+    if equity_record is None or cash_record is None or assets_record is None:
         return None
-    asset_records = _fy_records(repository, security_id, "Assets", as_of_time)
-    if len(asset_records) < 2:
-        return None
-    prior_assets = asset_records[-2].value
-    if prior_assets <= 0:
+    if assets_record.value <= 0:
         return None
     long_term_debt = _fy_flow_or_zero(repository, security_id, "LongTermDebtNoncurrent", as_of_time)
-    noa = (equity_record.value - cash_record.value + long_term_debt) / prior_assets
+    noa = (equity_record.value - cash_record.value + long_term_debt) / assets_record.value
     return -noa

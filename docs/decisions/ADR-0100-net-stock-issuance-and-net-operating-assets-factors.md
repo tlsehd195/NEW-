@@ -91,3 +91,37 @@ simplification above.
 `test_run_long_horizon_validation_factor_wiring.py`'s `_EXPECTED_NAMES`
 extended to 31 names across 6 candidate tables. Full suite re-run: 2601
 tests pass (up from 2589 after ADR-0099).
+
+## Amendment (same session): denominator correction from real documentation
+
+The account owner independently obtained and supplied `bkelly-lab/jkp-data`
+(the Python successor to `ReplicationCrisis`) and its "Global Factor Data
+Documentation" PDF -- resolving the data-source limitation stated above
+for one of the two factors. Cross-checking `net_operating_assets_score`
+against JKP's own verified `noa_at = NOA*_t / AT*_t` formula (both
+numerator and denominator from the SAME fiscal year) found a real
+discrepancy: this ADR's original implementation scaled by the PRIOR
+fiscal year's `Assets`, based on this project's own unverified recollection
+of Hirshleifer et al.'s denominator convention. **Corrected to scale by
+the SAME (contemporaneous) fiscal year's `Assets`** -- a genuine RULE
+0.8-compliant fix from better documentation, made before any real IC
+result existed for this factor, not empirical tuning. This also
+simplified the implementation: no second fiscal year of `Assets` is
+needed anymore, so the function now reads `Assets` via
+`_latest_fiscal_year_value` like every other single-period ratio in this
+module, rather than `_fy_records`.
+
+Cross-checking also confirmed the two simplifications already stated
+above are the correct two gaps versus JKP's own fuller construction
+(`OA* = AT* - CHE - IVAO`, `OL* = LT - DLC - DLTT`): this project omits
+`IVAO` (other investments/advances -- no XBRL concept ingested for it)
+and `DLC` (short-term debt -- same simplification `leverage_score`
+already makes), not literally "minority interest/preferred stock" as
+originally described -- the docstring is corrected to name the two real
+omitted terms precisely. `net_stock_issuance_score` was left unchanged:
+it already follows Fama & French's own well-established share-count
+convention, a legitimate, independently-citable measure distinct from
+(not superseded by) JKP's own dollar-value `eqnetis*` alternative.
+
+Tests updated to match (`TestNetOperatingAssetsScore` no longer needs a
+two-fiscal-year `Assets` fixture); full suite re-run, all tests pass.

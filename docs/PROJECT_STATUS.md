@@ -17,6 +17,8 @@
 
 사용자가 코드스페이스에서 `compute_signal_ic_from_catalog.py --strategy rs_rating` 실제 실행 → 실측 결과 수신(2010-01-01~2023-04-28, 80 리밸런스일, 73 관측치): mean_ic=-0.0053, ic_information_ratio=-0.0202, positive_ic_ratio=50.68% — 사실상 0에 가깝고 미세하게 음수, O'Neil/IBD의 "최근 강세 지속" 가설을 뒷받침 안 함, positive_ic_ratio도 동전 던지기 수준(51%)이라 약한 신호가 아니라 노이즈로 해석. ADR-0051 선례대로 이 raw IC 하나만으로 후보를 제외하거나 구성을 수정하지 않고, 이미 배선된 그대로 `run_long_horizon_validation.py`의 전체 walk-forward/PBO/DSR 파이프라인에서 최종 판단하도록 둠(RULE 0.8).
 
+사용자가 `bkelly-lab/ReplicationCrisis`/`bkelly-lab/jkp-data`(파이썬 후속 버전)를 직접 GitHub에서 찾아 링크로 전달 → jkp-data 저장소 자체엔 공식 없었지만, 그 안에서 링크된 "Global Factor Data Documentation" PDF를 WebFetch로 받아 pdftotext로 직접 읽어서(이 세션이 poppler-utils 설치) 153개 팩터 정확한 공식 확보 성공. 이걸로 `net_operating_assets_score`를 실제로 검증해보니 오류 발견: 분모를 "전기(prior) 회계연도 Assets"로 계산했었는데, JKP 공식 문서의 실제 정의(`noa_at = NOA*_t / AT*_t`)는 분자·분모 둘 다 "같은(당기) 회계연도"를 쓰는 걸로 확인 — 이건 실측 결과를 보고 고친 게 아니라 더 나은 문서를 확보해서 고친 순수한 공식 검증/수정이라 RULE 0.8 위반 아님. 분모를 당기 Assets로 수정(코드도 2개년 조회 불필요해져서 단순해짐), 문서상 실제로 빠진 두 항목도 정확히 특정(원래 "소수지분/우선주"라고 잘못 적었던 걸 "IVAO(기타 투자)"와 "DLC(단기부채)"로 정정 — leverage_score와 동일한 단순화 논리). `net_stock_issuance_score`는 대조 결과 문제없음(Fama-French 방식이 JKP의 달러 기준 방식과 다르지만 둘 다 독립적으로 타당한 별개 척도라 그대로 둠). 테스트 수정 후 전체 스위트 재통과.
+
 ---
 
 ## raw IC 스크리닝 20개 전체 완료 (Session 36, 2026-09-03) — 편입 판단은 아래 "다음 결정" 섹션 참고
