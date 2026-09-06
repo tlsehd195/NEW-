@@ -35,6 +35,7 @@ from strategy_research.factor_scores import (
     cash_holdings_score,
     cashflow_yield_score,
     combined_factor_score,
+    coskewness_score,
     dividend_growth_score,
     downside_beta_score,
     earnings_yield_score,
@@ -532,6 +533,61 @@ class TestDownsideBetaScore:
         data = _view(repo, as_of_time)
 
         assert downside_beta_score("NOBENCH", as_of_time, data) is None
+
+
+class TestCoskewnessScore:
+    """Session 36 continued (전략 더 찾아봐, 논문쪽에서 S급) -- Harvey &
+    Siddique (2000)'s coskewness. Score is the NEGATIVE of the
+    standardized `E[e_i * e_m^2] / sqrt(Var(e_i) * Var(e_m))` coefficient
+    -- negative coskewness (co-moves negatively with the market's own
+    squared excess return) is more attractive, per the paper's own
+    "negative coskewness earns a higher return" finding."""
+
+    def test_a_negative_coskewness_security_scores_higher_than_a_positive_coskewness_security(self) -> None:
+        # NEGCOSKEW tanks specifically on days SPY makes a LARGE move
+        # (in either direction) -- its return picks up an extra
+        # -0.5*spy_return^2 term, so it co-moves NEGATIVELY with SPY's
+        # own squared excess return (negative coskewness). POSCOSKEW is
+        # the mirror image (+0.5*spy_return^2, positive coskewness).
+        # Both realize the identical SPY path, isolating the coskewness
+        # sign alone.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.05 * math.sin(i / 6.0)) for i in range(len(days))]
+        negcoskew_closes = [spy_closes[0]]
+        poscoskew_closes = [spy_closes[0]]
+        for i in range(1, len(days)):
+            spy_return = spy_closes[i] / spy_closes[i - 1] - 1.0
+            negcoskew_closes.append(negcoskew_closes[-1] * (1.0 + spy_return - 0.5 * spy_return ** 2))
+            poscoskew_closes.append(poscoskew_closes[-1] * (1.0 + spy_return + 0.5 * spy_return ** 2))
+        extra_bars = list(make_bars("NEGCOSKEW", days, negcoskew_closes)) + list(make_bars("POSCOSKEW", days, poscoskew_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        neg_score = coskewness_score("NEGCOSKEW", as_of_time, data)
+        pos_score = coskewness_score("POSCOSKEW", as_of_time, data)
+
+        assert neg_score is not None and pos_score is not None
+        assert neg_score > pos_score  # negative coskewness -> higher (more attractive) score
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 15))  # far fewer than the 20-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 1, 15), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 14)
+        data = _view(repo, as_of_time)
+
+        assert coskewness_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert coskewness_score("NOBENCH", as_of_time, data) is None
 
 
 class TestHighVolumeReturnPremiumScore:

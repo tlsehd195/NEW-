@@ -644,6 +644,96 @@ def downside_beta_score(
     return covariance / downside_variance
 
 
+def coskewness_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- Harvey & Siddique (2000, "Conditional Skewness in
+    Asset Pricing Tests," The Journal of Finance 55(3): 1263-1295): one
+    of the most-cited papers in the asset-pricing literature (an
+    explicit "S-tier" request from the account owner, "논문쪽에서 S급이라
+    판단되는 것들로", after this session had already mined a long tail of
+    single-paper anomalies). Investors with non-increasing absolute risk
+    aversion prefer POSITIVE skewness and are averse to NEGATIVE
+    skewness; a stock whose returns covary NEGATIVELY with the
+    market's own squared excess return (negative coskewness -- it makes
+    the investor's overall portfolio distribution more left-skewed, a
+    less desirable shape) is hypothesized to earn a HIGHER subsequent
+    return as compensation, while positive coskewness (the stock
+    improves portfolio skewness) commands a valuation premium and thus a
+    LOWER subsequent return. The original paper's own long-short
+    coskewness factor earned 3.60%/year in its sample. Formula verified
+    against a primary source (the paper's own author's institutional
+    page, people.duke.edu/~charvey) rather than reconstructed from
+    memory alone, per this module's established citation-verification
+    discipline (the same standard already applied to the Corwin-Schultz
+    estimator this session).
+
+    **A genuinely different construct from every other co-movement or
+    shape statistic already in this module**: `low_beta_score`/
+    `downside_beta_score` are LINEAR co-movement with the market (first
+    moment, Cov/Var); `idiosyncratic_skewness_score` is the SHAPE of a
+    security's own residual distribution in isolation (no market
+    co-movement information at all); this factor is co-movement between
+    a security's own returns and the market's SQUARED excess return --
+    a third-moment cross term distinct from all of the above. A security
+    can have a defensive (low) beta yet still have strongly negative
+    coskewness (crashes hard specifically alongside big market moves in
+    either direction), or vice versa, so this score can and does
+    disagree with every other risk factor here on an individual
+    security.
+
+    Per the verified formula: `CSK_i = E[e_i * e_m^2] / sqrt(Var(e_i) *
+    Var(e_m))`, where `e_i`/`e_m` are the security's and the benchmark's
+    own demeaned excess returns over the trailing window (population,
+    not sample, moments, matching the primary source's own `1/T`
+    normalization exactly). **A deliberate simplification of the
+    original paper's own estimator, flagged the same way `low_beta_score`/
+    `downside_beta_score` flag theirs**: the original paper uses MONTHLY
+    returns over a rolling multi-year window; this implementation uses
+    DAILY returns over the trailing `lookback_days` (default 252, ~1
+    trading year), the same daily-proxy-for-a-longer-horizon-measure
+    simplification `low_beta_score`/`downside_beta_score` already make
+    for their own market-co-movement estimators, needing zero new data.
+
+    Score is the NEGATIVE of `CSK_i` (higher score = more negative
+    coskewness = more attractive, matching this module's convention and
+    the paper's own "negative coskewness earns a higher return"
+    finding). Needs at least 20 paired daily observations (matching
+    `low_beta_score`'s own floor) and non-zero variance in both series;
+    `None` below that."""
+    padded_days = int(lookback_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 21:
+        return None
+    security_returns = compute_returns([security_closes[d] for d in common_dates])
+    benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    if len(security_returns) < 20 or len(security_returns) != len(benchmark_returns):
+        return None
+    n = len(security_returns)
+    security_mean = sum(security_returns) / n
+    benchmark_mean = sum(benchmark_returns) / n
+    security_demeaned = [s - security_mean for s in security_returns]
+    benchmark_demeaned = [b - benchmark_mean for b in benchmark_returns]
+    numerator = sum(ei * (em ** 2) for ei, em in zip(security_demeaned, benchmark_demeaned)) / n
+    security_variance = sum(ei ** 2 for ei in security_demeaned) / n
+    benchmark_variance = sum(em ** 2 for em in benchmark_demeaned) / n
+    denominator = (security_variance * benchmark_variance) ** 0.5
+    if denominator == 0:
+        return None
+    coskewness = numerator / denominator
+    return -coskewness
+
+
 def high_volume_return_premium_score(
     security_id: str, as_of_time: datetime, data: AsOfDataView, *, recent_days: int = 5, baseline_days: int = 50,
 ) -> Optional[float]:

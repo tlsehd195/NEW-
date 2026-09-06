@@ -72,6 +72,7 @@ from storage.engine import StorageEngine  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
     bid_ask_spread_score,
+    coskewness_score,
     downside_beta_score,
     fifty_two_week_high_score,
     high_volume_return_premium_score,
@@ -146,6 +147,11 @@ _PRICE_ONLY_SCORES = {
     # needing zero new data. Wired in before any real IC result exists,
     # per RULE 0.8.
     "high_volume_return_premium": high_volume_return_premium_score,
+    # Session 36 continued (전략 더 찾아봐, 논문쪽에서 S급) -- Harvey &
+    # Siddique 2000 coskewness, one of the most-cited papers in the
+    # asset-pricing literature, price-only, needing zero new data. Wired
+    # in before any real IC result exists, per RULE 0.8.
+    "coskewness": coskewness_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 

@@ -3046,6 +3046,35 @@ cross-sectional) and `run_long_horizon_validation.py` (`_EXPECTED_
 NAMES` extended to 42) before any real result exists. No real result
 recorded yet for any of the three.
 
+## Session 36 continued Addendum -- Coskewness, an explicit "S-tier" paper request (ADR-0107)
+
+The account owner asked specifically for top-tier, canonical papers
+this round ("전략 더 찾아봐 논문쪽에서 s급이라 판단되는 것들로"), rather than
+continuing the long tail of single-paper anomalies. Most genuinely
+canonical asset-pricing papers are already represented in this
+project's 42 existing factors; **Harvey & Siddique (2000), "Conditional
+Skewness in Asset Pricing Tests," The Journal of Finance 55(3):
+1263-1295** -- one of the most-cited papers in the literature -- was a
+genuinely distinct gap. Formula verified against a primary source (the
+paper's own author's institutional page, people.duke.edu/~charvey):
+`CSK_i = E[e_i * e_m^2] / sqrt(Var(e_i) * Var(e_m))`, where `e_i`/`e_m`
+are demeaned excess returns. Negative coskewness (worsens portfolio
+skewness) earns a return premium; the score is the NEGATIVE of `CSK_i`,
+matching this module's convention.
+
+Distinct from every other risk factor already here: `low_beta_score`/
+`downside_beta_score` are linear market co-movement (first moment);
+`idiosyncratic_skewness_score` is a security's OWN residual shape (no
+market co-movement); coskewness is co-movement with the market's
+SQUARED excess return -- a third-moment cross term. Price-only, needs
+zero new data (daily-returns-over-1-year simplification of the
+original paper's monthly/multi-year estimator, the same simplification
+`low_beta_score`/`downside_beta_score` already make).
+
+Wired into `compute_signal_ic_from_catalog.py` and `run_long_horizon_
+validation.py` (`_EXPECTED_NAMES` extended to 43) before any real
+result exists. No real result recorded yet.
+
 ## Outstanding real results not yet received (tracked so they are not lost)
 
 Two real-data runs remain outstanding in the account owner's own
@@ -3067,8 +3096,9 @@ later, not blocking):
    `abnormal_investment`, `cash_holdings`, `bid_ask_spread`,
    `institutional_ownership_change`, `idiosyncratic_skewness`,
    `downside_beta`, `share_turnover`, `high_volume_return_premium`,
-   `asset_turnover_change`, `industry_momentum`) -- not yet executed for
-   real against the account owner's own DuckDB catalogs.
+   `asset_turnover_change`, `industry_momentum`, `coskewness`) -- not
+   yet executed for real against the account owner's own DuckDB
+   catalogs.
 3. **`institutional_ownership_change_score` needs its own new data
    acquisition first** -- unlike every other pending factor above (a
    re-run of an existing pipeline), this one needs the account owner to

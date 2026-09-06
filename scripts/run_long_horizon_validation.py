@@ -145,6 +145,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     cash_holdings_score,
     cashflow_yield_score,
     combined_factor_score,
+    coskewness_score,
     dividend_growth_score,
     downside_beta_score,
     earnings_yield_score,
@@ -298,6 +299,11 @@ _PRICE_FACTOR_CANDIDATES = (
     # needing zero new data. Wired in before any real walk-forward
     # result exists, per RULE 0.8.
     ("high_volume_return_premium", "Gervais, Kaniel & Mingelgrin 2001 high-volume return premium, price+volume", high_volume_return_premium_score),
+    # Session 36 continued (전략 더 찾아봐, 논문쪽에서 S급) -- Harvey &
+    # Siddique 2000 coskewness, one of the most-cited papers in the
+    # asset-pricing literature, price-only, needing zero new data. Wired
+    # in before any real walk-forward result exists, per RULE 0.8.
+    ("coskewness", "Harvey & Siddique 2000 coskewness, price-only", coskewness_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),
