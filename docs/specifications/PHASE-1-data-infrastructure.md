@@ -255,6 +255,8 @@ Optional / where applicable:
 
 ```
 adjusted_close     # see §5.2 — adjustment semantics must be explicit
+adjusted_high      # Session 36 continued addition, same §5.2 semantics
+adjusted_low       # Session 36 continued addition, same §5.2 semantics
 vwap
 trade_count
 currency
@@ -283,6 +285,16 @@ change over time as new corporate actions occur after it. This is why:
   first-class, separately versioned data specifically so that
   adjustment logic is auditable and reproducible rather than trusted
   blindly from a vendor field.
+
+`adjusted_high`/`adjusted_low` (added Session 36 continued) carry the
+identical semantics above, applied to the day's high/low instead of its
+close. Added specifically because `strategy_research.factor_scores.
+bid_ask_spread_score`'s Corwin & Schultz (2012) estimator cross-compares
+ONE day's high/low against the ADJACENT day's -- a comparison of price
+LEVELS, not of returns, which `adjusted_close` alone cannot make safe
+across an unadjusted split boundary. No earlier factor in this project
+ever needed a cross-day comparison of price levels (only of returns),
+which is why these two fields did not exist before that factor did.
 
 ### 5.3 OHLC invariants (enforced by the Data Quality Framework, §13)
 

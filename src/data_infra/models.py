@@ -105,7 +105,9 @@ class SecurityMaster:
 class PriceBar:
     """A single OHLCV bar. See Phase 1 spec section 5 for field semantics,
     especially section 5.2 for what ``adjusted_close`` does and does not
-    mean."""
+    mean -- the same "raw is truth, adjusted is a separate optional view,
+    never substituted" discipline applies identically to
+    ``adjusted_high``/``adjusted_low`` below."""
 
     security_id: str
     timestamp: datetime  # start of the bar's period, per spec section 10
@@ -118,6 +120,21 @@ class PriceBar:
     ingestion_time: datetime
     provenance: Provenance
     adjusted_close: Optional[float] = None
+    # Session 36 continued addition -- needed to correctly implement a
+    # Corwin & Schultz (2012) high-low bid-ask spread estimator
+    # (`strategy_research.factor_scores.bid_ask_spread_score`), whose own
+    # 2-day "gamma" term cross-compares one day's high/low against the
+    # NEXT day's -- if either day's raw high/low straddled an
+    # unadjusted stock split, that comparison mixes two different price
+    # scales and produces a spurious, wildly wrong estimate. `close` has
+    # always had this same "raw vs. adjusted" split via `adjusted_close`;
+    # `high`/`low` never did, since no earlier factor in this module
+    # needed a cross-day comparison of price LEVELS (only of returns,
+    # for which `adjusted_close` already suffices). Optional and never
+    # fabricated -- `None` for any provider that does not supply it
+    # (e.g. `StooqDataProvider`, which supplies raw prices only).
+    adjusted_high: Optional[float] = None
+    adjusted_low: Optional[float] = None
     vwap: Optional[float] = None
     trade_count: Optional[int] = None
     currency: Optional[str] = None

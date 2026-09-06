@@ -91,6 +91,34 @@ class TestNormalize:
         assert bar.ingestion_time == utc(2024, 1, 3)
         assert bar.provenance.retrieved_at == utc(2024, 1, 3)
 
+    def test_normalize_parses_adjusted_high_and_low_from_the_same_response(self, monkeypatch) -> None:
+        # Session 36 continued -- Tiingo's EOD response already carries
+        # adjHigh/adjLow alongside adjClose in the same response already
+        # fetched above; zero new network requests.
+        provider, _ = _provider([], monkeypatch)
+        raw = [{
+            "date": "2024-01-02T00:00:00.000Z", "security_id": "AAPL", "_fetched_as_of": utc(2024, 1, 3),
+            "open": "185.0", "high": "186.0", "low": "184.0", "close": "185.5", "volume": "1000000",
+            "adjClose": "92.75", "adjHigh": "93.0", "adjLow": "92.0",
+        }]
+        bars = provider.normalize("AAPL", raw)
+        bar = bars[0]
+        assert bar.high == 186.0  # raw, unadjusted -- never overwritten
+        assert bar.low == 184.0
+        assert bar.adjusted_high == 93.0
+        assert bar.adjusted_low == 92.0
+
+    def test_normalize_leaves_adjusted_high_low_none_when_the_response_omits_them(self, monkeypatch) -> None:
+        provider, _ = _provider([], monkeypatch)
+        raw = [{
+            "date": "2024-01-02T00:00:00.000Z", "security_id": "AAPL", "_fetched_as_of": utc(2024, 1, 3),
+            "open": "185.0", "high": "186.0", "low": "184.0", "close": "185.5", "volume": "1000000",
+            "adjClose": "185.5",
+        }]
+        bars = provider.normalize("AAPL", raw)
+        assert bars[0].adjusted_high is None
+        assert bars[0].adjusted_low is None
+
     def test_data_version_is_stable_across_different_fetched_as_of_values(self, monkeypatch) -> None:
         """The same real-world bar, re-ingested on a later run (a
         different `_fetched_as_of`), must produce the same

@@ -71,6 +71,7 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
+    bid_ask_spread_score,
     fifty_two_week_high_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
@@ -120,6 +121,15 @@ _PRICE_ONLY_SCORES = {
     # found via the same GitHub/web search. Wired in before any real IC
     # result exists, per RULE 0.8.
     "return_seasonality": return_seasonality_score,
+    # Session 36 continued -- Amihud & Mendelson 1986 bid-ask spread
+    # anomaly, measured via the Corwin & Schultz 2012 estimator, found
+    # while continuing to review OpenSourceAP/CrossSection's predictor
+    # catalogue per the account owner's "1 2 실행" instruction. Needs
+    # PriceBar.adjusted_high/.adjusted_low (added this session) --
+    # returns None for any security whose bars lack them (e.g.
+    # Stooq-sourced). Wired in before any real IC result exists, per
+    # RULE 0.8.
+    "bid_ask_spread": bid_ask_spread_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 

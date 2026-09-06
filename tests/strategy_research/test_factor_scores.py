@@ -30,6 +30,7 @@ from strategy_research.factor_scores import (
     abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
+    bid_ask_spread_score,
     book_to_market_score,
     cash_holdings_score,
     cashflow_yield_score,
@@ -2488,3 +2489,96 @@ class TestCashHoldingsScore:
         repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=30.0, period_end=_utc(2022, 12, 31)))
 
         assert cash_holdings_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestBidAskSpreadScore:
+    """Session 36 continued -- Amihud & Mendelson (1986)'s bid-ask
+    spread anomaly, measured via the Corwin & Schultz (2012) high-low
+    estimator. RAW (not negated), the same sign situation
+    `illiquidity_score` already documents. The one factor in this module
+    needing `adjusted_high`/`adjusted_low` (added this session) rather
+    than raw `high`/`low`, since its `gamma` term cross-compares
+    adjacent days' price LEVELS -- an unadjusted split between them
+    would corrupt the estimate."""
+
+    def test_computes_the_average_daily_spread_estimate(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        adj_highs = [102.0] * len(days)
+        adj_lows = [98.0] * len(days)
+        bars = make_bars("AAA", days, closes, adjusted_highs=adj_highs, adjusted_lows=adj_lows)
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        # Every consecutive-day pair has an identical 102/98 high/low
+        # band -- the Corwin-Schultz estimator's own closed-form
+        # reduces, in this constant-band case, to ln(102/98) ~ 0.04.
+        score = bid_ask_spread_score("AAA", as_of_time, data)
+        assert score == pytest.approx(0.04, rel=1e-3)
+
+    def test_a_wider_high_low_band_scores_higher_not_lower(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        tight_bars = make_bars("TIGHT", days, closes, adjusted_highs=[101.0] * len(days), adjusted_lows=[99.0] * len(days))
+        wide_bars = make_bars("WIDE", days, closes, adjusted_highs=[110.0] * len(days), adjusted_lows=[90.0] * len(days))
+        repo = InMemoryDataRepository(bars=list(tight_bars) + list(wide_bars))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        tight_score = bid_ask_spread_score("TIGHT", as_of_time, data)
+        wide_score = bid_ask_spread_score("WIDE", as_of_time, data)
+
+        assert tight_score is not None and wide_score is not None
+        assert wide_score > tight_score  # wider (less liquid) spread -> higher (more attractive) score, RAW not negated
+
+    def test_ignores_raw_high_low_uses_only_adjusted(self) -> None:
+        # Raw high/low set to an absurd, wildly different band (as if an
+        # unadjusted split sat in the window) -- the score must come out
+        # identical to the constant 102/98 adjusted band case above,
+        # proving raw high/low is never read by this factor at all.
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        bars = make_bars(
+            "AAA", days, closes,
+            highs=[1_000_000.0] * len(days), lows=[1.0] * len(days),
+            adjusted_highs=[102.0] * len(days), adjusted_lows=[98.0] * len(days),
+        )
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        score = bid_ask_spread_score("AAA", as_of_time, data)
+        assert score == pytest.approx(0.04, rel=1e-3)
+
+    def test_missing_adjusted_high_low_returns_none(self) -> None:
+        # The default make_bars() output (no adjusted_highs/lows passed)
+        # -- the same gap StooqDataProvider-sourced bars would have.
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        bars = make_bars("AAA", days, closes)
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert bid_ask_spread_score("AAA", as_of_time, data) is None
+
+    def test_fewer_than_12_valid_daily_estimates_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 15))  # far fewer than 12 daily pairs
+        closes = [100.0] * len(days)
+        bars = make_bars("AAA", days, closes, adjusted_highs=[102.0] * len(days), adjusted_lows=[98.0] * len(days))
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert bid_ask_spread_score("AAA", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        bars = make_bars("AAA", days, closes, adjusted_highs=[102.0] * len(days), adjusted_lows=[98.0] * len(days))
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert bid_ask_spread_score("NONEXISTENT", as_of_time, data) is None

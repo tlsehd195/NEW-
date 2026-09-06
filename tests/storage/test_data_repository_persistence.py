@@ -188,3 +188,65 @@ class TestPersistenceAndRestart:
         assert before == ["AAA"]
         assert after == ["BBB"]
         engine.close()
+
+
+class TestPriceBarSchemaEvolution:
+    """Session 36 continued -- `adjusted_high`/`adjusted_low` were added
+    to `PriceBar`/`PRICE_BAR_COLUMNS` this session. A Parquet file
+    written by an EARLIER version of this code (before those two
+    columns existed) has a genuinely different Arrow schema, not just
+    NULLs in those columns -- proves `union_by_name=true` (added to
+    every `read_parquet(...)` call in `data_repository.py` alongside
+    this column addition) lets that old file and a newly-written one
+    coexist in the same glob without error, so an account owner's
+    already-ingested real data is never broken by this additive schema
+    change."""
+
+    @staticmethod
+    def _write_old_schema_parquet_file(price_bars_dir, bar: PriceBar) -> None:
+        """Writes one bar using the OLD (pre-this-session) column set --
+        `PRICE_BAR_COLUMNS` minus `adjusted_high`/`adjusted_low` --
+        simulating a real file already on disk from before this
+        session's schema change."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from storage.serialization import PRICE_BAR_COLUMNS, price_bar_to_row
+
+        old_columns = tuple(c for c in PRICE_BAR_COLUMNS if c not in ("adjusted_high", "adjusted_low"))
+        row = price_bar_to_row(bar)
+        table = pa.Table.from_pylist([{c: row.get(c) for c in old_columns}])
+        price_bars_dir.mkdir(parents=True, exist_ok=True)
+        pq.write_table(table, price_bars_dir / "part-old-schema.parquet")
+
+    def test_old_schema_file_and_new_schema_file_coexist_via_union_by_name(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine)
+        price_bars_dir = engine.config.parquet_dir / "price_bars"
+
+        old_bar = make_bar("AAA", date(2024, 1, 2), 100.0)
+        self._write_old_schema_parquet_file(price_bars_dir, old_bar)
+
+        new_bar = PriceBar(
+            security_id="AAA", timestamp=utc(2024, 1, 3), open=101.0, high=102.0, low=100.0, close=101.5,
+            volume=1_000.0, available_time=utc(2024, 1, 3, 20), ingestion_time=utc(2024, 1, 3, 20),
+            provenance=Provenance(
+                source="s1", source_dataset="ds", source_record_id="AAA-2024-01-03",
+                retrieved_at=utc(2024, 1, 3, 20), data_version="v1",
+            ),
+            adjusted_high=51.0, adjusted_low=50.0,
+        )
+        assert repo.append_bars([new_bar]) == 1
+
+        got = repo.get_bars("AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
+        assert [b.close for b in got] == [100.0, 101.5]
+        # The old file's bar never had these columns at all -- reads back None, not an error.
+        assert got[0].adjusted_high is None
+        assert got[0].adjusted_low is None
+        # The new file's bar keeps its real values.
+        assert got[1].adjusted_high == 51.0
+        assert got[1].adjusted_low == 50.0
+
+        all_bars = repo.all_bars()
+        assert len(all_bars) == 2
+        engine.close()

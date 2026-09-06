@@ -2406,3 +2406,94 @@ def cash_holdings_score(security_id: str, as_of_time: datetime, repository: obje
     if assets_record.value <= 0:
         return None
     return cash_record.value / assets_record.value
+
+
+def bid_ask_spread_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 21,
+) -> Optional[float]:
+    """HYPOTHESIS -- Amihud & Mendelson (1986)'s bid-ask spread anomaly
+    ("Asset Pricing and the Bid-Ask Spread," Journal of Financial
+    Economics 17(2): 223-249): investors demand a return premium for
+    holding stocks with a WIDER bid-ask spread (a real transaction cost
+    of trading), so a HIGHER spread is hypothesized to predict HIGHER
+    subsequent returns -- the same "IMPORTANT SIGN NOTE" situation
+    `illiquidity_score`'s own docstring already documents for the
+    (distinct) Amihud 2002 measure: illiquidity itself is the priced
+    quantity here, not something to negate.
+
+    This module has no real bid/ask quote data, so the spread itself is
+    ESTIMATED from daily high/low prices via Corwin & Schultz (2012)'s
+    ("A Simple Way to Estimate Bid-Ask Spreads from Daily High and Low
+    Prices," The Journal of Finance 67(2): 719-760) closed-form
+    estimator -- the same measurement-vs-anomaly citation split
+    `OpenSourceAP/CrossSection` (Chen & Zimmermann 2021, Critical
+    Finance Review)'s own `BidAskSpread.py` predictor uses (found while
+    continuing the account owner's "1 2 실행" instruction: 1 = build the
+    split-adjusted high/low infrastructure this estimator needs; 2 =
+    keep reviewing that repository's own predictor catalogue for further
+    candidates). The estimator's exact formula was verified two
+    independent ways before being trusted (a third-party Python
+    reimplementation's source, and an independent web summary of the
+    same closed-form equations), per this session's now-established
+    "never reconstruct a cited algorithm from memory alone" discipline.
+
+    For each pair of consecutive trading days (bars `t-1`, `t`):
+    `beta = ln(H_t/L_t)^2 + ln(H_{t-1}/L_{t-1})^2`, `gamma =
+    ln(max(H_t,H_{t-1}) / min(L_t,L_{t-1}))^2`, `const = 3 - 2*sqrt(2)`,
+    `alpha = (sqrt(2*beta) - sqrt(beta))/const - sqrt(gamma/const)`,
+    daily spread `= max(0, 2*(e^alpha - 1)/(1 + e^alpha))` (negative
+    estimates floored at zero, the estimator's own documented
+    convention). This module's `lookback_days` (default 21, ~1 trading
+    month) window of daily estimates is then averaged -- requiring at
+    least 12 valid daily estimates, the same minimum-observations
+    threshold `OpenSourceAP/CrossSection`'s own monthly aggregation
+    documents.
+
+    **Why this needs `adjusted_high`/`adjusted_low`, not raw `high`/
+    `low`**: the `gamma` term above compares ONE day's high/low against
+    the ADJACENT day's -- if an unadjusted stock split fell between
+    those two days, the two days' raw prices sit on different scales
+    entirely, producing a spurious, wildly wrong estimate purely from
+    the split, not from any real spread or volatility. `close` has
+    always had this same raw/adjusted split via `adjusted_close`, but no
+    earlier factor in this module ever needed a cross-day comparison of
+    price LEVELS (only of returns, for which `adjusted_close` already
+    suffices) -- this is the first one that does, so `PriceBar.
+    adjusted_high`/`.adjusted_low` were added this session specifically
+    for it (see `data_infra.models.PriceBar`'s own docstring). `None`
+    (never a fabricated estimate, never a mix of adjusted and raw price
+    scales within the same computation) unless EVERY bar used has both
+    fields populated -- currently only `TiingoDataProvider` supplies
+    them (Tiingo's EOD response already carries `adjHigh`/`adjLow`
+    alongside `adjClose`, zero new network requests); `StooqDataProvider`
+    supplies raw prices only, so this factor is simply unavailable for
+    Stooq-sourced securities, the same honest gap `adjusted_close`
+    itself already has there.
+
+    Score is the RAW average estimated spread (deliberately NOT
+    negated, per the positive risk-return relation above)."""
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=int((lookback_days + 10) * 1.6)), as_of_time),
+        lookback_days + 1,
+    )
+    if len(bars) < 2:
+        return None
+    const = 3.0 - 2.0 * math.sqrt(2.0)
+    daily_spreads = []
+    for prev_bar, bar in zip(bars[:-1], bars[1:]):
+        hi_prev, lo_prev = prev_bar.adjusted_high, prev_bar.adjusted_low
+        hi, lo = bar.adjusted_high, bar.adjusted_low
+        if hi_prev is None or lo_prev is None or hi is None or lo is None:
+            continue
+        if hi_prev <= 0 or lo_prev <= 0 or hi <= 0 or lo <= 0:
+            continue
+        beta = math.log(hi / lo) ** 2 + math.log(hi_prev / lo_prev) ** 2
+        high_high = max(hi, hi_prev)
+        low_low = min(lo, lo_prev)
+        gamma = math.log(high_high / low_low) ** 2
+        alpha = (math.sqrt(2 * beta) - math.sqrt(beta)) / const - math.sqrt(gamma / const)
+        spread = 2.0 * (math.exp(alpha) - 1.0) / (1.0 + math.exp(alpha))
+        daily_spreads.append(max(spread, 0.0))
+    if len(daily_spreads) < 12:
+        return None
+    return sum(daily_spreads) / len(daily_spreads)

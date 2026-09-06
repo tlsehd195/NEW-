@@ -138,6 +138,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
+    bid_ask_spread_score,
     book_to_market_score,
     cash_holdings_score,
     cashflow_yield_score,
@@ -265,6 +266,15 @@ _PRICE_FACTOR_CANDIDATES = (
     # found via the same GitHub/web search. Wired in before any real
     # walk-forward result exists, per RULE 0.8.
     ("return_seasonality", "Heston & Sadka 2008 return seasonality, price-only", return_seasonality_score),
+    # Session 36 continued -- Amihud & Mendelson 1986 bid-ask spread
+    # anomaly, measured via the Corwin & Schultz 2012 high-low
+    # estimator, found while continuing to review OpenSourceAP/
+    # CrossSection's predictor catalogue per the account owner's "1 2
+    # 실행" instruction. Needs PriceBar.adjusted_high/.adjusted_low
+    # (added this session, ADR-0103) -- returns None for any security
+    # whose bars lack them. Wired in before any real walk-forward result
+    # exists, per RULE 0.8.
+    ("bid_ask_spread", "Amihud & Mendelson 1986 bid-ask spread anomaly (Corwin-Schultz estimator), price-only", bid_ask_spread_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),

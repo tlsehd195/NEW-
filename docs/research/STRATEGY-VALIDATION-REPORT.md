@@ -2908,6 +2908,43 @@ outright: `at_be` (algebraically redundant with `leverage_score`),
 `rd_sale` (same underlying paper as the existing `rd_expenditure_score`,
 just a different scaling choice).
 
+## Session 36 continued Addendum -- split-adjusted high/low infrastructure, Bid-Ask Spread factor (ADR-0103)
+
+Per the account owner's "1 2 실행" instruction (build the split-adjusted
+high/low infrastructure `bidaskhl_21d` needed; keep reviewing
+`OpenSourceAP/CrossSection`'s predictor catalogue), both blockers on
+the deferred bid-ask-spread candidate were resolved.
+
+The Corwin & Schultz (2012) estimator's exact formula was found and
+cross-verified two independent ways (a third-party Python
+reimplementation's source, an independent web summary) rather than
+reconstructed from memory. The account owner separately confirmed both
+that paper and Penman/Richardson/Tuna (2007) are paywalled -- but the
+paper was never the real remaining blocker for THIS factor once the
+formula was independently verified; `netdebt_me` remains deferred since
+its own blocker genuinely is needing the original paper read directly.
+
+**Infrastructure**: `PriceBar.adjusted_high`/`.adjusted_low` added
+(Phase 1 spec §5.2 extended) -- `TiingoDataProvider` now parses
+`adjHigh`/`adjLow` from the same EOD response already fetched (zero new
+network requests), `LocalFileDataProvider` gained matching optional CSV
+columns, storage serialization/Parquet columns extended, and every
+`read_parquet(...)` call in `data_repository.py` now passes
+`union_by_name=true` so an account owner's already-ingested real data
+(written before this additive schema change) is never broken -- proven
+by a dedicated regression test.
+
+**`bid_ask_spread_score`** (Amihud & Mendelson 1986, measured via the
+Corwin & Schultz 2012 estimator): average of the daily spread estimate
+over a trailing 21-trading-day window (>= 12 valid observations), RAW
+(not negated) per the same positive risk-return relation
+`illiquidity_score` already established. Uses ONLY `adjusted_high`/
+`adjusted_low` -- `None` for any security whose bars lack them (only
+Tiingo-sourced bars currently have them). Wired into
+`compute_signal_ic_from_catalog.py` and `run_long_horizon_validation.py`
+(the pool's 43rd candidate) before any real result exists. No real
+result recorded yet.
+
 ## Outstanding real results not yet received (tracked so they are not lost)
 
 Two real-data runs remain outstanding in the account owner's own
@@ -2926,8 +2963,8 @@ later, not blocking):
    (`sue`, `insider_buying`, `rs_rating`, `residual_momentum`,
    `rd_expenditure`, `return_seasonality`, `short_interest`,
    `net_stock_issuance`, `net_operating_assets`, `operating_leverage`,
-   `abnormal_investment`, `cash_holdings`) -- not yet executed for real
-   against the account owner's own DuckDB catalogs.
+   `abnormal_investment`, `cash_holdings`, `bid_ask_spread`) -- not yet
+   executed for real against the account owner's own DuckDB catalogs.
 
 Recorded here explicitly (per the account owner's own request) so
 neither item is silently dropped while this session continues other

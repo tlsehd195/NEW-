@@ -151,9 +151,13 @@ class TestCandidateTables:
     subsequent SYSTEMATIC pass through the document's entire ~150-factor
     cited-anomaly catalogue ("전부 확인하고 적용할만 한거 적용해") --
     all three single-paper-cited JKP constructions used directly,
-    verified against the PDF itself) -- 34 total -- no name collisions
-    with each other, or with the 8 pre-existing candidates already in
-    `strategy_specs` before ADR-0051."""
+    verified against the PDF itself; `bid_ask_spread`, Amihud & Mendelson
+    1986 measured via the Corwin & Schultz 2012 estimator, found while
+    reviewing OpenSourceAP/CrossSection's predictor catalogue -- the
+    first factor needing the `PriceBar.adjusted_high`/`.adjusted_low`
+    infrastructure added this same session, ADR-0103) -- 35 total -- no
+    name collisions with each other, or with the 8 pre-existing
+    candidates already in `strategy_specs` before ADR-0051."""
 
     _EXPECTED_NAMES = {
         "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
@@ -165,7 +169,7 @@ class TestCandidateTables:
         "idiosyncratic_volatility", "combined_factor", "sue", "insider_buying", "rs_rating",
         "residual_momentum", "rd_expenditure", "return_seasonality", "short_interest",
         "net_stock_issuance", "net_operating_assets",
-        "operating_leverage", "abnormal_investment", "cash_holdings",
+        "operating_leverage", "abnormal_investment", "cash_holdings", "bid_ask_spread",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",

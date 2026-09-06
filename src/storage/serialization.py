@@ -276,6 +276,8 @@ def price_bar_to_row(bar: PriceBar) -> dict:
         "available_time": to_utc_naive(bar.available_time),
         "ingestion_time": to_utc_naive(bar.ingestion_time),
         "adjusted_close": bar.adjusted_close,
+        "adjusted_high": bar.adjusted_high,
+        "adjusted_low": bar.adjusted_low,
         "vwap": bar.vwap,
         "trade_count": bar.trade_count,
         "currency": bar.currency,
@@ -300,6 +302,8 @@ def row_to_price_bar(row: dict) -> PriceBar:
         ingestion_time=from_utc_naive(row["ingestion_time"]),
         provenance=row_to_provenance(row),
         adjusted_close=row.get("adjusted_close"),
+        adjusted_high=row.get("adjusted_high"),
+        adjusted_low=row.get("adjusted_low"),
         vwap=row.get("vwap"),
         trade_count=(int(row["trade_count"]) if row.get("trade_count") is not None else None),
         currency=row.get("currency"),
@@ -311,7 +315,8 @@ def row_to_price_bar(row: dict) -> PriceBar:
 
 PRICE_BAR_COLUMNS = (
     "security_id", "timestamp", "open", "high", "low", "close", "volume",
-    "available_time", "ingestion_time", "adjusted_close", "vwap", "trade_count",
+    "available_time", "ingestion_time", "adjusted_close", "adjusted_high", "adjusted_low",
+    "vwap", "trade_count",
     "currency", "exchange", "event_time", "publication_time",
     "provenance_source", "provenance_source_dataset", "provenance_source_record_id",
     "provenance_retrieved_at", "provenance_data_version", "provenance_schema_version",

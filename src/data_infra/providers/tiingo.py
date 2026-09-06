@@ -149,6 +149,15 @@ class TiingoDataProvider:
                     # point-in-time discipline: raw OHLCV is the record
                     # of truth, adjustment is a derived, optional view).
                     adjusted_close=float(record["adjClose"]) if record.get("adjClose") is not None else None,
+                    # Session 36 continued addition -- Tiingo's EOD
+                    # response already carries `adjHigh`/`adjLow`
+                    # alongside `adjClose` (same response already
+                    # fetched above, zero new network requests), simply
+                    # never parsed by any earlier field on this model.
+                    # Same "separate optional field, never substituted
+                    # for the raw value" discipline as `adjusted_close`.
+                    adjusted_high=float(record["adjHigh"]) if record.get("adjHigh") is not None else None,
+                    adjusted_low=float(record["adjLow"]) if record.get("adjLow") is not None else None,
                     currency="USD",
                 )
             )
