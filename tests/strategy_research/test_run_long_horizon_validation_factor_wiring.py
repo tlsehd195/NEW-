@@ -144,14 +144,16 @@ class TestCandidateTables:
     `net_operating_assets`, found via a further GitHub/web search
     -- bkelly-lab/ReplicationCrisis surfaced these themes, built from
     the original underlying papers since that repository's own exact
-    formulas could not be verified from this sandbox; `operating_leverage`
-    and `abnormal_investment`, found by continuing this session's mining
-    of the JKP "Global Factor Data Documentation" PDF per the account
-    owner's "2번 진행해" instruction -- both single-paper-cited JKP
-    constructions used directly, verified against the PDF itself) -- 33
-    total -- no name collisions with each other, or with the 8
-    pre-existing candidates already in `strategy_specs` before
-    ADR-0051."""
+    formulas could not be verified from this sandbox; `operating_leverage`,
+    `abnormal_investment` and `cash_holdings`, found by mining the JKP
+    "Global Factor Data Documentation" PDF -- the first two from
+    already-surfaced leads ("2번 진행해"), `cash_holdings` from a
+    subsequent SYSTEMATIC pass through the document's entire ~150-factor
+    cited-anomaly catalogue ("전부 확인하고 적용할만 한거 적용해") --
+    all three single-paper-cited JKP constructions used directly,
+    verified against the PDF itself) -- 34 total -- no name collisions
+    with each other, or with the 8 pre-existing candidates already in
+    `strategy_specs` before ADR-0051."""
 
     _EXPECTED_NAMES = {
         "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
@@ -163,7 +165,7 @@ class TestCandidateTables:
         "idiosyncratic_volatility", "combined_factor", "sue", "insider_buying", "rs_rating",
         "residual_momentum", "rd_expenditure", "return_seasonality", "short_interest",
         "net_stock_issuance", "net_operating_assets",
-        "operating_leverage", "abnormal_investment",
+        "operating_leverage", "abnormal_investment", "cash_holdings",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",

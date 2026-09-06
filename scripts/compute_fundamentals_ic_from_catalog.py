@@ -100,6 +100,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     altman_z_score,
     asset_growth_score,
     book_to_market_score,
+    cash_holdings_score,
     cashflow_yield_score,
     combined_factor_score,
     dividend_growth_score,
@@ -162,6 +163,13 @@ _SCORES = {
     # JKP constructions used directly (verified against the PDF).
     "operating_leverage": operating_leverage_score,
     "abnormal_investment": abnormal_investment_score,
+    # Session 36 continued addition -- Palazzo 2012 cash holdings
+    # anomaly, found by a systematic pass through the ENTIRE JKP
+    # "Global Factor Data Documentation" PDF's cited-anomaly catalogue
+    # per the account owner's "전부 확인하고 적용할만 한거 적용해"
+    # instruction. Fundamentals-only, single-paper-cited JKP
+    # construction (cash_at), zero new data.
+    "cash_holdings": cash_holdings_score,
     # Session 36 continued addition (ADR-0084) -- Foster, Olsen &
     # Shevlin 1984 Standardized Unexpected Earnings, fundamentals-only
     # (needs quarterly EarningsPerShareDiluted, no price data).

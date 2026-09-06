@@ -2356,3 +2356,53 @@ def abnormal_investment_score(security_id: str, as_of_time: datetime, repository
         return None
     capex_abn = current_ratio / trailing_average - 1.0
     return -capex_abn
+
+
+def cash_holdings_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Palazzo (2012)'s cash holdings anomaly ("Cash
+    Holdings, Risk, and Expected Returns," Journal of Financial
+    Economics 104(1): 162-185): firms holding MORE cash relative to
+    their assets earn systematically HIGHER subsequent returns.
+    Palazzo's own explanation is risk-based, not mispricing: cash-rich
+    firms are disproportionately firms with more valuable growth
+    options, whose payoffs are more exposed to the same aggregate
+    (cash-flow) shocks that drive market-wide returns, so cash holdings
+    proxy for a priced risk exposure rather than for safety. This is a
+    POSITIVE risk-return relation, the same "opposite sign convention
+    from every other risk factor already in this module" situation
+    `operating_leverage_score` already documents for its own paper.
+
+    Found this session (per the account owner's explicit "전부 확인하고
+    적용할만 한거 적용해" instruction) via a systematic pass through the
+    ENTIRE JKP "Global Factor Data Documentation" PDF's own cited-anomaly
+    catalogue (Table 9, ~150 factors across 13 clusters), not just the
+    already-surfaced leads `operating_leverage_score`/
+    `abnormal_investment_score` came from. Cross-verified two ways: (1)
+    JKP's own "New Variables from HXZ" section gives the exact formula
+    inline (`cash_at = CASH_t / AT*_t`); (2) Table 9's own "Low Leverage"
+    cluster citation list, read in the SAME order as its matching
+    abbreviation list two pages earlier, lines up `cash_at` with `Palazzo
+    (2012)` -- independently confirmed against this document's own
+    References section, which lists the identical paper
+    ("Palazzo, B. (2012). Cash holdings, risk, and expected returns.
+    Journal of Financial Economics, 104(1), 162-185"). Needs ZERO new
+    data: `CashAndCashEquivalentsAtCarryingValue` (ingested for
+    `net_operating_assets_score`) and `Assets` are both already fetched.
+
+    Distinct from `net_operating_assets_score` (which treats cash as one
+    subtracted component of a much larger balance-sheet mispricing
+    ratio, Hirshleifer et al.'s different "bloated balance sheet"
+    hypothesis) -- this is cash holdings taken on their own, as Palazzo's
+    own distinct risk-based hypothesis.
+
+    Score is the RAW `cash_at` ratio (deliberately NOT negated, per the
+    positive risk-return relation above). `None` (never a fabricated
+    ratio) unless `CashAndCashEquivalentsAtCarryingValue` and `Assets`
+    are both known, or `Assets` is non-positive."""
+    cash_record = _latest_fiscal_year_value(repository, security_id, "CashAndCashEquivalentsAtCarryingValue", as_of_time)
+    assets_record = _latest_fiscal_year_value(repository, security_id, "Assets", as_of_time)
+    if cash_record is None or assets_record is None:
+        return None
+    if assets_record.value <= 0:
+        return None
+    return cash_record.value / assets_record.value

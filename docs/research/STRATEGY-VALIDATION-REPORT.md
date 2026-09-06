@@ -2872,6 +2872,42 @@ Wired into `compute_fundamentals_ic_from_catalog.py`'s `_SCORES`
 (the pool's 40th and 41st candidates) **before any real IC or
 walk-forward result exists for either**. No real result recorded yet.
 
+## Session 36 continued Addendum -- full JKP catalogue review, Cash Holdings wired blind (ADR-0102)
+
+The account owner asked directly whether the JKP documentation had been
+checked in full ("jkp 전부 확인한거야?"). It had not -- only
+already-surfaced leads had been checked. Instructed to do so ("전부
+확인하고 적용할만 한거 적용해"), this session read through the
+document's ENTIRE Table 9 (~150 factors, 13 clusters) plus the earlier
+construction tables, not just grepped terms.
+
+**Finding**: everything past the document's own "Other Factors" section
+break (~150 "growth in X scaled by AT/BE/ME" mechanical variants) is
+JKP's own systematic transformation methodology, not individually-cited
+academic findings -- confirms ADR-0101's earlier skip of that family was
+correct.
+
+**One new factor added: `cash_holdings_score`** (Palazzo 2012, Journal
+of Financial Economics) -- `cash_at = CASH/Assets`, RAW (not negated):
+Palazzo's own risk-based finding is that cash-rich firms carry more
+valuable, more systematically-exposed growth options, so cash predicts
+HIGHER subsequent returns. Verified two independent ways (the document's
+own inline formula, and its ordered citation list cross-checked against
+its own References section). Zero new data. Wired into both scripts
+(the pool's 42nd candidate) before any real result exists.
+
+**Three candidates explicitly deferred (not rejected)**, recorded so
+they are not silently dropped: `bidaskhl_21d` (Corwin-Schultz spread
+estimator -- this document only points to the external paper's own
+algorithm, does not give it inline), `netdebt_me` (Penman, Richardson &
+Tuna 2007 -- that paper's actual finding is more nuanced than a simple
+univariate claim, needs to be read directly before trusting a sign),
+`rd5_at`/`ni_ivol` (both need substantially more complex multi-period
+constructions than this project's existing pattern). Two rejected
+outright: `at_be` (algebraically redundant with `leverage_score`),
+`rd_sale` (same underlying paper as the existing `rd_expenditure_score`,
+just a different scaling choice).
+
 ## Outstanding real results not yet received (tracked so they are not lost)
 
 Two real-data runs remain outstanding in the account owner's own
@@ -2890,8 +2926,8 @@ later, not blocking):
    (`sue`, `insider_buying`, `rs_rating`, `residual_momentum`,
    `rd_expenditure`, `return_seasonality`, `short_interest`,
    `net_stock_issuance`, `net_operating_assets`, `operating_leverage`,
-   `abnormal_investment`) -- not yet executed for real against the
-   account owner's own DuckDB catalogs.
+   `abnormal_investment`, `cash_holdings`) -- not yet executed for real
+   against the account owner's own DuckDB catalogs.
 
 Recorded here explicitly (per the account owner's own request) so
 neither item is silently dropped while this session continues other

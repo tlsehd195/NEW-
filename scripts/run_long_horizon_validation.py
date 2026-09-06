@@ -139,6 +139,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     altman_z_score,
     asset_growth_score,
     book_to_market_score,
+    cash_holdings_score,
     cashflow_yield_score,
     combined_factor_score,
     dividend_growth_score,
@@ -300,6 +301,15 @@ _FUNDAMENTALS_FACTOR_CANDIDATES = (
     # per RULE 0.8.
     ("operating_leverage", "Novy-Marx 2011 operating leverage, fundamentals-only", operating_leverage_score),
     ("abnormal_investment", "Titman, Wei & Xie 2004 abnormal corporate investment, fundamentals-only", abnormal_investment_score),
+    # Session 36 continued -- Palazzo 2012 cash holdings anomaly, found
+    # by a systematic pass through the ENTIRE JKP "Global Factor Data
+    # Documentation" PDF's cited-anomaly catalogue (Table 9, ~150
+    # factors across 13 clusters) per the account owner's "전부
+    # 확인하고 적용할만 한거 적용해" instruction -- not just the
+    # already-surfaced leads operating_leverage/abnormal_investment came
+    # from. Single-paper-cited JKP construction (cash_at), zero new
+    # data. Wired in before any real result exists, per RULE 0.8.
+    ("cash_holdings", "Palazzo 2012 cash holdings anomaly, fundamentals-only", cash_holdings_score),
 )
 _HYBRID_FACTOR_CANDIDATES = (
     ("shareholder_yield", "O'Shaughnessy shareholder yield, fundamentals+price", shareholder_yield_score),

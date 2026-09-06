@@ -31,6 +31,7 @@ from strategy_research.factor_scores import (
     altman_z_score,
     asset_growth_score,
     book_to_market_score,
+    cash_holdings_score,
     cashflow_yield_score,
     combined_factor_score,
     dividend_growth_score,
@@ -2432,3 +2433,58 @@ class TestAbnormalInvestmentScore:
             ))
 
         assert abnormal_investment_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestCashHoldingsScore:
+    """Session 36 continued -- Palazzo (2012)'s cash holdings anomaly,
+    found by a systematic pass through the ENTIRE JKP "Global Factor
+    Data Documentation" PDF's cited-anomaly catalogue. `cash_at =
+    CASH/Assets`, RAW (not negated) since Palazzo's own finding is a
+    POSITIVE risk-return relation -- the same sign-convention situation
+    as `operating_leverage_score`."""
+
+    def test_computes_cash_over_assets(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        # 30 / 200 = 0.15, RAW (not negated)
+        assert cash_holdings_score("AAA", _utc(2023, 6, 1), repo) == pytest.approx(0.15)
+
+    def test_higher_cash_holdings_scores_higher_not_lower(self, tmp_path) -> None:
+        # The opposite sign convention from most "safety" intuitions --
+        # Palazzo's own finding is a POSITIVE risk-return relation, so
+        # more cash relative to assets must score HIGHER, not lower.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("LOW", "LOW:cash", concept="CashAndCashEquivalentsAtCarryingValue", value=10.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW", "LOW:assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:cash", concept="CashAndCashEquivalentsAtCarryingValue", value=80.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        low_score = cash_holdings_score("LOW", _utc(2023, 6, 1), repo)
+        high_score = cash_holdings_score("HIGH", _utc(2023, 6, 1), repo)
+        assert high_score > low_score
+
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=0.0, period_end=_utc(2022, 12, 31)))
+
+        assert cash_holdings_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_cash_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        assert cash_holdings_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=30.0, period_end=_utc(2022, 12, 31)))
+
+        assert cash_holdings_score("AAA", _utc(2023, 6, 1), repo) is None
