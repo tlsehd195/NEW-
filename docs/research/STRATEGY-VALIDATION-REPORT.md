@@ -2665,9 +2665,31 @@ Wired into `compute_signal_ic_from_catalog.py` (`--strategy rs_rating`)
 and `run_long_horizon_validation.py`'s `_PRICE_FACTOR_CANDIDATES` (the
 pool's 33rd candidate, alongside `insider_buying`'s 32nd) **before any
 real IC or walk-forward result exists for it** -- the same discipline
-every candidate in this document already follows. No real result
-recorded yet; the account owner has not run either script against real
-data with this candidate.
+every candidate in this document already follows.
+
+**Real raw IC result received** (account owner, `compute_signal_ic_from_catalog.py
+--db-path ./data/real_2010_latest --universe RESEARCH_UNIVERSE --strategy
+rs_rating --start 2010-01-01`, window [2010-01-01, 2023-04-28), 80
+rebalance dates, 73 observations):
+
+```
+mean_ic = -0.0053
+ic_information_ratio = -0.0202
+positive_ic_ratio = 50.68%
+```
+
+Essentially zero, slightly negative -- the RAW IC does not support
+O'Neil/IBD's own hypothesis that recent relative strength predicts
+continued outperformance in this real sample; `positive_ic_ratio`
+sitting at ~51% (statistically indistinguishable from a coin flip at
+this observation count) reinforces that this is noise, not a weak-but-
+real negative signal. Per this project's own RULE 0.8 discipline
+(`ADR-0051`'s own precedent, applied identically here): this raw-IC
+result does NOT get the candidate excluded or its construction
+adjusted -- it stays wired into `run_long_horizon_validation.py`'s pool
+exactly as already built, to be judged later by the full walk-forward/
+PBO/DSR evidence pipeline rather than by this single screening
+statistic in isolation.
 
 ## Session 36 continued Addendum -- Residual Momentum and R&D Expenditure Anomaly, wired blind (ADR-0098)
 

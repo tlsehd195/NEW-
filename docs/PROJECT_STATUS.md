@@ -15,6 +15,8 @@
 
 사용자가 "다른 프로젝트 더 찾아봐" 지시 → GitHub/웹 재검색해서 `bkelly-lab/ReplicationCrisis`(Jensen, Kelly & Pedersen 2023, Journal of Finance 게재 — 이번 세션에서 찾은 것 중 가장 권위 있는 학술 소스, 93개국 데이터 153개 팩터를 13개 테마로 클러스터링) 발견. 하지만 정확한 공식이 SAS 스크립트와 바이너리 엑셀 파일 안에 있고 문서 사이트(jkpfactors.com, nber.org)가 이 세션에서 네트워크 차단되어 있어 직접 검증 불가 — 검증 안 된 공식을 추측하는 건 원칙 위반이라 그 저장소 자체는 못 씀. 대신 그 13개 테마 중 2개("Net Issuance"/"Investment")가 다른 경로로 확실하게 검증되는 더 오래된 개별 논문에 대응된다는 걸 확인 → ADR-0100으로 원본 논문 기준 구현: `net_stock_issuance_score`(Pontiff & Woodgate 2008 / Fama & French 2008)는 `ln(당기 발행주식수/전기 발행주식수)`의 음수 — 이미 있는 `CommonStockSharesOutstanding`만 쓰므로 새 데이터 불필요. `net_operating_assets_score`(Hirshleifer, Hou, Teoh & Zhang 2004)는 대차대조표 항등식(`Assets - Liabilities = StockholdersEquity`)을 이용해 `(StockholdersEquity - Cash + LongTermDebtNoncurrent) / 전기 Assets`로 계산 — 원 논문의 5~6개 항목 중 이자부채는 `LongTermDebtNoncurrent`만(leverage_score의 기존 단순화 방식과 동일), 소수지분/우선주는 생략(piotroski_f_score/leverage_score와 동일 관례)하는 문서화된 단순화 적용, 새 XBRL concept 1개(`CashAndCashEquivalentsAtCarryingValue`)만 필요. 둘 다 IC/walk-forward 스크립트에 결과 확인 전에 배선 완료(`_EXPECTED_NAMES` 31개로 갱신).
 
+사용자가 코드스페이스에서 `compute_signal_ic_from_catalog.py --strategy rs_rating` 실제 실행 → 실측 결과 수신(2010-01-01~2023-04-28, 80 리밸런스일, 73 관측치): mean_ic=-0.0053, ic_information_ratio=-0.0202, positive_ic_ratio=50.68% — 사실상 0에 가깝고 미세하게 음수, O'Neil/IBD의 "최근 강세 지속" 가설을 뒷받침 안 함, positive_ic_ratio도 동전 던지기 수준(51%)이라 약한 신호가 아니라 노이즈로 해석. ADR-0051 선례대로 이 raw IC 하나만으로 후보를 제외하거나 구성을 수정하지 않고, 이미 배선된 그대로 `run_long_horizon_validation.py`의 전체 walk-forward/PBO/DSR 파이프라인에서 최종 판단하도록 둠(RULE 0.8).
+
 ---
 
 ## raw IC 스크리닝 20개 전체 완료 (Session 36, 2026-09-03) — 편입 판단은 아래 "다음 결정" 섹션 참고
