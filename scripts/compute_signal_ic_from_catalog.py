@@ -72,7 +72,9 @@ from storage.engine import StorageEngine  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
     bid_ask_spread_score,
+    downside_beta_score,
     fifty_two_week_high_score,
+    idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
     long_term_reversal_score,
@@ -130,6 +132,14 @@ _PRICE_ONLY_SCORES = {
     # Stooq-sourced). Wired in before any real IC result exists, per
     # RULE 0.8.
     "bid_ask_spread": bid_ask_spread_score,
+    # Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Boyer, Mitton &
+    # Vorkink 2010 expected idiosyncratic skewness (lottery-preference
+    # anomaly) and Ang, Chen & Xing 2006 downside beta (a downside-risk
+    # premium distinct from low_beta_score's pooled-window beta), both
+    # price-only, needing zero new data. Wired in before any real IC
+    # result exists, per RULE 0.8.
+    "idiosyncratic_skewness": idiosyncratic_skewness_score,
+    "downside_beta": downside_beta_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 

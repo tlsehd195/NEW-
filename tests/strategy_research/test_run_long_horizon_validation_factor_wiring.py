@@ -158,9 +158,14 @@ class TestCandidateTables:
     infrastructure added this same session, ADR-0103; `institutional_
     ownership_change`, Chen, Jegadeesh & Wermers 2000, the account
     owner's own idea this session ("기관들의 움직임을 추적할 순 없을까?") --
-    sourced from a SIXTH, distinct DuckDB catalog, ADR-0104) -- 36 total
-    -- no name collisions with each other, or with the 8 pre-existing
-    candidates already in `strategy_specs` before ADR-0051."""
+    sourced from a SIXTH, distinct DuckDB catalog, ADR-0104; `idiosyncratic_
+    skewness`, Boyer, Mitton & Vorkink 2010, `downside_beta`, Ang, Chen &
+    Xing 2006, and `share_turnover`, Datar, Naik & Radcliffe 1998 -- all
+    three found via WebSearch literature verification per the account
+    owner's "일단 우리 전략을 최대한 늘리자" instruction, all price-only or
+    price+fundamentals needing zero new data) -- 39 total -- no name
+    collisions with each other, or with the 8 pre-existing candidates
+    already in `strategy_specs` before ADR-0051."""
 
     _EXPECTED_NAMES = {
         "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
@@ -174,6 +179,7 @@ class TestCandidateTables:
         "net_stock_issuance", "net_operating_assets",
         "operating_leverage", "abnormal_investment", "cash_holdings", "bid_ask_spread",
         "institutional_ownership_change",
+        "idiosyncratic_skewness", "downside_beta", "share_turnover",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
@@ -191,7 +197,7 @@ class TestCandidateTables:
             names.extend(name for name, _hypothesis, _score_fn in table)
         return names
 
-    def test_all_36_expected_names_present_exactly_once(self) -> None:
+    def test_all_39_expected_names_present_exactly_once(self) -> None:
         module = _load_script()
         names = self._all_new_candidate_names(module)
         assert len(names) == len(set(names)), "duplicate candidate name across the 6 tables"

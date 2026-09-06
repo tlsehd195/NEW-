@@ -2984,6 +2984,37 @@ institutional_ownership_change`, a new `--institutional-db-path` flag)
 and `run_long_horizon_validation.py` (the pool's 44th candidate) before
 any real result exists. No real result recorded yet.
 
+## Session 36 continued Addendum -- Idiosyncratic Skewness, Downside Beta, Share Turnover, wired blind (ADR-0105)
+
+The account owner asked to expand the factor pool as broadly as
+possible ("일단 우리 전략을 최대한 늘리자"). Rather than mine JKP or
+OpenSourceAP/CrossSection again (both already exhausted this session),
+this round used WebSearch directly to verify three well-known,
+single-paper-cited anomalies computable from data already ingested
+(price OHLCV + `CommonStockSharesOutstanding`) -- no new data
+acquisition needed, unlike the institutional-holdings addendum above.
+
+**`idiosyncratic_skewness_score`** (Boyer, Mitton & Vorkink 2010, RFS):
+reuses `idiosyncratic_volatility_score`'s market-model residual
+construction, takes the residuals' skewness instead of their standard
+deviation, negated (higher skewness predicts lower returns -- a
+lottery-preference anomaly). **`downside_beta_score`** (Ang, Chen &
+Xing 2006, RFS): reuses `low_beta_score`'s `Cov/Var` estimator
+restricted to benchmark-down days only, RAW (not negated -- higher
+downside beta predicts higher returns, a ~6%/year premium in the
+original paper). **`share_turnover_score`** (Datar, Naik & Radcliffe
+1998, JFM): average daily `volume/shares_outstanding`, negated (higher
+turnover predicts lower returns, confirmed via WebSearch: "stock
+returns are a decreasing function of the turnover rates") -- a third
+independent liquidity proxy alongside `illiquidity_score` (price-impact-
+based) and `bid_ask_spread_score` (range-based).
+
+Wired into `compute_signal_ic_from_catalog.py` (`idiosyncratic_
+skewness`/`downside_beta`, price-only) and `compute_fundamentals_ic_
+from_catalog.py` (`share_turnover`, hybrid) and `run_long_horizon_
+validation.py` (`_EXPECTED_NAMES` extended to 39) before any real
+result exists. No real result recorded yet for any of the three.
+
 ## Outstanding real results not yet received (tracked so they are not lost)
 
 Two real-data runs remain outstanding in the account owner's own
@@ -3003,7 +3034,8 @@ later, not blocking):
    `rd_expenditure`, `return_seasonality`, `short_interest`,
    `net_stock_issuance`, `net_operating_assets`, `operating_leverage`,
    `abnormal_investment`, `cash_holdings`, `bid_ask_spread`,
-   `institutional_ownership_change`) -- not yet executed for real
+   `institutional_ownership_change`, `idiosyncratic_skewness`,
+   `downside_beta`, `share_turnover`) -- not yet executed for real
    against the account owner's own DuckDB catalogs.
 3. **`institutional_ownership_change_score` needs its own new data
    acquisition first** -- unlike every other pending factor above (a

@@ -471,6 +471,179 @@ def max_effect_score(
     return -max(returns)
 
 
+def idiosyncratic_skewness_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 21,
+) -> Optional[float]:
+    """HYPOTHESIS -- Boyer, Mitton & Vorkink (2010, "Expected
+    Idiosyncratic Skewness," The Review of Financial Studies 23(1):
+    169-202): stocks with HIGHER expected idiosyncratic (stock-specific,
+    non-market) return skewness earn LOWER subsequent returns -- the
+    original paper's own headline result is a 1.00%/month Fama-French
+    alpha spread between its low- and high-expected-skewness quintiles.
+    Interpreted the same way the MAX effect (`max_effect_score`) already
+    in this module is: investors with a preference for lottery-like,
+    right-skewed payoffs overpay for positive skewness, depressing its
+    subsequent return. Verified via WebSearch (paper's own abstract and
+    citing summaries) rather than reconstructed from memory alone,
+    per this module's established citation-verification discipline.
+
+    **Distinct from `max_effect_score`, not a re-parameterization**: MAX
+    is a single-extreme-observation statistic (the one largest daily
+    return in the window); skewness is a shape-of-the-whole-distribution
+    statistic (the THIRD standardized moment of every return in the
+    window) -- a distribution can have one large up-day yet still be
+    left-skewed overall (many small down-days dominating the shape), and
+    vice versa, so the two can and do disagree on individual securities.
+    Also distinct from `idiosyncratic_volatility_score` (the SECOND
+    moment of the same market-model residuals): a security's residuals
+    can have low dispersion yet a strongly skewed shape, or high
+    dispersion yet a symmetric shape.
+
+    **Construction, a deliberate simplification of the original paper's
+    own estimator, flagged the same way `idiosyncratic_volatility_score`
+    flags its own**: the original paper fits a cross-sectional model of
+    EXPECTED future skewness from several predictive characteristics
+    (lagged idiosyncratic skewness, volume, size, book-to-market, and
+    others); this implementation instead uses REALIZED trailing
+    idiosyncratic skewness directly (this module's existing convention,
+    also used by `max_effect_score`'s own realized-not-expected MAX and
+    `idiosyncratic_volatility_score`'s own realized-not-expected IVOL --
+    a REALIZED statistic as a proxy for the paper's own EXPECTED one).
+    Reuses `idiosyncratic_volatility_score`'s own market-model residual
+    construction (regress trailing daily returns on `BENCHMARK_SYMBOL`
+    via simple OLS, matching its 21-day/~1-month default window) and
+    takes the third standardized moment (population skewness) of the
+    residuals instead of their standard deviation.
+
+    Score is the NEGATIVE of the residual skewness (higher score = lower
+    idiosyncratic skewness = more attractive, matching this module's
+    convention and the paper's own "high skewness -> low returns"
+    finding). Needs at least 15 paired daily observations (matching
+    `idiosyncratic_volatility_score`'s own floor) and a non-zero
+    residual standard deviation (skewness is undefined at zero
+    variance); `None` below that."""
+    padded_days = int(lookback_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 16:
+        return None
+    security_returns = compute_returns([security_closes[d] for d in common_dates])
+    benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    if len(security_returns) < 15 or len(security_returns) != len(benchmark_returns):
+        return None
+    security_mean = sum(security_returns) / len(security_returns)
+    benchmark_mean = sum(benchmark_returns) / len(benchmark_returns)
+    covariance = sum(
+        (s - security_mean) * (b - benchmark_mean) for s, b in zip(security_returns, benchmark_returns)
+    ) / (len(security_returns) - 1)
+    benchmark_variance = sum((b - benchmark_mean) ** 2 for b in benchmark_returns) / (len(benchmark_returns) - 1)
+    if benchmark_variance == 0:
+        return None
+    beta = covariance / benchmark_variance
+    alpha = security_mean - beta * benchmark_mean
+    residuals = [s - alpha - beta * b for s, b in zip(security_returns, benchmark_returns)]
+    n = len(residuals)
+    residual_mean = sum(residuals) / n
+    residual_variance = sum((r - residual_mean) ** 2 for r in residuals) / n
+    residual_std = residual_variance ** 0.5
+    if residual_std == 0:
+        return None
+    residual_skewness = (sum((r - residual_mean) ** 3 for r in residuals) / n) / (residual_std ** 3)
+    return -residual_skewness
+
+
+def downside_beta_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- Ang, Chen & Xing (2006, "Downside Risk," The
+    Review of Financial Studies 19(4): 1191-1239): stocks whose returns
+    covary MORE STRONGLY with the market specifically DURING market
+    declines (a higher "downside beta") earn HIGHER subsequent returns
+    -- a roughly 6%/year downside-risk premium in the original paper's
+    own US sample, which the authors show survives controls for
+    regular market beta, coskewness, liquidity risk, size, book-to-
+    market, and momentum. Verified via WebSearch (paper's own abstract
+    and citing summaries) rather than reconstructed from memory alone.
+
+    **Distinct from `low_beta_score`, not a re-parameterization**:
+    `low_beta_score` estimates ONE beta over the WHOLE window (up-days
+    and down-days pooled together); this factor estimates beta
+    CONDITIONAL ON the benchmark being in a down period only -- a
+    security can have a low unconditional (pooled) beta yet still
+    covary strongly with the market specifically on its worst days (a
+    "crash-prone" security the pooled estimate would not flag), and
+    vice versa, so the two scores can and do disagree on individual
+    securities. Per the original paper's own convention, "downside" is
+    defined relative to the benchmark's OWN trailing mean return over
+    the same window (`benchmark_return < benchmark_mean`), not relative
+    to zero.
+
+    **Construction, a deliberate simplification of the original paper's
+    own estimator, flagged the same way `low_beta_score` flags its
+    own**: the original paper computes beta over a downside-conditioned
+    joint distribution using a 5-year/60-month rolling window and
+    several averaging refinements across sub-periods; this
+    implementation instead reuses `low_beta_score`'s own single-window
+    `Cov/Var` OLS estimator directly, applied only to the subset of
+    paired trading days where the benchmark return is below its own
+    trailing mean over the same `lookback_days` window (default 252,
+    ~1 trading year, matching `low_beta_score`'s own default).
+
+    Score is the RAW (NOT negated) downside beta -- unlike
+    `low_beta_score`, where a LOWER beta is hypothesized more
+    attractive, here a HIGHER downside beta is the paper's own
+    hypothesized direction, the same "no negation needed" situation
+    `illiquidity_score`/`fifty_two_week_high_score` already document.
+    Needs at least 20 DOWNSIDE-day paired observations (matching
+    `low_beta_score`'s own full-window floor, applied here to the
+    smaller downside-only subset) and non-zero downside benchmark
+    variance; `None` below that."""
+    padded_days = int(lookback_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 21:
+        return None
+    security_returns = compute_returns([security_closes[d] for d in common_dates])
+    benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    if len(security_returns) < 20 or len(security_returns) != len(benchmark_returns):
+        return None
+    benchmark_mean = sum(benchmark_returns) / len(benchmark_returns)
+    downside_pairs = [
+        (s, b) for s, b in zip(security_returns, benchmark_returns) if b < benchmark_mean
+    ]
+    if len(downside_pairs) < 20:
+        return None
+    downside_security = [p[0] for p in downside_pairs]
+    downside_benchmark = [p[1] for p in downside_pairs]
+    ds_mean = sum(downside_security) / len(downside_security)
+    db_mean = sum(downside_benchmark) / len(downside_benchmark)
+    covariance = sum(
+        (s - ds_mean) * (b - db_mean) for s, b in zip(downside_security, downside_benchmark)
+    ) / (len(downside_pairs) - 1)
+    downside_variance = sum((b - db_mean) ** 2 for b in downside_benchmark) / (len(downside_pairs) - 1)
+    if downside_variance == 0:
+        return None
+    return covariance / downside_variance
+
+
 def _fy_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:
     """Every annual (`fiscal_period == "FY"`) `FundamentalRecord` for
     `(security_id, concept)` already knowable `as_of_time`, oldest
@@ -1221,6 +1394,76 @@ def cashflow_yield_score(
     if market_cap <= 0:
         return None
     return cfo_record.value / market_cap
+
+
+def share_turnover_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+    *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- Datar, Naik & Radcliffe (1998, "Liquidity and
+    Stock Returns: An Alternative Test," Journal of Financial Markets
+    1(2): 203-219): stock returns are a DECREASING function of share
+    turnover (shares traded as a fraction of shares outstanding) --
+    an alternative test of Amihud & Mendelson (1986)'s liquidity-premium
+    hypothesis (the same paper `bid_ask_spread_score` already cites for
+    its own bid-ask-spread-based liquidity measure) using a volume-based
+    proxy instead. The original paper's own finding: the high average
+    return of LOW-turnover stocks represents a liquidity premium --
+    illiquid (low-turnover, hard to trade quickly) stocks earn higher
+    subsequent returns, so HIGH turnover predicts LOWER returns.
+    Verified via WebSearch (paper's own construction and finding, "stock
+    returns are a decreasing function of the turnover rates") rather
+    than reconstructed from memory alone.
+
+    **Distinct from `illiquidity_score` and `bid_ask_spread_score`, a
+    THIRD independent liquidity proxy, not a re-parameterization of
+    either**: `illiquidity_score` (Amihud 2002) is price-impact-based
+    (how much a given DOLLAR of trading moves the price); this factor is
+    volume-based (how much of the OUTSTANDING SHARE COUNT trades, with
+    no reference to price impact at all); `bid_ask_spread_score` (Corwin
+    & Schultz 2012, measuring Amihud & Mendelson 1986) is a high-low-
+    range-based transaction-cost proxy referencing neither dollar volume
+    nor share count. A stock can have low dollar-volume price impact
+    (low Amihud ILLIQ) yet a low fraction of its own huge share count
+    turning over (low turnover, still "illiquid" by this measure), and
+    vice versa, so the three can and do disagree on individual
+    securities.
+
+    Turnover for one trading day is `volume / shares_outstanding` (the
+    paper's own TR definition); this implementation averages that ratio
+    over the trailing `lookback_days` (default 252, ~1 trading year,
+    matching `illiquidity_score`'s own annual-averaging convention
+    rather than the paper's own within-year sub-period refinements) using
+    the single latest known `CommonStockSharesOutstanding` fiscal-year
+    value as of `as_of_time` (already ingested for `size_score`/
+    `book_to_market_score`, needing ZERO new data) as a constant
+    denominator across the window -- a deliberate simplification, since
+    shares outstanding do change intra-year (buybacks/issuance) but this
+    project has no daily shares-outstanding series, only annual XBRL
+    filings, the same granularity constraint every other market-cap-
+    based factor in this module already accepts.
+
+    Score is the NEGATIVE of average daily turnover, so a LOWER turnover
+    (hypothesized more attractive, per the paper's own finding) produces
+    a HIGHER score -- matches this module's convention. `None` unless
+    `CommonStockSharesOutstanding` is known and positive, and at least
+    20 valid daily volume observations exist (matching
+    `illiquidity_score`'s own floor)."""
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    bars = trim_to_lookback(
+        price_repository.get_bars(
+            security_id, as_of_time - timedelta(days=int(lookback_days * 1.6)), as_of_time, as_of_time=as_of_time,
+        ),
+        lookback_days,
+    )
+    turnovers = [b.volume / shares_record.value for b in bars if b.volume is not None and b.volume >= 0]
+    if len(turnovers) < 20:
+        return None
+    return -(sum(turnovers) / len(turnovers))
 
 
 def size_score(

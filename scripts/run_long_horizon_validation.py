@@ -145,9 +145,11 @@ from strategy_research.factor_scores import (  # noqa: E402
     cashflow_yield_score,
     combined_factor_score,
     dividend_growth_score,
+    downside_beta_score,
     earnings_yield_score,
     fifty_two_week_high_score,
     gross_profitability_score,
+    idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
     insider_buying_score,
@@ -165,6 +167,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     return_seasonality_score,
     rs_rating_score,
     sales_yield_score,
+    share_turnover_score,
     shareholder_yield_score,
     short_interest_score,
     short_term_reversal_score,
@@ -277,6 +280,16 @@ _PRICE_FACTOR_CANDIDATES = (
     # whose bars lack them. Wired in before any real walk-forward result
     # exists, per RULE 0.8.
     ("bid_ask_spread", "Amihud & Mendelson 1986 bid-ask spread anomaly (Corwin-Schultz estimator), price-only", bid_ask_spread_score),
+    # Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Boyer, Mitton &
+    # Vorkink 2010 expected idiosyncratic skewness (lottery-preference
+    # anomaly, realized-not-expected proxy, distinct from both max_effect
+    # and idiosyncratic_volatility -- see its own docstring) and Ang,
+    # Chen & Xing 2006 downside beta (a downside-conditioned Cov/Var
+    # estimate, distinct from low_beta's pooled-window beta). Both
+    # price-only, needing zero new data. Wired in before any real
+    # walk-forward result exists, per RULE 0.8.
+    ("idiosyncratic_skewness", "Boyer, Mitton & Vorkink 2010 expected idiosyncratic skewness, price-only", idiosyncratic_skewness_score),
+    ("downside_beta", "Ang, Chen & Xing 2006 downside risk / downside beta, price-only", downside_beta_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),
@@ -338,6 +351,14 @@ _HYBRID_FACTOR_CANDIDATES = (
     # `ResearchAndDevelopmentExpense` -- see `ingest_fundamentals_data.py`'s
     # now-extended `_DEFAULT_CONCEPTS`.
     ("rd_expenditure", "Chan, Lakonishok & Sougiannis 2001 R&D expenditure anomaly, fundamentals+price", rd_expenditure_score),
+    # Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Datar, Naik &
+    # Radcliffe 1998 share turnover liquidity anomaly, a third
+    # independent liquidity proxy alongside illiquidity/bid_ask_spread
+    # (see share_turnover_score's own docstring for how it differs from
+    # both). Needs CommonStockSharesOutstanding (already ingested) +
+    # volume (already a required PriceBar field), fundamentals+price.
+    # Wired in before any real walk-forward result exists, per RULE 0.8.
+    ("share_turnover", "Datar, Naik & Radcliffe 1998 share turnover liquidity anomaly, fundamentals+price", share_turnover_score),
 )
 _UNIVERSE_FACTOR_CANDIDATES = (
     ("quality_minus_junk", "Asness, Frazzini & Pedersen quality-minus-junk (3-pillar simplification), cross-sectional", quality_minus_junk_score),

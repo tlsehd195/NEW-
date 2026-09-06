@@ -120,6 +120,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     roa_score,
     roe_score,
     sales_yield_score,
+    share_turnover_score,
     shareholder_yield_score,
     short_interest_score,
     size_score,
@@ -244,6 +245,14 @@ _HYBRID_SCORES = {
     # `ResearchAndDevelopmentExpense` -- see `ingest_fundamentals_data.py`'s
     # now-extended `_DEFAULT_CONCEPTS`.
     "rd_expenditure": rd_expenditure_score,
+    # Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Datar, Naik &
+    # Radcliffe 1998 share turnover liquidity anomaly, a third
+    # independent liquidity proxy alongside illiquidity/bid_ask_spread
+    # (see share_turnover_score's own docstring for how it differs from
+    # both). Needs CommonStockSharesOutstanding (already ingested) +
+    # volume (already a required PriceBar field) -- zero new data. Wired
+    # in before any real IC result exists, per RULE 0.8.
+    "share_turnover": share_turnover_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 12) -- scores whose score_fn is

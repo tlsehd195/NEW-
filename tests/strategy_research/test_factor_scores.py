@@ -36,9 +36,11 @@ from strategy_research.factor_scores import (
     cashflow_yield_score,
     combined_factor_score,
     dividend_growth_score,
+    downside_beta_score,
     earnings_yield_score,
     fifty_two_week_high_score,
     gross_profitability_score,
+    idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
     leverage_score,
@@ -59,6 +61,7 @@ from strategy_research.factor_scores import (
     roe_score,
     rs_rating_score,
     sales_yield_score,
+    share_turnover_score,
     shareholder_yield_score,
     short_term_reversal_score,
     size_score,
@@ -406,6 +409,126 @@ class TestIdiosyncraticVolatilityScore:
         data = _view(repo, as_of_time)
 
         assert idiosyncratic_volatility_score("NOBENCH", as_of_time, data) is None
+
+
+class TestIdiosyncraticSkewnessScore:
+    """Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Boyer, Mitton &
+    Vorkink (2010)'s expected idiosyncratic skewness. Reuses
+    `idiosyncratic_volatility_score`'s own market-model residual
+    construction, but takes the residuals' third standardized moment
+    (skewness) instead of their standard deviation, and negates it
+    (higher skewness -> lower score, per the paper's own finding)."""
+
+    def test_a_security_with_a_right_skewed_residual_scores_lower_than_a_symmetric_one(self) -> None:
+        # SYMMETRIC has small alternating +/-epsilon noise around beta=1
+        # (zero skewness by construction); SKEWED has that same base
+        # noise PLUS one large, rare positive spike every ~10 days (a
+        # classic right-skew/lottery shape) -- both share the identical
+        # beta and roughly the same variance, isolating skewness alone.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        symmetric_closes = [c * (1.0 + 0.01 * (1 if i % 2 == 0 else -1)) for i, c in enumerate(spy_closes)]
+        skewed_closes = []
+        level = spy_closes[0]
+        for i, c in enumerate(spy_closes):
+            spy_return = c / spy_closes[i - 1] - 1.0 if i > 0 else 0.0
+            spike = 0.08 if i % 10 == 0 else -0.01
+            level = level * (1.0 + spy_return + spike)
+            skewed_closes.append(level)
+        extra_bars = list(make_bars("SYMMETRIC", days, symmetric_closes)) + list(make_bars("SKEWED", days, skewed_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        symmetric_score = idiosyncratic_skewness_score("SYMMETRIC", as_of_time, data)
+        skewed_score = idiosyncratic_skewness_score("SKEWED", as_of_time, data)
+
+        assert symmetric_score is not None and skewed_score is not None
+        assert symmetric_score > skewed_score  # right-skewed residuals -> lower (less attractive) score
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 10))  # far fewer than the 15-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 1, 10), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 9)
+        data = _view(repo, as_of_time)
+
+        assert idiosyncratic_skewness_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert idiosyncratic_skewness_score("NOBENCH", as_of_time, data) is None
+
+    def test_zero_variance_residuals_return_none(self) -> None:
+        # A security EXACTLY 1x SPY every day -- zero-variance residuals,
+        # so skewness (which divides by residual_std**3) is undefined.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        extra_bars = list(make_bars("TWIN", days, spy_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert idiosyncratic_skewness_score("TWIN", as_of_time, data) is None
+
+
+class TestDownsideBetaScore:
+    """Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Ang, Chen &
+    Xing (2006)'s downside risk / downside beta. RAW (not negated) --
+    higher downside beta is the paper's own hypothesized more-attractive
+    direction, the same "no negation" situation `illiquidity_score`
+    already documents."""
+
+    def test_a_security_that_amplifies_only_down_days_scores_higher_than_one_that_does_not(self) -> None:
+        # CRASHY amplifies SPY's move 3x specifically on days SPY falls,
+        # and follows SPY 1x on up days -- high downside beta, ordinary
+        # upside beta. STEADY follows SPY 1x on every day (downside beta
+        # == upside beta == 1). Both realize the identical benchmark
+        # path, isolating the downside-conditioned estimate.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.03 * math.sin(i / 8.0)) for i in range(len(days))]
+        crashy_closes = [spy_closes[0]]
+        steady_closes = [spy_closes[0]]
+        for i in range(1, len(days)):
+            spy_return = spy_closes[i] / spy_closes[i - 1] - 1.0
+            multiplier = 3.0 if spy_return < 0 else 1.0
+            crashy_closes.append(crashy_closes[-1] * (1.0 + multiplier * spy_return))
+            steady_closes.append(steady_closes[-1] * (1.0 + spy_return))
+        extra_bars = list(make_bars("CRASHY", days, crashy_closes)) + list(make_bars("STEADY", days, steady_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        crashy_score = downside_beta_score("CRASHY", as_of_time, data)
+        steady_score = downside_beta_score("STEADY", as_of_time, data)
+
+        assert crashy_score is not None and steady_score is not None
+        assert crashy_score > steady_score  # higher downside beta -> higher (more attractive) score, NOT negated
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 15))  # far fewer than the 20-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 1, 15), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 14)
+        data = _view(repo, as_of_time)
+
+        assert downside_beta_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert downside_beta_score("NOBENCH", as_of_time, data) is None
 
 
 class TestResidualMomentumScore:
@@ -1865,6 +1988,52 @@ class TestSizeScore:
         price_repo = InMemoryDataRepository(bars=[])
 
         assert size_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+class TestShareTurnoverScore:
+    """Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Datar, Naik &
+    Radcliffe (1998)'s share turnover liquidity anomaly. Score is the
+    NEGATIVE of average daily turnover (volume / shares outstanding) --
+    the paper's own finding is that returns are a DECREASING function of
+    turnover, so lower turnover is more attractive, matching this
+    module's convention."""
+
+    def test_low_turnover_security_scores_higher_than_high_turnover_security(self, tmp_path) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        closes = [100.0 + 0.01 * i for i in range(len(days))]
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("THIN", "thin_shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=_utc(2018, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("DEEP", "deep_shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=_utc(2018, 12, 31)))
+        # Identical shares outstanding for both -- only VOLUME differs, so
+        # any score difference isolates turnover's dependence on volume.
+        price_repo = InMemoryDataRepository(bars=(
+            list(make_bars("THIN", days, closes, volume=1_000.0)) + list(make_bars("DEEP", days, closes, volume=100_000.0))
+        ))
+        as_of_time = _utc(2020, 1, 4)
+
+        thin_score = share_turnover_score("THIN", as_of_time, fundamentals_repo, price_repo)
+        deep_score = share_turnover_score("DEEP", as_of_time, fundamentals_repo, price_repo)
+
+        assert thin_score is not None and deep_score is not None
+        assert thin_score > deep_score  # lower turnover -> higher (more attractive) score
+
+    def test_missing_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        price_repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days))))
+
+        assert share_turnover_score("AAA", _utc(2020, 1, 4), fundamentals_repo, price_repo) is None
+
+    def test_insufficient_volume_observations_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("THIN", "thin_shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=_utc(2018, 12, 31)))
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 20-observation floor
+        price_repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, [100.0] * len(days), volume=1_000.0)))
+
+        assert share_turnover_score("THIN", _utc(2020, 1, 19), fundamentals_repo, price_repo) is None
 
 
 def _altman_fixture(repo, security_id, *, assets=1000.0, current_assets=400.0, current_liabilities=200.0,
