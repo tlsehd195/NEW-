@@ -1303,6 +1303,114 @@ def sloan_accruals_score(security_id: str, as_of_time: datetime, repository: obj
     return -accruals
 
 
+def ohlson_o_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Ohlson (1980, "Financial Ratios and Probabilistic
+    Prediction of Bankruptcy," Journal of Accounting Research 18(1):
+    109-131): a 9-variable logistic bankruptcy-probability model, the
+    second-most-cited distress-risk model in the literature alongside
+    Altman (1968) (already in this module as `altman_z_score`) and one
+    of accounting's most influential papers overall. Added per the
+    account owner's explicit "S-tier only" instruction ("구현 할 수 있는
+    s급 논문들 구현하거나 더 찾아" -- implement whichever S-tier papers can
+    actually be implemented) -- this session's earlier pass (ADR-0106)
+    had provisionally excluded this exact paper for needing a GNP
+    price-level deflator this project has no macro data source for;
+    revisited here with a new, purely mathematical argument (not a
+    result-driven reversal, so RULE 0.8 is not violated) that resolves
+    that concern, detailed below. All 9 inputs verified via WebSearch
+    against at least two independent sources per variable (this
+    session's established citation-verification discipline) rather
+    than reconstructed from memory alone -- Ohlson's own coefficients
+    are 34 years old and easy to misremember a digit of.
+
+    The 9 variables and their exact published coefficients:
+    `O = -1.32 - 0.407*SIZE + 6.03*TLTA - 1.43*WCTA + 0.0757*CLCA
+    - 1.72*OENEG - 2.37*NITA - 1.83*FUTL + 0.285*INTWO - 0.521*CHIN`,
+    where (using this module's already-ingested concepts -- needing
+    ZERO new data, all 6 underlying concepts already used by
+    `altman_z_score`/`roa_score`/`sloan_accruals_score`/
+    `shareholder_yield_score`): `SIZE = ln(Assets)`, `TLTA =
+    Liabilities/Assets`, `WCTA = (AssetsCurrent - LiabilitiesCurrent)/
+    Assets`, `CLCA = LiabilitiesCurrent/AssetsCurrent`, `OENEG = 1 if
+    Liabilities > Assets else 0`, `NITA = NetIncomeLoss/Assets`, `FUTL =
+    NetCashProvidedByUsedInOperatingActivities/Liabilities` (the
+    standard modern proxy for Ohlson's pre-cash-flow-statement-era
+    "funds provided by operations," verified via WebSearch as the
+    widely-used practitioner approximation), `INTWO = 1 if NetIncomeLoss
+    was negative in BOTH of the two most recent fiscal years else 0`,
+    `CHIN = (NI_t - NI_{t-1}) / (|NI_t| + |NI_{t-1}|)`.
+
+    **On the omitted GNP price-level deflator (SIZE's own original
+    definition is `ln(Assets / price-level-index)`)**: this project has
+    no macro deflator data source, and ADR-0106 originally excluded this
+    factor for exactly that reason. The resolving argument: this
+    module's `SIZE` term is used ONLY for cross-sectional ranking of
+    securities AT THE SAME `as_of_time` (IC computation, rank-averaging,
+    top-N selection) -- it is never compared across different dates for
+    the SAME security. At any single date, the deflator has exactly one
+    value, identical for every security scored that day; subtracting
+    `-0.407 * ln(deflator)` from every security's O-score on that date
+    shifts the ENTIRE cross-section by the same constant and changes
+    NO security's rank relative to any other. Omitting the deflator is
+    therefore mathematically exact for this project's only use case
+    (cross-sectional ranking), not an approximation -- a genuinely
+    different situation from a value that would change relative
+    rankings if omitted or guessed.
+
+    Score is the NEGATIVE of the raw Ohlson `O` value (higher `O` =
+    higher predicted bankruptcy probability = LESS attractive), matching
+    this module's convention and the same Dichev (1998)/Campbell-
+    Hilscher-Szilagyi (2008) distress-anomaly direction `altman_z_score`
+    already documents (healthier = more attractive). `None` (never a
+    fabricated score) unless `Assets`/`Liabilities`/`AssetsCurrent`/
+    `LiabilitiesCurrent`/`NetCashProvidedByUsedInOperatingActivities`
+    are all known for the latest fiscal year, `NetIncomeLoss` is known
+    for at least 2 distinct fiscal years, `Assets` is positive (needed
+    for `ln(Assets)`), and `AssetsCurrent`/`Liabilities` are both
+    non-zero (guarding the ratios that divide by them)."""
+    assets_record = _latest_fiscal_year_value(repository, security_id, "Assets", as_of_time)
+    liabilities_record = _latest_fiscal_year_value(repository, security_id, "Liabilities", as_of_time)
+    current_assets_record = _latest_fiscal_year_value(repository, security_id, "AssetsCurrent", as_of_time)
+    current_liabilities_record = _latest_fiscal_year_value(repository, security_id, "LiabilitiesCurrent", as_of_time)
+    cfo_record = _latest_fiscal_year_value(
+        repository, security_id, "NetCashProvidedByUsedInOperatingActivities", as_of_time,
+    )
+    if (
+        assets_record is None or liabilities_record is None or current_assets_record is None
+        or current_liabilities_record is None or cfo_record is None
+    ):
+        return None
+    total_assets = assets_record.value
+    total_liabilities = liabilities_record.value
+    current_assets = current_assets_record.value
+    if total_assets <= 0 or current_assets == 0 or total_liabilities == 0:
+        return None
+
+    ni_records = _fy_records(repository, security_id, "NetIncomeLoss", as_of_time)
+    if len(ni_records) < 2:
+        return None
+    current_ni, prior_ni = ni_records[-1].value, ni_records[-2].value
+    ni_denominator = abs(current_ni) + abs(prior_ni)
+    if ni_denominator == 0:
+        return None
+
+    size = math.log(total_assets)
+    tlta = total_liabilities / total_assets
+    wcta = (current_assets - current_liabilities_record.value) / total_assets
+    clca = current_liabilities_record.value / current_assets
+    oeneg = 1.0 if total_liabilities > total_assets else 0.0
+    nita = current_ni / total_assets
+    futl = cfo_record.value / total_liabilities
+    intwo = 1.0 if (current_ni < 0 and prior_ni < 0) else 0.0
+    chin = (current_ni - prior_ni) / ni_denominator
+
+    o = (
+        -1.32 - 0.407 * size + 6.03 * tlta - 1.43 * wcta + 0.0757 * clca
+        - 1.72 * oeneg - 2.37 * nita - 1.83 * futl + 0.285 * intwo - 0.521 * chin
+    )
+    return -o
+
+
 def dividend_growth_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
     """HYPOTHESIS -- a dividend growth factor: companies growing their
     dividend payouts fastest year-over-year are hypothesized to have

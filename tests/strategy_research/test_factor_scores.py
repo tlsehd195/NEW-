@@ -55,6 +55,7 @@ from strategy_research.factor_scores import (
     net_margin_score,
     net_operating_assets_score,
     net_stock_issuance_score,
+    ohlson_o_score,
     operating_leverage_score,
     piotroski_f_score,
     quality_minus_junk_score,
@@ -2275,6 +2276,97 @@ class TestAltmanZScore:
         price_repo = InMemoryDataRepository(bars=[])
 
         assert altman_z_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+def _ohlson_fixture(repo, security_id, *, assets=1000.0, liabilities=600.0, current_assets=400.0,
+                     current_liabilities=200.0, cfo=100.0, prior_ni=40.0, current_ni=50.0) -> None:
+    for concept, value in (
+        ("Assets", assets), ("Liabilities", liabilities), ("AssetsCurrent", current_assets),
+        ("LiabilitiesCurrent", current_liabilities),
+        ("NetCashProvidedByUsedInOperatingActivities", cfo),
+    ):
+        repo.add_fundamental(_fy_record(security_id, f"{security_id}:{concept}", concept=concept, value=value, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:ni_2021", concept="NetIncomeLoss", value=prior_ni, period_end=_utc(2021, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:ni_2022", concept="NetIncomeLoss", value=current_ni, period_end=_utc(2022, 12, 31)))
+
+
+class TestOhlsonOScore:
+    """Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    Ohlson (1980)'s O-Score, a second canonical distress-risk model
+    alongside `altman_z_score`. Score is the NEGATIVE of the raw
+    9-variable logit O value (higher O = more distressed = less
+    attractive), matching the same Dichev (1998)/Campbell-Hilscher-
+    Szilagyi (2008) distress-anomaly direction `altman_z_score` already
+    documents."""
+
+    def test_computes_the_nine_variable_logit_formula(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _ohlson_fixture(repo, "AAA")
+
+        score = ohlson_o_score("AAA", _utc(2023, 6, 1), repo)
+        # SIZE=ln(1000) TLTA=0.6 WCTA=0.2 CLCA=0.5 OENEG=0 NITA=0.05
+        # FUTL=100/600 INTWO=0 CHIN=(50-40)/(50+40)=10/90
+        expected_o = (
+            -1.32 - 0.407 * math.log(1000.0) + 6.03 * 0.6 - 1.43 * 0.2 + 0.0757 * 0.5
+            - 1.72 * 0.0 - 2.37 * 0.05 - 1.83 * (100.0 / 600.0) + 0.285 * 0.0 - 0.521 * (10.0 / 90.0)
+        )
+        assert score == pytest.approx(-expected_o)
+
+    def test_healthier_company_scores_higher_than_distressed_one(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _ohlson_fixture(repo, "HEALTHY")
+        # DISTRESSED: liabilities exceed assets (OENEG=1), negative net
+        # income both years (INTWO=1), thin current ratio, no CFO cushion.
+        _ohlson_fixture(
+            repo, "DISTRESSED", assets=1000.0, liabilities=1500.0, current_assets=200.0,
+            current_liabilities=400.0, cfo=-50.0, prior_ni=-100.0, current_ni=-150.0,
+        )
+
+        healthy_score = ohlson_o_score("HEALTHY", _utc(2023, 6, 1), repo)
+        distressed_score = ohlson_o_score("DISTRESSED", _utc(2023, 6, 1), repo)
+
+        assert healthy_score is not None and distressed_score is not None
+        assert healthy_score > distressed_score
+
+    def test_missing_cfo_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for concept, value in (
+            ("Assets", 1000.0), ("Liabilities", 600.0), ("AssetsCurrent", 400.0), ("LiabilitiesCurrent", 200.0),
+        ):
+            repo.add_fundamental(_fy_record("AAA", f"AAA:{concept}", concept=concept, value=value, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "AAA:ni_2021", concept="NetIncomeLoss", value=40.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "AAA:ni_2022", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+
+        assert ohlson_o_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_only_one_fiscal_year_of_net_income_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for concept, value in (
+            ("Assets", 1000.0), ("Liabilities", 600.0), ("AssetsCurrent", 400.0), ("LiabilitiesCurrent", 200.0),
+            ("NetCashProvidedByUsedInOperatingActivities", 100.0),
+        ):
+            repo.add_fundamental(_fy_record("AAA", f"AAA:{concept}", concept=concept, value=value, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "AAA:ni_2022", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+
+        assert ohlson_o_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_liabilities_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _ohlson_fixture(repo, "AAA", liabilities=0.0)
+
+        assert ohlson_o_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _ohlson_fixture(repo, "AAA", assets=0.0)
+
+        assert ohlson_o_score("AAA", _utc(2023, 6, 1), repo) is None
 
 
 def _add_quality_fixture(repo, security_id, *, roe_income=50.0, roe_equity=100.0, leverage_liabilities=100.0, accruals_cfo=60.0, accruals_ni=None) -> None:

@@ -3075,6 +3075,44 @@ Wired into `compute_signal_ic_from_catalog.py` and `run_long_horizon_
 validation.py` (`_EXPECTED_NAMES` extended to 43) before any real
 result exists. No real result recorded yet.
 
+## Session 36 continued Addendum -- Ohlson O-Score, implementing what's implementable (ADR-0108)
+
+Directly continuing the S-tier round, the account owner asked to
+implement whichever S-tier papers are actually implementable, or keep
+searching ("구현 할 수 있는 s급 논문들 구현하거나 더 찾아"). ADR-0106 had
+provisionally excluded **Ohlson (1980), "Financial Ratios and
+Probabilistic Prediction of Bankruptcy," Journal of Accounting Research
+18(1): 109-131** for needing a GNP price-level deflator this project
+has no macro data source for. Revisited with a new, purely
+mathematical argument (not result-driven, so RULE 0.8 is not
+implicated): this module only ever ranks securities cross-sectionally
+at the SAME `as_of_time`; the deflator has one value per date, applied
+identically to every security scored that day, so omitting it shifts
+every security's score by an identical constant and changes NO
+security's rank relative to any other. Omitting the deflator is
+mathematically EXACT for this project's only use case, not a guess.
+
+All 9 O-Score inputs and coefficients verified via WebSearch against at
+least two independent sources each (the same standard already applied
+to Corwin-Schultz and Harvey-Siddique). `ohlson_o_score`
+(fundamentals-only) reuses concepts already ingested for
+`altman_z_score`/`roa_score`/`sloan_accruals_score`/
+`shareholder_yield_score` -- zero new data. Score is the NEGATIVE of
+the raw 9-variable logit `O` value, matching `altman_z_score`'s own
+distress-anomaly direction (healthier = more attractive).
+
+Also explicitly declined this round (fabrication-risk or complexity too
+high to safely implement): Campbell, Hilscher & Szilagyi (2008)'s own
+dynamic hazard model (8 harder-to-verify coefficients on
+exponentially-weighted trailing variables) and Pastor & Stambaugh
+(2003)'s systematic liquidity risk factor (needs a cross-sectional,
+universe-wide aggregate liquidity innovation series -- materially more
+complex new infrastructure than any single-security factor here).
+
+Wired into `compute_fundamentals_ic_from_catalog.py` and
+`run_long_horizon_validation.py` (`_EXPECTED_NAMES` extended to 44)
+before any real result exists. No real result recorded yet.
+
 ## Outstanding real results not yet received (tracked so they are not lost)
 
 Two real-data runs remain outstanding in the account owner's own
@@ -3096,9 +3134,9 @@ later, not blocking):
    `abnormal_investment`, `cash_holdings`, `bid_ask_spread`,
    `institutional_ownership_change`, `idiosyncratic_skewness`,
    `downside_beta`, `share_turnover`, `high_volume_return_premium`,
-   `asset_turnover_change`, `industry_momentum`, `coskewness`) -- not
-   yet executed for real against the account owner's own DuckDB
-   catalogs.
+   `asset_turnover_change`, `industry_momentum`, `coskewness`,
+   `ohlson_o`) -- not yet executed for real against the account owner's
+   own DuckDB catalogs.
 3. **`institutional_ownership_change_score` needs its own new data
    acquisition first** -- unlike every other pending factor above (a
    re-run of an existing pipeline), this one needs the account owner to

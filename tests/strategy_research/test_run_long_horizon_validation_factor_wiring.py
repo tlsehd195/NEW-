@@ -170,10 +170,15 @@ class TestCandidateTables:
     account owner's further "가능한 많이 전략을 더 찾아봐" instruction,
     ADR-0106; `coskewness`, Harvey & Siddique 2000, found per the account
     owner's explicit "논문쪽에서 S급이라 판단되는 것들로" (top-tier papers
-    only) instruction, ADR-0107 -- all needing zero new data
-    acquisition) -- 43 total -- no name collisions with each other, or
-    with the 8 pre-existing candidates already in `strategy_specs`
-    before ADR-0051."""
+    only) instruction, ADR-0107; `ohlson_o`, Ohlson 1980, found per the
+    account owner's further "구현 할 수 있는 s급 논문들 구현하거나 더 찾아"
+    instruction (this session's earlier ADR-0106 had provisionally
+    excluded it for a GNP deflator gap, revisited here with a purely
+    mathematical -- not result-driven -- argument that the deflator does
+    not affect cross-sectional ranking, ADR-0108) -- all needing zero
+    new data acquisition) -- 44 total -- no name collisions with each
+    other, or with the 8 pre-existing candidates already in
+    `strategy_specs` before ADR-0051."""
 
     _EXPECTED_NAMES = {
         "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
@@ -189,7 +194,7 @@ class TestCandidateTables:
         "institutional_ownership_change",
         "idiosyncratic_skewness", "downside_beta", "share_turnover",
         "high_volume_return_premium", "asset_turnover_change", "industry_momentum",
-        "coskewness",
+        "coskewness", "ohlson_o",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
@@ -207,7 +212,7 @@ class TestCandidateTables:
             names.extend(name for name, _hypothesis, _score_fn in table)
         return names
 
-    def test_all_43_expected_names_present_exactly_once(self) -> None:
+    def test_all_44_expected_names_present_exactly_once(self) -> None:
         module = _load_script()
         names = self._all_new_candidate_names(module)
         assert len(names) == len(set(names)), "duplicate candidate name across the 6 tables"

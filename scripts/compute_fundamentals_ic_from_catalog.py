@@ -115,6 +115,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     net_margin_score,
     net_operating_assets_score,
     net_stock_issuance_score,
+    ohlson_o_score,
     operating_leverage_score,
     piotroski_f_score,
     quality_minus_junk_score,
@@ -179,6 +180,16 @@ _SCORES = {
     # Shevlin 1984 Standardized Unexpected Earnings, fundamentals-only
     # (needs quarterly EarningsPerShareDiluted, no price data).
     "sue": sue_score,
+    # Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    # Ohlson 1980 O-Score, a second canonical distress-risk model
+    # alongside altman_z_score. Fundamentals-only, needs Assets/
+    # Liabilities/AssetsCurrent/LiabilitiesCurrent/NetIncomeLoss/
+    # NetCashProvidedByUsedInOperatingActivities (all already ingested),
+    # zero new data. GNP price-level deflator omitted -- see
+    # ohlson_o_score's own docstring for the mathematical (not
+    # result-driven) proof this does not change cross-sectional ranking.
+    # Wired in before any real IC result exists, per RULE 0.8.
+    "ohlson_o": ohlson_o_score,
     # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Fairfield & Yohn
     # 2001 / Soliman 2008 change-in-asset-turnover anomaly. Fundamentals-
     # only, needs Revenues + Assets (both already ingested), zero new
