@@ -39,10 +39,13 @@ from strategy_research.factor_scores import (
     downside_beta_score,
     earnings_yield_score,
     fifty_two_week_high_score,
+    asset_turnover_change_score,
     gross_profitability_score,
+    high_volume_return_premium_score,
     idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
+    industry_momentum_score,
     leverage_score,
     long_term_reversal_score,
     low_beta_score,
@@ -529,6 +532,49 @@ class TestDownsideBetaScore:
         data = _view(repo, as_of_time)
 
         assert downside_beta_score("NOBENCH", as_of_time, data) is None
+
+
+class TestHighVolumeReturnPremiumScore:
+    """Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Gervais,
+    Kaniel & Mingelgrin (2001)'s high-volume return premium. Score =
+    RAW `recent_avg_volume/baseline_avg_volume - 1` -- higher recent
+    abnormal volume is more attractive, not negated."""
+
+    def test_a_recent_volume_spike_scores_higher_than_flat_volume(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        closes = [100.0 + 0.01 * i for i in range(len(days))]
+        spike_volumes = [1_000.0] * (len(days) - 5) + [10_000.0] * 5
+        # make_bars only accepts one constant volume per call, so build the
+        # spike case's per-day bars directly, one call per distinct volume.
+        spike_bars = []
+        for d, close, vol in zip(days, closes, spike_volumes):
+            spike_bars.extend(make_bars("SPIKE", [d], [close], volume=vol))
+        repo = InMemoryDataRepository(bars=spike_bars + list(make_bars("FLAT", days, closes, volume=1_000.0)))
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        spike_score = high_volume_return_premium_score("SPIKE", as_of_time, data)
+        flat_score = high_volume_return_premium_score("FLAT", as_of_time, data)
+
+        assert spike_score is not None and flat_score is not None
+        assert spike_score > flat_score  # recent volume spike -> higher (more attractive) score
+        assert flat_score == pytest.approx(0.0, abs=1e-9)  # flat volume -> zero abnormal-volume ratio
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 55-observation floor
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 1, 19)
+        data = _view(repo, as_of_time)
+
+        assert high_volume_return_premium_score("THIN", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        assert high_volume_return_premium_score("NONEXISTENT", as_of_time, data) is None
 
 
 class TestResidualMomentumScore:
@@ -1169,6 +1215,68 @@ class TestNetStockIssuanceScore:
         repo.add_fundamental(_fy_record("AAA", "shares_2022", concept="CommonStockSharesOutstanding", value=110.0, period_end=_utc(2022, 12, 31)))
 
         assert net_stock_issuance_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestAssetTurnoverChangeScore:
+    """Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Fairfield &
+    Yohn (2001) / Soliman (2008)'s change-in-asset-turnover anomaly.
+    Score = current FY (Revenues/Assets) - prior FY (Revenues/Assets),
+    RAW (an increase is more attractive, not negated)."""
+
+    def test_score_is_the_yoy_change_in_revenues_over_assets(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev_2021", concept="Revenues", value=200.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=1000.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "rev_2022", concept="Revenues", value=300.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=1000.0, period_end=_utc(2022, 12, 31)))
+
+        score = asset_turnover_change_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(0.3 - 0.2)  # (300/1000) - (200/1000)
+
+    def test_rising_turnover_scores_higher_than_falling_turnover(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for sid, rev_2021, rev_2022 in (("RISING", 200.0, 300.0), ("FALLING", 300.0, 200.0)):
+            repo.add_fundamental(_fy_record(sid, f"{sid}:rev_2021", concept="Revenues", value=rev_2021, period_end=_utc(2021, 12, 31)))
+            repo.add_fundamental(_fy_record(sid, f"{sid}:assets_2021", concept="Assets", value=1000.0, period_end=_utc(2021, 12, 31)))
+            repo.add_fundamental(_fy_record(sid, f"{sid}:rev_2022", concept="Revenues", value=rev_2022, period_end=_utc(2022, 12, 31)))
+            repo.add_fundamental(_fy_record(sid, f"{sid}:assets_2022", concept="Assets", value=1000.0, period_end=_utc(2022, 12, 31)))
+
+        rising_score = asset_turnover_change_score("RISING", _utc(2023, 6, 1), repo)
+        falling_score = asset_turnover_change_score("FALLING", _utc(2023, 6, 1), repo)
+        assert rising_score is not None and falling_score is not None
+        assert rising_score > falling_score  # rising turnover -> higher (more attractive) score, RAW
+
+    def test_only_one_fiscal_year_known_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev_2022", concept="Revenues", value=300.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=1000.0, period_end=_utc(2022, 12, 31)))
+
+        assert asset_turnover_change_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_mismatched_period_ends_between_concepts_returns_none(self, tmp_path) -> None:
+        # Revenues and Assets never share a common period_end -- no
+        # period-matched fiscal year can be formed at all.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev_2021", concept="Revenues", value=200.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "rev_2022", concept="Revenues", value=300.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2021q", concept="Assets", value=1000.0, period_end=_utc(2021, 6, 30)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022q", concept="Assets", value=1000.0, period_end=_utc(2022, 6, 30)))
+
+        assert asset_turnover_change_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_assets_in_a_year_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev_2021", concept="Revenues", value=200.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=0.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "rev_2022", concept="Revenues", value=300.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=1000.0, period_end=_utc(2022, 12, 31)))
+
+        assert asset_turnover_change_score("AAA", _utc(2023, 6, 1), repo) is None
 
 
 _PIOTROSKI_TWO_YEAR_CONCEPTS = (
@@ -2226,6 +2334,74 @@ class TestValueCompositeScore:
         scores = value_composite_score(["ONLY_ONE"], _utc(2023, 6, 1), repo, price_repo)
 
         assert scores == {}
+
+
+class TestIndustryMomentumScore:
+    """Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Moskowitz &
+    Grinblatt (1999)'s industry momentum. Sector comes from
+    `data_infra.universe.get_sector`, monkeypatched here (as it is
+    imported into `strategy_research.factor_scores`'s own namespace) to
+    a fake security_id -> sector map, so these tests are not coupled to
+    which real symbols this project has actually confirmed a SEC SIC
+    sector for."""
+
+    def _patch_sectors(self, monkeypatch, sector_by_id: dict) -> None:
+        monkeypatch.setattr("strategy_research.factor_scores.get_sector", lambda sid: sector_by_id.get(sid))
+
+    def test_same_industry_members_share_the_identical_score(self, monkeypatch) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        winner_closes = [100.0 + 0.5 * i for i in range(len(days))]
+        loser_closes = [100.0 - 0.05 * i for i in range(len(days))]
+        # A and B are both TECH (a winning industry); C is RETAIL, its own
+        # single-member industry with no peer -- excluded entirely.
+        repo = InMemoryDataRepository(bars=(
+            list(make_bars("A", days, winner_closes)) + list(make_bars("B", days, winner_closes))
+            + list(make_bars("C", days, loser_closes))
+        ))
+        self._patch_sectors(monkeypatch, {"A": "TECH", "B": "TECH", "C": "RETAIL"})
+        as_of_time = _utc(2020, 5, 29)
+
+        scores = industry_momentum_score(["A", "B", "C"], as_of_time, None, repo)
+
+        assert set(scores) == {"A", "B"}  # C excluded -- its industry has only itself
+        assert scores["A"] == pytest.approx(scores["B"])
+
+    def test_a_winning_industry_scores_higher_than_a_losing_industry(self, monkeypatch) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        winner_closes = [100.0 + 0.5 * i for i in range(len(days))]
+        loser_closes = [100.0 - 0.05 * i for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=(
+            list(make_bars("WIN1", days, winner_closes)) + list(make_bars("WIN2", days, winner_closes))
+            + list(make_bars("LOSE1", days, loser_closes)) + list(make_bars("LOSE2", days, loser_closes))
+        ))
+        self._patch_sectors(monkeypatch, {"WIN1": "TECH", "WIN2": "TECH", "LOSE1": "RETAIL", "LOSE2": "RETAIL"})
+        as_of_time = _utc(2020, 5, 29)
+
+        scores = industry_momentum_score(["WIN1", "WIN2", "LOSE1", "LOSE2"], as_of_time, None, repo)
+
+        assert scores["WIN1"] > scores["LOSE1"]  # winning industry -> higher (more attractive) score, RAW
+
+    def test_unknown_sector_excludes_the_security(self, monkeypatch) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        closes = [100.0 + 0.1 * i for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=(
+            list(make_bars("A", days, closes)) + list(make_bars("B", days, closes)) + list(make_bars("UNKNOWN", days, closes))
+        ))
+        self._patch_sectors(monkeypatch, {"A": "TECH", "B": "TECH", "UNKNOWN": None})
+        as_of_time = _utc(2020, 5, 29)
+
+        scores = industry_momentum_score(["A", "B", "UNKNOWN"], as_of_time, None, repo)
+
+        assert "UNKNOWN" not in scores
+        assert set(scores) == {"A", "B"}
+
+    def test_fewer_than_two_scorable_securities_returns_an_empty_dict(self, monkeypatch) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("SOLO", days, [100.0 + i * 0.1 for i in range(len(days))])))
+        self._patch_sectors(monkeypatch, {"SOLO": "TECH"})
+        as_of_time = _utc(2020, 5, 29)
+
+        assert industry_momentum_score(["SOLO"], as_of_time, None, repo) == {}
 
 
 # Fixed per-security fake values for the 9 legs `combined_factor_score`

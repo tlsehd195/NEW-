@@ -23,7 +23,7 @@ from backtest.asof import AsOfDataView
 from backtest.clock import BacktestClock
 from backtest.metrics import annualized_volatility, compute_returns
 
-from data_infra.universe import BENCHMARK_SYMBOL
+from data_infra.universe import BENCHMARK_SYMBOL, get_sector
 
 from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months, trim_to_lookback
 from strategy_research.signal_ic import rank_average
@@ -642,6 +642,63 @@ def downside_beta_score(
     if downside_variance == 0:
         return None
     return covariance / downside_variance
+
+
+def high_volume_return_premium_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, recent_days: int = 5, baseline_days: int = 50,
+) -> Optional[float]:
+    """HYPOTHESIS -- Gervais, Kaniel & Mingelgrin (2001, "The High-
+    Volume Return Premium," The Journal of Finance 56(3): 877-919):
+    stocks with UNUSUALLY HIGH trading volume over a recent short window
+    (relative to their own normal trading activity) tend to APPRECIATE
+    over the following month -- the authors' own explanation is that a
+    volume shock raises a stock's visibility, drawing in new buyers and
+    temporarily lifting demand and price. Verified via WebSearch (the
+    paper's own citation and finding) rather than reconstructed from
+    memory alone.
+
+    **Distinct from every other volume/liquidity factor already in this
+    module**: `illiquidity_score` (Amihud 2002) and `bid_ask_spread_score`
+    (Corwin & Schultz 2012) are both about price IMPACT/COST of trading;
+    `share_turnover_score` (Datar, Naik & Radcliffe 1998) is the LEVEL
+    of turnover relative to shares outstanding, averaged over a full
+    year. This factor is about a RECENT CHANGE in a security's OWN
+    volume relative to its OWN normal baseline -- a security can have
+    low illiquidity, low turnover, and yet still show an unusual recent
+    volume spike (or vice versa), so all four can and do disagree on an
+    individual security.
+
+    Construction: `average_volume(recent_days) / average_volume(baseline_days
+    immediately before that) - 1` -- the paper's own "abnormal volume"
+    concept, here a simple ratio-to-prior-baseline rather than the
+    paper's own more elaborate standardized-unexpected-volume regression
+    model (a deliberate simplification, flagged the same way `low_beta_score`
+    flags its own). Defaults (`recent_days=5`, `baseline_days=50`) match
+    the paper's own "daily/weekly volume shock, ~monthly baseline"
+    characterization. Score is RAW (not negated) -- higher abnormal
+    volume is the paper's own hypothesized more-attractive direction,
+    the same "no negation needed" situation `illiquidity_score` already
+    documents. Needs zero new real ingestion -- `volume` is already a
+    required `PriceBar` field. `None` unless both windows are fully
+    populated with valid (non-negative) volume and the baseline average
+    is positive."""
+    total_days = recent_days + baseline_days
+    padded_days = int(total_days * 1.6)
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), total_days,
+    )
+    if len(bars) < total_days:
+        return None
+    baseline_bars, recent_bars = bars[:-recent_days], bars[-recent_days:]
+    baseline_volumes = [b.volume for b in baseline_bars if b.volume is not None and b.volume >= 0]
+    recent_volumes = [b.volume for b in recent_bars if b.volume is not None and b.volume >= 0]
+    if len(baseline_volumes) < baseline_days or len(recent_volumes) < recent_days:
+        return None
+    baseline_avg = sum(baseline_volumes) / len(baseline_volumes)
+    if baseline_avg <= 0:
+        return None
+    recent_avg = sum(recent_volumes) / len(recent_volumes)
+    return recent_avg / baseline_avg - 1.0
 
 
 def _fy_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:
@@ -1850,6 +1907,92 @@ def combined_factor_score(
     }
 
 
+def industry_momentum_score(
+    security_ids: Sequence[str], as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+    *, lookback_days: int = 126,
+) -> dict:
+    """HYPOTHESIS -- Moskowitz & Grinblatt (1999, "Do Industries
+    Explain Momentum?" The Journal of Finance 54(4): 1249-1290): the
+    past return of a security's OWN INDUSTRY GROUP (an equal-weighted
+    average of every other same-industry security's own trailing
+    return) predicts that security's future return, in the SAME
+    direction ordinary individual momentum predicts -- the original
+    paper's own central finding is that this industry-level component
+    explains much of individual-stock momentum's own profitability, and
+    that industry momentum survives controls the individual-stock
+    version does not. Verified via WebSearch (the paper's own citation
+    and finding) rather than reconstructed from memory alone.
+
+    **A genuinely different construct from this module's own
+    `long_term_reversal_score`/`short_term_reversal_score`/
+    `residual_momentum_score`**: every one of those is an individual
+    security's OWN past return (or a residual of it); this factor is
+    the AVERAGE past return of every OTHER security sharing the same
+    industry -- two securities in the same industry always receive the
+    IDENTICAL score here regardless of their own individual returns, so
+    this factor can and does disagree with an individual security's own
+    momentum on any given date.
+
+    Sector classification comes from `data_infra.universe.get_sector`
+    (SEC EDGAR SIC classification text, ADR-0058, real provider-sourced
+    data for confirmed symbols only, `None` for any symbol never
+    actually resolved this session) -- a security with no confirmed
+    sector, or whose sector has fewer than 2 total members among
+    `security_ids` with a computable trailing return, is excluded from
+    the returned dict entirely (never a fabricated industry group of
+    one). Trailing return uses `adjusted_close or close` over
+    `lookback_days` (default 126, ~6 months, the same intermediate-
+    horizon window `long_term_reversal_score` already uses).
+
+    **A DELIBERATE SIMPLIFICATION of the original paper's own
+    construction, flagged the same way `low_beta_score`/
+    `idiosyncratic_volatility_score` flag theirs**: the original paper
+    value-weights each industry portfolio and excludes the security
+    itself from its own industry's average; this implementation
+    equal-weights and includes every same-industry security (including
+    the one being scored) in its own industry's average -- a minor
+    simplification this project's (comparatively small) universe makes
+    acceptable, not a look-ahead violation (every included return is
+    already fully realized as of `as_of_time`).
+
+    Score is RAW (not negated) -- higher industry momentum is this
+    paper's own hypothesized more-attractive direction. `UniverseScoreFn`-
+    shaped (`compute_universe_ic_series`), like `quality_minus_junk_score`/
+    `value_composite_score`/`combined_factor_score` -- `fundamentals_
+    repository` is accepted but unused (this factor is price+sector
+    only), matching that shared call shape. Returns `{}` if fewer than 2
+    securities end up with a computable score."""
+    padded_days = int(lookback_days * 1.6)
+    returns_by_id = {}
+    for sid in security_ids:
+        bars = trim_to_lookback(
+            price_repository.get_bars(
+                sid, as_of_time - timedelta(days=padded_days), as_of_time, as_of_time=as_of_time,
+            ),
+            lookback_days,
+        )
+        if len(bars) < 2:
+            continue
+        start_close = bars[0].adjusted_close or bars[0].close
+        end_close = bars[-1].adjusted_close or bars[-1].close
+        if start_close is None or start_close <= 0 or end_close is None:
+            continue
+        returns_by_id[sid] = end_close / start_close - 1.0
+
+    sector_by_id = {sid: sector for sid in returns_by_id if (sector := get_sector(sid)) is not None}
+    members_by_sector: dict = {}
+    for sid, sector in sector_by_id.items():
+        members_by_sector.setdefault(sector, []).append(sid)
+
+    scores = {}
+    for sid, sector in sector_by_id.items():
+        members = members_by_sector[sector]
+        if len(members) < 2:
+            continue
+        scores[sid] = sum(returns_by_id[m] for m in members) / len(members)
+    return scores if len(scores) >= 2 else {}
+
+
 def sue_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
     """HYPOTHESIS -- Standardized Unexpected Earnings (Foster, Olsen &
     Shevlin 1984, "Earnings Releases, Anomalies, and the Behavior of
@@ -2415,6 +2558,59 @@ def net_stock_issuance_score(security_id: str, as_of_time: datetime, repository:
         return None
     net_issuance = math.log(current.value / prior.value)
     return -net_issuance
+
+
+def asset_turnover_change_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Fairfield & Yohn (2001, "Using Asset Turnover and
+    Profit Margin to Forecast Changes in Profitability," Review of
+    Accounting Studies 6: 371-385) / Soliman (2008, "The Use of DuPont
+    Analysis by Market Participants," The Accounting Review 83(3):
+    823-853): a YEAR-OVER-YEAR INCREASE in asset turnover (Sales /
+    Assets, the DuPont decomposition's efficiency leg) predicts
+    subsequently HIGHER profitability, and Soliman finds the market only
+    partially prices this in, leaving predictable subsequent abnormal
+    stock returns in the same direction -- a fundamental-momentum /
+    under-reaction story structurally similar to this module's own
+    `sue_score` (Foster, Olsen & Shevlin 1984) and `sloan_accruals_score`
+    (Sloan 1996), applied to a different DuPont-derived signal. Verified
+    via WebSearch (both papers' own citations and the direction of the
+    change-in-turnover-to-profitability relationship) rather than
+    reconstructed from memory alone.
+
+    Asset turnover for one fiscal year is `Revenues / Assets` -- both
+    concepts already ingested (`Revenues` for `sales_yield_score`/
+    `altman_z_score`, `Assets` throughout this module), needing ZERO new
+    data. The change (delta-ATO) is `current FY ATO - prior FY ATO`
+    (a simple difference, not a log-ratio, matching the literature's own
+    "delta-ATO" operational definition for a ratio-of-ratios quantity
+    rather than this module's more common log-change shape for a single
+    level quantity like `net_stock_issuance_score`'s shares count).
+    Requires BOTH concepts to share the identical `period_end` for a
+    given fiscal year (never mixing one year's Revenues against a
+    different year's Assets), the same period-matching discipline
+    `_fy_ratio` already enforces for a single-year ratio.
+
+    Score is the RAW delta-ATO (not negated) -- an INCREASING asset
+    turnover is the papers' own hypothesized more-attractive direction.
+    `None` (never a fabricated value) unless at least two distinct
+    fiscal years have BOTH concepts known, period-matched, with a
+    positive `Assets` value in each."""
+    revenue_records = _fy_records(repository, security_id, "Revenues", as_of_time)
+    asset_records = _fy_records(repository, security_id, "Assets", as_of_time)
+    if len(revenue_records) < 2 or len(asset_records) < 2:
+        return None
+    assets_by_period = {r.period_end: r.value for r in asset_records}
+    turnover_by_period = {}
+    for r in revenue_records:
+        assets_value = assets_by_period.get(r.period_end)
+        if assets_value is None or assets_value <= 0:
+            continue
+        turnover_by_period[r.period_end] = r.value / assets_value
+    if len(turnover_by_period) < 2:
+        return None
+    period_ends = sorted(turnover_by_period)
+    prior_ato, current_ato = turnover_by_period[period_ends[-2]], turnover_by_period[period_ends[-1]]
+    return current_ato - prior_ato
 
 
 def net_operating_assets_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:

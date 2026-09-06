@@ -139,6 +139,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
+    asset_turnover_change_score,
     bid_ask_spread_score,
     book_to_market_score,
     cash_holdings_score,
@@ -149,9 +150,11 @@ from strategy_research.factor_scores import (  # noqa: E402
     earnings_yield_score,
     fifty_two_week_high_score,
     gross_profitability_score,
+    high_volume_return_premium_score,
     idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
+    industry_momentum_score,
     insider_buying_score,
     institutional_ownership_change_score,
     long_term_reversal_score,
@@ -290,6 +293,11 @@ _PRICE_FACTOR_CANDIDATES = (
     # walk-forward result exists, per RULE 0.8.
     ("idiosyncratic_skewness", "Boyer, Mitton & Vorkink 2010 expected idiosyncratic skewness, price-only", idiosyncratic_skewness_score),
     ("downside_beta", "Ang, Chen & Xing 2006 downside risk / downside beta, price-only", downside_beta_score),
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Gervais, Kaniel &
+    # Mingelgrin 2001 high-volume return premium, price+volume only,
+    # needing zero new data. Wired in before any real walk-forward
+    # result exists, per RULE 0.8.
+    ("high_volume_return_premium", "Gervais, Kaniel & Mingelgrin 2001 high-volume return premium, price+volume", high_volume_return_premium_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),
@@ -335,6 +343,12 @@ _FUNDAMENTALS_FACTOR_CANDIDATES = (
     # from. Single-paper-cited JKP construction (cash_at), zero new
     # data. Wired in before any real result exists, per RULE 0.8.
     ("cash_holdings", "Palazzo 2012 cash holdings anomaly, fundamentals-only", cash_holdings_score),
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Fairfield & Yohn
+    # 2001 / Soliman 2008 change-in-asset-turnover anomaly, fundamentals-
+    # only, needs Revenues + Assets (both already ingested), zero new
+    # data. Wired in before any real walk-forward result exists, per
+    # RULE 0.8.
+    ("asset_turnover_change", "Fairfield & Yohn 2001 / Soliman 2008 change-in-asset-turnover anomaly, fundamentals-only", asset_turnover_change_score),
 )
 _HYBRID_FACTOR_CANDIDATES = (
     ("shareholder_yield", "O'Shaughnessy shareholder yield, fundamentals+price", shareholder_yield_score),
@@ -374,6 +388,12 @@ _UNIVERSE_FACTOR_CANDIDATES = (
     # class of concern the SLB/size concentration finding already
     # raised for a different candidate), not a reason to exclude it.
     ("combined_factor", "9-leg rank-averaged combination of every Session 36 sign-matching candidate, cross-sectional", combined_factor_score),
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Moskowitz &
+    # Grinblatt 1999 industry momentum, cross-sectional (needs every
+    # security's own sector via data_infra.universe.get_sector, ADR-0058
+    # real SEC EDGAR SIC data). Wired in before any real walk-forward
+    # result exists, per RULE 0.8.
+    ("industry_momentum", "Moskowitz & Grinblatt 1999 industry momentum, cross-sectional", industry_momentum_score),
 )
 # Session 36 continued (ADR-0086) -- sourced from a THIRD, distinct
 # DuckDB catalog (--insider-db-path, SEC Form 4 filings via

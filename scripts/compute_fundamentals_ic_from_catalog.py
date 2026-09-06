@@ -100,6 +100,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
+    asset_turnover_change_score,
     book_to_market_score,
     cash_holdings_score,
     cashflow_yield_score,
@@ -107,6 +108,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     dividend_growth_score,
     earnings_yield_score,
     gross_profitability_score,
+    industry_momentum_score,
     insider_buying_score,
     institutional_ownership_change_score,
     leverage_score,
@@ -177,6 +179,11 @@ _SCORES = {
     # Shevlin 1984 Standardized Unexpected Earnings, fundamentals-only
     # (needs quarterly EarningsPerShareDiluted, no price data).
     "sue": sue_score,
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Fairfield & Yohn
+    # 2001 / Soliman 2008 change-in-asset-turnover anomaly. Fundamentals-
+    # only, needs Revenues + Assets (both already ingested), zero new
+    # data. Wired in before any real IC result exists, per RULE 0.8.
+    "asset_turnover_change": asset_turnover_change_score,
 }
 
 # Session 36 continued addition (ADR-0086) -- score_fn's have the
@@ -271,6 +278,14 @@ _UNIVERSE_SCORES = {
     # factor_scores.py), so it reuses this same call path with no new
     # plumbing.
     "combined_factor": combined_factor_score,
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Moskowitz &
+    # Grinblatt 1999 industry momentum. Cross-sectional (needs every
+    # security's own sector, via data_infra.universe.get_sector, and
+    # every security's own trailing return to average within its
+    # industry) -- reuses this same call path, same reasoning as
+    # quality_minus_junk_score/value_composite_score above. Wired in
+    # before any real IC result exists, per RULE 0.8.
+    "industry_momentum": industry_momentum_score,
 }
 
 

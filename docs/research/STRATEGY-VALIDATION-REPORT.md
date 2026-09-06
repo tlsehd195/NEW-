@@ -3015,6 +3015,37 @@ from_catalog.py` (`share_turnover`, hybrid) and `run_long_horizon_
 validation.py` (`_EXPECTED_NAMES` extended to 39) before any real
 result exists. No real result recorded yet for any of the three.
 
+## Session 36 continued Addendum -- High-Volume Return Premium, Asset Turnover Change, Industry Momentum, wired blind (ADR-0106)
+
+The account owner asked to keep expanding the factor pool further
+("가능한 많이 전략을 더 찾아봐"), continuing directly from ADR-0105.
+Three more WebSearch-verified anomalies, again needing no new external
+data acquisition:
+
+**`high_volume_return_premium_score`** (Gervais, Kaniel & Mingelgrin
+2001, JF): average recent volume relative to a prior baseline, RAW -- a
+fourth independent volume/liquidity proxy alongside `illiquidity_score`,
+`bid_ask_spread_score` and `share_turnover_score` (about a RECENT
+CHANGE in a security's own volume, not price impact, range, or a
+turnover level). **`asset_turnover_change_score`** (Fairfield & Yohn
+2001 / Soliman 2008): year-over-year change in Revenues/Assets, RAW --
+a fundamental-momentum/under-reaction story structurally similar to
+`sue_score`/`sloan_accruals_score`, applied to a DuPont-derived signal.
+**`industry_momentum_score`** (Moskowitz & Grinblatt 1999, JF): every
+security's score is its own industry's equal-weighted average trailing
+return, RAW -- the first factor in this project needing sector/industry
+classification, so a new small public accessor, `data_infra.universe.
+get_sector`, was added as a thin wrapper around the existing (module-
+private) `_real_symbol_metadata(symbol).sector` (SEC EDGAR SIC text,
+ADR-0058) rather than reaching into that private function directly.
+
+Wired into `compute_signal_ic_from_catalog.py` (`high_volume_return_
+premium`, price-only), `compute_fundamentals_ic_from_catalog.py`
+(`asset_turnover_change`, fundamentals-only; `industry_momentum`,
+cross-sectional) and `run_long_horizon_validation.py` (`_EXPECTED_
+NAMES` extended to 42) before any real result exists. No real result
+recorded yet for any of the three.
+
 ## Outstanding real results not yet received (tracked so they are not lost)
 
 Two real-data runs remain outstanding in the account owner's own
@@ -3035,8 +3066,9 @@ later, not blocking):
    `net_stock_issuance`, `net_operating_assets`, `operating_leverage`,
    `abnormal_investment`, `cash_holdings`, `bid_ask_spread`,
    `institutional_ownership_change`, `idiosyncratic_skewness`,
-   `downside_beta`, `share_turnover`) -- not yet executed for real
-   against the account owner's own DuckDB catalogs.
+   `downside_beta`, `share_turnover`, `high_volume_return_premium`,
+   `asset_turnover_change`, `industry_momentum`) -- not yet executed for
+   real against the account owner's own DuckDB catalogs.
 3. **`institutional_ownership_change_score` needs its own new data
    acquisition first** -- unlike every other pending factor above (a
    re-run of an existing pipeline), this one needs the account owner to

@@ -74,6 +74,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     bid_ask_spread_score,
     downside_beta_score,
     fifty_two_week_high_score,
+    high_volume_return_premium_score,
     idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
@@ -140,6 +141,11 @@ _PRICE_ONLY_SCORES = {
     # result exists, per RULE 0.8.
     "idiosyncratic_skewness": idiosyncratic_skewness_score,
     "downside_beta": downside_beta_score,
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Gervais, Kaniel &
+    # Mingelgrin 2001 high-volume return premium, price+volume only,
+    # needing zero new data. Wired in before any real IC result exists,
+    # per RULE 0.8.
+    "high_volume_return_premium": high_volume_return_premium_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 

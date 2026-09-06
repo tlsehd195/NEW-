@@ -24,6 +24,7 @@ from data_infra.universe import (
     _SP500_PIT_CONFIRMED_LISTED_FROM,
     build_security_masters,
     build_universe_memberships,
+    get_sector,
 )
 
 
@@ -252,6 +253,19 @@ class TestRealSymbolMetadata:
         avb = _real_symbol_metadata("AVB")
         assert avb.sector == "Real Estate Investment Trusts"
         assert avb.listed_from == datetime(2007, 1, 10, tzinfo=timezone.utc)
+
+
+class TestGetSector:
+    """Session 36 continued (ADR-0106) -- `get_sector` is a thin public
+    wrapper around `_real_symbol_metadata(symbol).sector`, added so
+    `strategy_research.factor_scores.industry_momentum_score` does not
+    need to reach into a module-private function directly."""
+
+    def test_a_resolved_symbol_returns_its_real_sector(self) -> None:
+        assert get_sector("MSFT") == "Services-Prepackaged Software"
+
+    def test_an_unresolved_symbol_returns_none(self) -> None:
+        assert get_sector("NOT_A_REAL_SYMBOL_XYZ") is None
 
 
 class TestUniverseDefinitionValidation:

@@ -317,6 +317,18 @@ def _real_symbol_metadata(symbol: str) -> SymbolMetadata:
     return SymbolMetadata(symbol=symbol, sector=sector, exchange=exchange, listed_from=listed_from)
 
 
+def get_sector(symbol: str) -> Optional[str]:
+    """Public accessor for `_real_symbol_metadata(symbol).sector` (SEC
+    EDGAR SIC classification text, ADR-0058) -- `None` if this symbol's
+    sector was never confirmed this session, never a guess. Added
+    (Session 36 continued, ADR-0106) for
+    `strategy_research.factor_scores.industry_momentum_score`, which
+    needs a security's sector without reaching into
+    `_real_symbol_metadata` (an underscore-prefixed, module-private
+    function) directly from another module."""
+    return _real_symbol_metadata(symbol).sector
+
+
 # -- PILOT_UNIVERSE v1 -- Phase 22's original 16-symbol US long-term
 # pilot universe (docs/operations/MARKET-DATA-PROVIDER.md), preserved
 # here unchanged as ONE named, versioned universe -- not the system's
