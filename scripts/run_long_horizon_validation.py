@@ -123,6 +123,7 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
+from storage.institutional_holding_repository import DuckDBInstitutionalHoldingRepository  # noqa: E402
 from storage.short_interest_repository import DuckDBShortInterestRepository  # noqa: E402
 
 from strategy_research.classification import (  # noqa: E402
@@ -150,6 +151,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     idiosyncratic_volatility_score,
     illiquidity_score,
     insider_buying_score,
+    institutional_ownership_change_score,
     long_term_reversal_score,
     low_beta_score,
     max_effect_score,
@@ -377,6 +379,19 @@ _INSIDER_FACTOR_CANDIDATES = (
 _SHORT_INTEREST_FACTOR_CANDIDATES = (
     ("short_interest", "Asquith, Pathak & Ritter 2005 short interest anomaly, short-interest-reports-only", short_interest_score),
 )
+# Session 36 continued (ADR-0104) -- same reasoning as
+# _SHORT_INTEREST_FACTOR_CANDIDATES immediately above, sourced from a
+# FIFTH, distinct DuckDB catalog (--institutional-db-path, a local SEC
+# Form 13F-derived CSV via ingest_institutional_holdings.py) rather than
+# any existing --*-db-path flag. The account owner's own idea this
+# session (institutional investors, not retail, are widely believed to
+# move most large-cap prices -- can this project track them?).
+# institutional_ownership_change_score's own signature is also
+# (security_id, as_of_time, repository), so it reuses
+# _fundamentals_factor_factory unchanged, same as short_interest above.
+_INSTITUTIONAL_FACTOR_CANDIDATES = (
+    ("institutional_ownership_change", "Chen, Jegadeesh & Wermers 2000 institutional-holdings-change anomaly, institutional-holdings-only", institutional_ownership_change_score),
+)
 
 
 def _price_factor_factory(security_ids, score_fn, version):
@@ -480,6 +495,17 @@ def main() -> int:
             "exactly as before this flag existed."
         ),
     )
+    parser.add_argument(
+        "--institutional-db-path", type=Path, default=None,
+        help=(
+            "Path to the DuckDB catalog scripts/ingest_institutional_holdings.py already "
+            "populated (ADR-0104). Optional -- when omitted, the "
+            "'institutional_ownership_change' candidate (SEC Form 13F-based, "
+            "src/strategy_research/factor_scores.py's "
+            "institutional_ownership_change_score) is skipped entirely and every other "
+            "candidate runs exactly as before this flag existed."
+        ),
+    )
     parser.add_argument("--initial-capital", type=float, default=10_000.0, help="Matches PAPER_CAPITAL_USD (broker.paper.us_longterm_config), not a currency-converted figure")
     parser.add_argument("--train-fraction", type=float, default=0.6, help="Chronological split: fraction of [start,end] reserved for TRAIN (fixed before this script's first real-data run, never tuned against a result)")
     parser.add_argument("--validation-fraction", type=float, default=0.2, help="Chronological split: fraction reserved for VALIDATION; remaining fraction is the held-out TEST window")
@@ -553,6 +579,11 @@ def main() -> int:
     if args.short_interest_db_path is not None:
         short_interest_engine = StorageEngine(StorageConfig(root_dir=args.short_interest_db_path))
         short_interest_repository = DuckDBShortInterestRepository(short_interest_engine)
+    institutional_engine = None
+    institutional_repository = None
+    if args.institutional_db_path is not None:
+        institutional_engine = StorageEngine(StorageConfig(root_dir=args.institutional_db_path))
+        institutional_repository = DuckDBInstitutionalHoldingRepository(institutional_engine)
 
     try:
         # Real SPY TOTAL_RETURN benchmark, same construction as Phase
@@ -785,6 +816,17 @@ def main() -> int:
                     _fundamentals_factor_factory(security_ids, short_interest_repository, score_fn, f"{name}_v1"),
                 ))
 
+        if institutional_repository is not None:
+            # ADR-0104: gated independently of every other --*-db-path
+            # flag, same reasoning as short_interest_repository
+            # immediately above -- this candidate needs only the
+            # institutional-holdings catalog.
+            for name, hypothesis, score_fn in _INSTITUTIONAL_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _fundamentals_factor_factory(security_ids, institutional_repository, score_fn, f"{name}_v1"),
+                ))
+
         # experiment_id: deterministic from caller-supplied run
         # configuration only (never datetime.now()/utcnow() -- rule
         # 0-11) -- the SAME configuration run twice always yields the
@@ -825,6 +867,9 @@ def main() -> int:
                 # Session 36 continued (ADR-0099): identical collision-
                 # prevention reasoning for --short-interest-db-path.
                 "short_interest_included": short_interest_repository is not None,
+                # Session 36 continued (ADR-0104): identical collision-
+                # prevention reasoning for --institutional-db-path.
+                "institutional_included": institutional_repository is not None,
                 # The actual candidate set evaluated -- catches "a
                 # candidate was added/removed" (e.g. 6 vs 8 candidates
                 # above). NOT a full code-identity/git-commit hash (this
@@ -1049,6 +1094,8 @@ def main() -> int:
             insider_engine.close()
         if short_interest_engine is not None:
             short_interest_engine.close()
+        if institutional_engine is not None:
+            institutional_engine.close()
 
 
 if __name__ == "__main__":

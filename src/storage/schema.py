@@ -804,6 +804,27 @@ DDL_STATEMENTS: tuple[str, ...] = (
         provenance_schema_version INTEGER NOT NULL
     )
     """,
+    # Session 36 continued addition -- SEC Form 13F aggregate
+    # institutional holdings (data_infra.institutional_holding_models.
+    # InstitutionalHoldingRecord). Mirrors short_interest_records above
+    # exactly: natural key = provenance_source_record_id (one row per
+    # security per calendar quarter), same idempotent-insert shape.
+    """
+    CREATE TABLE IF NOT EXISTS institutional_holding_records (
+        provenance_source_record_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        quarter_end TIMESTAMP NOT NULL,
+        institutional_shares DOUBLE NOT NULL,
+        num_institutions INTEGER,
+        available_time TIMESTAMP NOT NULL,
+        ingestion_time TIMESTAMP NOT NULL,
+        provenance_source TEXT NOT NULL,
+        provenance_source_dataset TEXT NOT NULL,
+        provenance_retrieved_at TIMESTAMP NOT NULL,
+        provenance_data_version TEXT NOT NULL,
+        provenance_schema_version INTEGER NOT NULL
+    )
+    """,
 )
 
 

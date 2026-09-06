@@ -2497,3 +2497,73 @@ def bid_ask_spread_score(
     if len(daily_spreads) < 12:
         return None
     return sum(daily_spreads) / len(daily_spreads)
+
+
+def institutional_ownership_change_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Chen, Jegadeesh & Wermers (2000, "The Value of
+    Active Mutual Fund Management: An Examination of the Stockholdings
+    and Trades of Fund Managers," Journal of Financial and Quantitative
+    Analysis 35(3): 343-368): stocks that institutional investors, in
+    aggregate, INCREASE their holdings in over a period earn
+    systematically HIGHER subsequent returns than stocks they decrease
+    holdings in -- "smart money" institutional trading, in aggregate,
+    contains real predictive information. Distinct from
+    `insider_buying_score` (a single corporate insider's own personal
+    Form 4 trades) and `short_interest_score` (aggregate SHORT
+    positions, a bet institutions are wrong): this is aggregate LONG
+    institutional ownership, disclosed quarterly via SEC Form 13F.
+
+    **Origin**: the account owner's own idea this session -- noting that
+    institutional investors, not individual retail traders, are widely
+    believed to move most large-cap stock prices, and asking whether
+    this project could track institutional positioning directly
+    ("기관들의 움직임을 추적할 순 없을까?"). Researched via a GitHub/web
+    search for real, open-source Form 13F parsers (`dgunning/edgartools`
+    among them) to identify the standard field semantics, continuing
+    this session's established practice of verifying a data format
+    before building against it rather than guessing.
+
+    **Data source, and the two real, stated limitations new to this
+    factor**: `repository` is a `storage.institutional_holding_
+    repository.DuckDBInstitutionalHoldingRepository`, populated by
+    `scripts.ingest_institutional_holdings` from a LOCAL FILE the user
+    produces from SEC Form 13F filings -- not a live network fetch this
+    project's own provider layer performs. Two distinct reasons, both
+    documented in full in `data_infra.institutional_holding_models`'s
+    own module docstring: (1) this sandboxed session cannot reach
+    `sec.gov` (`www.sec.gov` and `data.sec.gov` both confirmed blocked
+    this session) to independently verify SEC's real Form 13F
+    structured data set byte-for-byte; (2) even with access, that data
+    set is keyed by CUSIP, an identifier this project's own
+    `SecurityMaster` has never carried and has no verified mapping for
+    -- a genuinely new kind of gap beyond the network-access limitation
+    every other real-data provider integration this session has hit.
+    `available_time` on every record is SEC Rule 13f-1's own hard 45-
+    calendar-day filing deadline after each quarter's end (a real
+    regulatory deadline, not an estimated dissemination schedule the way
+    `short_interest_models.SHORT_INTEREST_DISSEMINATION_LAG_DAYS` is) --
+    never the quarter-end date itself, the same look-ahead discipline
+    `InsiderTransaction.available_time`/`ShortInterestRecord.
+    available_time` already apply to their own filing dates.
+
+    **Construction, decided BEFORE any result exists (RULE 0.8)**: the
+    RAW log change in aggregate institutional shares held between the
+    two most recent quarters with a known report,
+    `ln(current_quarter_shares / prior_quarter_shares)` --
+    structurally the same `_fy_records`-based year-over-year LOG change
+    shape `net_stock_issuance_score` already uses (there, on total
+    shares outstanding across fiscal years; here, on aggregate
+    institutional shares held across 13F quarters), NOT negated, since
+    the hypothesized relation is that MORE institutional buying predicts
+    HIGHER returns (matches this module's convention that a higher
+    score always ranks a security as more attractive). `None` (never a
+    fabricated change) unless at least two distinct quarters' aggregate
+    institutional holdings are both already known as of `as_of_time`, or
+    the prior quarter's aggregate shares are non-positive."""
+    history = repository.get_institutional_holding_history(security_id, as_of_time)
+    if len(history) < 2:
+        return None
+    current, prior = history[-1], history[-2]
+    if prior.institutional_shares <= 0 or current.institutional_shares <= 0:
+        return None
+    return math.log(current.institutional_shares / prior.institutional_shares)

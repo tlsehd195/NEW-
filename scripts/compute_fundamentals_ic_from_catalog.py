@@ -93,6 +93,7 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
+from storage.institutional_holding_repository import DuckDBInstitutionalHoldingRepository  # noqa: E402
 from storage.short_interest_repository import DuckDBShortInterestRepository  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
@@ -107,6 +108,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     earnings_yield_score,
     gross_profitability_score,
     insider_buying_score,
+    institutional_ownership_change_score,
     leverage_score,
     net_margin_score,
     net_operating_assets_score,
@@ -201,6 +203,17 @@ _SHORT_INTEREST_SCORES = {
     "short_interest": short_interest_score,
 }
 
+# Session 36 continued addition -- same reasoning as _INSIDER_SCORES/
+# _SHORT_INTEREST_SCORES above, sourced from a FIFTH, distinct DuckDB
+# catalog (--institutional-db-path, a local SEC-Form-13F-derived CSV via
+# ingest_institutional_holdings.py). institutional_ownership_change_
+# score's own signature is also (security_id, as_of_time, repository),
+# so it reuses compute_fundamentals_ic_series unchanged, same as the
+# two dicts above.
+_INSTITUTIONAL_SCORES = {
+    "institutional_ownership_change": institutional_ownership_change_score,
+}
+
 # Session 36 addition (ADR-0043 Decision 10) -- scores whose score_fn
 # needs BOTH repositories (not just fundamentals_repository), wired
 # through compute_hybrid_ic_series instead of compute_fundamentals_
@@ -273,10 +286,17 @@ def main(argv: list[str] | None = None) -> int:
         "--short-interest-db-path", type=Path, default=None,
         help="DuckDB catalog from ingest_short_interest_data.py (ADR-0099). Required only for --score short_interest.",
     )
+    parser.add_argument(
+        "--institutional-db-path", type=Path, default=None,
+        help="DuckDB catalog from ingest_institutional_holdings.py (ADR-0104). Required only for --score institutional_ownership_change.",
+    )
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE")
     parser.add_argument(
         "--score",
-        choices=sorted(set(_SCORES) | set(_HYBRID_SCORES) | set(_UNIVERSE_SCORES) | set(_INSIDER_SCORES) | set(_SHORT_INTEREST_SCORES)),
+        choices=sorted(
+            set(_SCORES) | set(_HYBRID_SCORES) | set(_UNIVERSE_SCORES) | set(_INSIDER_SCORES)
+            | set(_SHORT_INTEREST_SCORES) | set(_INSTITUTIONAL_SCORES)
+        ),
         default="roe",
     )
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
@@ -304,6 +324,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: --score {args.score} requires --short-interest-db-path (ADR-0099).", file=sys.stderr)
         return 1
 
+    if args.score in _INSTITUTIONAL_SCORES and args.institutional_db_path is None:
+        print(f"ERROR: --score {args.score} requires --institutional-db-path (ADR-0104).", file=sys.stderr)
+        return 1
+
     locked = overlaps_any_locked_window(start, end)
     if locked:
         names = ", ".join(w.name for w in locked)
@@ -326,6 +350,9 @@ def main(argv: list[str] | None = None) -> int:
     short_interest_engine = None
     if args.short_interest_db_path is not None:
         short_interest_engine = StorageEngine(StorageConfig(root_dir=args.short_interest_db_path))
+    institutional_engine = None
+    if args.institutional_db_path is not None:
+        institutional_engine = StorageEngine(StorageConfig(root_dir=args.institutional_db_path))
 
     rebalance_dates = _rebalance_dates(start, end, args.step_months)
 
@@ -350,6 +377,16 @@ def main(argv: list[str] | None = None) -> int:
         summary = compute_fundamentals_ic_series(
             list(universe.symbol_ids), rebalance_dates, _SHORT_INTEREST_SCORES[args.score],
             fundamentals_repository=short_interest_repository, price_repository=price_repository,
+            horizon_days=args.horizon_days,
+        )
+    elif args.score in _INSTITUTIONAL_SCORES:
+        # Same reuse as _INSIDER_SCORES/_SHORT_INTEREST_SCORES above --
+        # institutional_ownership_change_score's signature is also
+        # (security_id, as_of_time, repository).
+        institutional_repository = DuckDBInstitutionalHoldingRepository(institutional_engine)
+        summary = compute_fundamentals_ic_series(
+            list(universe.symbol_ids), rebalance_dates, _INSTITUTIONAL_SCORES[args.score],
+            fundamentals_repository=institutional_repository, price_repository=price_repository,
             horizon_days=args.horizon_days,
         )
     elif args.score in _UNIVERSE_SCORES:

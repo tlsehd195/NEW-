@@ -155,8 +155,11 @@ class TestCandidateTables:
     1986 measured via the Corwin & Schultz 2012 estimator, found while
     reviewing OpenSourceAP/CrossSection's predictor catalogue -- the
     first factor needing the `PriceBar.adjusted_high`/`.adjusted_low`
-    infrastructure added this same session, ADR-0103) -- 35 total -- no
-    name collisions with each other, or with the 8 pre-existing
+    infrastructure added this same session, ADR-0103; `institutional_
+    ownership_change`, Chen, Jegadeesh & Wermers 2000, the account
+    owner's own idea this session ("기관들의 움직임을 추적할 순 없을까?") --
+    sourced from a SIXTH, distinct DuckDB catalog, ADR-0104) -- 36 total
+    -- no name collisions with each other, or with the 8 pre-existing
     candidates already in `strategy_specs` before ADR-0051."""
 
     _EXPECTED_NAMES = {
@@ -170,6 +173,7 @@ class TestCandidateTables:
         "residual_momentum", "rd_expenditure", "return_seasonality", "short_interest",
         "net_stock_issuance", "net_operating_assets",
         "operating_leverage", "abnormal_investment", "cash_holdings", "bid_ask_spread",
+        "institutional_ownership_change",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
@@ -182,11 +186,12 @@ class TestCandidateTables:
             module._PRICE_FACTOR_CANDIDATES, module._FUNDAMENTALS_FACTOR_CANDIDATES,
             module._HYBRID_FACTOR_CANDIDATES, module._UNIVERSE_FACTOR_CANDIDATES,
             module._INSIDER_FACTOR_CANDIDATES, module._SHORT_INTEREST_FACTOR_CANDIDATES,
+            module._INSTITUTIONAL_FACTOR_CANDIDATES,
         ):
             names.extend(name for name, _hypothesis, _score_fn in table)
         return names
 
-    def test_all_31_expected_names_present_exactly_once(self) -> None:
+    def test_all_36_expected_names_present_exactly_once(self) -> None:
         module = _load_script()
         names = self._all_new_candidate_names(module)
         assert len(names) == len(set(names)), "duplicate candidate name across the 6 tables"
@@ -203,6 +208,7 @@ class TestCandidateTables:
             module._PRICE_FACTOR_CANDIDATES, module._FUNDAMENTALS_FACTOR_CANDIDATES,
             module._HYBRID_FACTOR_CANDIDATES, module._UNIVERSE_FACTOR_CANDIDATES,
             module._INSIDER_FACTOR_CANDIDATES, module._SHORT_INTEREST_FACTOR_CANDIDATES,
+            module._INSTITUTIONAL_FACTOR_CANDIDATES,
         ):
             for name, hypothesis, score_fn in table:
                 assert callable(score_fn), f"{name}'s score_fn is not callable"

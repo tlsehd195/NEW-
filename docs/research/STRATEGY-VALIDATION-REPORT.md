@@ -2945,6 +2945,45 @@ Tiingo-sourced bars currently have them). Wired into
 (the pool's 43rd candidate) before any real result exists. No real
 result recorded yet.
 
+## Session 36 continued Addendum -- Institutional Ownership Change (SEC Form 13F), wired blind (ADR-0104)
+
+The account owner's own idea this session: most large-cap price
+movement is widely believed to come from institutions, not retail
+traders -- can this project track institutional positioning directly?
+("대부분 투자에서 주가를 움직이는건 개미들이 아니라 기관들이라 생각하는데
+기관들에 움직임을 추적할 순 없을까?"). Per the account owner's follow-up
+("깃허브나 온라인에서 별점 높은걸로 찾아서 봐봐" / "아니면 논문"),
+verified SEC Form 13F's standard field semantics against a real
+open-source parser (`dgunning/edgartools`) and an independent web
+summary of SEC's own structured data set -- the two agree.
+
+**Two real, stated limitations**: this session's network is confirmed
+blocked to both `www.sec.gov` and `data.sec.gov`, so SEC's real Form
+13F data set has never been observed directly here; and even with
+access, that data set is CUSIP-keyed, an identifier this project's
+`SecurityMaster` has never carried and has no verified mapping for --
+the first genuinely new kind of data-access gap this session's real-
+data integrations have hit (every earlier one is CIK- or
+`security_id`-keyed already).
+
+**`institutional_ownership_change_score`** (Chen, Jegadeesh & Wermers
+2000): the RAW log change in aggregate institutional shares held
+between the two most recent known quarters -- structurally the same
+YoY log-change shape `net_stock_issuance_score` already uses, NOT
+negated (institutions increasing their position predicts higher
+returns). A full new pipeline was built, mirroring the short-interest/
+FINRA precedent exactly: `InstitutionalHoldingRecord`,
+`DuckDBInstitutionalHoldingRepository`, a local-CSV-only import module
+(`institutional_holding_file_import.py`) and CLI
+(`ingest_institutional_holdings.py`) -- the account owner's own
+workflow resolves each universe security's CUSIP and aggregates SEC's
+real 13F data into this project's own simple schema.
+
+Wired into `compute_fundamentals_ic_from_catalog.py` (`--score
+institutional_ownership_change`, a new `--institutional-db-path` flag)
+and `run_long_horizon_validation.py` (the pool's 44th candidate) before
+any real result exists. No real result recorded yet.
+
 ## Outstanding real results not yet received (tracked so they are not lost)
 
 Two real-data runs remain outstanding in the account owner's own
@@ -2963,8 +3002,16 @@ later, not blocking):
    (`sue`, `insider_buying`, `rs_rating`, `residual_momentum`,
    `rd_expenditure`, `return_seasonality`, `short_interest`,
    `net_stock_issuance`, `net_operating_assets`, `operating_leverage`,
-   `abnormal_investment`, `cash_holdings`, `bid_ask_spread`) -- not yet
-   executed for real against the account owner's own DuckDB catalogs.
+   `abnormal_investment`, `cash_holdings`, `bid_ask_spread`,
+   `institutional_ownership_change`) -- not yet executed for real
+   against the account owner's own DuckDB catalogs.
+3. **`institutional_ownership_change_score` needs its own new data
+   acquisition first** -- unlike every other pending factor above (a
+   re-run of an existing pipeline), this one needs the account owner to
+   actually acquire SEC Form 13F data, resolve CUSIPs for their universe
+   securities, and aggregate/preprocess it into
+   `ingest_institutional_holdings.py`'s CSV schema before any ingestion
+   can happen at all.
 
 Recorded here explicitly (per the account owner's own request) so
 neither item is silently dropped while this session continues other
