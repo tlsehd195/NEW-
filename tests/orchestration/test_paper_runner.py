@@ -73,6 +73,36 @@ def _scenario():
     return repo, config, bars
 
 
+def _reversal_scenario():
+    """Session 37 (ADR-0113) -- `_scenario`'s steady upward drift never
+    produces a real SELL (`BaselineRuleDecisionAgent` only exits on a
+    negative expected return, `decision/agent.py`), so no existing test
+    in this file could ever exercise a real closing trade's realized
+    PnL. This fixture rises for the first 150 trading days (long enough
+    to clear a real BUY) then reverses into a sustained decline for the
+    rest -- once `DriftPredictor`'s 20-day lookback drift turns negative
+    enough to clear `DecisionConfig.min_expected_return`'s threshold on
+    the sell side, a real SELL follows. Deterministic (fixed seed), not
+    tuned per-run -- confirmed to produce a real SELL by direct
+    instrumentation before being written as a test."""
+    import random
+
+    days = trading_days(date(2024, 1, 2), date(2024, 8, 30))
+    rng = random.Random(3)
+    prices = [100.0]
+    for i in range(1, len(days)):
+        daily_return = 0.006 if i < 150 else -0.015
+        prices.append(prices[-1] * (1 + daily_return + rng.gauss(0.0, 0.005)))
+    bars = make_bars("AAA", days, prices)
+    securities = [make_security("AAA", "AAA")]
+    repo = build_repository(bars=bars, securities=securities)
+    config = BacktestConfig(
+        market="US_EQUITY", start_date=days[0], end_date=days[-1], initial_capital=100_000.0,
+        security_ids=("AAA",), code_version="paper-runner-reversal-test",
+    )
+    return repo, config, bars
+
+
 def _build_view(repo, config, index: int):
     calendar = repo.get_trading_calendar("US_EQUITY")
     checkpoints = build_daily_checkpoints(calendar, config.start_date, config.end_date)
@@ -317,7 +347,13 @@ class TestTradeJournalWriteSide:
     project's Paper Trading pipeline had never once populated the Trade
     Journal in its production code path before this."""
 
-    def test_a_filled_buy_is_recorded_as_a_real_trade(self) -> None:
+    def test_a_filled_buy_is_recorded_as_a_real_trade_with_a_real_joinable_decision(self) -> None:
+        """Session 37 (ADR-0113): `trade.decision_id` now points to a
+        real `DecisionSnapshot` this function itself records (superseding
+        ADR-0097's own documented "not joinable" limitation) -- verified
+        by actually resolving the join, not just comparing IDs, since
+        `learning.cleaning.DataCleaner.clean` depends on exactly this
+        join succeeding (`journal.get_decision(record.decision_id)`)."""
         repo, config, bars = _scenario()
         view, _, _ = _build_view(repo, config, 100)
         session = _session(bars)
@@ -334,9 +370,15 @@ class TestTradeJournalWriteSide:
         trade = trades[0]
         assert trade.side == OrderSide.BUY
         assert trade.quantity == outcome.submission.filled_quantity
-        assert trade.decision_id == outcome.decision.decision_id
         assert trade.position_after == outcome.submission.filled_quantity  # started from an empty portfolio
         assert trade.provenance == TradeProvenance.PAPER_TRADING
+
+        decision_snapshot = journal.get_decision(trade.decision_id)
+        assert decision_snapshot is not None  # the real join DataCleaner.clean depends on
+        assert decision_snapshot.security_id == "AAA"
+        assert decision_snapshot.decision == outcome.decision.action
+        assert decision_snapshot.order is None  # never a ValidatedOrder -- see module docstring
+        assert decision_snapshot.provenance == TradeProvenance.PAPER_TRADING
 
     def test_a_rejected_order_writes_no_trade(self) -> None:
         repo, config, bars = _scenario()
@@ -365,6 +407,68 @@ class TestTradeJournalWriteSide:
         outcome = run_cycle(["AAA"], view.current_time, view, session, **_components())[0]
 
         assert outcome.submission is not None and outcome.submission.filled_quantity
+
+    def test_a_closing_sell_records_real_realized_pnl_return_and_holding_period(self) -> None:
+        """Session 37 (ADR-0113): ADR-0096/ADR-0097's original write-side
+        wiring never passed realized_pnl/realized_return/holding_period
+        to record_trade at all -- every real TradeRecord this module
+        ever wrote had them permanently None, even for a genuine closing
+        SELL, which silently made learning.pipeline.run_learning_pipeline
+        structurally unable to ever train from real Paper Trading
+        experience (DataCleaningConfig.require_realized_outcome=True's
+        default excludes any sample without a real realized_return).
+        Uses _reversal_scenario (rise then decline) since _scenario's own
+        steady uptrend never produces a real SELL to test against."""
+        repo, config, bars = _reversal_scenario()
+        view, clock, checkpoints = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+        components = _components()
+
+        sell_outcome = None
+        for offset in range(0, len(checkpoints) - 100):
+            clock.index = 100 + offset
+            outcome = run_cycle(
+                ["AAA"], view.current_time, view, session, trade_journal_repository=journal, **components,
+            )[0]
+            if outcome.submission is not None and outcome.decision.action.value == "SELL":
+                sell_outcome = outcome
+                break
+
+        assert sell_outcome is not None, "fixture must produce a real SELL -- see _reversal_scenario's own docstring"
+
+        trades = journal.list_trades(security_id="AAA")
+        buy_trades = [t for t in trades if t.side == OrderSide.BUY]
+        sell_trades = [t for t in trades if t.side == OrderSide.SELL]
+        assert len(buy_trades) == 1 and buy_trades[0].realized_pnl is None  # an opening leg realizes nothing yet
+        assert len(sell_trades) == 1
+        sell_trade = sell_trades[0]
+
+        # Hand-computed against the same real inputs run_cycle itself
+        # used: the BUY's own real fill price (cost basis) and the SELL's
+        # own real fill price/quantity/total_cost.
+        buy_fill = buy_trades[0].fill
+        sell_fill = sell_trade.fill
+        expected_pnl = (sell_fill.price - buy_fill.price) * sell_fill.quantity - sell_fill.total_cost
+        assert sell_trade.realized_pnl == pytest.approx(expected_pnl)
+        expected_return = expected_pnl / (buy_fill.price * sell_fill.quantity)
+        assert sell_trade.realized_return == pytest.approx(expected_return)
+        assert sell_trade.holding_period == sell_fill.execution_time - buy_fill.execution_time
+        assert sell_trade.position_after == 0.0
+
+    def test_omitted_trade_journal_repository_still_omits_realized_fields_by_default(self) -> None:
+        """Regression guard: TradeJournalRepositoryLike widening
+        record_trade's signature (Session 37) must not change behavior
+        for a caller that never supplies trade_journal_repository at
+        all -- covered structurally by every other test in this class
+        that omits it and still passes, this test just names the
+        invariant explicitly."""
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+
+        outcomes = run_cycle(["AAA"], view.current_time, view, session, **_components())
+        assert outcomes[0].submission is not None  # unchanged baseline behavior
 
 
 class TestValueHistoryState:

@@ -133,6 +133,68 @@ ADR-0112 작성(이 세션 전체 기록). 신규 테스트 11개, 전체 스위
 (브랜치/merge 각각의 정확한 수치는 ADR-0112 및 이 섹션 하단 커밋
 로그 참고).
 
+### Completed (Session 37 계속 — 중복 작업 정리 + Learning Engine 실사용 가능화, ADR-0113)
+
+ADR-0112 병합 직후 사용자가 "처리해" 지시(이 세션이 main 병합 전
+자체적으로 만들었던 `claude/autonomous-ai-investment-system-plan-4-ha7y35`
+브랜치의 Paper Trading↔Trade Journal↔Learning Engine 연결 작업이,
+방금 병합된 `claude/phase-11-model-evolution-7hpibr`가 이미 독립적으로
+구현해둔 ADR-0093/0095/0096/0097과 중복된다는 걸 발견하고 사용자에게
+보고했던 것에 대한 처리 지시).
+
+- **중복 확인**: `main`에 이미 `orchestration.paper_runner.run_cycle`
+  자체에 Trade Journal 쓰기(ADR-0096/0097, reentry cooldown 포함)가
+  내장돼 있었음(`src/trade_journal/paper_adapter.py` 같은 별도
+  모듈 없이). `scripts/run_learning_cycle.py`(Learning Engine "읽기
+  쪽")는 main에 없어 유일하게 진짜 신규였음.
+- **정리**: 중복인 `src/trade_journal/paper_adapter.py` +
+  `tests/trade_journal/test_journal_paper_adapter.py` + 옛
+  `ADR-0086-paper-trade-journal-and-learning-engine-wiring.md` 삭제
+  (main에 이미 다른 주제로 실재하는 ADR-0086과 번호 충돌이기도 했음).
+  `scripts/run_learning_cycle.py`는 그대로 유지(Trade Journal
+  Repository 인터페이스에만 의존, 어느 쪽 write-side 구현인지 몰라도
+  동작).
+- **실제 버그 2건 발견** (main의 ADR-0097 구현을 `run_learning_cycle.py`로
+  실제 검증하다가): (1) `record_trade` 호출에 `realized_pnl`/
+  `realized_return`/`holding_period`가 전혀 안 넘어가서 실제 청산
+  SELL이 나도 전부 `None`으로 영구 고정 (2) 더 근본적으로,
+  `learning.cleaning.DataCleaner.clean`이 `realized_return` 확인보다
+  먼저 `journal.get_decision(trade.decision_id)`로 `DecisionSnapshot`
+  조인을 시도하는데, `run_cycle`이 `record_decision`을 호출한 적이
+  없어서 이 조인이 항상 실패("missing_decision") — (1)만 고쳐도
+  (2) 때문에 여전히 전량 제외됐을 것. ADR-0097 자체가 "지금은 이
+  조인이 필요한 곳이 없다"고 명시적으로 범위 밖 처리했던 부분인데,
+  이 세션이 만들려는 Learning Engine이 정확히 그 필요한 곳이었음.
+- **수정**: `run_cycle`이 이제 유효한 주문이 나올 때마다 진짜
+  `DecisionSnapshot`을 `record_decision`으로 기록(`order=`는 여전히
+  절대 안 넘김 — `ValidatedOrder`와 `backtest.orders.Order` 타입
+  불일치로 실제 크래시 확인, `natural_key`로 대체), 그 `TradeRecord`들의
+  `decision_id`를 Phase 7 `DecisionOutput.decision_id`가 아니라 새
+  `DecisionSnapshot.snapshot_id`로 설정(ADR-0097 원래 선택을 대체).
+  청산 SELL은 `portfolio.positions[...].average_cost`(사이클 시작
+  시점 실제 원가)와 `_position_opened_at`(Trade Journal 실제 이력
+  리플레이)로 `realized_pnl`/`realized_return`/`holding_period` 실제
+  계산.
+- **실측 검증**: 상승 250거래일 후 하락 반전하는 결정론적 합성
+  시나리오로 실제 CLI(`run_paper_trading_cycle.py` →
+  `run_learning_cycle.py`)를 실행 — 수정 전엔
+  `INSUFFICIENT_SAMPLES`/`FAILED`(실제 청산이 있었는데도), 수정 후엔
+  `dataset_quality_status=OK`/`experiment_status=COMPLETED`,
+  `test_metrics.mean_label`이 실제 거래의 실제 realized_return(+55.75%)과
+  정확히 일치 — 이 프로젝트의 Learning Engine이 실제 Paper Trading
+  경험으로 처음으로 진짜 학습을 완료한 사례.
+- **범위 밖으로 명시**: Live(`orchestration.live_runner`)는 동일하게
+  안 고침(Live 활성화 자체가 구조적으로 막혀있어 지금 고쳐도 쓸 실제
+  Live 경험이 없음, RULE 0.8). 기존에 이미 스케줄러가 쌓아온 과거
+  TradeRecord들의 `decision_id`/`realized_*`는 소급 갱신 안 함(새로
+  도는 실행부터만 적용).
+- ADR-0113 작성. 신규/수정 테스트: `test_paper_runner.py`
+  `TestTradeJournalWriteSide`에 실제 조인 검증으로 교체된 기존 테스트
+  1개 + `_reversal_scenario` 기반 realized_pnl 정밀 검증 테스트 1개,
+  `test_run_learning_cycle_cli.py`에 `TestFullLoopWithARealClosedTrade`
+  캡스톤 테스트 1개 신규. 전체 스위트 재실행: **2797개 통과**
+  (ADR-0112 병합 직후 main HEAD의 2787개에서 +10).
+
 ---
 
 ## raw IC 스크리닝 20개 전체 완료 (Session 36, 2026-09-03) — 편입 판단은 아래 "다음 결정" 섹션 참고
