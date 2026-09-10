@@ -255,6 +255,22 @@ def _last_exit_time_by_security(
     return result
 
 
+def compute_portfolio_snapshot(session: PaperTradingSession, view: AsOfDataView, as_of_time: datetime) -> PortfolioView:
+    """Public wrapper around the exact same mark-to-market snapshot
+    `run_cycle` itself takes at the start of every checkpoint (cash +
+    reference-priced positions, cost-basis fallback for a security with
+    no available price -- see `_portfolio_view`'s own docstring) --
+    reusable by a caller that needs a checkpoint's real portfolio value
+    without running the full Prediction/Regime/Decision/Sizing/Risk
+    chain (Session 36 continued: `PaperStrategyKind.BUY_AND_HOLD`'s own
+    per-checkpoint valuation loop, `scripts/run_multi_strategy_paper_
+    trading_cycle.py`, needs exactly this and nothing more -- it never
+    calls a `Predictor`/`DecisionAgent` at all after its one initial
+    allocation)."""
+    account = session.account_summary(as_of=as_of_time)
+    return _portfolio_view(account, view, as_of_time)
+
+
 def run_cycle(
     security_ids: Sequence[str],
     as_of_time: datetime,

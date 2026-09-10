@@ -108,20 +108,10 @@ from data_infra.calendar import US_EQUITY  # noqa: E402
 from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from data_infra.versioning import compute_data_version  # noqa: E402
 
-from decision.agent import BaselineRuleDecisionAgent  # noqa: E402
-from decision.config import DecisionConfig  # noqa: E402
-
 from orchestration.paper_runner import PaperRunnerState, run_cycle  # noqa: E402
+from orchestration.paper_strategies import RunCycleStartingIds, build_run_cycle_components  # noqa: E402
 
-from predict.config import PredictionConfig  # noqa: E402
-from predict.predictor import DriftPredictor  # noqa: E402
-
-from regime.config import RegimeConfig  # noqa: E402
-from regime.detector import RegimeDetector  # noqa: E402
-
-from risk.config import PositionSizingConfig, RiskConfig  # noqa: E402
-from risk.engine import DeterministicPortfolioRiskEngine  # noqa: E402
-from risk.sizing import DeterministicPositionSizer  # noqa: E402
+from risk.config import RiskConfig  # noqa: E402
 
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
@@ -343,14 +333,18 @@ def main(argv=None) -> int:
         max_drawdown=args.max_drawdown, max_portfolio_volatility=args.max_portfolio_volatility,
         reentry_cooldown_days=args.reentry_cooldown_days,
     )
-    components = dict(
-        predictor=DriftPredictor(PredictionConfig(lookback_days=20), starting_id=next_prediction_id),
-        regime_detector=RegimeDetector(
-            RegimeConfig(), starting_observation_id=next_observation_id, starting_composite_id=next_composite_id,
+    # "baseline_rule" (Session 36 continued, ADR-0110): the exact
+    # DriftPredictor + BaselineRuleDecisionAgent + DeterministicPositionSizer
+    # + DeterministicPortfolioRiskEngine configuration this script ran
+    # inline before `orchestration.paper_strategies` existed -- moving the
+    # construction there and calling it by name here changes nothing about
+    # what this script actually runs.
+    components = build_run_cycle_components(
+        "baseline_rule", risk_config=risk_config,
+        starting_ids=RunCycleStartingIds(
+            prediction=next_prediction_id, observation=next_observation_id, composite=next_composite_id,
+            decision=next_decision_id, sizing=next_sizing_id, risk=next_risk_id,
         ),
-        decision_agent=BaselineRuleDecisionAgent(DecisionConfig(), starting_id=next_decision_id),
-        position_sizer=DeterministicPositionSizer(PositionSizingConfig(), starting_id=next_sizing_id),
-        risk_engine=DeterministicPortfolioRiskEngine(risk_config, starting_id=next_risk_id),
     )
 
     warmup_checkpoints = [c for c in checkpoints if (c - args.start).days < _WARMUP_DAYS]
