@@ -219,12 +219,15 @@ def _portfolio_view(account, view: AsOfDataView, as_of_time: datetime) -> Portfo
         if not broker_position.available or broker_position.quantity is None:
             continue
         average_cost = broker_position.average_cost or 0.0
-        positions[security_id] = PositionView(security_id, broker_position.quantity, average_cost)
         price = _reference_price(view, security_id, as_of_time)
         # A real current price marks the position to market; absent
         # one, the position's own cost basis is the best honest
         # fallback still available (never a fabricated market price).
-        market_value += broker_position.quantity * (price if price is not None else average_cost)
+        position_market_value = broker_position.quantity * price if price is not None else None
+        positions[security_id] = PositionView(
+            security_id, broker_position.quantity, average_cost, market_value=position_market_value,
+        )
+        market_value += position_market_value if position_market_value is not None else broker_position.quantity * average_cost
     return PortfolioView(
         as_of_time=as_of_time, cash=account.cash, positions=positions,
         portfolio_value=account.cash + market_value,

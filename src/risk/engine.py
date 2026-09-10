@@ -101,8 +101,20 @@ class DeterministicPortfolioRiskEngine:
         sector_by_security: Optional[dict[str, str]] = None,
     ) -> PortfolioRiskState:
         config = self._config
+        # Session 36 continued (external review remediation): weights by
+        # real mark-to-market value (`pos.market_value`) when the caller
+        # supplied one, falling back to cost basis (`quantity *
+        # average_cost`, this engine's original behavior, unchanged
+        # where no real price is available) only when it is absent.
+        # `portfolio_state.portfolio_value` (the denominator) is itself
+        # already mark-to-market -- weighting the numerator by cost basis
+        # while the denominator uses current price understated a
+        # position's real weight once its price moved away from cost,
+        # letting real gross/concentration/sector exposure exceed a
+        # configured limit undetected.
         position_weights = {
-            sid: (pos.quantity * pos.average_cost) / portfolio_state.portfolio_value
+            sid: (pos.market_value if pos.market_value is not None else pos.quantity * pos.average_cost)
+            / portfolio_state.portfolio_value
             for sid, pos in portfolio_state.positions.items()
             if pos.quantity != 0
         }

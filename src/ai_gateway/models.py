@@ -161,6 +161,18 @@ class ProviderQuotaState:
     last_error_at: Optional[datetime]
     last_error_reason: Optional[str]
     reason: str  # factual: why this observation was recorded, e.g. "initial", "success", "quota_exhausted", "billing_detected"
+    # Session 36 continued (external review remediation): this
+    # provider's own configured daily limits, carried unchanged on
+    # every observation since `QuotaManager.initialize()` first set
+    # them from `ProviderConfig.rpd_limit`/`tpd_limit` -- never
+    # re-supplied per call. Without these, nothing downstream could
+    # ever correctly refill `remaining_requests`/`remaining_tokens`
+    # after a real quota-window rollover; `None` only for rows
+    # persisted before this field existed (read back via
+    # `storage.serialization.payload_to_provider_quota_state`'s own
+    # `.get()` default).
+    rpd_limit: Optional[int] = None
+    tpd_limit: Optional[int] = None
 
     def __post_init__(self) -> None:
         if not self.state_id or not self.provider_id:

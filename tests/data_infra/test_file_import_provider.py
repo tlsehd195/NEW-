@@ -98,6 +98,10 @@ class TestLocalFileDataProviderNormalize:
         assert bar.provenance.source == "nasdaq_data_link_sharadar"
         assert bar.adjusted_close == pytest.approx(1.4)
         assert bar.close == pytest.approx(1.5)
+        # External review finding (Session 36 continued): matches the
+        # identical fix/test in test_tiingo_provider.py -- see
+        # data_infra.provider.bar_available_time's own docstring.
+        assert bar.available_time == datetime(2010, 6, 15, 20, tzinfo=timezone.utc)
 
     def test_normalize_parses_adj_high_and_adj_low_columns(self, tmp_path) -> None:
         _write_csv(

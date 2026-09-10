@@ -12,13 +12,47 @@ from __future__ import annotations
 
 import time as time_module
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Optional, Protocol, Sequence
 
 from data_infra.enums import IngestionStatus
 from data_infra.models import PriceBar, Provenance
 from data_infra.repository import AppendableDataRepository
 from data_infra.versioning import compute_data_version
+
+# Session 36 continued (external review remediation): the real, provider-
+# quoted event date/time a daily EOD bar carries (Tiingo/Stooq/a local
+# CSV import all report midnight UTC of the trading day, e.g.
+# `2024-06-10T00:00:00Z`) is NOT when that bar's closing price actually
+# became knowable -- a US equity market does not close until roughly
+# 20:00-21:00 UTC (varying with DST). Using the bare event date as
+# `available_time` let an intraday as-of query made on the SAME calendar
+# day see that day's own not-yet-final close hours before the market
+# actually closed -- a real, if narrow, look-ahead gap (ADR-0004's own
+# "never event_time" principle). This does NOT use each record's own
+# real `ingestion_time`/`retrieved_at` instead (the fix `normalize_
+# corporate_actions`'s dividend branch uses, Session 36 continued) --
+# `fetch()` stamps that as ONE value across an entire batched date
+# range, so backdating every bar in a broad historical backfill to it
+# would make months of already-public, ordinarily-knowable history
+# falsely invisible until the batch's own end date, a worse regression
+# than the gap being fixed. `END_OF_SESSION_OFFSET` is instead the same
+# fixed, conservative, documented convention `backtest.clock.
+# build_daily_checkpoints`'s own default `checkpoint_time=time(20, 0)`
+# already assumes ("mirrors the convention Phase 1's mock data used for
+# available_time") -- applied per-record here so every real provider
+# matches what this project's own mock data and checkpoint clock already
+# assume, not a new, independently-guessed value.
+END_OF_SESSION_OFFSET = timedelta(hours=20)
+
+
+def bar_available_time(event_date: datetime) -> datetime:
+    """`event_date` (midnight UTC of the trading day, as every real
+    provider in this package reports it) plus `END_OF_SESSION_OFFSET` --
+    see that constant's own docstring for why this, not the batch-level
+    `ingestion_time`, is this project's chosen `available_time` for a
+    daily EOD price bar."""
+    return event_date + END_OF_SESSION_OFFSET
 
 
 class ProviderError(Exception):

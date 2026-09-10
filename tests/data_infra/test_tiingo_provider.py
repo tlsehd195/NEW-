@@ -90,6 +90,15 @@ class TestNormalize:
         assert bar.timestamp == utc(2024, 1, 2)
         assert bar.ingestion_time == utc(2024, 1, 3)
         assert bar.provenance.retrieved_at == utc(2024, 1, 3)
+        # External review finding (Session 36 continued): available_time
+        # must be end-of-session on the bar's own date (20:00 UTC), never
+        # the bare midnight-UTC event date itself -- an as-of query made
+        # intraday before real market close must not see this bar's own
+        # not-yet-final close. Deliberately NOT ingestion_time (2024-01-03
+        # here) either -- see data_infra.provider.bar_available_time's
+        # own docstring for why a per-record convention, not the
+        # batch-level ingestion timestamp, is used for bars specifically.
+        assert bar.available_time == utc(2024, 1, 2, 20)
 
     def test_normalize_parses_adjusted_high_and_low_from_the_same_response(self, monkeypatch) -> None:
         # Session 36 continued -- Tiingo's EOD response already carries
@@ -171,6 +180,36 @@ class TestCorporateActions:
         assert len(actions) == 1
         assert actions[0].action_type == CorporateActionType.DIVIDEND
         assert actions[0].details["amount"] == 0.24
+
+    def test_dividend_available_time_is_ingestion_time_never_backdated_to_event_date(self, monkeypatch) -> None:
+        """External review finding (Session 36 continued): a backfill
+        scenario where the ex-dividend date is months before the actual
+        ingestion -- `available_time` must be the later, real ingestion_
+        time, matching the SPLIT branch's own already-correct behavior
+        immediately below, never the earlier event date (which would let
+        an as-of query made before this system ever ingested the
+        dividend see it anyway -- a real leak, especially exploitable on
+        a broad historical backfill)."""
+        provider, _ = _provider([], monkeypatch)
+        raw = [{"date": "2024-01-15T00:00:00.000Z", "splitFactor": "1.0", "divCash": "0.24"}]
+        actions = provider.normalize_corporate_actions(
+            "AAPL", raw, retrieved_at=utc(2024, 6, 1), ingestion_time=utc(2024, 6, 1),
+        )
+        assert len(actions) == 1
+        assert actions[0].available_time == utc(2024, 6, 1)  # ingestion_time, not the January event_date
+        assert actions[0].event_time == utc(2024, 1, 15)  # the real event date is still recorded, just not as available_time
+
+    def test_split_available_time_is_ingestion_time(self, monkeypatch) -> None:
+        """Locks in the SPLIT branch's own already-correct behavior so a
+        future change cannot silently regress it back toward event_date
+        the way the DIVIDEND branch once did."""
+        provider, _ = _provider([], monkeypatch)
+        raw = [{"date": "2024-01-15T00:00:00.000Z", "splitFactor": "2.0", "divCash": "0.0"}]
+        actions = provider.normalize_corporate_actions(
+            "AAPL", raw, retrieved_at=utc(2024, 6, 1), ingestion_time=utc(2024, 6, 1),
+        )
+        assert len(actions) == 1
+        assert actions[0].available_time == utc(2024, 6, 1)
 
     def test_ordinary_row_produces_no_action(self, monkeypatch) -> None:
         provider, _ = _provider([], monkeypatch)

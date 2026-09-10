@@ -41,7 +41,22 @@ class ProviderAuthError(ProviderError):
 
 
 class ProviderRateLimitError(ProviderError):
-    pass
+    """`retry_after_seconds` (Session 36 continued, external review
+    remediation): optional, real signal a provider's own rate-limit
+    response supplied (e.g. an HTTP `Retry-After` header) -- `None`
+    (the default) when the provider gave no such signal, or when this
+    error was raised by something that never had one to give (`Mock
+    ProviderAdapter` never sets it, matching its own "no network call"
+    design). Never fabricated by this codebase itself: only a real
+    adapter parsing a real response may populate it. `ai_gateway.
+    gateway.AIGateway` passes it through to `QuotaManager.
+    mark_quota_exhausted`'s own `reset_time` when present -- absent, the
+    conservative pre-existing behavior (no automatic recovery window,
+    requires an operator to intervene) is unchanged."""
+
+    def __init__(self, message: str = "", *, retry_after_seconds: Optional[float] = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class RawProviderOutput:

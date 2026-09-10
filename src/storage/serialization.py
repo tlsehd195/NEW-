@@ -1651,6 +1651,8 @@ def provider_quota_state_to_payload(state: ProviderQuotaState) -> dict:
         "last_error_at": _dt_iso(state.last_error_at),
         "last_error_reason": state.last_error_reason,
         "reason": state.reason,
+        "rpd_limit": state.rpd_limit,
+        "tpd_limit": state.tpd_limit,
     }
 
 
@@ -1670,6 +1672,8 @@ def payload_to_provider_quota_state(data: dict) -> ProviderQuotaState:
         last_error_at=_dt_from_iso(data.get("last_error_at")),
         last_error_reason=data.get("last_error_reason"),
         reason=data["reason"],
+        rpd_limit=data.get("rpd_limit"),
+        tpd_limit=data.get("tpd_limit"),
     )
 
 

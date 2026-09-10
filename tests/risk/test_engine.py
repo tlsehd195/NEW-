@@ -75,6 +75,51 @@ class TestConcentrationLimit:
         assert checked.final_target_weight <= 0.20 + 1e-9
 
 
+class TestPositionWeightUsesMarketValueNotCostBasis:
+    """External review finding (Session 36 continued): `position_weights`
+    used to be `quantity * average_cost / portfolio_value` -- cost basis
+    in the numerator, mark-to-market in the denominator (`portfolio_
+    value` is already real market value). A position whose price rose
+    well past its cost basis had its real, current weight understated,
+    letting real concentration/gross exposure exceed a configured limit
+    undetected. `PositionView.market_value` (new, optional) fixes this;
+    absent (the default, every pre-existing caller/test unaffected),
+    behavior is unchanged."""
+
+    def test_position_weight_reflects_real_appreciation_not_stale_cost(self) -> None:
+        # Bought 100 shares at $10 (cost basis $1,000) -- now worth $100/
+        # share ($10,000 real market value). All cash is in this one
+        # position, so portfolio_value == this position's own real value.
+        held = portfolio_holding(
+            T, "BBB", quantity=100.0, average_cost=10.0, cash=0.0,
+            portfolio_value=10_000.0, market_value=10_000.0,
+        )
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_drawdown=None, max_portfolio_volatility=None))
+        sizer = DeterministicPositionSizer()
+        hold_decision = make_decision(T, action=DecisionAction.HOLD)
+        sizing = sizer.size("BBB", T, hold_decision, FakePrediction(0.10), None, held, current_price=100.0)
+        checked = engine.assess("BBB", T, sizing, held, current_price=100.0, value_history=None)
+
+        # The real, current weight -- 100% of the portfolio, not the
+        # stale ~10% a cost-basis numerator over a mark-to-market
+        # denominator would have reported.
+        assert checked.risk_state.position_weights["BBB"] == pytest.approx(1.0)
+        assert checked.risk_state.concentration == pytest.approx(1.0)
+        assert checked.risk_state.gross_exposure == pytest.approx(1.0)
+
+    def test_absent_market_value_falls_back_to_cost_basis_unchanged(self) -> None:
+        """No behavior change for a caller that never supplies
+        `market_value` (every pre-existing production/test call site,
+        until this session's own `orchestration.paper_runner` wiring)."""
+        held = portfolio_holding(T, "BBB", quantity=100.0, average_cost=10.0, cash=9_000.0, portfolio_value=10_000.0)
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_drawdown=None, max_portfolio_volatility=None))
+        sizer = DeterministicPositionSizer()
+        hold_decision = make_decision(T, action=DecisionAction.HOLD)
+        sizing = sizer.size("BBB", T, hold_decision, FakePrediction(0.10), None, held, current_price=100.0)
+        checked = engine.assess("BBB", T, sizing, held, current_price=100.0, value_history=None)
+        assert checked.risk_state.position_weights["BBB"] == pytest.approx(0.10)  # 1,000 cost / 10,000 -- unchanged
+
+
 class TestCashMinimumViolation:
     def test_cash_minimum_breach_reduces_the_position(self) -> None:
         config = PositionSizingConfig(max_position_weight=0.90, cost_safety_margin=0.0)

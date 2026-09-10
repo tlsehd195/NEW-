@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pytest
+
 from backtest_helpers import build_repository, make_bars, make_security, trading_days
 from journal_helpers import make_fill, make_order
 from paper_helpers import make_paper_config
@@ -145,6 +147,37 @@ class TestOrdersActuallySubmitAndFill:
         # must reflect the real position from the first cycle's fill --
         # never a fabricated/reset-to-empty state.
         assert second.decision.as_of_time == view.current_time
+
+    def test_risk_state_position_weight_reflects_real_price_not_stale_fill_cost(self) -> None:
+        """External review finding (Session 36 continued): `_portfolio_
+        view` now populates `PositionView.market_value` from the same
+        real reference price it already computes for the aggregate
+        `portfolio_value` -- proving the fix reaches all the way through
+        `run_cycle`'s real chain, not just a risk-engine unit test. The
+        fixture's own steady upward price drift (`_scenario`) means the
+        position's real market value diverges from its average fill
+        cost by the time of this later checkpoint."""
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+
+        first = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
+        assert first.submission is not None and first.submission.status == BrokerOrderStatus.FILLED
+        fill_price = first.submission.avg_fill_price
+
+        clock.index = 130  # far enough past the drift to move price meaningfully
+        second = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
+        risk_state = second.risk_checked.risk_state
+        assert risk_state is not None
+        position = session.account_summary(as_of=view.current_time).positions["AAA"]
+
+        cost_basis_weight = (position.quantity * position.average_cost) / risk_state.portfolio_value
+        # The real weight this session's own fix now reports must differ
+        # from what a cost-basis-only calculation would have reported --
+        # the steady upward drift guarantees current price > fill cost.
+        assert risk_state.position_weights["AAA"] != pytest.approx(cost_basis_weight)
+        assert fill_price is not None and position.average_cost == pytest.approx(fill_price)
 
 
 class TestSectorLimitPropagatesThroughTheWholeChain:
