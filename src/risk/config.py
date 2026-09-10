@@ -142,7 +142,12 @@ class RiskConfig:
     # first-time BUY whenever a caller has not wired up exit history,
     # which is not what a reentry-cooldown limit is meant to do. See
     # ADR-0093 and LIVE-RISK-POLICY.md item #16 for the full account,
-    # including the still-unratified proposed number --
+    # including the still-unratified proposed number -- counted in
+    # TRADING days (Monday-Friday, not US market holiday-aware), matching
+    # LIVE-RISK-POLICY.md #16's ratified "5 trading days" -- see
+    # risk.engine._trading_days_elapsed's own docstring (Session 37,
+    # ADR-0114) for why calendar days were used before this and are not
+    # now.
     reentry_cooldown_days: Optional[int] = None
 
     # -- minimum number of historical portfolio-value points required

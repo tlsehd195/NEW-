@@ -54,6 +54,7 @@ closed/realized trades):
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from datetime import datetime, timezone
@@ -138,10 +139,34 @@ def main(argv=None) -> int:
 
     result = run_learning_pipeline(journal, records, provenance=provenance, trainer=trainer, seed=args.seed, run_at=run_at)
 
-    DuckDBTrainingDatasetRepository(engine).record(result.dataset_result.dataset)
-    DuckDBCandidateModelRepository(engine).record(result.candidate)
-    DuckDBEvaluationRepository(engine).record(result.evaluation)
-    DuckDBLearningExperimentRepository(engine).record(result.experiment)
+    # Session 37 (ADR-0114): each repository's own `record()` MAY
+    # reassign the id it was called with (natural-key idempotency --
+    # e.g. DuckDBCandidateModelRepository.record allocates candidate_id
+    # from a persistent DB sequence, never trusting the in-process
+    # `learning.trainer._IdAllocator` counter that starts at 1 fresh
+    # every invocation). The returned object, not the one passed in, is
+    # therefore the only one with the REAL, persisted id -- discarding
+    # it (as this script did before this fix) silently let every
+    # cross-reference below (evaluation.candidate_id/dataset_id,
+    # experiment.dataset_id/candidate_id/evaluation_id) point at a
+    # dangling in-process id after the very first run whose dataset
+    # differs from an already-recorded one, a real database consistency
+    # bug an external review found. `dataset_id`/`dataset_version` never
+    # change on record() (only `dataset_id` can be reassigned;
+    # `dataset_version` is a content hash, identical before and after),
+    # so only those two ever need forwarding into the dependent records.
+    dataset = DuckDBTrainingDatasetRepository(engine).record(result.dataset_result.dataset)
+    candidate = DuckDBCandidateModelRepository(engine).record(
+        dataclasses.replace(result.candidate, dataset_id=dataset.dataset_id, dataset_version=dataset.dataset_version)
+    )
+    evaluation = DuckDBEvaluationRepository(engine).record(dataclasses.replace(
+        result.evaluation, candidate_id=candidate.candidate_id,
+        dataset_id=dataset.dataset_id, dataset_version=dataset.dataset_version,
+    ))
+    experiment = DuckDBLearningExperimentRepository(engine).record(dataclasses.replace(
+        result.experiment, dataset_id=dataset.dataset_id, dataset_version=dataset.dataset_version,
+        candidate_id=candidate.candidate_id, evaluation_id=evaluation.evaluation_id,
+    ))
 
     report = {
         "note": (
@@ -153,29 +178,28 @@ def main(argv=None) -> int:
         "provenance": provenance.value,
         "trainer_version": trainer.version,
         "experience_record_count": len(records),
-        "dataset_id": result.dataset_result.dataset.dataset_id,
-        "dataset_version": result.dataset_result.dataset.dataset_version,
-        "dataset_sample_count": result.dataset_result.dataset.sample_count,
-        "dataset_excluded_count": result.dataset_result.dataset.excluded_count,
-        "dataset_quality_status": result.dataset_result.dataset.quality_status,
-        "candidate_id": result.candidate.candidate_id,
-        "candidate_status": result.candidate.status.value,
-        "candidate_parameters": result.candidate.parameters,
-        "evaluation_id": result.evaluation.evaluation_id,
-        "train_metrics": _metrics_dict(result.evaluation.train_metrics),
-        "validation_metrics": _metrics_dict(result.evaluation.validation_metrics),
-        "test_metrics": _metrics_dict(result.evaluation.test_metrics),
-        "baseline_metrics": _metrics_dict(result.evaluation.baseline_metrics),
-        "experiment_id": result.experiment.experiment_id,
-        "experiment_status": result.experiment.status,
+        "dataset_id": dataset.dataset_id,
+        "dataset_version": dataset.dataset_version,
+        "dataset_sample_count": dataset.sample_count,
+        "dataset_excluded_count": dataset.excluded_count,
+        "dataset_quality_status": dataset.quality_status,
+        "candidate_id": candidate.candidate_id,
+        "candidate_status": candidate.status.value,
+        "candidate_parameters": candidate.parameters,
+        "evaluation_id": evaluation.evaluation_id,
+        "train_metrics": _metrics_dict(evaluation.train_metrics),
+        "validation_metrics": _metrics_dict(evaluation.validation_metrics),
+        "test_metrics": _metrics_dict(evaluation.test_metrics),
+        "baseline_metrics": _metrics_dict(evaluation.baseline_metrics),
+        "experiment_id": experiment.experiment_id,
+        "experiment_status": experiment.status,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2))
 
-    print(f"Dataset: {result.dataset_result.dataset.dataset_id} "
-          f"({result.dataset_result.dataset.sample_count} samples, quality={result.dataset_result.dataset.quality_status})")
-    print(f"Candidate: {result.candidate.candidate_id} ({trainer.version}) status={result.candidate.status.value}")
-    print(f"Test metrics: {_metrics_dict(result.evaluation.test_metrics)}")
+    print(f"Dataset: {dataset.dataset_id} ({dataset.sample_count} samples, quality={dataset.quality_status})")
+    print(f"Candidate: {candidate.candidate_id} ({trainer.version}) status={candidate.status.value}")
+    print(f"Test metrics: {_metrics_dict(evaluation.test_metrics)}")
     print(f"Report written to: {args.out}")
     engine.close()
     return 0

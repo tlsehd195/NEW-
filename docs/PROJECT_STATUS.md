@@ -195,6 +195,60 @@ ADR-0112 병합 직후 사용자가 "처리해" 지시(이 세션이 main 병합
   캡스톤 테스트 1개 신규. 전체 스위트 재실행: **2797개 통과**
   (ADR-0112 병합 직후 main HEAD의 2787개에서 +10).
 
+### Completed (Session 37 계속 — 제3자 2차 전수 재리뷰 HIGH 3건 수정, ADR-0114)
+
+PR #5(ADR-0113) 병합 직후 사용자가 **제2차 독립 전수 재리뷰** 결과를
+전달(16개 병렬 에이전트가 727개 파일 전수 정독 + 검증자 직접 재확인,
+`main@145ea95` 대상). 이전 HIGH 8건은 전부 재확인됐고(재작업 없음),
+**신규 HIGH 3건**이 확정돼 전달됨 — 전부 실제 코드 재대조로 재검증 후
+수정:
+
+1. **H-1 (`scripts/run_learning_cycle.py`)**: `storage.
+   learning_repository`의 `record()`가 자연키 신규 시 DB 시퀀스로
+   id를 재할당하는데, 스크립트가 반환값을 전부 버리고 프로세스 내
+   id(`learning.trainer._IdAllocator`, 매 실행마다 1부터 재시작)를
+   그대로 리포트/후속 레코드에 사용 — 1회차는 우연히 일치해 안
+   드러나지만, 새 데이터로 **2회차 재학습**하면 evaluation/experiment의
+   `candidate_id`/`dataset_id` 등이 실제 DB에 저장된 적 없는 유령
+   id를 가리키게 됨(DB 조인 전부 오답). 기존 "동일 데이터 2회 실행"
+   테스트는 자연키 조기 반환 경로만 타서 이 재할당 코드 자체가
+   실행된 적이 없어 미탐지였음. **수정**: 각 `record()` 반환값을
+   `dataclasses.replace`로 다음 레코드에 실제로 전달하도록 재조립.
+   신규 테스트가 실제로 버그를 재현(수정 전 fail, 수정 후 pass)함을
+   직접 확인.
+2. **H-2 (`backtest/portfolio.py` + `orchestration/paper_runner.py`)**:
+   `Fill.price`는 이미 스프레드·슬리피지가 반영된 실효가인데,
+   `realized_pnl` 공식이 `fill.total_cost`(=commission+spread_cost+
+   slippage_cost)를 한 번 더 빼서 스프레드·슬리피지를 **이중 공제**
+   — 모든 backtest의 realized_pnl/승률이 실제보다 나쁘게 편향돼
+   있었고, 이번 세션이 ADR-0113에서 그 공식을 그대로 베껴써서
+   **Learning Engine의 학습 레이블(realized_return)까지 오염**되고
+   있었음. **수정**: 두 곳 모두 `commission`만 공제하도록 정정
+   (`trade_journal/backtest_adapter.py`는 `PortfolioAccounting`을
+   재사용하므로 자동 전파, 별도 수정 불필요). 고정 테스트 2곳(기대값이
+   `- fill.total_cost`였던 것)을 `- fill.commission`으로 재계산.
+3. **H-3 (`risk/engine.py`)**: 재진입 쿨다운이 "5 **거래일**"로
+   비준됐는데(ADR-0093/0095) 구현은 순수 달력일 비율(`total_seconds()
+   /86400.0`)로 비교 — 금요일 청산이 다음 수요일(달력일 5, 거래일
+   3)에 허하게 통과되는 등, 비준된 리스크 한도가 무음으로 약하게
+   적용되고 있었음. **수정**: `_trading_days_elapsed` 신규(월~금만
+   카운트, 미국 시장 휴일은 미반영 — 정책 문서 자체가 "5 거래일(대략
+   한 주)"라고 근사치로 프레이밍한 점을 근거로 전체 거래소 캘린더
+   의존성 추가는 과함으로 판단해 보류). 기존 경계 테스트를 실제
+   거래일 산술로 재작성 + 주말만으로 쿨다운이 풀리면 안 된다는 회귀
+   테스트 신규.
+
+**범위 밖으로 명시**: 이번 리뷰의 MEDIUM(~40건)/LOW(~90건)는 이번
+패스에서 처리 안 함(잔존 ID 할당기 재시작 충돌 계열, ai_gateway
+자연소진 잠금, market_value 직렬화 누락, 문서 오기 잔존 등) — 사용자가
+후속으로 우선순위를 정하면 그때 처리. `Fill.total_cost`/
+`TradeRecord.transaction_cost` 자체 정의는 안 건드림(여전히
+정확한 별개의 "총 거래비용" 지표, realized_pnl 공식만 문제였음).
+이미 쌓인 과거 realized_pnl(스케줄러 누적 이력 등)은 소급 정정 안 함.
+
+ADR-0114 작성. 전체 스위트 재실행: **2799개 통과** (ADR-0113 병합 직후
+main HEAD의 2797개에서 +2).
+
 ---
 
 ## raw IC 스크리닝 20개 전체 완료 (Session 36, 2026-09-03) — 편입 판단은 아래 "다음 결정" 섹션 참고

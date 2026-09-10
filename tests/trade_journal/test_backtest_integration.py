@@ -112,7 +112,14 @@ class TestBacktestIntegration:
         buy_trades = [t for t in journal.list_trades() if t.side == OrderSide.BUY]
         buy = buy_trades[0]
 
-        expected_pnl = (sell.execution_price - buy.execution_price) * buy.quantity - sell.transaction_cost
+        # Session 37 (ADR-0114, external review): commission ONLY, not
+        # sell.transaction_cost (= commission + spread_cost +
+        # slippage_cost) -- execution_price/fill.price is already the
+        # effective, post-spread-and-slippage price on both legs, so
+        # subtracting spread/slippage again here double-counted them
+        # (see backtest.portfolio.PortfolioAccounting.apply_fill's own
+        # comment, the actual source of this realized_pnl).
+        expected_pnl = (sell.execution_price - buy.execution_price) * buy.quantity - sell.fill.commission
         assert sell.realized_pnl == pytest.approx(expected_pnl)
         assert sell.holding_period is not None
         assert sell.holding_period.total_seconds() > 0

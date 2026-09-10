@@ -29,7 +29,7 @@ input data is unavailable right now" (always REJECT).
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Protocol, Sequence
 
 from backtest.metrics import annualized_volatility, compute_max_drawdown, compute_returns
@@ -49,6 +49,38 @@ RISK_STATE_VERSION = "portfolio_risk_state_v1"
 
 def _finite(x: Optional[float]) -> bool:
     return x is not None and math.isfinite(x)
+
+
+def _trading_days_elapsed(start: datetime, end: datetime) -> int:
+    """Counts Monday-Friday calendar days strictly after `start`'s own
+    date through `end`'s date, inclusive -- 0 if `end` is not after
+    `start`. Session 37 (ADR-0114, external review): the reentry-cooldown
+    check below previously compared a raw calendar-day fraction
+    (`total_seconds() / 86400.0`) against `RiskConfig.
+    reentry_cooldown_days`, but `LIVE-RISK-POLICY.md` #16 explicitly
+    ratified "5 TRADING days" -- a real unit mismatch that let a real
+    weekend gap satisfy the cooldown with fewer actual trading days
+    elapsed than the ratified policy intended (e.g. a Friday exit
+    "clears" a 5-day cooldown by the following Wednesday in calendar
+    days, several real trading days early). This excludes weekends but
+    not US market holidays -- this module has no market-calendar
+    dependency, and LIVE-RISK-POLICY.md's own "5 trading days (roughly
+    one calendar week)" framing already treats the number as an
+    approximate, conservative guard against whipsaw churn, not a
+    precisely-calibrated one, so a weekend-only approximation is
+    accepted rather than threading a full `data_infra.calendar.
+    TradingCalendar` through this module's Protocol-based, no-data-
+    access design (see this module's own docstring)."""
+    if end <= start:
+        return 0
+    count = 0
+    current = start.date() + timedelta(days=1)
+    end_date = end.date()
+    while current <= end_date:
+        if current.weekday() < 5:  # Monday=0 .. Friday=4
+            count += 1
+        current += timedelta(days=1)
+    return count
 
 
 class PortfolioRiskEngine(Protocol):
@@ -427,8 +459,15 @@ class DeterministicPortfolioRiskEngine:
         if config.reentry_cooldown_days is not None and last_exit_time_by_security is not None:
             last_exit_time = last_exit_time_by_security.get(security_id)
             if last_exit_time is not None:
-                days_since_exit = (as_of_time - last_exit_time).total_seconds() / 86400.0
-                if days_since_exit < config.reentry_cooldown_days:
+                # Trading days, not calendar days -- see
+                # _trading_days_elapsed's own docstring (Session 37,
+                # ADR-0114): LIVE-RISK-POLICY.md #16 ratified "5 TRADING
+                # days," and comparing a raw calendar-day count against
+                # that threshold let a real weekend gap satisfy the
+                # cooldown with fewer real trading days elapsed than
+                # ratified.
+                trading_days_since_exit = _trading_days_elapsed(last_exit_time, as_of_time)
+                if trading_days_since_exit < config.reentry_cooldown_days:
                     return build(
                         RiskCheckStatus.REJECT, "reentry_cooldown_breached",
                         breached=tuple(breached) + ("reentry_cooldown",),
