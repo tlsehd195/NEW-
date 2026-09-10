@@ -43,6 +43,12 @@
       "skillPath": "skills/engineering/research/SKILL.md",
       "computedHash": "c8c1cba327a6f824b554cd978079a3dadd7406d73174f8fb9bfef58824691970"
     },
+    "task-observer": {
+      "source": "rebelytics/one-skill-to-rule-them-all",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "9e1bc7798f5d1926710d5402c2b5259d56c6b7ff27d9fc2589a808f0c5663d7c"
+    },
     "tdd": {
       "source": "mattpocock/skills",
       "sourceType": "github",
