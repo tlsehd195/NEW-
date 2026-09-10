@@ -50,6 +50,27 @@ untouched here) -- these five parameters cover exactly the five stages
 that session does not already persist. All default to `None` (skip),
 matching `broker.pipeline.submit_validated_order`'s own "persist only
 if a repository is supplied" precedent.
+
+**Trade Journal (Session 37, ADR-0086): now available, opt-in.**
+`run_cycle` accepts an optional `trade_journal`/`journal_state` pair --
+when both are supplied, every checkpoint's `DecisionSnapshot` and any
+real `TradeRecord`(s) it produced are recorded through
+`trade_journal.paper_adapter.record_decision_and_trades`, the adapter
+`trade_journal.backtest_adapter`'s own docstring had anticipated but
+nothing had built until now. Before this, `PaperTradingSession.submit`'s
+real fills were persisted only in `broker.paper.*`'s own order/fill
+repositories -- never in the Trade Journal -- so
+`trade_journal.experience.build_experience_records` (and therefore
+`learning.pipeline.run_learning_pipeline`) had no real Paper Trading
+experience to ever read, despite both halves of that pipeline being
+fully built and tested independently (see ADR-0086). `journal_state`
+must be created once by the caller (`trade_journal.paper_adapter.
+PaperJournalState()`) and carried across every `run_cycle` call for the
+same session, the same "caller-owned state carried forward" shape
+`state: PaperRunnerState` already uses for `value_history` -- supplying
+`trade_journal` without `journal_state` (or vice versa) raises
+`ValueError` rather than silently skipping half the wiring. Both default
+to `None` (skip), so every existing caller's behavior is unchanged.
 """
 
 from __future__ import annotations
@@ -79,6 +100,8 @@ from risk.models import PositionSizingResult, RiskCheckedPosition
 from risk.sizing import PositionSizer
 
 from trade_journal.enums import TradeProvenance
+from trade_journal.paper_adapter import PaperJournalState, record_decision_and_trades
+from trade_journal.repository import TradeJournalRepository
 
 # Mirrors backtest.engine.BacktestEngine's own 1-day reference-price
 # lookback exactly (src/backtest/engine.py) for the checkpoint-only
@@ -185,6 +208,8 @@ def run_cycle(
     decision_repository: Optional[DecisionRepository] = None,
     sizing_repository: Optional[SizingRepository] = None,
     risk_repository: Optional[RiskRepository] = None,
+    trade_journal: Optional[TradeJournalRepository] = None,
+    journal_state: Optional[PaperJournalState] = None,
     provenance: TradeProvenance = TradeProvenance.PAPER_TRADING,
     experiment_id: Optional[str] = None,
 ) -> tuple[CycleOutcome, ...]:
@@ -213,7 +238,15 @@ def run_cycle(
     persist that stage's real output through the exact repository
     classes `tests/integration/test_risk_lineage.py` already uses --
     `PaperTradingSession.submit` already persists its own order/fill/
-    status records independently of these."""
+    status records independently of these. `trade_journal`/
+    `journal_state`, when BOTH supplied, additionally record a real
+    `DecisionSnapshot` (every security, every checkpoint) and any real
+    `TradeRecord`(s) into the Trade Journal (see module docstring) --
+    the only stage this project's own Learning Engine actually reads
+    from."""
+    if (trade_journal is None) != (journal_state is None):
+        raise ValueError("trade_journal and journal_state must be supplied together or not at all")
+
     account = session.account_summary(as_of=as_of_time)
     portfolio = _portfolio_view(account, view, as_of_time)
 
@@ -260,8 +293,18 @@ def run_cycle(
             risk_checked, current_quantity, configuration_version=session.config.configuration_version(),
         )
         submission: Optional[BrokerOrderResponse] = None
+        fills: tuple = ()
         if validation.validated_order is not None:
-            submission, _fills = session.submit(validation.validated_order, requested_at=as_of_time)
+            submission, fills = session.submit(validation.validated_order, requested_at=as_of_time)
+
+        if trade_journal is not None:
+            record_decision_and_trades(
+                trade_journal, journal_state,
+                security_id=security_id, as_of_time=as_of_time, decision=decision, validation=validation,
+                fills=fills, portfolio_state=portfolio,
+                strategy_version=decision.strategy_version or "unknown",
+                provenance=provenance, experiment_id=experiment_id,
+            )
 
         outcomes.append(CycleOutcome(
             security_id=security_id, prediction=prediction, regime=regime, decision=decision,

@@ -26,6 +26,9 @@ from storage.data_repository import DuckDBDataRepository
 from storage.engine import StorageEngine
 from storage.paper_repository import DuckDBPaperFillRepository, DuckDBPaperOrderRepository
 from storage.prediction_repository import DuckDBPredictionRepository
+from storage.trade_journal_repository import DuckDBTradeJournalRepository
+
+from trade_journal.enums import TradeProvenance
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run_paper_trading_cycle.py"
 
@@ -274,3 +277,68 @@ class TestResume:
         # every real prior point PLUS this run's own new checkpoints --
         # never reset to only the new ones.
         assert second["value_history_length"] == first["value_history_length"] + second["checkpoints_run"]
+
+
+class TestTradeJournalWiring:
+    """Session 37, ADR-0086 -- this script now records every checkpoint's
+    Decision (and any real Trade) into the Trade Journal, closing the
+    gap that left `trade_journal.experience.build_experience_records`
+    with nothing real from Paper Trading to ever read."""
+
+    def test_a_run_persists_a_real_decision_per_checkpoint(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        out_path = tmp_path / "report.json"
+        _seed_catalog(db_path)
+
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            "--start", "2024-02-01", "--end", "2024-02-15",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())
+
+        assert report["trade_journal_decisions"] == report["checkpoints_run"]
+
+        store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        journal = DuckDBTradeJournalRepository(store_engine)
+        assert len(journal.list_decisions(security_id="AAA")) == report["checkpoints_run"]
+        assert len(journal.list_trades(security_id="AAA", provenance=TradeProvenance.PAPER_TRADING)) == report["trade_journal_trades"]
+        store_engine.close()
+
+    def test_resume_never_double_counts_journal_records(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        def _run(out_name, *, resume, end):
+            out_path = tmp_path / out_name
+            argv = [
+                "--universe", "TEST_UNIVERSE",
+                "--db-path", str(db_path),
+                "--paper-store", str(paper_store),
+                "--start", "2024-02-01", "--end", end,
+                "--out", str(out_path),
+            ]
+            if resume:
+                argv.append("--resume")
+            assert module.main(argv) == 0
+            return json.loads(out_path.read_text())
+
+        first = _run("first.json", resume=False, end="2024-02-08")
+        second = _run("second.json", resume=True, end="2024-02-15")
+
+        store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        journal = DuckDBTradeJournalRepository(store_engine)
+        total_decisions = len(journal.list_decisions(security_id="AAA"))
+        store_engine.close()
+
+        assert total_decisions == first["checkpoints_run"] + second["checkpoints_run"]

@@ -117,6 +117,10 @@ from storage.broker_repository import DuckDBOrderStatusEventRepository  # noqa: 
 from storage.prediction_repository import DuckDBPredictionRepository  # noqa: E402
 from storage.regime_repository import DuckDBRegimeRepository  # noqa: E402
 from storage.risk_repository import DuckDBPositionSizingRepository, DuckDBRiskRepository  # noqa: E402
+from storage.trade_journal_repository import DuckDBTradeJournalRepository  # noqa: E402
+
+from trade_journal.enums import TradeProvenance  # noqa: E402
+from trade_journal.paper_adapter import reconstruct_journal_state  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
 
@@ -245,6 +249,13 @@ def main(argv=None) -> int:
     decision_repository = DuckDBDecisionRepository(store_engine)
     sizing_repository = DuckDBPositionSizingRepository(store_engine)
     risk_repository = DuckDBRiskRepository(store_engine)
+    trade_journal = DuckDBTradeJournalRepository(store_engine)
+    # Always reconstructed from whatever the journal already has (empty
+    # for a fresh --paper-store) -- not only under --resume, the same
+    # "always correct, never just a --resume special case" choice
+    # ADR-0073 already made for `PaperTradingSession.restore()` and
+    # `_next_starting_id` above.
+    journal_state = reconstruct_journal_state(trade_journal)
 
     # Any --resume filtering of `checkpoints` MUST happen before `clock`/
     # `view` are built below -- `clock.index` is an index into whatever
@@ -331,7 +342,8 @@ def main(argv=None) -> int:
             sector_by_security=sector_by_security if args.max_sector_weight is not None else None,
             prediction_repository=prediction_repository, regime_repository=regime_repository,
             decision_repository=decision_repository, sizing_repository=sizing_repository,
-            risk_repository=risk_repository, **components,
+            risk_repository=risk_repository, trade_journal=trade_journal, journal_state=journal_state,
+            **components,
         )
         for outcome in outcomes:
             if outcome.submission is not None:
@@ -365,7 +377,9 @@ def main(argv=None) -> int:
             "every checkpoint's Prediction/Regime/Decision/Sizing/Risk output and "
             "every real order/fill is persisted in --paper-store, queryable by the "
             "same repository classes this run used. Not an always-on process -- "
-            "this run covers exactly [--start, --end] and then exits."
+            "this run covers exactly [--start, --end] and then exits. Every "
+            "checkpoint's Decision/Trade also reaches the Trade Journal now "
+            "(ADR-0086) -- scripts/run_learning_cycle.py can train from it."
         ),
         "universe": args.universe,
         "start": args.start.isoformat(),
@@ -376,6 +390,8 @@ def main(argv=None) -> int:
         "final_cash": final_account.cash,
         "final_positions": {sid: pos.quantity for sid, pos in final_account.positions.items() if pos.available},
         "value_history_length": len(state.value_history),
+        "trade_journal_decisions": len(trade_journal.list_decisions()),
+        "trade_journal_trades": len(trade_journal.list_trades(provenance=TradeProvenance.PAPER_TRADING)),
         "risk_config": {
             "max_sector_weight": args.max_sector_weight, "max_order_notional": args.max_order_notional,
             "max_drawdown": args.max_drawdown, "max_portfolio_volatility": args.max_portfolio_volatility,
