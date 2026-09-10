@@ -43,6 +43,27 @@ from data_infra.versioning import compute_data_version
 # available_time") -- applied per-record here so every real provider
 # matches what this project's own mock data and checkpoint clock already
 # assume, not a new, independently-guessed value.
+#
+# KNOWN, ACCEPTED LIMITATION (Session 37, external review, ADR-0112):
+# 20:00 UTC matches US equity market close exactly only during Eastern
+# DAYLIGHT time (EDT, UTC-4, roughly mid-March to early November); during
+# Eastern STANDARD time (EST, UTC-5, roughly November to March) the real
+# close is 21:00 UTC, one hour later. This constant does not vary by
+# calendar date, so for ~4 months a year a bar's `available_time` is
+# stamped up to 1 hour EARLIER than the market actually closed -- a
+# narrower reopening of the same class of look-ahead gap this constant
+# exists to fix, not a new one. Left as a deliberate, documented project
+# convention rather than fixed now: `backtest.clock.build_daily_
+# checkpoints`'s own `checkpoint_time=time(20, 0)` default has the
+# identical DST blind spot and is the precedent this constant was
+# explicitly chosen to match (see above) -- fixing one without the other
+# would make an as-of query and the checkpoint clock it drives disagree
+# about when a winter session actually closed, a worse inconsistency
+# than the shared 1-hour winter gap both already accept today. A real
+# fix (varying the offset by whether `event_date` falls in EDT or EST)
+# would need to change both together and is left for a future session
+# that revisits this pair intentionally, not as a side effect of a
+# review remediation pass.
 END_OF_SESSION_OFFSET = timedelta(hours=20)
 
 

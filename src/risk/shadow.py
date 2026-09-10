@@ -155,7 +155,7 @@ def evaluate_in_shadow(
     policy_name: str,
     shadow_id: str,
     repository: Optional[ShadowEvaluationRepository] = None,
-    current_price: Optional[float] = None,
+    current_price: Optional[float] = None,  # forwarded to both engines -- see risk.engine.PortfolioRiskEngine.assess's own docstring on why this is currently unused by DeterministicPortfolioRiskEngine
     value_history=None,
     turnover: Optional[float] = None,
     liquidity_state: Optional[str] = None,

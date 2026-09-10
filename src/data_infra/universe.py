@@ -329,18 +329,21 @@ def get_sector(symbol: str) -> Optional[str]:
     return _real_symbol_metadata(symbol).sector
 
 
-# -- PILOT_UNIVERSE v1 -- Phase 22's original 16-symbol US long-term
+# -- PILOT_UNIVERSE v1 -- Phase 22's original 15-symbol US long-term
 # pilot universe (docs/operations/MARKET-DATA-PROVIDER.md), preserved
 # here unchanged as ONE named, versioned universe -- not the system's
 # only possible universe. Every SymbolMetadata field beyond the symbol
 # itself is left unconfirmed (None) per this module's honesty
-# discipline above.
+# discipline above. (Session 37: corrected from a stale off-by-one
+# count -- an external third-party review counted the actual literal
+# `symbols=` tuple below and found 15, not 16; docs/PROJECT_STATUS.md
+# and STAGE2's own description below carried the same off-by-one.)
 PILOT_UNIVERSE_V1 = UniverseDefinition(
     name="PILOT_UNIVERSE",
     version="v1",
     role="PILOT",
     description=(
-        "Phase 22's original 16-symbol US large-cap pilot universe, selected for "
+        "Phase 22's original 15-symbol US large-cap pilot universe, selected for "
         "data-pipeline validation and long-term/low-turnover Paper Trading -- not a "
         "claim of index representativeness or survivorship-bias-free construction "
         "(see docs/decisions/ADR-0030-universe-architecture.md section on "
@@ -434,7 +437,7 @@ RESEARCH_UNIVERSE_STAGE2 = UniverseDefinition(
     role="RESEARCH",
     description=(
         "Stage 2 of the research universe (instruction section 31): PILOT_UNIVERSE_V1's "
-        "16 symbols plus 24 additional hand-curated large-cap US companies chosen to "
+        "15 symbols plus 24 additional hand-curated large-cap US companies chosen to "
         "reduce mega-cap-tech concentration and broaden GICS sector coverage. Selection "
         "was fixed before any Stage 2 backtest was run (RULE 0.8). Addresses "
         "concentration risk only -- NOT survivorship bias (every symbol still has "

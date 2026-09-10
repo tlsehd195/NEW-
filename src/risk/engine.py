@@ -59,6 +59,24 @@ class PortfolioRiskEngine(Protocol):
         sizing_result: Optional[PositionSizingResult],
         portfolio_state: Optional[PortfolioView],
         *,
+        # Session 37 (external review, ADR-0112): intentionally UNUSED by
+        # `DeterministicPortfolioRiskEngine.assess()`'s own body --
+        # `_compute_risk_state`'s position-weighting fix (Session 36
+        # continued, external review remediation, see the comment above
+        # `position_weights` below) already gets a real mark-to-market
+        # price from `portfolio_state`'s own `PositionView.market_value`
+        # (populated by the caller, e.g. `orchestration.paper_runner`'s
+        # `_portfolio_view`), so this parameter is not this engine's own
+        # source of price truth. Kept on the Protocol (not removed) so a
+        # future concrete `PortfolioRiskEngine` implementation that DOES
+        # need a security's own current price for some other check (e.g.
+        # a price-based liquidity/circuit-breaker rule) can read it
+        # without a signature change rippling through every existing
+        # caller (`orchestration.paper_runner`/`orchestration.
+        # live_runner`/`risk.shadow.run_shadow_evaluation` all already
+        # pass it through) -- removing it now would be a pure signature
+        # cleanup with no behavior change, deferred rather than bundled
+        # into this remediation pass.
         current_price: Optional[float] = None,
         value_history: Optional[Sequence[float]] = None,
         turnover: Optional[float] = None,
@@ -177,7 +195,7 @@ class DeterministicPortfolioRiskEngine:
         sizing_result: Optional[PositionSizingResult],
         portfolio_state: Optional[PortfolioView],
         *,
-        current_price: Optional[float] = None,
+        current_price: Optional[float] = None,  # intentionally unused here -- see PortfolioRiskEngine.assess's own docstring above
         value_history: Optional[Sequence[float]] = None,
         turnover: Optional[float] = None,
         liquidity_state: Optional[str] = None,
