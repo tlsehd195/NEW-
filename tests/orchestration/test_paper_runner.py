@@ -445,11 +445,13 @@ class TestTradeJournalWriteSide:
         sell_trade = sell_trades[0]
 
         # Hand-computed against the same real inputs run_cycle itself
-        # used: the BUY's own real fill price (cost basis) and the SELL's
-        # own real fill price/quantity/total_cost.
+        # used: the BUY's own real fill price (cost basis) and the
+        # SELL's own real fill price/quantity/commission. commission
+        # ONLY, not sell_fill.total_cost -- fill.price already nets out
+        # spread/slippage on both legs (Session 37, ADR-0114).
         buy_fill = buy_trades[0].fill
         sell_fill = sell_trade.fill
-        expected_pnl = (sell_fill.price - buy_fill.price) * sell_fill.quantity - sell_fill.total_cost
+        expected_pnl = (sell_fill.price - buy_fill.price) * sell_fill.quantity - sell_fill.commission
         assert sell_trade.realized_pnl == pytest.approx(expected_pnl)
         expected_return = expected_pnl / (buy_fill.price * sell_fill.quantity)
         assert sell_trade.realized_return == pytest.approx(expected_return)

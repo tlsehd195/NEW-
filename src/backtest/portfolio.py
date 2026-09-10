@@ -125,7 +125,18 @@ class PortfolioAccounting:
             pos.quantity = new_quantity
         else:  # SELL
             self.cash += fill.notional - fill.commission
-            realized = (fill.price - pos.average_cost) * fill.quantity - fill.total_cost
+            # Session 37 (ADR-0114, external review): commission ONLY,
+            # not fill.total_cost (= commission + spread_cost +
+            # slippage_cost). fill.price is already the effective,
+            # post-spread-and-slippage price ("effective per-share price
+            # actually paid/received" -- Fill's own docstring), and
+            # pos.average_cost is built from the BUY fill's own
+            # (also-effective) price -- so (fill.price - pos.average_cost)
+            # already nets out spread/slippage on both legs. Subtracting
+            # spread_cost/slippage_cost again on top of that (the
+            # pre-fix formula) double-counted them, biasing every
+            # realized_pnl toward a bigger loss than actually occurred.
+            realized = (fill.price - pos.average_cost) * fill.quantity - fill.commission
             self.realized_pnl += realized
             self.closed_trades.append(
                 ClosedTradeRecord(

@@ -521,7 +521,13 @@ def run_cycle(
                     realized_return: Optional[float] = None
                     holding_period: Optional[timedelta] = None
                     if fill.side == OrderSide.SELL and position_average_cost is not None:
-                        realized_pnl = (fill.price - position_average_cost) * fill.quantity - fill.total_cost
+                        # commission ONLY, not fill.total_cost -- see
+                        # backtest.portfolio.PortfolioAccounting.apply_fill's
+                        # own comment (Session 37, ADR-0114): fill.price
+                        # already nets out spread/slippage on both the
+                        # entry and exit leg, so subtracting spread_cost/
+                        # slippage_cost again here double-counts them.
+                        realized_pnl = (fill.price - position_average_cost) * fill.quantity - fill.commission
                         cost_basis = position_average_cost * fill.quantity
                         realized_return = (realized_pnl / cost_basis) if cost_basis else None
                         if opened_at is not None:

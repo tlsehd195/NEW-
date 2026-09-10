@@ -184,6 +184,93 @@ class TestEndToEndAgainstARealPaperStore:
         assert first["dataset_id"] == second["dataset_id"]
         assert first["candidate_id"] == second["candidate_id"]
 
+    def test_a_second_run_against_new_experience_persists_real_resolvable_ids(self, tmp_path) -> None:
+        """Session 37 (ADR-0114): an external review found that every
+        `repo.record(...)` return value was discarded -- harmless on the
+        FIRST run of a fresh store (the in-process id allocator, which
+        restarts at 1 every invocation, and the DB's own persistent
+        sequence happen to agree), but on a SECOND run whose dataset
+        genuinely differs (a new dataset_version, so record() does NOT
+        take its natural-key early-return path and DOES reassign a new
+        id from the DB sequence), the report and the cross-references
+        inside evaluation_results/learning_experiments silently kept the
+        stale in-process id instead of the one actually persisted --
+        `test_running_it_twice_is_idempotent_on_dataset_version` above
+        could never catch this, since identical data always takes the
+        early-return path. Verified here by looking the reported ids up
+        directly in the DB, not by trusting the report's own internal
+        consistency (the very thing that was wrong)."""
+        # _seed_catalog's own steady uptrend produces exactly ONE trade
+        # ever (BaselineRuleDecisionAgent never exits an uptrend), so a
+        # longer --end alone would not actually change the Trade
+        # Journal's content or dataset_version -- _seed_reversal_catalog
+        # (rise then decline) is used instead so the second run's window
+        # genuinely includes a second, real trade (the closing SELL) the
+        # first run's window does not.
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_reversal_catalog(db_path)
+        paper_module = _load_module(_PAPER_SCRIPT_PATH, "run_learning_cycle_second_run_paper")
+        paper_module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        def _run_paper(end: str) -> None:
+            # --resume: the same --paper-store is invoked twice over an
+            # overlapping [--start, --end] range -- without it, the
+            # second call would re-derive fresh lineage ids and
+            # genuinely double-submit the first call's own already-
+            # processed checkpoints (ADR-0073).
+            rc = paper_module.main([
+                "--universe", "TEST_UNIVERSE", "--db-path", str(db_path), "--paper-store", str(paper_store),
+                "--start", "2024-08-01", "--end", end, "--resume", "--out", str(tmp_path / f"paper_{end}.json"),
+            ])
+            assert rc == 0
+
+        _run_paper("2024-10-01")  # before the reversal -- only the opening BUY on record
+
+        module = _load_module(_LEARNING_SCRIPT_PATH, "run_learning_cycle_second_run")
+        first_out = tmp_path / "first.json"
+        assert module.main(["--paper-store", str(paper_store), "--out", str(first_out)]) == 0
+
+        _run_paper("2025-06-30")  # past the reversal -- the closing SELL is now also on record
+        second_out = tmp_path / "second.json"
+        assert module.main(["--paper-store", str(paper_store), "--out", str(second_out)]) == 0
+
+        first = json.loads(first_out.read_text())
+        second = json.loads(second_out.read_text())
+        assert second["dataset_version"] != first["dataset_version"]  # genuinely new content, not idempotent
+
+        from storage.learning_repository import (
+            DuckDBCandidateModelRepository,
+            DuckDBEvaluationRepository,
+            DuckDBLearningExperimentRepository,
+            DuckDBTrainingDatasetRepository,
+        )
+
+        engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        dataset_repo = DuckDBTrainingDatasetRepository(engine)
+        candidate_repo = DuckDBCandidateModelRepository(engine)
+        evaluation_repo = DuckDBEvaluationRepository(engine)
+        experiment_repo = DuckDBLearningExperimentRepository(engine)
+
+        real_dataset = dataset_repo.get(second["dataset_id"])
+        real_candidate = candidate_repo.get(second["candidate_id"])
+        real_evaluation = evaluation_repo.get(second["evaluation_id"])
+        real_experiment = experiment_repo.get(second["experiment_id"])
+        engine.close()
+
+        assert real_dataset is not None and real_dataset.dataset_version == second["dataset_version"]
+        assert real_candidate is not None
+        # The actual bug: these cross-references, read back from real
+        # persisted rows, must point at each other -- not at a stale
+        # in-process id that never made it into the database at all.
+        assert real_evaluation is not None
+        assert real_evaluation.candidate_id == real_candidate.candidate_id
+        assert real_evaluation.dataset_id == real_dataset.dataset_id
+        assert real_experiment is not None
+        assert real_experiment.candidate_id == real_candidate.candidate_id
+        assert real_experiment.dataset_id == real_dataset.dataset_id
+        assert real_experiment.evaluation_id == real_evaluation.evaluation_id
+
 
 def _seed_reversal_catalog(db_path: Path) -> None:
     """Rises for 250 trading days (long enough to clear a real BUY, and

@@ -356,25 +356,48 @@ class TestReentryCooldown:
         assert "reentry_cooldown" in checked.breached_limits
 
     def test_an_exit_exactly_at_the_cooldown_boundary_is_no_longer_blocked(self) -> None:
-        """`days_since_exit < reentry_cooldown_days` is a strict `<` --
-        `reentry_cooldown_days=5` means "wait AT LEAST 5 days," so
-        exactly 5 days since exit has already cleared the cooldown
-        (PASS), while one day short of it (4 days) still rejects."""
+        """`trading_days_since_exit < reentry_cooldown_days` is a strict
+        `<` -- `reentry_cooldown_days=5` means "wait AT LEAST 5 TRADING
+        days" (LIVE-RISK-POLICY.md #16's ratified value; Session 37,
+        ADR-0114 -- see `risk.engine._trading_days_elapsed`'s own
+        docstring for why this counts weekdays, not raw calendar days).
+        T (2024-06-01) is a Saturday. An exit on Friday 2024-05-24 has
+        exactly 5 real trading days elapsed by T (5/27 Mon, 5/28 Tue,
+        5/29 Wed, 5/30 Thu, 5/31 Fri -- the weekend on either end never
+        counts) -- cooldown cleared (PASS). An exit on Monday 2024-05-27
+        has only 4 trading days elapsed (5/28-5/31) -- still within
+        cooldown (REJECT)."""
         sizing = _sized_buy()
         engine = DeterministicPortfolioRiskEngine(RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None))
 
         at_boundary = engine.assess(
             "AAA", T, sizing, empty_portfolio(), current_price=50.0,
-            last_exit_time_by_security={"AAA": utc(2024, 5, 27)},  # exactly 5 days before T
+            last_exit_time_by_security={"AAA": utc(2024, 5, 24)},  # exactly 5 trading days before T
         )
         assert at_boundary.status == RiskCheckStatus.PASS
 
         just_inside = engine.assess(
             "AAA", T, sizing, empty_portfolio(), current_price=50.0,
-            last_exit_time_by_security={"AAA": utc(2024, 5, 28)},  # 4 days before T -- still within cooldown
+            last_exit_time_by_security={"AAA": utc(2024, 5, 27)},  # 4 trading days before T -- still within cooldown
         )
         assert just_inside.status == RiskCheckStatus.REJECT
         assert just_inside.reason == "reentry_cooldown_breached"
+
+    def test_a_weekend_gap_alone_never_satisfies_the_cooldown(self) -> None:
+        """Session 37 (ADR-0114) regression guard for the exact bug an
+        external review found: a Friday exit must NOT clear a 5-trading-
+        day cooldown by the following Wednesday just because 5 raw
+        CALENDAR days have passed (Fri->Wed spans a weekend, so only 3
+        real trading days have elapsed) -- the pre-fix formula
+        (`total_seconds() / 86400.0`) incorrectly PASSed this exact case."""
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess(
+            "AAA", utc(2024, 6, 5), sizing, empty_portfolio(), current_price=50.0,  # Wednesday
+            last_exit_time_by_security={"AAA": utc(2024, 5, 31)},  # Friday, 5 calendar days earlier, only 3 trading days
+        )
+        assert checked.status == RiskCheckStatus.REJECT
+        assert checked.reason == "reentry_cooldown_breached"
 
     def test_an_exit_past_the_cooldown_window_does_not_reject(self) -> None:
         sizing = _sized_buy()
