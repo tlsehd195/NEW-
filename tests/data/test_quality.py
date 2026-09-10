@@ -110,6 +110,21 @@ class TestNonFiniteValueGuard:
         run = DataQualityFramework().run([ok], dataset="test", data_version="v1")
         assert not any(i.check == "non_finite_value" for i in run.issues)
 
+    def test_nan_adjusted_high_is_flagged(self) -> None:
+        bad = _bar(adjusted_high=float("nan"))
+        run = DataQualityFramework().run([bad], dataset="test", data_version="v1")
+        assert any(i.check == "non_finite_value" for i in run.issues)
+
+    def test_nan_adjusted_low_is_flagged(self) -> None:
+        bad = _bar(adjusted_low=float("nan"))
+        run = DataQualityFramework().run([bad], dataset="test", data_version="v1")
+        assert any(i.check == "non_finite_value" for i in run.issues)
+
+    def test_missing_optional_adjusted_high_low_is_not_flagged(self) -> None:
+        ok = _bar()  # adjusted_high/adjusted_low default to None -- must not be treated as non-finite
+        run = DataQualityFramework().run([ok], dataset="test", data_version="v1")
+        assert not any(i.check == "non_finite_value" for i in run.issues)
+
     def test_all_finite_values_produce_no_issue(self) -> None:
         run = DataQualityFramework().run([_bar()], dataset="test", data_version="v1")
         assert not any(i.check == "non_finite_value" for i in run.issues)

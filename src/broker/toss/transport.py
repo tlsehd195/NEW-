@@ -21,6 +21,7 @@ import json
 import urllib.error
 import urllib.request
 from typing import Optional
+from urllib.parse import urlencode
 
 from broker.errors import BrokerTimeoutError, BrokerTransportError
 from broker.transport import TransportResponse
@@ -45,9 +46,22 @@ class TossHttpTransport:
         self, method: str, path: str, *, headers: dict[str, str], body: Optional[dict], timeout: float
     ) -> TransportResponse:
         url = f"{self._base_url}{path}"
-        data = json.dumps(body).encode("utf-8") if body is not None else None
         request_headers = dict(headers)
-        request_headers.setdefault("Content-Type", "application/json")
+        # Session 36 continued (external review remediation): the wire
+        # encoding must match whatever `Content-Type` the caller actually
+        # declared, not always JSON. `auth.fetch_access_token` declares
+        # `application/x-www-form-urlencoded` (RFC 6749 section 4.4.2
+        # requires form-urlencoded token-request bodies) -- before this
+        # fix, this method ignored that and JSON-encoded the body
+        # regardless, sending a body that did not match its own
+        # Content-Type header on every such call.
+        content_type = request_headers.setdefault("Content-Type", "application/json")
+        if body is None:
+            data = None
+        elif content_type == "application/x-www-form-urlencoded":
+            data = urlencode(body).encode("utf-8")
+        else:
+            data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=request_headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as raw_response:
@@ -79,6 +93,8 @@ class TossHttpTransport:
 
     def get(self, path: str, *, headers: dict[str, str], params: dict, timeout: float) -> TransportResponse:
         if params:
-            query = "&".join(f"{k}={v}" for k, v in params.items())
-            path = f"{path}?{query}"
+            # urlencode (not a raw f-string join) so a param value
+            # containing "&"/"="/other reserved characters cannot
+            # corrupt the query string or inject an extra parameter.
+            path = f"{path}?{urlencode(params)}"
         return self._request("GET", path, headers=headers, body=None, timeout=timeout)

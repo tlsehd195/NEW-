@@ -12,7 +12,7 @@ import pytest
 
 from live_helpers import make_approval, make_broker_capabilities, make_live_config, make_passing_gate_context, utc
 
-from broker.enums import BrokerCapability
+from broker.enums import BrokerCapability, BrokerOrderStatus
 from broker.errors import BrokerAuthError, BrokerRateLimitError, BrokerTimeoutError, BrokerTransportError
 from broker.live.enums import OperationalState
 from broker.live.session import LiveTradingSession, run_shutdown_checks, run_startup_checks
@@ -77,6 +77,23 @@ class TestScenario8KillSwitchOn:
         assert outcome.submitted is False
         assert "kill_switch_engaged" in outcome.gate_result.failed_conditions
 
+    def test_stale_gate_context_cannot_bypass_the_sessions_own_kill_switch_state(self) -> None:
+        """External review finding (Session 36 continued): `submit()`
+        used to trust `gate_context.kill_switch_engaged` alone. A
+        caller that built its `gate_context` from a snapshot taken
+        BEFORE this session's own `engage_kill_switch` ran -- i.e. the
+        caller still believes the switch is off -- must still be
+        blocked, because the session now also checks its own
+        `is_kill_switch_engaged()`/`operational_state` directly against
+        real state, not just whatever the caller happened to pass in."""
+        session = _session()
+        ctx = _gate_ctx(session, kill_switch_engaged=False)  # deliberately stale/wrong
+        session.engage_kill_switch("manual_test", occurred_at=utc(2024, 1, 2))
+        outcome = session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert outcome.submitted is False
+        assert outcome.status == "BLOCKED"
+        assert "kill_switch_engaged" in outcome.gate_result.failed_conditions
+
 
 class TestCancelOnKillSwitch:
     """Session 36 -- ADR-0045: `engage_kill_switch` now automatically
@@ -137,6 +154,63 @@ class TestCancelOnKillSwitch:
         assert len(result.cancellation_outcomes) == 1
         assert result.cancellation_outcomes[0].cancelled is False
         assert result.cancellation_outcomes[0].error is not None
+
+
+class TestReleaseKillSwitchPreservesReconciliationRequirement:
+    """External review finding (Session 36 continued):
+    `release_kill_switch` used to unconditionally set `READY`,
+    regardless of prior state -- meaning a real UNKNOWN order (never
+    confirmed with the broker) could get silently forgotten the moment
+    someone released the kill switch, resuming trading with no
+    reconciliation having actually happened. It now re-derives the
+    correct resulting state from `self._internal_status` itself: any
+    order still UNKNOWN forces `RECONCILIATION_REQUIRED`, not `READY`."""
+
+    def test_release_after_an_unresolved_unknown_order_stays_blocked_not_ready(self) -> None:
+        session = _session(failure_mode="unavailable")
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)  # -> UNKNOWN, RECONCILIATION_REQUIRED
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+
+        session.engage_kill_switch("manual_test", occurred_at=utc(2024, 1, 3))
+        assert session.operational_state == OperationalState.KILL_SWITCHED
+
+        session.release_kill_switch(make_approval(), occurred_at=utc(2024, 1, 4))
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+
+        # Still blocked -- release alone must not have been enough to resume.
+        second_ctx = _gate_ctx(session)
+        outcome = session.submit(_order(client_order_id="CID-2", security_id="BBB"), requested_at=utc(2024, 1, 4), gate_context=second_ctx)
+        assert outcome.submitted is False
+        assert outcome.error == "reconciliation_required"
+
+    def test_reconciling_the_unknown_order_then_releasing_reaches_ready(self) -> None:
+        session = _session()
+        ctx = _gate_ctx(session)
+        order = _order()
+        session.submit(order, requested_at=utc(2024, 1, 2), gate_context=ctx)
+        # simulate a lost-response scenario, matching TestScenario20's own
+        # precedent (test_reconcile_resolves_unknown_and_resumes): a real
+        # `BrokerError` would have set this same UNKNOWN value via submit()'s
+        # own except-branch -- injected directly here so this test can
+        # control exactly when/whether it gets reconciled, independent of
+        # MockBrokerAdapter's own failure_mode plumbing.
+        session._internal_status[order.client_order_id] = BrokerOrderStatus.UNKNOWN  # type: ignore[attr-defined]
+        session._operational_state = OperationalState.RECONCILIATION_REQUIRED  # type: ignore[attr-defined]
+
+        session.engage_kill_switch("manual_test", occurred_at=utc(2024, 1, 3))
+        session.reconcile_order(order.client_order_id, as_of=utc(2024, 1, 4))  # resolves the UNKNOWN status
+        session.release_kill_switch(make_approval(), occurred_at=utc(2024, 1, 5))
+        assert session.operational_state == OperationalState.READY
+
+    def test_release_with_no_unresolved_orders_reaches_ready_unchanged(self) -> None:
+        """Happy path, unaffected by this fix: no UNKNOWN order exists at
+        all (a plain manual kill-switch drill), so release still returns
+        the session to READY exactly as before."""
+        session = _session()
+        session.engage_kill_switch("manual_test", occurred_at=utc(2024, 1, 2))
+        session.release_kill_switch(make_approval(), occurred_at=utc(2024, 1, 3))
+        assert session.operational_state == OperationalState.READY
 
 
 class TestScenario11DuplicateClientOrderId:

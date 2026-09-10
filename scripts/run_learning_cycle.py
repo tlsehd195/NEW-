@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Real Experience -> Learning Engine retraining CLI (Session 37, ADR-0086).
+"""Real Experience -> Learning Engine retraining CLI (Session 37, ADR-0113).
 
-Closes the second half of the gap ADR-0086 identified: Phase 9's
+Closes the read side of a gap discovered this session: Phase 9's
 Learning Engine (`trade_journal.experience.build_experience_records` ->
 `learning.pipeline.run_learning_pipeline`) and real Paper/Live Trading
-existed as two fully-built, fully-tested, but never-connected halves --
-`scripts/run_paper_trading_cycle.py` now writes real Decisions/Trades
-into the Trade Journal (this script's own read side), but nothing
-previously read them back out to actually train from. This script is
-that missing "read side": it builds real `ExperienceRecord`s from
+existed as fully-built, fully-tested, but never-connected pieces.
+`orchestration.paper_runner.run_cycle` (ADR-0096/ADR-0097, widened this
+session by ADR-0113 to also record a real, joinable `DecisionSnapshot`
+and real `realized_pnl`/`realized_return`/`holding_period`) and
+`scripts/run_paper_trading_cycle.py` are the write side; nothing
+previously read the result back out to actually train from. This script
+is that missing "read side": it builds real `ExperienceRecord`s from
 whatever `--paper-store` a real `scripts/run_paper_trading_cycle.py` run
 already populated, runs the full Data Cleaning -> Labeling -> Dataset ->
 Training -> Evaluation chain (`learning.pipeline.run_learning_pipeline`),
@@ -19,8 +21,9 @@ and persists every stage through the real DuckDB-backed repositories
 share with `storage.data_repository`).
 
 Read-only with respect to the Trade Journal -- this script never calls
-`record_decision`/`record_trade` itself; `scripts/run_paper_trading_cycle.py`
-remains the only writer (ADR-0086's own separation of concerns).
+`record_decision`/`record_trade` itself; `orchestration.paper_runner.
+run_cycle` (via `scripts/run_paper_trading_cycle.py`) remains the only
+writer.
 
 **Honest current limitation, not hidden**: no `Strategy`/`DecisionAgent`
 in this codebase sets `OrderIntent.features` yet (ADR-0048's own
@@ -30,11 +33,15 @@ would therefore always report `fitted=False, train_sample_count=0`
 against real data right now, an honest "no real feature-based learning
 is possible yet" result, not a bug in this script. The default trainer
 is `mean_reward_baseline` for exactly this reason: it needs only
-`LabeledSample.label_value` (`realized_return`, already real from
-ADR-0086's Paper adapter), so it is the first trainer that can produce a
-genuinely non-trivial result from real Paper Trading data today, in the
-same "baseline first, prove the pipeline end to end" spirit
-`MeanRewardBaselineTrainer`'s own docstring already documents.
+`LabeledSample.label_value` (`realized_return`, real as of ADR-0113's
+fix to `orchestration.paper_runner.run_cycle` -- before that fix, EVERY
+real Paper Trading `TradeRecord` had `realized_return=None` regardless
+of this script, making a COMPLETED training run from real data
+impossible no matter which trainer was chosen), so it is the first
+trainer that can produce a genuinely non-trivial result from real Paper
+Trading data today, in the same "baseline first, prove the pipeline end
+to end" spirit `MeanRewardBaselineTrainer`'s own docstring already
+documents.
 
 Usage (run after at least one real scripts/run_paper_trading_cycle.py
 invocation against the same --paper-store has produced some real
@@ -139,7 +146,7 @@ def main(argv=None) -> int:
     report = {
         "note": (
             "Real Experience -> Training Dataset -> Candidate -> Evaluation chain "
-            "(ADR-0086), read from a real --paper-store scripts/run_paper_trading_cycle.py "
+            "(ADR-0113), read from a real --paper-store scripts/run_paper_trading_cycle.py "
             "already populated. Persisted into the same catalog file's own Learning Engine "
             "tables (storage.learning_repository) -- never mutates the Trade Journal itself."
         ),

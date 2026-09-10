@@ -188,6 +188,36 @@ class TestEndToEndAgainstSyntheticCatalog:
             assert exit_code == 0
             assert f"Signal IC: {strategy}" in capsys.readouterr().out
 
+    def test_rs_rating_option_runs_end_to_end(self, tmp_path, capsys) -> None:
+        """Session 36 continued -- O'Neil/IBD Relative Strength Rating,
+        found while comparing this project against an external
+        repository. Price-only, like low_volatility/reversal above --
+        needs >252 trading days of history, so reuses the same 3.5-year
+        fixture shape as the reversal test."""
+        days = trading_days(date(2015, 1, 2), date(2019, 6, 1))
+        trendup_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        trenddown_closes = [100.0 * (0.9998**i) for i in range(len(days))]
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+        repo.append_bars(make_bars(symbols[0], days, trendup_closes))
+        repo.append_bars(make_bars(symbols[1], days, trenddown_closes))
+        engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--db-path", str(tmp_path / "store"),
+            "--universe", "PILOT_UNIVERSE",
+            "--strategy", "rs_rating",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+        assert exit_code == 0
+        assert "Signal IC: rs_rating" in capsys.readouterr().out
+
     def test_low_beta_option_runs_end_to_end(self, tmp_path, capsys) -> None:
         """Session 36 -- ADR-0043 Decision 14. The one price-only score
         that also needs BENCHMARK_SYMBOL ("SPY") bars in the same

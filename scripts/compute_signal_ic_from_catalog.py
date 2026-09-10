@@ -19,7 +19,13 @@ ADR-0043 Decision 16 -- close/trailing-52-week-high), or
 `idiosyncratic_volatility_score` (Ang, Hodrick, Xing & Zhang 2006,
 Session 36 -- negative of the trailing month's CAPM-residual return
 standard deviation, distinct from both `low_volatility_score` (total
-vol) and `low_beta_score` (systematic co-movement)) -- using
+vol) and `low_beta_score` (systematic co-movement)), `residual_momentum_score` (Blitz, Huij & Martens 2011, Session 36
+continued -- standardized MEAN of trailing-year CAPM-residual returns,
+distinct from `idiosyncratic_volatility_score`'s residual STD), or
+`return_seasonality_score` (Heston & Sadka 2008, Session 36 continued --
+average same-calendar-month return across multiple prior years, a
+genuinely different computational shape from every contiguous-window
+factor above) -- using
 `strategy_research.signal_ic.compute_ic_series` against a live DuckDB
 catalog.
 
@@ -65,13 +71,21 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
+    bid_ask_spread_score,
+    coskewness_score,
+    downside_beta_score,
     fifty_two_week_high_score,
+    high_volume_return_premium_score,
+    idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
     long_term_reversal_score,
     low_beta_score,
     low_volatility_score,
     max_effect_score,
+    residual_momentum_score,
+    return_seasonality_score,
+    rs_rating_score,
     short_term_reversal_score,
 )
 from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
@@ -97,6 +111,47 @@ _PRICE_ONLY_SCORES = {
     "fifty_two_week_high": fifty_two_week_high_score,
     "max_effect": max_effect_score,
     "idiosyncratic_volatility": idiosyncratic_volatility_score,
+    # Session 36 continued -- O'Neil/IBD Relative Strength Rating,
+    # found while comparing this project against an external repository
+    # (dragon1086/prism-insight). Wired in before any real IC result
+    # exists, per RULE 0.8.
+    "rs_rating": rs_rating_score,
+    # Session 36 continued -- Blitz, Huij & Martens 2011 Residual
+    # Momentum, found via a GitHub/web search for borrowable strategies
+    # (paperswithbacktest/awesome-systematic-trading). Wired in before
+    # any real IC result exists, per RULE 0.8.
+    "residual_momentum": residual_momentum_score,
+    # Session 36 continued -- Heston & Sadka 2008 Return Seasonality,
+    # found via the same GitHub/web search. Wired in before any real IC
+    # result exists, per RULE 0.8.
+    "return_seasonality": return_seasonality_score,
+    # Session 36 continued -- Amihud & Mendelson 1986 bid-ask spread
+    # anomaly, measured via the Corwin & Schultz 2012 estimator, found
+    # while continuing to review OpenSourceAP/CrossSection's predictor
+    # catalogue per the account owner's "1 2 실행" instruction. Needs
+    # PriceBar.adjusted_high/.adjusted_low (added this session) --
+    # returns None for any security whose bars lack them (e.g.
+    # Stooq-sourced). Wired in before any real IC result exists, per
+    # RULE 0.8.
+    "bid_ask_spread": bid_ask_spread_score,
+    # Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Boyer, Mitton &
+    # Vorkink 2010 expected idiosyncratic skewness (lottery-preference
+    # anomaly) and Ang, Chen & Xing 2006 downside beta (a downside-risk
+    # premium distinct from low_beta_score's pooled-window beta), both
+    # price-only, needing zero new data. Wired in before any real IC
+    # result exists, per RULE 0.8.
+    "idiosyncratic_skewness": idiosyncratic_skewness_score,
+    "downside_beta": downside_beta_score,
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Gervais, Kaniel &
+    # Mingelgrin 2001 high-volume return premium, price+volume only,
+    # needing zero new data. Wired in before any real IC result exists,
+    # per RULE 0.8.
+    "high_volume_return_premium": high_volume_return_premium_score,
+    # Session 36 continued (전략 더 찾아봐, 논문쪽에서 S급) -- Harvey &
+    # Siddique 2000 coskewness, one of the most-cited papers in the
+    # asset-pricing literature, price-only, needing zero new data. Wired
+    # in before any real IC result exists, per RULE 0.8.
+    "coskewness": coskewness_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 

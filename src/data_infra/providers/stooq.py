@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 from data_infra.models import PriceBar, Provenance
-from data_infra.provider import PermanentProviderError
+from data_infra.provider import PermanentProviderError, bar_available_time
 from data_infra.providers.stooq_config import StooqConfig
 from data_infra.providers.stooq_transport import StooqHttpTransport
 from data_infra.versioning import compute_data_version
@@ -123,7 +123,10 @@ class StooqDataProvider:
                     low=float(record["low"]),
                     close=float(record["close"]),
                     volume=float(record["volume"]),
-                    available_time=timestamp,
+                    # Session 36 continued (external review remediation):
+                    # see `data_infra.provider.bar_available_time`'s own
+                    # docstring -- matches the identical fix in tiingo.py.
+                    available_time=bar_available_time(timestamp),
                     ingestion_time=as_of,
                     provenance=provenance,
                     adjusted_close=None,  # never fabricated -- see module docstring

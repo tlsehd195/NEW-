@@ -15,16 +15,17 @@ untested ones.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import math
+from datetime import date, datetime, timedelta
 from typing import Optional, Sequence
 
 from backtest.asof import AsOfDataView
 from backtest.clock import BacktestClock
 from backtest.metrics import annualized_volatility, compute_returns
 
-from data_infra.universe import BENCHMARK_SYMBOL
+from data_infra.universe import BENCHMARK_SYMBOL, get_sector
 
-from strategy_research._dates import TRADING_DAYS_PER_MONTH, trim_to_lookback
+from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months, trim_to_lookback
 from strategy_research.signal_ic import rank_average
 
 
@@ -468,6 +469,326 @@ def max_effect_score(
     if len(returns) < 2:
         return None
     return -max(returns)
+
+
+def idiosyncratic_skewness_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 21,
+) -> Optional[float]:
+    """HYPOTHESIS -- Boyer, Mitton & Vorkink (2010, "Expected
+    Idiosyncratic Skewness," The Review of Financial Studies 23(1):
+    169-202): stocks with HIGHER expected idiosyncratic (stock-specific,
+    non-market) return skewness earn LOWER subsequent returns -- the
+    original paper's own headline result is a 1.00%/month Fama-French
+    alpha spread between its low- and high-expected-skewness quintiles.
+    Interpreted the same way the MAX effect (`max_effect_score`) already
+    in this module is: investors with a preference for lottery-like,
+    right-skewed payoffs overpay for positive skewness, depressing its
+    subsequent return. Verified via WebSearch (paper's own abstract and
+    citing summaries) rather than reconstructed from memory alone,
+    per this module's established citation-verification discipline.
+
+    **Distinct from `max_effect_score`, not a re-parameterization**: MAX
+    is a single-extreme-observation statistic (the one largest daily
+    return in the window); skewness is a shape-of-the-whole-distribution
+    statistic (the THIRD standardized moment of every return in the
+    window) -- a distribution can have one large up-day yet still be
+    left-skewed overall (many small down-days dominating the shape), and
+    vice versa, so the two can and do disagree on individual securities.
+    Also distinct from `idiosyncratic_volatility_score` (the SECOND
+    moment of the same market-model residuals): a security's residuals
+    can have low dispersion yet a strongly skewed shape, or high
+    dispersion yet a symmetric shape.
+
+    **Construction, a deliberate simplification of the original paper's
+    own estimator, flagged the same way `idiosyncratic_volatility_score`
+    flags its own**: the original paper fits a cross-sectional model of
+    EXPECTED future skewness from several predictive characteristics
+    (lagged idiosyncratic skewness, volume, size, book-to-market, and
+    others); this implementation instead uses REALIZED trailing
+    idiosyncratic skewness directly (this module's existing convention,
+    also used by `max_effect_score`'s own realized-not-expected MAX and
+    `idiosyncratic_volatility_score`'s own realized-not-expected IVOL --
+    a REALIZED statistic as a proxy for the paper's own EXPECTED one).
+    Reuses `idiosyncratic_volatility_score`'s own market-model residual
+    construction (regress trailing daily returns on `BENCHMARK_SYMBOL`
+    via simple OLS, matching its 21-day/~1-month default window) and
+    takes the third standardized moment (population skewness) of the
+    residuals instead of their standard deviation.
+
+    Score is the NEGATIVE of the residual skewness (higher score = lower
+    idiosyncratic skewness = more attractive, matching this module's
+    convention and the paper's own "high skewness -> low returns"
+    finding). Needs at least 15 paired daily observations (matching
+    `idiosyncratic_volatility_score`'s own floor) and a non-zero
+    residual standard deviation (skewness is undefined at zero
+    variance); `None` below that."""
+    padded_days = int(lookback_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 16:
+        return None
+    security_returns = compute_returns([security_closes[d] for d in common_dates])
+    benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    if len(security_returns) < 15 or len(security_returns) != len(benchmark_returns):
+        return None
+    security_mean = sum(security_returns) / len(security_returns)
+    benchmark_mean = sum(benchmark_returns) / len(benchmark_returns)
+    covariance = sum(
+        (s - security_mean) * (b - benchmark_mean) for s, b in zip(security_returns, benchmark_returns)
+    ) / (len(security_returns) - 1)
+    benchmark_variance = sum((b - benchmark_mean) ** 2 for b in benchmark_returns) / (len(benchmark_returns) - 1)
+    if benchmark_variance == 0:
+        return None
+    beta = covariance / benchmark_variance
+    alpha = security_mean - beta * benchmark_mean
+    residuals = [s - alpha - beta * b for s, b in zip(security_returns, benchmark_returns)]
+    n = len(residuals)
+    residual_mean = sum(residuals) / n
+    residual_variance = sum((r - residual_mean) ** 2 for r in residuals) / n
+    residual_std = residual_variance ** 0.5
+    if residual_std == 0:
+        return None
+    residual_skewness = (sum((r - residual_mean) ** 3 for r in residuals) / n) / (residual_std ** 3)
+    return -residual_skewness
+
+
+def downside_beta_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- Ang, Chen & Xing (2006, "Downside Risk," The
+    Review of Financial Studies 19(4): 1191-1239): stocks whose returns
+    covary MORE STRONGLY with the market specifically DURING market
+    declines (a higher "downside beta") earn HIGHER subsequent returns
+    -- a roughly 6%/year downside-risk premium in the original paper's
+    own US sample, which the authors show survives controls for
+    regular market beta, coskewness, liquidity risk, size, book-to-
+    market, and momentum. Verified via WebSearch (paper's own abstract
+    and citing summaries) rather than reconstructed from memory alone.
+
+    **Distinct from `low_beta_score`, not a re-parameterization**:
+    `low_beta_score` estimates ONE beta over the WHOLE window (up-days
+    and down-days pooled together); this factor estimates beta
+    CONDITIONAL ON the benchmark being in a down period only -- a
+    security can have a low unconditional (pooled) beta yet still
+    covary strongly with the market specifically on its worst days (a
+    "crash-prone" security the pooled estimate would not flag), and
+    vice versa, so the two scores can and do disagree on individual
+    securities. Per the original paper's own convention, "downside" is
+    defined relative to the benchmark's OWN trailing mean return over
+    the same window (`benchmark_return < benchmark_mean`), not relative
+    to zero.
+
+    **Construction, a deliberate simplification of the original paper's
+    own estimator, flagged the same way `low_beta_score` flags its
+    own**: the original paper computes beta over a downside-conditioned
+    joint distribution using a 5-year/60-month rolling window and
+    several averaging refinements across sub-periods; this
+    implementation instead reuses `low_beta_score`'s own single-window
+    `Cov/Var` OLS estimator directly, applied only to the subset of
+    paired trading days where the benchmark return is below its own
+    trailing mean over the same `lookback_days` window (default 252,
+    ~1 trading year, matching `low_beta_score`'s own default).
+
+    Score is the RAW (NOT negated) downside beta -- unlike
+    `low_beta_score`, where a LOWER beta is hypothesized more
+    attractive, here a HIGHER downside beta is the paper's own
+    hypothesized direction, the same "no negation needed" situation
+    `illiquidity_score`/`fifty_two_week_high_score` already document.
+    Needs at least 20 DOWNSIDE-day paired observations (matching
+    `low_beta_score`'s own full-window floor, applied here to the
+    smaller downside-only subset) and non-zero downside benchmark
+    variance; `None` below that."""
+    padded_days = int(lookback_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 21:
+        return None
+    security_returns = compute_returns([security_closes[d] for d in common_dates])
+    benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    if len(security_returns) < 20 or len(security_returns) != len(benchmark_returns):
+        return None
+    benchmark_mean = sum(benchmark_returns) / len(benchmark_returns)
+    downside_pairs = [
+        (s, b) for s, b in zip(security_returns, benchmark_returns) if b < benchmark_mean
+    ]
+    if len(downside_pairs) < 20:
+        return None
+    downside_security = [p[0] for p in downside_pairs]
+    downside_benchmark = [p[1] for p in downside_pairs]
+    ds_mean = sum(downside_security) / len(downside_security)
+    db_mean = sum(downside_benchmark) / len(downside_benchmark)
+    covariance = sum(
+        (s - ds_mean) * (b - db_mean) for s, b in zip(downside_security, downside_benchmark)
+    ) / (len(downside_pairs) - 1)
+    downside_variance = sum((b - db_mean) ** 2 for b in downside_benchmark) / (len(downside_pairs) - 1)
+    if downside_variance == 0:
+        return None
+    return covariance / downside_variance
+
+
+def coskewness_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- Harvey & Siddique (2000, "Conditional Skewness in
+    Asset Pricing Tests," The Journal of Finance 55(3): 1263-1295): one
+    of the most-cited papers in the asset-pricing literature (an
+    explicit "S-tier" request from the account owner, "논문쪽에서 S급이라
+    판단되는 것들로", after this session had already mined a long tail of
+    single-paper anomalies). Investors with non-increasing absolute risk
+    aversion prefer POSITIVE skewness and are averse to NEGATIVE
+    skewness; a stock whose returns covary NEGATIVELY with the
+    market's own squared excess return (negative coskewness -- it makes
+    the investor's overall portfolio distribution more left-skewed, a
+    less desirable shape) is hypothesized to earn a HIGHER subsequent
+    return as compensation, while positive coskewness (the stock
+    improves portfolio skewness) commands a valuation premium and thus a
+    LOWER subsequent return. The original paper's own long-short
+    coskewness factor earned 3.60%/year in its sample. Formula verified
+    against a primary source (the paper's own author's institutional
+    page, people.duke.edu/~charvey) rather than reconstructed from
+    memory alone, per this module's established citation-verification
+    discipline (the same standard already applied to the Corwin-Schultz
+    estimator this session).
+
+    **A genuinely different construct from every other co-movement or
+    shape statistic already in this module**: `low_beta_score`/
+    `downside_beta_score` are LINEAR co-movement with the market (first
+    moment, Cov/Var); `idiosyncratic_skewness_score` is the SHAPE of a
+    security's own residual distribution in isolation (no market
+    co-movement information at all); this factor is co-movement between
+    a security's own returns and the market's SQUARED excess return --
+    a third-moment cross term distinct from all of the above. A security
+    can have a defensive (low) beta yet still have strongly negative
+    coskewness (crashes hard specifically alongside big market moves in
+    either direction), or vice versa, so this score can and does
+    disagree with every other risk factor here on an individual
+    security.
+
+    Per the verified formula: `CSK_i = E[e_i * e_m^2] / sqrt(Var(e_i) *
+    Var(e_m))`, where `e_i`/`e_m` are the security's and the benchmark's
+    own demeaned excess returns over the trailing window (population,
+    not sample, moments, matching the primary source's own `1/T`
+    normalization exactly). **A deliberate simplification of the
+    original paper's own estimator, flagged the same way `low_beta_score`/
+    `downside_beta_score` flag theirs**: the original paper uses MONTHLY
+    returns over a rolling multi-year window; this implementation uses
+    DAILY returns over the trailing `lookback_days` (default 252, ~1
+    trading year), the same daily-proxy-for-a-longer-horizon-measure
+    simplification `low_beta_score`/`downside_beta_score` already make
+    for their own market-co-movement estimators, needing zero new data.
+
+    Score is the NEGATIVE of `CSK_i` (higher score = more negative
+    coskewness = more attractive, matching this module's convention and
+    the paper's own "negative coskewness earns a higher return"
+    finding). Needs at least 20 paired daily observations (matching
+    `low_beta_score`'s own floor) and non-zero variance in both series;
+    `None` below that."""
+    padded_days = int(lookback_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 21:
+        return None
+    security_returns = compute_returns([security_closes[d] for d in common_dates])
+    benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    if len(security_returns) < 20 or len(security_returns) != len(benchmark_returns):
+        return None
+    n = len(security_returns)
+    security_mean = sum(security_returns) / n
+    benchmark_mean = sum(benchmark_returns) / n
+    security_demeaned = [s - security_mean for s in security_returns]
+    benchmark_demeaned = [b - benchmark_mean for b in benchmark_returns]
+    numerator = sum(ei * (em ** 2) for ei, em in zip(security_demeaned, benchmark_demeaned)) / n
+    security_variance = sum(ei ** 2 for ei in security_demeaned) / n
+    benchmark_variance = sum(em ** 2 for em in benchmark_demeaned) / n
+    denominator = (security_variance * benchmark_variance) ** 0.5
+    if denominator == 0:
+        return None
+    coskewness = numerator / denominator
+    return -coskewness
+
+
+def high_volume_return_premium_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, recent_days: int = 5, baseline_days: int = 50,
+) -> Optional[float]:
+    """HYPOTHESIS -- Gervais, Kaniel & Mingelgrin (2001, "The High-
+    Volume Return Premium," The Journal of Finance 56(3): 877-919):
+    stocks with UNUSUALLY HIGH trading volume over a recent short window
+    (relative to their own normal trading activity) tend to APPRECIATE
+    over the following month -- the authors' own explanation is that a
+    volume shock raises a stock's visibility, drawing in new buyers and
+    temporarily lifting demand and price. Verified via WebSearch (the
+    paper's own citation and finding) rather than reconstructed from
+    memory alone.
+
+    **Distinct from every other volume/liquidity factor already in this
+    module**: `illiquidity_score` (Amihud 2002) and `bid_ask_spread_score`
+    (Corwin & Schultz 2012) are both about price IMPACT/COST of trading;
+    `share_turnover_score` (Datar, Naik & Radcliffe 1998) is the LEVEL
+    of turnover relative to shares outstanding, averaged over a full
+    year. This factor is about a RECENT CHANGE in a security's OWN
+    volume relative to its OWN normal baseline -- a security can have
+    low illiquidity, low turnover, and yet still show an unusual recent
+    volume spike (or vice versa), so all four can and do disagree on an
+    individual security.
+
+    Construction: `average_volume(recent_days) / average_volume(baseline_days
+    immediately before that) - 1` -- the paper's own "abnormal volume"
+    concept, here a simple ratio-to-prior-baseline rather than the
+    paper's own more elaborate standardized-unexpected-volume regression
+    model (a deliberate simplification, flagged the same way `low_beta_score`
+    flags its own). Defaults (`recent_days=5`, `baseline_days=50`) match
+    the paper's own "daily/weekly volume shock, ~monthly baseline"
+    characterization. Score is RAW (not negated) -- higher abnormal
+    volume is the paper's own hypothesized more-attractive direction,
+    the same "no negation needed" situation `illiquidity_score` already
+    documents. Needs zero new real ingestion -- `volume` is already a
+    required `PriceBar` field. `None` unless both windows are fully
+    populated with valid (non-negative) volume and the baseline average
+    is positive."""
+    total_days = recent_days + baseline_days
+    padded_days = int(total_days * 1.6)
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), total_days,
+    )
+    if len(bars) < total_days:
+        return None
+    baseline_bars, recent_bars = bars[:-recent_days], bars[-recent_days:]
+    baseline_volumes = [b.volume for b in baseline_bars if b.volume is not None and b.volume >= 0]
+    recent_volumes = [b.volume for b in recent_bars if b.volume is not None and b.volume >= 0]
+    if len(baseline_volumes) < baseline_days or len(recent_volumes) < recent_days:
+        return None
+    baseline_avg = sum(baseline_volumes) / len(baseline_volumes)
+    if baseline_avg <= 0:
+        return None
+    recent_avg = sum(recent_volumes) / len(recent_volumes)
+    return recent_avg / baseline_avg - 1.0
 
 
 def _fy_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:
@@ -982,6 +1303,114 @@ def sloan_accruals_score(security_id: str, as_of_time: datetime, repository: obj
     return -accruals
 
 
+def ohlson_o_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Ohlson (1980, "Financial Ratios and Probabilistic
+    Prediction of Bankruptcy," Journal of Accounting Research 18(1):
+    109-131): a 9-variable logistic bankruptcy-probability model, the
+    second-most-cited distress-risk model in the literature alongside
+    Altman (1968) (already in this module as `altman_z_score`) and one
+    of accounting's most influential papers overall. Added per the
+    account owner's explicit "S-tier only" instruction ("구현 할 수 있는
+    s급 논문들 구현하거나 더 찾아" -- implement whichever S-tier papers can
+    actually be implemented) -- this session's earlier pass (ADR-0106)
+    had provisionally excluded this exact paper for needing a GNP
+    price-level deflator this project has no macro data source for;
+    revisited here with a new, purely mathematical argument (not a
+    result-driven reversal, so RULE 0.8 is not violated) that resolves
+    that concern, detailed below. All 9 inputs verified via WebSearch
+    against at least two independent sources per variable (this
+    session's established citation-verification discipline) rather
+    than reconstructed from memory alone -- Ohlson's own coefficients
+    are 34 years old and easy to misremember a digit of.
+
+    The 9 variables and their exact published coefficients:
+    `O = -1.32 - 0.407*SIZE + 6.03*TLTA - 1.43*WCTA + 0.0757*CLCA
+    - 1.72*OENEG - 2.37*NITA - 1.83*FUTL + 0.285*INTWO - 0.521*CHIN`,
+    where (using this module's already-ingested concepts -- needing
+    ZERO new data, all 6 underlying concepts already used by
+    `altman_z_score`/`roa_score`/`sloan_accruals_score`/
+    `shareholder_yield_score`): `SIZE = ln(Assets)`, `TLTA =
+    Liabilities/Assets`, `WCTA = (AssetsCurrent - LiabilitiesCurrent)/
+    Assets`, `CLCA = LiabilitiesCurrent/AssetsCurrent`, `OENEG = 1 if
+    Liabilities > Assets else 0`, `NITA = NetIncomeLoss/Assets`, `FUTL =
+    NetCashProvidedByUsedInOperatingActivities/Liabilities` (the
+    standard modern proxy for Ohlson's pre-cash-flow-statement-era
+    "funds provided by operations," verified via WebSearch as the
+    widely-used practitioner approximation), `INTWO = 1 if NetIncomeLoss
+    was negative in BOTH of the two most recent fiscal years else 0`,
+    `CHIN = (NI_t - NI_{t-1}) / (|NI_t| + |NI_{t-1}|)`.
+
+    **On the omitted GNP price-level deflator (SIZE's own original
+    definition is `ln(Assets / price-level-index)`)**: this project has
+    no macro deflator data source, and ADR-0106 originally excluded this
+    factor for exactly that reason. The resolving argument: this
+    module's `SIZE` term is used ONLY for cross-sectional ranking of
+    securities AT THE SAME `as_of_time` (IC computation, rank-averaging,
+    top-N selection) -- it is never compared across different dates for
+    the SAME security. At any single date, the deflator has exactly one
+    value, identical for every security scored that day; subtracting
+    `-0.407 * ln(deflator)` from every security's O-score on that date
+    shifts the ENTIRE cross-section by the same constant and changes
+    NO security's rank relative to any other. Omitting the deflator is
+    therefore mathematically exact for this project's only use case
+    (cross-sectional ranking), not an approximation -- a genuinely
+    different situation from a value that would change relative
+    rankings if omitted or guessed.
+
+    Score is the NEGATIVE of the raw Ohlson `O` value (higher `O` =
+    higher predicted bankruptcy probability = LESS attractive), matching
+    this module's convention and the same Dichev (1998)/Campbell-
+    Hilscher-Szilagyi (2008) distress-anomaly direction `altman_z_score`
+    already documents (healthier = more attractive). `None` (never a
+    fabricated score) unless `Assets`/`Liabilities`/`AssetsCurrent`/
+    `LiabilitiesCurrent`/`NetCashProvidedByUsedInOperatingActivities`
+    are all known for the latest fiscal year, `NetIncomeLoss` is known
+    for at least 2 distinct fiscal years, `Assets` is positive (needed
+    for `ln(Assets)`), and `AssetsCurrent`/`Liabilities` are both
+    non-zero (guarding the ratios that divide by them)."""
+    assets_record = _latest_fiscal_year_value(repository, security_id, "Assets", as_of_time)
+    liabilities_record = _latest_fiscal_year_value(repository, security_id, "Liabilities", as_of_time)
+    current_assets_record = _latest_fiscal_year_value(repository, security_id, "AssetsCurrent", as_of_time)
+    current_liabilities_record = _latest_fiscal_year_value(repository, security_id, "LiabilitiesCurrent", as_of_time)
+    cfo_record = _latest_fiscal_year_value(
+        repository, security_id, "NetCashProvidedByUsedInOperatingActivities", as_of_time,
+    )
+    if (
+        assets_record is None or liabilities_record is None or current_assets_record is None
+        or current_liabilities_record is None or cfo_record is None
+    ):
+        return None
+    total_assets = assets_record.value
+    total_liabilities = liabilities_record.value
+    current_assets = current_assets_record.value
+    if total_assets <= 0 or current_assets == 0 or total_liabilities == 0:
+        return None
+
+    ni_records = _fy_records(repository, security_id, "NetIncomeLoss", as_of_time)
+    if len(ni_records) < 2:
+        return None
+    current_ni, prior_ni = ni_records[-1].value, ni_records[-2].value
+    ni_denominator = abs(current_ni) + abs(prior_ni)
+    if ni_denominator == 0:
+        return None
+
+    size = math.log(total_assets)
+    tlta = total_liabilities / total_assets
+    wcta = (current_assets - current_liabilities_record.value) / total_assets
+    clca = current_liabilities_record.value / current_assets
+    oeneg = 1.0 if total_liabilities > total_assets else 0.0
+    nita = current_ni / total_assets
+    futl = cfo_record.value / total_liabilities
+    intwo = 1.0 if (current_ni < 0 and prior_ni < 0) else 0.0
+    chin = (current_ni - prior_ni) / ni_denominator
+
+    o = (
+        -1.32 - 0.407 * size + 6.03 * tlta - 1.43 * wcta + 0.0757 * clca
+        - 1.72 * oeneg - 2.37 * nita - 1.83 * futl + 0.285 * intwo - 0.521 * chin
+    )
+    return -o
+
+
 def dividend_growth_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
     """HYPOTHESIS -- a dividend growth factor: companies growing their
     dividend payouts fastest year-over-year are hypothesized to have
@@ -1222,6 +1651,76 @@ def cashflow_yield_score(
     return cfo_record.value / market_cap
 
 
+def share_turnover_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+    *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- Datar, Naik & Radcliffe (1998, "Liquidity and
+    Stock Returns: An Alternative Test," Journal of Financial Markets
+    1(2): 203-219): stock returns are a DECREASING function of share
+    turnover (shares traded as a fraction of shares outstanding) --
+    an alternative test of Amihud & Mendelson (1986)'s liquidity-premium
+    hypothesis (the same paper `bid_ask_spread_score` already cites for
+    its own bid-ask-spread-based liquidity measure) using a volume-based
+    proxy instead. The original paper's own finding: the high average
+    return of LOW-turnover stocks represents a liquidity premium --
+    illiquid (low-turnover, hard to trade quickly) stocks earn higher
+    subsequent returns, so HIGH turnover predicts LOWER returns.
+    Verified via WebSearch (paper's own construction and finding, "stock
+    returns are a decreasing function of the turnover rates") rather
+    than reconstructed from memory alone.
+
+    **Distinct from `illiquidity_score` and `bid_ask_spread_score`, a
+    THIRD independent liquidity proxy, not a re-parameterization of
+    either**: `illiquidity_score` (Amihud 2002) is price-impact-based
+    (how much a given DOLLAR of trading moves the price); this factor is
+    volume-based (how much of the OUTSTANDING SHARE COUNT trades, with
+    no reference to price impact at all); `bid_ask_spread_score` (Corwin
+    & Schultz 2012, measuring Amihud & Mendelson 1986) is a high-low-
+    range-based transaction-cost proxy referencing neither dollar volume
+    nor share count. A stock can have low dollar-volume price impact
+    (low Amihud ILLIQ) yet a low fraction of its own huge share count
+    turning over (low turnover, still "illiquid" by this measure), and
+    vice versa, so the three can and do disagree on individual
+    securities.
+
+    Turnover for one trading day is `volume / shares_outstanding` (the
+    paper's own TR definition); this implementation averages that ratio
+    over the trailing `lookback_days` (default 252, ~1 trading year,
+    matching `illiquidity_score`'s own annual-averaging convention
+    rather than the paper's own within-year sub-period refinements) using
+    the single latest known `CommonStockSharesOutstanding` fiscal-year
+    value as of `as_of_time` (already ingested for `size_score`/
+    `book_to_market_score`, needing ZERO new data) as a constant
+    denominator across the window -- a deliberate simplification, since
+    shares outstanding do change intra-year (buybacks/issuance) but this
+    project has no daily shares-outstanding series, only annual XBRL
+    filings, the same granularity constraint every other market-cap-
+    based factor in this module already accepts.
+
+    Score is the NEGATIVE of average daily turnover, so a LOWER turnover
+    (hypothesized more attractive, per the paper's own finding) produces
+    a HIGHER score -- matches this module's convention. `None` unless
+    `CommonStockSharesOutstanding` is known and positive, and at least
+    20 valid daily volume observations exist (matching
+    `illiquidity_score`'s own floor)."""
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    bars = trim_to_lookback(
+        price_repository.get_bars(
+            security_id, as_of_time - timedelta(days=int(lookback_days * 1.6)), as_of_time, as_of_time=as_of_time,
+        ),
+        lookback_days,
+    )
+    turnovers = [b.volume / shares_record.value for b in bars if b.volume is not None and b.volume >= 0]
+    if len(turnovers) < 20:
+        return None
+    return -(sum(turnovers) / len(turnovers))
+
+
 def size_score(
     security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
 ) -> Optional[float]:
@@ -1354,6 +1853,138 @@ def altman_z_score(
     x4 = market_value_equity / liabilities_record.value
     x5 = revenue_record.value / assets
     return 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + 1.0 * x5
+
+
+def merton_distance_to_default_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+    *, lookback_days: int = 252,
+) -> Optional[float]:
+    """HYPOTHESIS -- Merton (1974, "On the Pricing of Corporate Debt:
+    The Risk Structure of Interest Rates," The Journal of Finance
+    29(2): 449-470)'s structural (option-theoretic) model of corporate
+    default: a firm's equity is a call option on its assets with strike
+    equal to its debt's face value, so a firm's own "distance to
+    default" (how many standard deviations of asset-value movement
+    separate it from the point where assets fall below debt) is a
+    market-implied credit-risk measure -- Merton's own Nobel-cited
+    option-pricing framework applied to credit risk, and (per the
+    account owner's continued "S급" instruction) a genuinely different
+    FAMILY from `altman_z_score`/`ohlson_o_score` already in this
+    module: those are pure ACCOUNTING-RATIO discriminant/logit models;
+    this is a MARKET-based structural model using price, volatility and
+    the firm's own capital structure -- a security can have a healthy
+    Altman Z/Ohlson O yet a poor (or vice versa) market-implied distance
+    to default, since the market-based measure reacts to price/
+    volatility information the accounting ratios never see between
+    filings.
+
+    **Construction is Bharath & Shumway (2008, "Forecasting Default
+    with the Merton Distance to Default Model," The Review of Financial
+    Studies 21(3): 1339-1369)'s own "naive" simplification**, not the
+    full Merton model: the full model requires iteratively solving two
+    simultaneous nonlinear equations for unobservable asset value and
+    asset volatility (a numerical procedure this module's other
+    "deliberate simplification" precedents, e.g. `low_beta_score`'s
+    single-window beta, already establish this project prefers avoiding
+    for a screening-stage factor); Bharath & Shumway's own finding is
+    that this closed-form "naive" version predicts default AT LEAST AS
+    WELL as the fully-solved iterative model in their own out-of-sample
+    tests, so it is not merely a shortcut but an independently validated
+    substitute. Formula (verified via WebSearch against two independent
+    sources, this session's established citation-verification
+    discipline, rather than reconstructed from memory alone):
+
+    `naiveDD = [ln((E+F)/F) + (r - 0.5*sigma_V^2)*T] / (sigma_V*sqrt(T))`
+
+    where `E` = market value of equity (`_latest_price * CommonStockSharesOutstanding`,
+    identical construction to `altman_z_score`'s own X4), `F` = face
+    value of debt (`Liabilities`, the same simplification `altman_z_score`'s
+    own X4 denominator already uses rather than a more refined
+    short-term-plus-half-long-term-debt split), `r` = the security's own
+    trailing 1-year raw return (Bharath & Shumway's own "naive" stand-in
+    for an unobservable risk-adjusted expected return), `T` = 1 year,
+    and `sigma_V = (E/(E+F))*sigma_E + (F/(E+F))*sigma_D` with `sigma_E`
+    = trailing annualized equity return volatility (`backtest.metrics.
+    annualized_volatility`, the same building block `low_volatility_score`
+    already uses) and `sigma_D = 0.05 + 0.25*sigma_E` (Bharath & Shumway's
+    own published "naive" debt-volatility heuristic, not derived, a
+    number this session verified rather than guessed).
+
+    Cited alongside Vassalou & Xing (2004, "Default Risk in Equity
+    Returns," The Journal of Finance 59(2): 831-868), the paper that
+    established default risk (via the full Merton DD) as
+    return-relevant information in the cross-section -- their own
+    finding is more nuanced than a simple monotonic relationship
+    (default risk is priced mainly WITHIN small-cap/high-book-to-market
+    segments, and interacts with the size and value effects rather than
+    standing alone), a conditional/interaction structure this
+    single-variable score does not attempt to replicate. Score is
+    instead the RAW naive DD (not negated) for the same reason
+    `altman_z_score` is not negated: `Dichev (1998)`/`Campbell,
+    Hilscher & Szilagyi (2008)`'s broader distress-risk-anomaly finding
+    already established in this module (distressed firms earn LOWER,
+    not higher, subsequent returns) means a HIGHER distance to default
+    (safer, healthier) is hypothesized more attractive here too --
+    applying this module's own already-established distress-anomaly
+    sign convention for internal consistency, not a claim that
+    Vassalou-Xing's own more nuanced result implies a simple monotonic
+    relationship on its own.
+
+    Needs zero new fundamentals data (`Liabilities`/
+    `CommonStockSharesOutstanding` already ingested for `altman_z_score`/
+    `size_score`) plus ordinary price history already available to every
+    other price-based factor. `None` (never a fabricated score) unless
+    `Liabilities`/`CommonStockSharesOutstanding` are both known and
+    positive, a current price is known, and at least 20 valid daily
+    returns exist over the trailing `lookback_days` (matching
+    `illiquidity_score`'s own floor) with positive equity volatility."""
+    liabilities_record = _latest_fiscal_year_value(fundamentals_repository, security_id, "Liabilities", as_of_time)
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if liabilities_record is None or liabilities_record.value <= 0:
+        return None
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    face_value_debt = liabilities_record.value
+    market_value_equity = price * shares_record.value
+    if market_value_equity <= 0:
+        return None
+
+    bars = trim_to_lookback(
+        price_repository.get_bars(
+            security_id, as_of_time - timedelta(days=int(lookback_days * 1.6)), as_of_time, as_of_time=as_of_time,
+        ),
+        lookback_days,
+    )
+    if len(bars) < 2:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    returns = compute_returns(closes)
+    if len(returns) < 20:
+        return None
+    equity_volatility = annualized_volatility(returns)
+    if equity_volatility <= 0:
+        return None
+    trailing_return = closes[-1] / closes[0] - 1.0
+
+    total_value = market_value_equity + face_value_debt
+    equity_weight = market_value_equity / total_value
+    debt_weight = face_value_debt / total_value
+    debt_volatility = 0.05 + 0.25 * equity_volatility
+    asset_volatility = equity_weight * equity_volatility + debt_weight * debt_volatility
+    if asset_volatility <= 0:
+        return None
+
+    time_horizon = 1.0
+    numerator = math.log(total_value / face_value_debt) + (trailing_return - 0.5 * asset_volatility ** 2) * time_horizon
+    denominator = asset_volatility * math.sqrt(time_horizon)
+    if denominator == 0:
+        return None
+    return numerator / denominator
 
 
 def _quality_component_values(
@@ -1606,6 +2237,92 @@ def combined_factor_score(
     }
 
 
+def industry_momentum_score(
+    security_ids: Sequence[str], as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+    *, lookback_days: int = 126,
+) -> dict:
+    """HYPOTHESIS -- Moskowitz & Grinblatt (1999, "Do Industries
+    Explain Momentum?" The Journal of Finance 54(4): 1249-1290): the
+    past return of a security's OWN INDUSTRY GROUP (an equal-weighted
+    average of every other same-industry security's own trailing
+    return) predicts that security's future return, in the SAME
+    direction ordinary individual momentum predicts -- the original
+    paper's own central finding is that this industry-level component
+    explains much of individual-stock momentum's own profitability, and
+    that industry momentum survives controls the individual-stock
+    version does not. Verified via WebSearch (the paper's own citation
+    and finding) rather than reconstructed from memory alone.
+
+    **A genuinely different construct from this module's own
+    `long_term_reversal_score`/`short_term_reversal_score`/
+    `residual_momentum_score`**: every one of those is an individual
+    security's OWN past return (or a residual of it); this factor is
+    the AVERAGE past return of every OTHER security sharing the same
+    industry -- two securities in the same industry always receive the
+    IDENTICAL score here regardless of their own individual returns, so
+    this factor can and does disagree with an individual security's own
+    momentum on any given date.
+
+    Sector classification comes from `data_infra.universe.get_sector`
+    (SEC EDGAR SIC classification text, ADR-0058, real provider-sourced
+    data for confirmed symbols only, `None` for any symbol never
+    actually resolved this session) -- a security with no confirmed
+    sector, or whose sector has fewer than 2 total members among
+    `security_ids` with a computable trailing return, is excluded from
+    the returned dict entirely (never a fabricated industry group of
+    one). Trailing return uses `adjusted_close or close` over
+    `lookback_days` (default 126, ~6 months, the same intermediate-
+    horizon window `long_term_reversal_score` already uses).
+
+    **A DELIBERATE SIMPLIFICATION of the original paper's own
+    construction, flagged the same way `low_beta_score`/
+    `idiosyncratic_volatility_score` flag theirs**: the original paper
+    value-weights each industry portfolio and excludes the security
+    itself from its own industry's average; this implementation
+    equal-weights and includes every same-industry security (including
+    the one being scored) in its own industry's average -- a minor
+    simplification this project's (comparatively small) universe makes
+    acceptable, not a look-ahead violation (every included return is
+    already fully realized as of `as_of_time`).
+
+    Score is RAW (not negated) -- higher industry momentum is this
+    paper's own hypothesized more-attractive direction. `UniverseScoreFn`-
+    shaped (`compute_universe_ic_series`), like `quality_minus_junk_score`/
+    `value_composite_score`/`combined_factor_score` -- `fundamentals_
+    repository` is accepted but unused (this factor is price+sector
+    only), matching that shared call shape. Returns `{}` if fewer than 2
+    securities end up with a computable score."""
+    padded_days = int(lookback_days * 1.6)
+    returns_by_id = {}
+    for sid in security_ids:
+        bars = trim_to_lookback(
+            price_repository.get_bars(
+                sid, as_of_time - timedelta(days=padded_days), as_of_time, as_of_time=as_of_time,
+            ),
+            lookback_days,
+        )
+        if len(bars) < 2:
+            continue
+        start_close = bars[0].adjusted_close or bars[0].close
+        end_close = bars[-1].adjusted_close or bars[-1].close
+        if start_close is None or start_close <= 0 or end_close is None:
+            continue
+        returns_by_id[sid] = end_close / start_close - 1.0
+
+    sector_by_id = {sid: sector for sid in returns_by_id if (sector := get_sector(sid)) is not None}
+    members_by_sector: dict = {}
+    for sid, sector in sector_by_id.items():
+        members_by_sector.setdefault(sector, []).append(sid)
+
+    scores = {}
+    for sid, sector in sector_by_id.items():
+        members = members_by_sector[sector]
+        if len(members) < 2:
+            continue
+        scores[sid] = sum(returns_by_id[m] for m in members) / len(members)
+    return scores if len(scores) >= 2 else {}
+
+
 def sue_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
     """HYPOTHESIS -- Standardized Unexpected Earnings (Foster, Olsen &
     Shevlin 1984, "Earnings Releases, Anomalies, and the Behavior of
@@ -1654,3 +2371,968 @@ def sue_score(security_id: str, as_of_time: datetime, repository: object) -> Opt
     if stdev == 0:
         return None
     return trailing[-1] / stdev
+
+
+_INSIDER_BUYING_LOOKBACK_MONTHS = 6
+
+
+def insider_buying_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- (Lakonishok & Lee 2001, "Are Insider Trades
+    Informative?," Review of Financial Studies; Seyhun 1986, "Insiders'
+    profits, costs of trading, and market efficiency," Journal of
+    Financial Economics): insiders (officers, directors, 10%+ owners)
+    sometimes trade on private information about their own company's
+    prospects, so a period of net insider BUYING on the open market --
+    genuinely discretionary purchases, never option exercises, stock
+    grants, or pre-scheduled Rule 10b5-1 transactions -- predicts higher
+    subsequent returns than a period of net insider selling. This is the
+    second data pipeline built this session (ADR-0086), after the SUE
+    factor (ADR-0084): the project's first factor sourced from SEC
+    Form 4 insider-transaction filings rather than XBRL fundamentals or
+    price/volume history.
+
+    **Why only transaction codes "P"/"S" and only `is_10b5_1_plan ==
+    False`, decided BEFORE any real result was seen (RULE 0.8)**: this
+    project's own real, directly-observed Form 4 sample this session
+    (AAPL, accession 0001140361-26-035636) turned out to be a Rule
+    10b5-1 pre-scheduled sale, not a genuinely discretionary trade --
+    the literature basis above is specifically about discretionary
+    trading conveying private information, which a pre-scheduled plan
+    transaction structurally cannot (the trade was decided months
+    earlier, unrelated to whatever the insider knows today). Every
+    other transaction code (`A` grants, `M` option exercises, ...) is
+    excluded for the same underlying reason: those are compensation
+    mechanics an insider does not choose based on a view on future
+    stock performance, not a discretionary market trade.
+
+    NET_PURCHASE_RATIO = `(buy_shares - sell_shares) / (buy_shares +
+    sell_shares)`, computed over the trailing
+    `_INSIDER_BUYING_LOOKBACK_MONTHS` (6) calendar months of
+    `transaction_date` -- a share-count-weighted ratio in `[-1, 1]`,
+    following Lakonishok & Lee (2001)'s own preference for a ratio over
+    a raw transaction count (an insider who buys 10x as much dollar
+    value in one purchase should weigh more than ten insiders each
+    buying 1 share). 6 months is this project's own fixed choice, not
+    copied from one paper's exact window -- both Lakonishok & Lee and
+    Seyhun examine multi-month insider-trading windows with varying
+    specifications (3/6/12-month cuts appear across the literature); 6
+    months is a mid-range, commonly used compromise, fixed here before
+    any IC result exists, per RULE 0.8.
+
+    `None` (never a fabricated ratio) if no qualifying (Code P or S,
+    non-10b5-1) transaction exists in the trailing window at all -- "no
+    insider trading activity observed" is a genuinely different,
+    non-fabricatable state from "insiders are exactly balanced," which
+    itself legitimately returns `0.0`."""
+    window_start = add_months(as_of_time, -_INSIDER_BUYING_LOOKBACK_MONTHS)
+    transactions = repository.get_insider_transactions(security_id, as_of_time, start=window_start, end=as_of_time)
+    buy_shares = sum(t.shares for t in transactions if t.transaction_code == "P" and not t.is_10b5_1_plan)
+    sell_shares = sum(t.shares for t in transactions if t.transaction_code == "S" and not t.is_10b5_1_plan)
+    total = buy_shares + sell_shares
+    if total == 0:
+        return None
+    return (buy_shares - sell_shares) / total
+
+
+_RS_RATING_LOOKBACK_DAYS = 252
+
+
+def rs_rating_score(security_id: str, as_of_time: datetime, data: AsOfDataView) -> Optional[float]:
+    """HYPOTHESIS -- O'Neil/IBD Relative Strength Rating (William
+    O'Neil, "How to Make Money in Stocks," CANSLIM methodology): a
+    security's own trailing price performance, weighted toward its most
+    recent quarter, predicts continued relative outperformance --
+    momentum specifically constructed to emphasize recent strength over
+    older strength, distinct from `long_term_reversal_score`'s
+    equal-weighted `_momentum_score`. Found while auditing an external
+    project (dragon1086/prism-insight, session comparison request) whose
+    own `cores/rs_rating.py` independently implements the same
+    published O'Neil formula -- the hypothesis and formula are IBD's,
+    not that project's; this project's own implementation is built
+    fresh against the public methodology, not copied.
+
+    SCORE = `2*R63 + R126 + R189 + R252`, where `Rn = (latest_close -
+    close_n_days_ago) / close_n_days_ago` -- four trailing returns over
+    the last 1/2/3/4 quarters (63 trading days each), the most recent
+    quarter weighted 2x, exactly IBD's own published construction.
+
+    **Deliberately returns this raw weighted-return score, never IBD's
+    own 1-99 cross-sectional percentile transform**, decided before any
+    real result exists (RULE 0.8): `signal_ic.compute_ic_series`'s
+    Spearman rank correlation and simple top-N portfolio sorting are
+    BOTH invariant to any monotonic (rank-preserving) transformation of
+    a score, so percentile-ranking changes nothing this project can
+    measure -- it is IBD's own human-readability presentation choice,
+    not new information. Adding it would also require restructuring
+    this into a cross-sectional `UniverseScoreFn` (like
+    `quality_minus_junk_score`), a real complexity cost for zero
+    measurable benefit to either raw-IC screening or portfolio
+    construction, so it is not done.
+
+    Needs 252 trading days (~1 calendar year) of price history for all
+    four component returns; returns `None` (never a fabricated score)
+    for a name with less history, or if any of the four base prices is
+    non-positive."""
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=int(_RS_RATING_LOOKBACK_DAYS * 1.6)), as_of_time),
+        _RS_RATING_LOOKBACK_DAYS,
+    )
+    if len(bars) < _RS_RATING_LOOKBACK_DAYS + 1:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    latest = closes[-1]
+
+    def _trailing_return(n: int) -> Optional[float]:
+        base = closes[-1 - n]
+        if base <= 0:
+            return None
+        return (latest - base) / base
+
+    r63, r126, r189, r252 = (_trailing_return(n) for n in (63, 126, 189, 252))
+    if r63 is None or r126 is None or r189 is None or r252 is None:
+        return None
+    return 2.0 * r63 + r126 + r189 + r252
+
+
+_RESIDUAL_MOMENTUM_ESTIMATION_DAYS = 252
+_RESIDUAL_MOMENTUM_FORMATION_DAYS = 63
+_RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS = 200
+_RESIDUAL_MOMENTUM_MIN_FORMATION_OBSERVATIONS = 40
+
+
+def residual_momentum_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView,
+    *, estimation_days: int = _RESIDUAL_MOMENTUM_ESTIMATION_DAYS, formation_days: int = _RESIDUAL_MOMENTUM_FORMATION_DAYS,
+) -> Optional[float]:
+    """HYPOTHESIS -- Residual Momentum (Blitz, Huij & Martens 2011,
+    "Residual Momentum," Journal of Financial Economics 108(3): 506-521):
+    momentum computed on a security's CAPM-RESIDUAL returns (the part of
+    its return left over after removing co-movement with the market)
+    outperforms and is more stable than momentum computed on raw total
+    returns, because a large share of raw momentum's own well-documented
+    "crash risk" comes from systematic (market-beta-driven) reversals
+    rather than genuine stock-specific continuation. Found during the
+    same GitHub/web search (Session 36 continued, `paperswithbacktest/
+    awesome-systematic-trading`) that also surfaced `rd_expenditure_score`
+    below -- both chosen and their construction fixed BEFORE seeing any
+    result (RULE 0.8).
+
+    **A genuinely different construct from every momentum-adjacent factor
+    already in this module, not a re-parameterization of one**:
+    `long_term_reversal_score`/this project's own `_momentum_score`
+    (`long_term_momentum.py`) compute cumulative RAW price return, no
+    market adjustment at all. `idiosyncratic_volatility_score` regresses
+    out the market the same way this factor does, but keeps only the
+    STANDARD DEVIATION of the residuals (a pure risk measure, sign and
+    mean discarded); this factor keeps the residuals' own MEAN
+    (standardized by their volatility), discarding nothing about their
+    direction -- the two scores can and do disagree on which securities
+    they favor, since a stock can have a strongly positive residual
+    momentum while also being unusually volatile, or vice versa.
+
+    **A real estimator subtlety, caught by reasoning about the math
+    before any test was run against it (still RULE 0.8 -- this is not an
+    empirical peek, it is a correctness fact about OLS itself)**: fitting
+    alpha/beta by OLS on a sample and then computing residuals on THAT
+    SAME sample always yields a residual MEAN of exactly zero, by
+    construction (an intercept-including OLS regression's own residuals
+    always sum to zero over its own estimation sample) -- so a first
+    draft of this factor that estimated beta/alpha and computed
+    "momentum" residuals over one identical window would have produced a
+    score of ~0 for every security, always, regardless of any real
+    signal. The literature's own answer (and this implementation's) is
+    an OUT-OF-SAMPLE split: alpha/beta are estimated over an EARLIER,
+    non-overlapping `estimation_days` window (default 252, ~12 months),
+    then applied to compute residuals over the immediately FOLLOWING
+    `formation_days` window (default 63, ~1 quarter -- the same "R63"
+    unit `rs_rating_score` already uses, chosen for consistency with
+    this module's existing vocabulary rather than the original paper's
+    own 11-month formation window, which needs more paired history per
+    security than this project's universe reliably offers). Score =
+    `mean(formation-window residuals) / std(formation-window residuals)`,
+    a t-statistic-like standardized average out-of-sample residual return
+    -- this standardization-by-own-volatility step is the paper's own
+    core mechanism for reducing momentum crash risk, not a cosmetic
+    normalization, and is only meaningful here because the residuals it
+    is computed over are genuinely out-of-sample.
+
+    Needs at least `_RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS` (200
+    of the nominal 252 estimation-window returns) and
+    `_RESIDUAL_MOMENTUM_MIN_FORMATION_OBSERVATIONS` (40 of the nominal 63
+    formation-window returns) of paired security/benchmark daily returns,
+    both floors below their nominal window sizes to tolerate real data
+    gaps (matching this module's existing practice), with non-zero
+    benchmark return variance in the estimation window and non-zero
+    residual volatility in the formation window; `None` (never a
+    fabricated score) below any of those."""
+    total_days = estimation_days + formation_days
+    padded_days = int(total_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), total_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), total_days,
+    )
+    if len(security_bars) < 2 or len(benchmark_bars) < 2:
+        return None
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < 2:
+        return None
+    all_security_returns = compute_returns([security_closes[d] for d in common_dates])
+    all_benchmark_returns = compute_returns([benchmark_closes[d] for d in common_dates])
+    n = len(all_security_returns)
+    if n != len(all_benchmark_returns) or n < _RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS + _RESIDUAL_MOMENTUM_MIN_FORMATION_OBSERVATIONS:
+        return None
+
+    # Non-overlapping, chronologically EARLIER estimation slice and
+    # LATER formation slice -- the formation slice always ends at the
+    # most recent paired return (closest to as_of_time).
+    formation_count = min(formation_days, n - _RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS)
+    estimation_security = all_security_returns[:-formation_count]
+    estimation_benchmark = all_benchmark_returns[:-formation_count]
+    formation_security = all_security_returns[-formation_count:]
+    formation_benchmark = all_benchmark_returns[-formation_count:]
+    if len(estimation_security) < _RESIDUAL_MOMENTUM_MIN_ESTIMATION_OBSERVATIONS or len(formation_security) < _RESIDUAL_MOMENTUM_MIN_FORMATION_OBSERVATIONS:
+        return None
+
+    estimation_security_mean = sum(estimation_security) / len(estimation_security)
+    estimation_benchmark_mean = sum(estimation_benchmark) / len(estimation_benchmark)
+    covariance = sum(
+        (s - estimation_security_mean) * (b - estimation_benchmark_mean)
+        for s, b in zip(estimation_security, estimation_benchmark)
+    ) / (len(estimation_security) - 1)
+    benchmark_variance = sum(
+        (b - estimation_benchmark_mean) ** 2 for b in estimation_benchmark
+    ) / (len(estimation_benchmark) - 1)
+    if benchmark_variance == 0:
+        return None
+    beta = covariance / benchmark_variance
+    alpha = estimation_security_mean - beta * estimation_benchmark_mean
+
+    formation_residuals = [s - alpha - beta * b for s, b in zip(formation_security, formation_benchmark)]
+    residual_mean = sum(formation_residuals) / len(formation_residuals)
+    residual_variance = sum((r - residual_mean) ** 2 for r in formation_residuals) / (len(formation_residuals) - 1)
+    residual_std = residual_variance ** 0.5
+    if residual_std == 0:
+        return None
+    return residual_mean / residual_std
+
+
+def rd_expenditure_score(
+    security_id: str, as_of_time: datetime, fundamentals_repository: object, price_repository: object,
+) -> Optional[float]:
+    """HYPOTHESIS -- the R&D expenditure anomaly (Chan, Lakonishok &
+    Sougiannis 2001, "The Stock Market Valuation of Research and
+    Development Expenditures," The Journal of Finance 56(6): 2431-2456):
+    firms with HIGHER research & development spending relative to market
+    value earn higher subsequent returns, hypothesized because US GAAP
+    requires R&D to be EXPENSED immediately (never capitalized as an
+    asset, unlike physical capital investment), which understates the
+    book value and near-term earnings of R&D-intensive firms relative to
+    the future growth that spending is actually building -- the market
+    is hypothesized to underappreciate this in the same expensed-not-
+    capitalized sense `sloan_accruals_score`'s own accrual/cash-flow
+    distinction concerns a different accounting choice. Found via the
+    same GitHub/web search (Session 36 continued,
+    `paperswithbacktest/awesome-systematic-trading`) that also surfaced
+    `residual_momentum_score` above.
+
+    Score = `ResearchAndDevelopmentExpense / market_cap` ("R&D-to-market",
+    the standard scaling used across the later factor-zoo replication
+    literature for this anomaly, e.g. Green, Hand & Zhang 2017's own
+    "rd_mve" -- a documented alternative to Chan, Lakonishok & Sougiannis'
+    own R&D-CAPITAL/market-value construction, which amortizes multiple
+    years of past R&D spending into a stock rather than using the single
+    latest fiscal year's flow. A single-year flow is used here for the
+    identical reason `shareholder_yield_score`'s numerator uses single
+    -year flows rather than amortized stocks: no new infrastructure is
+    needed beyond what this module's other market-cap-scaled ratios
+    already build). Same market-cap denominator construction as
+    `sales_yield_score`/`book_to_market_score` (`_latest_price`, raw
+    `close`, times latest fiscal-year-end `CommonStockSharesOutstanding`).
+
+    **The numerator reads a genuinely absent `ResearchAndDevelopmentExpense`
+    tag as `0.0`, not `None`, via `_fy_flow_or_zero`** -- the identical
+    reasoning that helper's own docstring already gives for
+    `shareholder_yield_score`'s dividend/buyback/issuance concepts: a
+    company that did no R&D in a given fiscal year (true for many
+    non-technology large-caps in this project's universe -- retailers,
+    banks, utilities) does not file a `ResearchAndDevelopmentExpense`
+    tag worth `$0`, it simply omits it, and reading that omission as "no
+    R&D was spent" is the financially correct interpretation, not a
+    fabrication. This means a genuine zero-R&D company gets a real score
+    of exactly `0.0` here (the lowest possible under this module's
+    higher-is-better convention), never a missing-data `None` -- an
+    intended, not accidental, consequence of the hypothesis itself
+    (zero R&D spending should rank least attractive under this factor).
+
+    **Needs one new XBRL concept beyond what any existing factor in this
+    module ingests**: `ResearchAndDevelopmentExpense`, added to
+    `ingest_fundamentals_data.py`'s `_DEFAULT_CONCEPTS` -- the identical
+    "zero additional real network requests" pattern `EarningsPerShareDiluted`
+    already established for `sue_score` (ADR-0084): concepts are parsed
+    from a company's existing SEC EDGAR `companyfacts` JSON response
+    already being fetched for every other concept, not a separate request
+    per concept. `None` (never a fabricated ratio) only when the share
+    count or price is unknown, or market cap is non-positive -- the same
+    missing-data guards `sales_yield_score`/`book_to_market_score`
+    already apply."""
+    shares_record = _latest_fiscal_year_value(
+        fundamentals_repository, security_id, "CommonStockSharesOutstanding", as_of_time,
+    )
+    if shares_record is None or shares_record.value <= 0:
+        return None
+    price = _latest_price(price_repository, security_id, as_of_time)
+    if price is None:
+        return None
+    market_cap = price * shares_record.value
+    if market_cap <= 0:
+        return None
+    rd_expense = _fy_flow_or_zero(fundamentals_repository, security_id, "ResearchAndDevelopmentExpense", as_of_time)
+    return rd_expense / market_cap
+
+
+_RETURN_SEASONALITY_LOOKBACK_YEARS = 5
+_RETURN_SEASONALITY_MIN_YEARS = 2
+
+
+def return_seasonality_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView,
+    *, lookback_years: int = _RETURN_SEASONALITY_LOOKBACK_YEARS, min_years: int = _RETURN_SEASONALITY_MIN_YEARS,
+) -> Optional[float]:
+    """HYPOTHESIS -- Return Seasonality (Heston & Sadka 2008, "Seasonality
+    in the Cross-Section of Stock Returns," Journal of Financial
+    Economics 87(2): 418-445): a security's own historical tendency to
+    over- or under-perform in a given CALENDAR MONTH, across multiple
+    prior years, predicts its performance in that SAME calendar month
+    going forward -- e.g. a stock that has historically done well every
+    March tends to do relatively well again this March. Found via the
+    same GitHub/web search that also surfaced `residual_momentum_score`/
+    `rd_expenditure_score` (ADR-0098) -- `paperswithbacktest/awesome-
+    systematic-trading`'s own `12-month-cycle-in-cross-section-of-stocks-
+    returns.py` independently confirmed this as a real, separately
+    replicated effect (that file's own "return exactly 12 months ago
+    predicts this month" construction is the k=1 special case of the
+    more general same-calendar-month averaging built here).
+
+    **A genuinely different COMPUTATIONAL SHAPE from every other factor
+    in this module, not a re-parameterization of one**: every other
+    price-only factor here reads one CONTIGUOUS trailing window of
+    trading days. This factor instead groups a security's own price
+    history by CALENDAR MONTH across multiple, non-contiguous prior
+    years and averages only the months sharing `as_of_time`'s own month
+    number -- e.g. computed in March 2023, it looks at March 2022, March
+    2021, ..., ignoring every other month in between. No other factor in
+    this module has this shape.
+
+    **Construction**: for each of the trailing `lookback_years` (default
+    5 -- a documented simplification of Heston & Sadka's own much longer
+    sample, chosen since this project's own real universe has far less
+    trailing history available than their multi-decade sample, the same
+    "adapt the academic window to what this project's data can actually
+    support" reasoning `residual_momentum_score`'s own `formation_days`
+    default already uses), find the calendar month with the SAME month
+    number as `as_of_time`, `k` years back, and compute that historical
+    month's own total return as `close_at_end_of_that_month /
+    close_at_end_of_the_PRECEDING_month - 1` (the standard "monthly
+    return" definition, anchored to month-END closes so a month with a
+    partial trading-day gap at either end does not distort the ratio).
+    Score = the simple average of however many of those `lookback_years`
+    historical same-month returns are actually available (never
+    fabricated for a missing year -- a year with no data for either the
+    target month or its preceding month is skipped entirely, not
+    treated as a zero return).
+
+    Needs at least `min_years` (default 2) valid historical same-month
+    observations; `None` (never a fabricated score) below that -- a
+    materially higher floor, proportionally, than this module's
+    contiguous-window factors, since a same-calendar-month average from
+    only 1 prior year is barely more informative than that single
+    month's own raw return, not yet a genuine "seasonality" signal."""
+    padded_days = lookback_years * 366 + 40
+    bars = data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time)
+    if not bars:
+        return None
+    closes_by_month: dict[tuple[int, int], list[tuple[date, float]]] = {}
+    for bar in bars:
+        bar_date = bar.timestamp.date()
+        key = (bar_date.year, bar_date.month)
+        closes_by_month.setdefault(key, []).append((bar_date, bar.adjusted_close or bar.close))
+    for entries in closes_by_month.values():
+        entries.sort(key=lambda pair: pair[0])
+
+    target_month = as_of_time.month
+    historical_returns: list[float] = []
+    for years_back in range(1, lookback_years + 1):
+        target_year = as_of_time.year - years_back
+        preceding_month, preceding_year = (target_month - 1, target_year) if target_month > 1 else (12, target_year - 1)
+        target_entries = closes_by_month.get((target_year, target_month))
+        preceding_entries = closes_by_month.get((preceding_year, preceding_month))
+        if not target_entries or not preceding_entries:
+            continue
+        baseline_price = preceding_entries[-1][1]
+        end_price = target_entries[-1][1]
+        if baseline_price is None or baseline_price <= 0 or end_price is None:
+            continue
+        historical_returns.append(end_price / baseline_price - 1.0)
+
+    if len(historical_returns) < min_years:
+        return None
+    return sum(historical_returns) / len(historical_returns)
+
+
+def short_interest_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the Short Interest Anomaly (Asquith, Pathak & Ritter
+    2005, "Short Interest, Institutional Ownership, and Stock Returns,"
+    Journal of Financial Economics 78(2): 243-276; Boehmer, Jones &
+    Zhang 2008, "Which Shorts Are Informed?," The Journal of Finance):
+    heavily shorted stocks earn systematically LOWER subsequent returns,
+    hypothesized because short sellers are, on average, more informed
+    than the typical market participant -- a large or growing short
+    position reflects a real, aggregated negative view worth taking
+    seriously as a signal, not noise. Flagged as the lowest-priority of
+    the four GitHub/web-search-derived candidates (ADR-0098's own
+    STRATEGY-VALIDATION-REPORT addendum) specifically because it was the
+    only one needing a genuinely NEW data source -- built now (ADR-0099)
+    following the user's explicit "proceed with the candidates" ("후보들
+    진행") instruction covering all remaining ones, not because the data
+    -feasibility concern was resolved by seeing any result.
+
+    **Data source, and the one real, stated limitation new to this
+    factor**: `repository` is a `storage.short_interest_repository.
+    DuckDBShortInterestRepository`, populated by `scripts.ingest_short_
+    interest_data` from a LOCAL FILE the user produces from FINRA Rule
+    4560 reporting -- not a live network fetch this project's own
+    provider layer performs (see `data_infra.short_interest_models`'s
+    own module docstring for why: this sandboxed session cannot reach
+    `finra.org` to verify FINRA's real bulk-file format, the identical
+    limitation `data_infra.providers.file_import.LocalFileDataProvider`
+    already states for real market-data acquisition). `available_time`
+    on every record is deliberately later than its own `settlement_date`
+    by a conservative fixed lag (FINRA's own published "7 business days"
+    public-dissemination schedule, rounded up to an 11-calendar-day
+    upper bound) -- never the settlement date itself, the same
+    look-ahead discipline `InsiderTransaction.available_time` already
+    applies to Form 4 filing dates.
+
+    **Construction, a deliberate engineering simplification chosen
+    BEFORE any result exists (RULE 0.8)**: score is the NEGATIVE of the
+    most recent available `days_to_cover` (short interest quantity
+    divided by average daily trading volume, FINRA's own published
+    field, not recomputed here) rather than short interest scaled by
+    shares outstanding (Asquith, Pathak & Ritter's own primary
+    construction) -- `days_to_cover` needs only this one dedicated
+    repository (mirrors `insider_buying_score`'s own single-repository
+    shape, reused through `compute_fundamentals_ic_series`'s
+    `fundamentals_repository` slot exactly the way that factor's own
+    docstring already describes), while a shares-outstanding-scaled
+    ratio would need a SECOND repository (fundamentals, for
+    `CommonStockSharesOutstanding`) and a new two-repository CLI wiring
+    shape this module does not otherwise need. `None` (never a
+    fabricated score) if no report exists yet with `available_time <=
+    as_of_time`, or if that latest report's own `days_to_cover` is
+    `None` (FINRA does not always publish it, e.g. for a name with zero
+    recorded average daily volume that reporting period)."""
+    latest = repository.get_latest_short_interest(security_id, as_of_time)
+    if latest is None or latest.days_to_cover is None:
+        return None
+    return -latest.days_to_cover
+
+
+def net_stock_issuance_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the Net Stock Issuance anomaly (Pontiff & Woodgate
+    2008, "Share Issuance and Cross-Sectional Returns," The Journal of
+    Finance 63(2): 921-945; Fama & French 2008, "Dissecting Anomalies,"
+    The Journal of Finance 63(4): 1653-1678): companies that issue new
+    shares (diluting existing holders) earn systematically LOWER
+    subsequent returns than companies that reduce shares outstanding
+    (via buybacks), and this predictive power was found to be even
+    stronger than size, book-to-market, or momentum individually in the
+    post-1970 US sample. Found via a further GitHub/web search for
+    borrowable strategies, continuing the same search thread as
+    ADR-0098/ADR-0099, specifically triggered by the user's "다른 프로젝트
+    더 찾아봐" follow-up: `bkelly-lab/ReplicationCrisis` (Jensen, Kelly &
+    Pedersen 2023, Journal of Finance -- the single highest-quality
+    academic source found this session) surfaces "net issuance"/"debt
+    issuance" as one of its 13 factor themes, but its own exact
+    construction lives in SAS scripts and a binary spreadsheet this
+    session's blocked network access to `nber.org`/`jkpfactors.com`
+    could not verify -- rather than guess THAT repository's exact
+    formula, this factor is built instead from the original, independently
+    well-documented Pontiff & Woodgate/Fama & French construction, which
+    multiple accessible sources converge on identically.
+
+    Per Fama & French (2008a)'s own definition (the standard operational
+    form used across this literature): NET STOCK ISSUANCE = the change
+    in LOG split-adjusted shares outstanding across the two most recent
+    fiscal years, using `CommonStockSharesOutstanding` -- a concept
+    already ingested for `shareholder_yield_score`/`book_to_market_score`
+    (ADR-0043 Decision 10/12), needing ZERO new data. Structurally the
+    same "single year-over-year change" shape `asset_growth_score`/
+    `dividend_growth_score` already use, applied to a different concept.
+
+    Score is the NEGATIVE of `ln(current FY shares / prior FY shares)`,
+    so a security that REDUCED its share count (net buybacks exceeding
+    any issuance) scores higher (more attractive) -- matches this
+    module's convention. `None` (never a fabricated value) unless at
+    least two distinct fiscal years' `CommonStockSharesOutstanding` are
+    both already known as of `as_of_time`, or either value is
+    non-positive."""
+    records = _fy_records(repository, security_id, "CommonStockSharesOutstanding", as_of_time)
+    if len(records) < 2:
+        return None
+    current, prior = records[-1], records[-2]
+    if prior.value <= 0 or current.value <= 0:
+        return None
+    net_issuance = math.log(current.value / prior.value)
+    return -net_issuance
+
+
+def asset_turnover_change_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Fairfield & Yohn (2001, "Using Asset Turnover and
+    Profit Margin to Forecast Changes in Profitability," Review of
+    Accounting Studies 6: 371-385) / Soliman (2008, "The Use of DuPont
+    Analysis by Market Participants," The Accounting Review 83(3):
+    823-853): a YEAR-OVER-YEAR INCREASE in asset turnover (Sales /
+    Assets, the DuPont decomposition's efficiency leg) predicts
+    subsequently HIGHER profitability, and Soliman finds the market only
+    partially prices this in, leaving predictable subsequent abnormal
+    stock returns in the same direction -- a fundamental-momentum /
+    under-reaction story structurally similar to this module's own
+    `sue_score` (Foster, Olsen & Shevlin 1984) and `sloan_accruals_score`
+    (Sloan 1996), applied to a different DuPont-derived signal. Verified
+    via WebSearch (both papers' own citations and the direction of the
+    change-in-turnover-to-profitability relationship) rather than
+    reconstructed from memory alone.
+
+    Asset turnover for one fiscal year is `Revenues / Assets` -- both
+    concepts already ingested (`Revenues` for `sales_yield_score`/
+    `altman_z_score`, `Assets` throughout this module), needing ZERO new
+    data. The change (delta-ATO) is `current FY ATO - prior FY ATO`
+    (a simple difference, not a log-ratio, matching the literature's own
+    "delta-ATO" operational definition for a ratio-of-ratios quantity
+    rather than this module's more common log-change shape for a single
+    level quantity like `net_stock_issuance_score`'s shares count).
+    Requires BOTH concepts to share the identical `period_end` for a
+    given fiscal year (never mixing one year's Revenues against a
+    different year's Assets), the same period-matching discipline
+    `_fy_ratio` already enforces for a single-year ratio.
+
+    Score is the RAW delta-ATO (not negated) -- an INCREASING asset
+    turnover is the papers' own hypothesized more-attractive direction.
+    `None` (never a fabricated value) unless at least two distinct
+    fiscal years have BOTH concepts known, period-matched, with a
+    positive `Assets` value in each."""
+    revenue_records = _fy_records(repository, security_id, "Revenues", as_of_time)
+    asset_records = _fy_records(repository, security_id, "Assets", as_of_time)
+    if len(revenue_records) < 2 or len(asset_records) < 2:
+        return None
+    assets_by_period = {r.period_end: r.value for r in asset_records}
+    turnover_by_period = {}
+    for r in revenue_records:
+        assets_value = assets_by_period.get(r.period_end)
+        if assets_value is None or assets_value <= 0:
+            continue
+        turnover_by_period[r.period_end] = r.value / assets_value
+    if len(turnover_by_period) < 2:
+        return None
+    period_ends = sorted(turnover_by_period)
+    prior_ato, current_ato = turnover_by_period[period_ends[-2]], turnover_by_period[period_ends[-1]]
+    return current_ato - prior_ato
+
+
+def net_operating_assets_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- the Net Operating Assets anomaly (Hirshleifer, Hou,
+    Teoh & Zhang 2004, "Do Investors Overvalue Firms With Bloated
+    Balance Sheets?," Journal of Accounting and Economics 38: 297-331):
+    firms whose balance sheets have accumulated a large gap between
+    operating income and free cash flow -- reflected in a high level of
+    NET OPERATING ASSETS relative to total assets -- earn systematically
+    LOWER subsequent returns, hypothesized because investors' limited
+    attention overweights accounting operating performance relative to
+    the (less salient) cash flow it is actually backed by. Found via a
+    further GitHub/web search for borrowable strategies -- one of
+    `bkelly-lab/ReplicationCrisis`'s 13 factor themes.
+
+    **Construction verified against the account owner's own copy of
+    Jensen, Kelly & Pedersen's "Global Factor Data Documentation" PDF**
+    (supplied after this factor's first draft, corrected here before any
+    real IC result exists for it -- a genuine RULE 0.8-compliant
+    correction from better documentation, not empirical tuning): JKP's
+    own `noa_at = NOA*_t / AT*_t`, where `NOA* = OA* - OL*`, `OA* = AT* -
+    CHE - IVAO` (total assets minus cash minus other investments/
+    advances) and `OL* = LT - DLC - DLTT` (total liabilities minus
+    short-term debt minus long-term debt) -- both scaled by the SAME
+    (contemporaneous, not lagged) fiscal year's Total Assets. This
+    project's FIRST DRAFT of this factor (before the documentation was
+    available) instead scaled by the PRIOR fiscal year's Assets,
+    incorrectly recalling Hirshleifer et al.'s own convention as lagged
+    -- fixed here to match the now-verified contemporaneous denominator.
+
+    Substituting `AT* - LT == StockholdersEquity` (the balance-sheet
+    identity) into JKP's own `OA* - OL*` expansion gives the
+    algebraically equivalent `StockholdersEquity - CHE - IVAO + DLC +
+    DLTT`, scaled by the SAME fiscal year's `Assets`. This project
+    computes `(StockholdersEquity - Cash + LongTermDebtNoncurrent) /
+    Assets` (same fiscal year for all three) -- two documented gaps
+    versus JKP's own full construction, decided BEFORE any result exists
+    (RULE 0.8): (1) `IVAO` (other investments/advances) is omitted --
+    this project has no XBRL concept for it, and it is immaterial for
+    most large-cap non-financial names, the same materiality argument
+    `piotroski_f_score`/`leverage_score` already make for their own
+    balance-sheet simplifications; (2) `DLC` (short-term interest-bearing
+    debt) is omitted for the identical reason -- `leverage_score` already
+    simplifies its own debt figure the same way, using total `Liabilities`
+    rather than a full debt breakdown.
+
+    **Needs one new XBRL concept beyond what any existing factor in this
+    module ingests**: `CashAndCashEquivalentsAtCarryingValue`, added to
+    `ingest_fundamentals_data.py`'s `_DEFAULT_CONCEPTS` -- the same
+    "zero additional real network requests" pattern every prior concept
+    addition here already established.
+
+    Score is the NEGATIVE of the NOA ratio, so a LOWER (hypothesized
+    more attractive) net-operating-assets level produces a HIGHER
+    score, matching this module's convention. `None` (never a
+    fabricated ratio) unless `StockholdersEquity`, `CashAndCashEquivalents
+    AtCarryingValue`, and `Assets` are all known, or `Assets` is
+    non-positive. `LongTermDebtNoncurrent` reads as `0.0` (never `None`)
+    when absent -- the same `_fy_flow_or_zero`-style reasoning already
+    applied to `shareholder_yield_score`'s own concepts: a company with
+    no long-term debt tag simply has none, a real `$0`, not a data gap."""
+    equity_record = _latest_fiscal_year_value(repository, security_id, "StockholdersEquity", as_of_time)
+    cash_record = _latest_fiscal_year_value(repository, security_id, "CashAndCashEquivalentsAtCarryingValue", as_of_time)
+    assets_record = _latest_fiscal_year_value(repository, security_id, "Assets", as_of_time)
+    if equity_record is None or cash_record is None or assets_record is None:
+        return None
+    if assets_record.value <= 0:
+        return None
+    long_term_debt = _fy_flow_or_zero(repository, security_id, "LongTermDebtNoncurrent", as_of_time)
+    noa = (equity_record.value - cash_record.value + long_term_debt) / assets_record.value
+    return -noa
+
+
+def operating_leverage_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Novy-Marx (2011)'s Operating Leverage anomaly
+    ("Operating Leverage," Review of Finance 15(1): 103-134): firms with
+    HIGHER fixed-cost intensity (operating expenses large relative to
+    total assets) bear more OPERATING risk -- their profits are more
+    sensitive to revenue fluctuations -- and are hypothesized to command
+    a HIGHER expected return as compensation. This is a POSITIVE risk-
+    return relation, the OPPOSITE sign convention from every other
+    "risk"-flavored factor already in this module (e.g. `leverage_score`,
+    where MORE financial leverage LOWERS the score, since it there
+    reflects lower quality rather than a priced risk premium). Novy-
+    Marx's own central finding is that this operating-leverage premium is
+    strongest when interacted with value, but the plain univariate
+    relation he documents is unconditionally positive.
+
+    Found by continuing this session's mining of the account owner's own
+    copy of Jensen, Kelly & Pedersen's "Global Factor Data Documentation"
+    PDF (the same source that corrected `net_operating_assets_score`'s
+    denominator earlier this session) per the account owner's "2번
+    진행해" instruction to keep searching that document's ~150-factor
+    catalogue for further candidates. JKP's own `opex_at` is a direct,
+    single-paper-cited (Novy-Marx 2011) construction -- unlike
+    `net_stock_issuance_score`/`net_operating_assets_score`, it needs no
+    original-paper workaround.
+
+    JKP's own formula: `opex_at = OPEX*_t / AT*_t`, where `OPEX* = COGS +
+    XSGA` is JKP's own STATED FALLBACK for when its preferred `XOPR`
+    (total operating expense) tag is unavailable -- this project has
+    never ingested `XOPR`, so this fallback form is used directly (the
+    same "use JKP's own documented fallback, not its preferred tag" shape
+    `net_operating_assets_score`'s own IVAO/DLC omissions already
+    followed). Needs ONE new XBRL concept, `SellingGeneralAndAdministrat
+    iveExpense` -- `CostOfGoodsAndServicesSold` and `Assets` are already
+    ingested for `gross_profitability_score`/`roa_score`.
+
+    Score is the RAW `opex_at` ratio (deliberately NOT negated, per the
+    positive risk-return relation stated above). `None` (never a
+    fabricated ratio) unless `CostOfGoodsAndServicesSold`,
+    `SellingGeneralAndAdministrativeExpense` and `Assets` are all known,
+    or `Assets` is non-positive."""
+    cogs_record = _latest_fiscal_year_value(repository, security_id, "CostOfGoodsAndServicesSold", as_of_time)
+    sga_record = _latest_fiscal_year_value(repository, security_id, "SellingGeneralAndAdministrativeExpense", as_of_time)
+    assets_record = _latest_fiscal_year_value(repository, security_id, "Assets", as_of_time)
+    if cogs_record is None or sga_record is None or assets_record is None:
+        return None
+    if assets_record.value <= 0:
+        return None
+    opex = cogs_record.value + sga_record.value
+    return opex / assets_record.value
+
+
+def abnormal_investment_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Titman, Wei & Xie (2004)'s Abnormal Corporate
+    Investment anomaly ("Capital Investments and Stock Returns," Journal
+    of Financial and Quantitative Analysis 39(4): 677-700): firms whose
+    capital expenditure has grown ABNORMALLY fast relative to their OWN
+    recent (3-fiscal-year trailing) capex-to-sales history earn
+    systematically LOWER subsequent returns, hypothesized to reflect
+    empire-building / overinvestment that the market only gradually
+    recognizes as value-destroying.
+
+    Found by continuing this session's mining of the JKP "Global Factor
+    Data Documentation" PDF per the account owner's "2번 진행해"
+    instruction. JKP's own `capex_abn` is a direct, single-paper-cited
+    (Titman, Wei & Xie 2004) construction, used here directly (verified
+    against the PDF's exact formula) rather than needing an original-
+    paper workaround.
+
+    JKP's own formula: `capex_abn_t = CAPX_SALE_t / avg(CAPX_SALE_{t-12},
+    CAPX_SALE_{t-24}, CAPX_SALE_{t-36}) - 1`, where `CAPX_SALE = CAPX /
+    SALE*`, sampled MONTHLY. This project substitutes annual fiscal-year
+    granularity for JKP's monthly sampling -- the same monthly-to-FY
+    substitution this module already makes throughout (e.g.
+    `residual_momentum_score`, `sue_score`) -- so `t-12/t-24/t-36`
+    (months) become the 3 fiscal years immediately prior to the current
+    one, and the current ratio is compared against their average. Needs
+    ONE new XBRL concept, `PaymentsToAcquirePropertyPlantAndEquipment`
+    (CAPX) -- `Revenues` (SALE*) is already ingested for
+    `sales_yield_score`/`gross_profitability_score`.
+
+    Score is the NEGATIVE of `capex_abn`, so a firm whose CURRENT
+    capex/sales ratio is abnormally HIGH relative to its own trailing
+    3-year average scores LOWER (matches this module's convention that a
+    higher score always ranks a security as more attractive). `None`
+    (never a fabricated ratio) unless at least 4 fiscal years with BOTH
+    `PaymentsToAcquirePropertyPlantAndEquipment` and `Revenues` already
+    known (matched by `period_end`) exist as of `as_of_time`, any of
+    those 4 years' `Revenues` is non-positive, or the trailing 3-year
+    average CAPX/SALE ratio is exactly zero."""
+    capex_records = _fy_records(repository, security_id, "PaymentsToAcquirePropertyPlantAndEquipment", as_of_time)
+    sales_records = _fy_records(repository, security_id, "Revenues", as_of_time)
+    if len(capex_records) < 4 or len(sales_records) < 4:
+        return None
+    capex_by_period = {r.period_end: r.value for r in capex_records}
+    sales_by_period = {r.period_end: r.value for r in sales_records}
+    common_periods = sorted(set(capex_by_period) & set(sales_by_period))
+    if len(common_periods) < 4:
+        return None
+    last_four_periods = common_periods[-4:]
+    ratios = []
+    for period in last_four_periods:
+        sales = sales_by_period[period]
+        if sales <= 0:
+            return None
+        ratios.append(capex_by_period[period] / sales)
+    current_ratio = ratios[-1]
+    trailing_average = sum(ratios[:-1]) / 3.0
+    if trailing_average == 0:
+        return None
+    capex_abn = current_ratio / trailing_average - 1.0
+    return -capex_abn
+
+
+def cash_holdings_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Palazzo (2012)'s cash holdings anomaly ("Cash
+    Holdings, Risk, and Expected Returns," Journal of Financial
+    Economics 104(1): 162-185): firms holding MORE cash relative to
+    their assets earn systematically HIGHER subsequent returns.
+    Palazzo's own explanation is risk-based, not mispricing: cash-rich
+    firms are disproportionately firms with more valuable growth
+    options, whose payoffs are more exposed to the same aggregate
+    (cash-flow) shocks that drive market-wide returns, so cash holdings
+    proxy for a priced risk exposure rather than for safety. This is a
+    POSITIVE risk-return relation, the same "opposite sign convention
+    from every other risk factor already in this module" situation
+    `operating_leverage_score` already documents for its own paper.
+
+    Found this session (per the account owner's explicit "전부 확인하고
+    적용할만 한거 적용해" instruction) via a systematic pass through the
+    ENTIRE JKP "Global Factor Data Documentation" PDF's own cited-anomaly
+    catalogue (Table 9, ~150 factors across 13 clusters), not just the
+    already-surfaced leads `operating_leverage_score`/
+    `abnormal_investment_score` came from. Cross-verified two ways: (1)
+    JKP's own "New Variables from HXZ" section gives the exact formula
+    inline (`cash_at = CASH_t / AT*_t`); (2) Table 9's own "Low Leverage"
+    cluster citation list, read in the SAME order as its matching
+    abbreviation list two pages earlier, lines up `cash_at` with `Palazzo
+    (2012)` -- independently confirmed against this document's own
+    References section, which lists the identical paper
+    ("Palazzo, B. (2012). Cash holdings, risk, and expected returns.
+    Journal of Financial Economics, 104(1), 162-185"). Needs ZERO new
+    data: `CashAndCashEquivalentsAtCarryingValue` (ingested for
+    `net_operating_assets_score`) and `Assets` are both already fetched.
+
+    Distinct from `net_operating_assets_score` (which treats cash as one
+    subtracted component of a much larger balance-sheet mispricing
+    ratio, Hirshleifer et al.'s different "bloated balance sheet"
+    hypothesis) -- this is cash holdings taken on their own, as Palazzo's
+    own distinct risk-based hypothesis.
+
+    Score is the RAW `cash_at` ratio (deliberately NOT negated, per the
+    positive risk-return relation above). `None` (never a fabricated
+    ratio) unless `CashAndCashEquivalentsAtCarryingValue` and `Assets`
+    are both known, or `Assets` is non-positive."""
+    cash_record = _latest_fiscal_year_value(repository, security_id, "CashAndCashEquivalentsAtCarryingValue", as_of_time)
+    assets_record = _latest_fiscal_year_value(repository, security_id, "Assets", as_of_time)
+    if cash_record is None or assets_record is None:
+        return None
+    if assets_record.value <= 0:
+        return None
+    return cash_record.value / assets_record.value
+
+
+def bid_ask_spread_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 21,
+) -> Optional[float]:
+    """HYPOTHESIS -- Amihud & Mendelson (1986)'s bid-ask spread anomaly
+    ("Asset Pricing and the Bid-Ask Spread," Journal of Financial
+    Economics 17(2): 223-249): investors demand a return premium for
+    holding stocks with a WIDER bid-ask spread (a real transaction cost
+    of trading), so a HIGHER spread is hypothesized to predict HIGHER
+    subsequent returns -- the same "IMPORTANT SIGN NOTE" situation
+    `illiquidity_score`'s own docstring already documents for the
+    (distinct) Amihud 2002 measure: illiquidity itself is the priced
+    quantity here, not something to negate.
+
+    This module has no real bid/ask quote data, so the spread itself is
+    ESTIMATED from daily high/low prices via Corwin & Schultz (2012)'s
+    ("A Simple Way to Estimate Bid-Ask Spreads from Daily High and Low
+    Prices," The Journal of Finance 67(2): 719-760) closed-form
+    estimator -- the same measurement-vs-anomaly citation split
+    `OpenSourceAP/CrossSection` (Chen & Zimmermann 2021, Critical
+    Finance Review)'s own `BidAskSpread.py` predictor uses (found while
+    continuing the account owner's "1 2 실행" instruction: 1 = build the
+    split-adjusted high/low infrastructure this estimator needs; 2 =
+    keep reviewing that repository's own predictor catalogue for further
+    candidates). The estimator's exact formula was verified two
+    independent ways before being trusted (a third-party Python
+    reimplementation's source, and an independent web summary of the
+    same closed-form equations), per this session's now-established
+    "never reconstruct a cited algorithm from memory alone" discipline.
+
+    For each pair of consecutive trading days (bars `t-1`, `t`):
+    `beta = ln(H_t/L_t)^2 + ln(H_{t-1}/L_{t-1})^2`, `gamma =
+    ln(max(H_t,H_{t-1}) / min(L_t,L_{t-1}))^2`, `const = 3 - 2*sqrt(2)`,
+    `alpha = (sqrt(2*beta) - sqrt(beta))/const - sqrt(gamma/const)`,
+    daily spread `= max(0, 2*(e^alpha - 1)/(1 + e^alpha))` (negative
+    estimates floored at zero, the estimator's own documented
+    convention). This module's `lookback_days` (default 21, ~1 trading
+    month) window of daily estimates is then averaged -- requiring at
+    least 12 valid daily estimates, the same minimum-observations
+    threshold `OpenSourceAP/CrossSection`'s own monthly aggregation
+    documents.
+
+    **Why this needs `adjusted_high`/`adjusted_low`, not raw `high`/
+    `low`**: the `gamma` term above compares ONE day's high/low against
+    the ADJACENT day's -- if an unadjusted stock split fell between
+    those two days, the two days' raw prices sit on different scales
+    entirely, producing a spurious, wildly wrong estimate purely from
+    the split, not from any real spread or volatility. `close` has
+    always had this same raw/adjusted split via `adjusted_close`, but no
+    earlier factor in this module ever needed a cross-day comparison of
+    price LEVELS (only of returns, for which `adjusted_close` already
+    suffices) -- this is the first one that does, so `PriceBar.
+    adjusted_high`/`.adjusted_low` were added this session specifically
+    for it (see `data_infra.models.PriceBar`'s own docstring). `None`
+    (never a fabricated estimate, never a mix of adjusted and raw price
+    scales within the same computation) unless EVERY bar used has both
+    fields populated -- currently only `TiingoDataProvider` supplies
+    them (Tiingo's EOD response already carries `adjHigh`/`adjLow`
+    alongside `adjClose`, zero new network requests); `StooqDataProvider`
+    supplies raw prices only, so this factor is simply unavailable for
+    Stooq-sourced securities, the same honest gap `adjusted_close`
+    itself already has there.
+
+    Score is the RAW average estimated spread (deliberately NOT
+    negated, per the positive risk-return relation above)."""
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=int((lookback_days + 10) * 1.6)), as_of_time),
+        lookback_days + 1,
+    )
+    if len(bars) < 2:
+        return None
+    const = 3.0 - 2.0 * math.sqrt(2.0)
+    daily_spreads = []
+    for prev_bar, bar in zip(bars[:-1], bars[1:]):
+        hi_prev, lo_prev = prev_bar.adjusted_high, prev_bar.adjusted_low
+        hi, lo = bar.adjusted_high, bar.adjusted_low
+        if hi_prev is None or lo_prev is None or hi is None or lo is None:
+            continue
+        if hi_prev <= 0 or lo_prev <= 0 or hi <= 0 or lo <= 0:
+            continue
+        beta = math.log(hi / lo) ** 2 + math.log(hi_prev / lo_prev) ** 2
+        high_high = max(hi, hi_prev)
+        low_low = min(lo, lo_prev)
+        gamma = math.log(high_high / low_low) ** 2
+        alpha = (math.sqrt(2 * beta) - math.sqrt(beta)) / const - math.sqrt(gamma / const)
+        spread = 2.0 * (math.exp(alpha) - 1.0) / (1.0 + math.exp(alpha))
+        daily_spreads.append(max(spread, 0.0))
+    if len(daily_spreads) < 12:
+        return None
+    return sum(daily_spreads) / len(daily_spreads)
+
+
+def institutional_ownership_change_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- Chen, Jegadeesh & Wermers (2000, "The Value of
+    Active Mutual Fund Management: An Examination of the Stockholdings
+    and Trades of Fund Managers," Journal of Financial and Quantitative
+    Analysis 35(3): 343-368): stocks that institutional investors, in
+    aggregate, INCREASE their holdings in over a period earn
+    systematically HIGHER subsequent returns than stocks they decrease
+    holdings in -- "smart money" institutional trading, in aggregate,
+    contains real predictive information. Distinct from
+    `insider_buying_score` (a single corporate insider's own personal
+    Form 4 trades) and `short_interest_score` (aggregate SHORT
+    positions, a bet institutions are wrong): this is aggregate LONG
+    institutional ownership, disclosed quarterly via SEC Form 13F.
+
+    **Origin**: the account owner's own idea this session -- noting that
+    institutional investors, not individual retail traders, are widely
+    believed to move most large-cap stock prices, and asking whether
+    this project could track institutional positioning directly
+    ("기관들의 움직임을 추적할 순 없을까?"). Researched via a GitHub/web
+    search for real, open-source Form 13F parsers (`dgunning/edgartools`
+    among them) to identify the standard field semantics, continuing
+    this session's established practice of verifying a data format
+    before building against it rather than guessing.
+
+    **Data source, and the two real, stated limitations new to this
+    factor**: `repository` is a `storage.institutional_holding_
+    repository.DuckDBInstitutionalHoldingRepository`, populated by
+    `scripts.ingest_institutional_holdings` from a LOCAL FILE the user
+    produces from SEC Form 13F filings -- not a live network fetch this
+    project's own provider layer performs. Two distinct reasons, both
+    documented in full in `data_infra.institutional_holding_models`'s
+    own module docstring: (1) this sandboxed session cannot reach
+    `sec.gov` (`www.sec.gov` and `data.sec.gov` both confirmed blocked
+    this session) to independently verify SEC's real Form 13F
+    structured data set byte-for-byte; (2) even with access, that data
+    set is keyed by CUSIP, an identifier this project's own
+    `SecurityMaster` has never carried and has no verified mapping for
+    -- a genuinely new kind of gap beyond the network-access limitation
+    every other real-data provider integration this session has hit.
+    `available_time` on every record is SEC Rule 13f-1's own hard 45-
+    calendar-day filing deadline after each quarter's end (a real
+    regulatory deadline, not an estimated dissemination schedule the way
+    `short_interest_models.SHORT_INTEREST_DISSEMINATION_LAG_DAYS` is) --
+    never the quarter-end date itself, the same look-ahead discipline
+    `InsiderTransaction.available_time`/`ShortInterestRecord.
+    available_time` already apply to their own filing dates.
+
+    **Construction, decided BEFORE any result exists (RULE 0.8)**: the
+    RAW log change in aggregate institutional shares held between the
+    two most recent quarters with a known report,
+    `ln(current_quarter_shares / prior_quarter_shares)` --
+    structurally the same `_fy_records`-based year-over-year LOG change
+    shape `net_stock_issuance_score` already uses (there, on total
+    shares outstanding across fiscal years; here, on aggregate
+    institutional shares held across 13F quarters), NOT negated, since
+    the hypothesized relation is that MORE institutional buying predicts
+    HIGHER returns (matches this module's convention that a higher
+    score always ranks a security as more attractive). `None` (never a
+    fabricated change) unless at least two distinct quarters' aggregate
+    institutional holdings are both already known as of `as_of_time`, or
+    the prior quarter's aggregate shares are non-positive."""
+    history = repository.get_institutional_holding_history(security_id, as_of_time)
+    if len(history) < 2:
+        return None
+    current, prior = history[-1], history[-2]
+    if prior.institutional_shares <= 0 or current.institutional_shares <= 0:
+        return None
+    return math.log(current.institutional_shares / prior.institutional_shares)

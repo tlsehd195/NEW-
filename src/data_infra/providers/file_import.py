@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Sequence
 
 from data_infra.models import PriceBar, Provenance
-from data_infra.provider import PermanentProviderError
+from data_infra.provider import PermanentProviderError, bar_available_time
 from data_infra.versioning import compute_data_version
 
 # The one CSV schema this module understands. A file not matching this
@@ -64,7 +64,7 @@ from data_infra.versioning import compute_data_version
 # section 2.1's "never fabricate/repair" discipline applies to shape
 # mismatches exactly as it does to values.
 _REQUIRED_COLUMNS = ("date", "open", "high", "low", "close", "volume")
-_OPTIONAL_COLUMNS = ("adj_close",)
+_OPTIONAL_COLUMNS = ("adj_close", "adj_high", "adj_low")
 
 
 @dataclass(frozen=True)
@@ -145,6 +145,8 @@ class LocalFileDataProvider:
             as_of = record["_fetched_as_of"]
             content_fields = {k: v for k, v in record.items() if k not in ("_fetched_as_of", "security_id")}
             adj_close_raw = record.get("adj_close")
+            adj_high_raw = record.get("adj_high")
+            adj_low_raw = record.get("adj_low")
             provenance = Provenance(
                 source=self._config.source_name,
                 source_dataset=f"{self._config.source_name}_{security_id}",
@@ -161,10 +163,15 @@ class LocalFileDataProvider:
                     low=float(record["low"]),
                     close=float(record["close"]),
                     volume=float(record["volume"]),
-                    available_time=timestamp,
+                    # Session 36 continued (external review remediation):
+                    # see `data_infra.provider.bar_available_time`'s own
+                    # docstring -- matches the identical fix in tiingo.py.
+                    available_time=bar_available_time(timestamp),
                     ingestion_time=as_of,
                     provenance=provenance,
                     adjusted_close=float(adj_close_raw) if adj_close_raw not in (None, "") else None,
+                    adjusted_high=float(adj_high_raw) if adj_high_raw not in (None, "") else None,
+                    adjusted_low=float(adj_low_raw) if adj_low_raw not in (None, "") else None,
                     currency="USD",
                 )
             )

@@ -77,6 +77,17 @@ class TradeRecord:
     realized_pnl: Optional[float] = None
     realized_return: Optional[float] = None
     holding_period: Optional[timedelta] = None
+    # -- Session 36 continued: found comparing this project against an
+    # external repository (dragon1086/prism-insight), needed before a
+    # reentry-cooldown risk rule can be built at all -- this project had
+    # no way to distinguish a normal strategy-driven SELL from a
+    # risk-engine-forced exit (e.g. "risk_limit_breach", "stop_loss").
+    # Free-text/tag, not an Enum: whoever converts a Fill into a
+    # TradeRecord decides the vocabulary; `None` (never a fabricated
+    # reason) when the producer does not distinguish exit kinds yet --
+    # additive, same "Optional[...] = None" schema convention every
+    # earlier Trade Journal field addition has used (ADR-0009 point 4).
+    exit_reason: Optional[str] = None
     provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION
     experiment_id: Optional[str] = None
     recorded_at: Optional[datetime] = None

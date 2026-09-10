@@ -33,6 +33,70 @@ class _FakeHTTPResponse:
         return False
 
 
+class TestWireEncodingMatchesDeclaredContentType:
+    """External review finding (Session 36 continued): `_request` used
+    to `json.dumps` the body unconditionally, regardless of what
+    `Content-Type` header the caller declared -- `auth.fetch_access_
+    token` declares `application/x-www-form-urlencoded` (RFC 6749
+    section 4.4.2 requires it for a token request) but the actual wire
+    body was JSON bytes, a real header/body mismatch a standards-
+    compliant token endpoint would reject. No test in this file
+    previously inspected `req.data`/`req.headers` at all."""
+
+    def test_form_urlencoded_content_type_produces_a_real_form_encoded_body(self, monkeypatch) -> None:
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["data"] = req.data
+            captured["content_type"] = req.headers.get("Content-type") or req.headers.get("Content-Type")
+            return _FakeHTTPResponse(200, {"access_token": "tok"}, {"content-type": "application/json"})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = TossHttpTransport("https://openapi.tossinvest.com")
+        transport.post(
+            "/oauth2/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            json_body={"grant_type": "client_credentials", "client_id": "abc", "client_secret": "s&cret=1"},
+            timeout=5.0,
+        )
+        # urllib.request.Request lower-cases/normalizes header keys to
+        # "Content-type" internally -- checked case-insensitively here.
+        assert captured["content_type"] in ("application/x-www-form-urlencoded", None)
+        body_text = captured["data"].decode("utf-8")
+        assert body_text.startswith("grant_type=client_credentials")
+        assert "client_id=abc" in body_text
+        # a raw json.dumps body would contain '{', ':', '"' -- none of
+        # those belong in a real form-urlencoded body
+        assert "{" not in body_text and '"' not in body_text
+        # the reserved characters in the secret got safely percent-encoded,
+        # not passed through raw (which would corrupt the field boundary)
+        assert "s%26cret%3D1" in body_text
+
+    def test_default_json_content_type_still_sends_json(self, monkeypatch) -> None:
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["data"] = req.data
+            return _FakeHTTPResponse(200, {"status": "FILLED"}, {"content-type": "application/json"})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = TossHttpTransport("https://openapi.tossinvest.com")
+        transport.post("/api/v1/orders", headers={}, json_body={"symbol": "005930"}, timeout=5.0)
+        assert json.loads(captured["data"].decode("utf-8")) == {"symbol": "005930"}
+
+    def test_get_query_params_are_percent_encoded(self, monkeypatch) -> None:
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["url"] = req.full_url
+            return _FakeHTTPResponse(200, {}, {})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = TossHttpTransport("https://openapi.tossinvest.com")
+        transport.get("/api/v1/orders", headers={}, params={"symbol": "005930", "note": "a&b=c"}, timeout=5.0)
+        assert "note=a%26b%3Dc" in captured["url"]
+
+
 class TestSuccessfulRequest:
     def test_post_returns_parsed_json_body(self, monkeypatch) -> None:
         def fake_urlopen(req, timeout):

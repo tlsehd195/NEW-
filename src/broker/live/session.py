@@ -198,6 +198,31 @@ class LiveTradingSession:
             )
 
         gate_result = evaluate_safety_gate(gate_context)
+
+        # Session 36 continued (external review remediation): re-derives
+        # kill-switch-engaged truth from the session's OWN state
+        # (`self._kill_switch_repository`/`self._operational_state`),
+        # never trusting `gate_context.kill_switch_engaged` alone. A
+        # caller building `gate_context` from a stale snapshot (taken
+        # before this session's own `engage_kill_switch` ran) would
+        # otherwise slip an order past a kill switch that is, right
+        # now, actually engaged -- `is_kill_switch_engaged()` already
+        # existed (queries the repository directly) but was never
+        # called from here before this fix, so it defended nothing on
+        # this path. `gate_result` is still computed normally above (and
+        # kept, not discarded) so every OTHER failed condition it found
+        # is still reported.
+        session_kill_switch_engaged = (
+            self._operational_state == OperationalState.KILL_SWITCHED or self.is_kill_switch_engaged()
+        )
+        if session_kill_switch_engaged and "kill_switch_engaged" not in gate_result.failed_conditions:
+            gate_result = SafetyGateResult(
+                passed=False,
+                failed_conditions=gate_result.failed_conditions + ("kill_switch_engaged",),
+                evaluated_at=gate_result.evaluated_at,
+                configuration_version=gate_result.configuration_version,
+            )
+
         if not gate_result.passed:
             return LiveSubmissionOutcome(submitted=False, status="BLOCKED", gate_result=gate_result, response=None)
 
@@ -275,10 +300,29 @@ class LiveTradingSession:
         return KillSwitchEngagementResult(event=event, cancellation_outcomes=tuple(outcomes))
 
     def release_kill_switch(self, approval: LiveActivationApproval, *, occurred_at: datetime) -> KillSwitchEvent:
+        """Releasing the kill switch does NOT unconditionally resume
+        trading (Session 36 continued, external review remediation):
+        any `client_order_id` this session still has recorded as
+        `BrokerOrderStatus.UNKNOWN` (a submission whose outcome was
+        never confirmed -- `submit`'s own `except BrokerError` branch is
+        the only place that sets UNKNOWN) means "정산(reconciliation)
+        전 재개 금지" has not actually been satisfied yet, no matter how
+        long the kill switch stayed engaged. `reconcile_order` is the
+        one real path that clears an UNKNOWN status (on a MATCHED
+        result); until every UNKNOWN order has gone through it, release
+        returns the session to `RECONCILIATION_REQUIRED`, not `READY`
+        -- `submit` stays blocked exactly as it already is for that
+        state, forcing an explicit `reconcile_order` call per open
+        UNKNOWN order before any new order can go out."""
         event = _release_kill_switch(
             event_id=self._kill_switch_ids.allocate(), approval=approval, occurred_at=occurred_at,
             configuration_version=self.config.configuration_version(),
         )
         self._kill_switch_repository.record(event)
-        self._operational_state = OperationalState.READY
+        has_unreconciled_orders = any(
+            status == BrokerOrderStatus.UNKNOWN for status in self._internal_status.values()
+        )
+        self._operational_state = (
+            OperationalState.RECONCILIATION_REQUIRED if has_unreconciled_orders else OperationalState.READY
+        )
         return event

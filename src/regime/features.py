@@ -29,7 +29,7 @@ from typing import Optional, Sequence
 from backtest.metrics import compute_max_drawdown
 
 from regime.config import RegimeConfig
-from regime.enums import CorrelationState, LiquidityState, StressState, TrendState, VolatilityState
+from regime.enums import CorrelationState, DistributionState, LiquidityState, StressState, TrendState, VolatilityState
 from regime.points import PricePoint
 
 _PERIODS_PER_YEAR = 252
@@ -267,3 +267,50 @@ def compute_stress(
     else:
         state = StressState.NORMAL
     return state, drawdown, reliability
+
+
+# --------------------------------------------------------------------
+# Distribution (Session 36 -- dragon1086/prism-insight comparison)
+# --------------------------------------------------------------------
+
+
+def compute_distribution_days(
+    points: Sequence[PricePoint], config: RegimeConfig
+) -> tuple[DistributionState, Optional[float], float]:
+    """Counts IBD-style "distribution days" -- a daily decline of at
+    least `config.distribution_decline_threshold` on volume higher than
+    the prior day's -- within the trailing `config.distribution_window`
+    trading days. An institutional-selling-pressure signal, distinct
+    from Volatility (price dispersion, no volume) and Stress (drawdown +
+    Volatility's own state, no per-day volume co-occurence check).
+
+    Needs both price and volume, so a subject with no volume data at all
+    (e.g. a BenchmarkPoint-derived series -- Phase 1's BenchmarkPoint has
+    no volume field) is honestly UNKNOWN, mirroring `compute_liquidity`'s
+    own handling of the identical gap."""
+    volumes = [p.volume for p in points if p.volume is not None]
+    if len(volumes) != len(points) or not points:
+        return DistributionState.UNKNOWN, None, 0.0
+
+    required = config.distribution_window + 1  # +1: the oldest scored day needs a prior day to compare volume against
+    reliability = data_completeness(len(points), required)
+    if len(points) < required or reliability < config.min_data_completeness:
+        return DistributionState.UNKNOWN, None, reliability
+
+    window = points[-required:]
+    count = 0
+    for i in range(1, len(window)):
+        prior, current = window[i - 1], window[i]
+        if prior.price == 0:
+            continue
+        daily_return = current.price / prior.price - 1.0
+        if daily_return <= config.distribution_decline_threshold and current.volume > prior.volume:
+            count += 1
+
+    if count >= config.distribution_high_count:
+        state = DistributionState.HIGH
+    elif count >= config.distribution_warning_count:
+        state = DistributionState.ELEVATED
+    else:
+        state = DistributionState.NORMAL
+    return state, float(count), reliability

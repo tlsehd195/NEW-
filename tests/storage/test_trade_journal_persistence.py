@@ -70,6 +70,34 @@ class TestPersistenceAndRestart:
         assert reloaded.order.features == {"momentum_score": 0.42}
         engine2.close()
 
+    def test_exit_reason_survives_restart(self, tmp_path) -> None:
+        """Session 36 continued -- TradeRecord.exit_reason (found
+        comparing this project against dragon1086/prism-insight, needed
+        before a reentry-cooldown risk rule can be built). Round-trips
+        through `payload_json` like every other trade field, not a
+        dedicated SQL column -- same additive-schema-only convention
+        every earlier Trade Journal field addition has used."""
+        config = StorageConfig(tmp_path / "store")
+        engine1 = StorageEngine(config)
+        journal1 = DuckDBTradeJournalRepository(engine1)
+
+        order = make_order()
+        decision = journal1.record_decision(
+            decision_time=order.decision_time, security_id="AAA", decision=DecisionAction.BUY, order=order,
+        )
+        trade = journal1.record_trade(
+            decision_id=decision.snapshot_id, fill=make_fill(), position_after=0.0, exit_reason="risk_limit_breach",
+        )
+        assert trade.exit_reason == "risk_limit_breach"
+        engine1.close()
+
+        engine2 = StorageEngine(config)
+        journal2 = DuckDBTradeJournalRepository(engine2)
+        reloaded = journal2.get_trade(trade.trade_id)
+        assert reloaded is not None
+        assert reloaded.exit_reason == "risk_limit_breach"
+        engine2.close()
+
 
 class TestIdempotency:
     def test_recording_same_order_twice_does_not_duplicate(self, tmp_path) -> None:

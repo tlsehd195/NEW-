@@ -125,6 +125,31 @@ _DEFAULT_CONCEPTS = (
     # `EarningsPerShareDiluted` is reported at both granularities under
     # this same tag, same as `NetIncomeLoss` already is.
     "EarningsPerShareDiluted",
+    # Session 36 continued addition -- the 1 concept
+    # `strategy_research.factor_scores.rd_expenditure_score` needs,
+    # found via a GitHub/web search for borrowable strategies
+    # (paperswithbacktest/awesome-systematic-trading -- Chan, Lakonishok
+    # & Sougiannis 2001 R&D expenditure anomaly). Same zero-extra-request
+    # justification as every earlier concept addition above -- FY-only,
+    # like every concept before `EarningsPerShareDiluted`.
+    "ResearchAndDevelopmentExpense",
+    # Session 36 continued addition -- the 1 concept
+    # `strategy_research.factor_scores.net_operating_assets_score`
+    # needs beyond what earlier scores already ingest (Hirshleifer, Hou,
+    # Teoh & Zhang 2004 net operating assets anomaly, found via a
+    # further GitHub/web search for borrowable strategies). Same
+    # zero-extra-request justification as every earlier concept
+    # addition above -- FY-only.
+    "CashAndCashEquivalentsAtCarryingValue",
+    # Session 36 continued addition -- the 2 concepts
+    # `strategy_research.factor_scores.operating_leverage_score`
+    # (Novy-Marx 2011) and `abnormal_investment_score` (Titman, Wei &
+    # Xie 2004) need, found by continuing this session's mining of the
+    # JKP "Global Factor Data Documentation" PDF per the account owner's
+    # "2번 진행해" instruction. Same zero-extra-request justification as
+    # every earlier concept addition above -- FY-only.
+    "SellingGeneralAndAdministrativeExpense",
+    "PaymentsToAcquirePropertyPlantAndEquipment",
 )
 
 _REQUEST_DELAY_SECONDS = 0.3

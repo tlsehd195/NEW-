@@ -50,6 +50,18 @@ class RegimeConfig:
     stress_elevated_drawdown: float = -0.10
     stress_high_drawdown: float = -0.20
 
+    # -- Distribution: IBD-style "distribution day" count (decline of at
+    # least distribution_decline_threshold on volume higher than the
+    # prior day's) within a trailing window. Session 36, found comparing
+    # this project against dragon1086/prism-insight --
+    # distribution_decline_threshold/warning_count/high_count are IBD's
+    # own long-published thresholds, not fit to any data this project
+    # holds --
+    distribution_window: int = 25
+    distribution_decline_threshold: float = -0.002  # -0.2%
+    distribution_warning_count: int = 5
+    distribution_high_count: int = 7
+
     # -- Fail-closed data-sufficiency gate, applied to every axis --
     min_data_completeness: float = 0.75  # below this, state is forced UNKNOWN
 

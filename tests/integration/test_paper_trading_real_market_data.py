@@ -86,6 +86,17 @@ class TestRealMarketDataFeedsPaperTradingEndToEnd:
     def test_ingested_tiingo_data_flows_through_paper_trading_to_a_performance_report(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("MARKET_DATA_API_KEY", "test-key")
         buy_day, sell_day = utc(2024, 1, 2), utc(2024, 1, 3)
+        # Session 36 continued (external review remediation): a bar's
+        # `available_time` is now end-of-session (20:00 UTC) on its own
+        # date (`data_infra.provider.bar_available_time`), not the bare
+        # midnight-UTC event date -- any `as_of`/`requested_at` actually
+        # used to look up a reference bar must be realistically after
+        # that. `buy_day`/`sell_day` stay at midnight -- still used
+        # below to match `PriceBar.timestamp` (the bar's own event
+        # date, a separate field from `available_time`) and for
+        # decision/risk metadata timestamps, neither of which drives a
+        # reference-bar lookup.
+        buy_time, sell_time = utc(2024, 1, 2, 20), utc(2024, 1, 3, 20)
         raw_body = [
             {"date": "2024-01-02T00:00:00.000Z", "open": "185.0", "high": "186.5", "low": "184.2",
              "close": "185.64", "volume": "82488700", "adjClose": "185.64", "splitFactor": "1.0", "divCash": "0.0"},
@@ -137,10 +148,10 @@ class TestRealMarketDataFeedsPaperTradingEndToEnd:
             decision_time=buy_day, security_id="AAPL", decision=DecisionAction.BUY,
         )
         buy_response = submit_validated_order(
-            session.adapter, buy_order, execution_mode="PAPER", requested_at=buy_day,
+            session.adapter, buy_order, execution_mode="PAPER", requested_at=buy_time,
             configuration_version="cfg-v1", request_repository=request_repo, response_repository=response_repo,
         )
-        buy_fills = session.capture(buy_order.client_order_id, as_of=buy_day)
+        buy_fills = session.capture(buy_order.client_order_id, as_of=buy_time)
         assert buy_response.status.value == "FILLED"
         assert len(buy_fills) == 1
         # -- the fill price is derived from the real ingested bar's
@@ -164,10 +175,10 @@ class TestRealMarketDataFeedsPaperTradingEndToEnd:
             decision_time=sell_day, security_id="AAPL", decision=DecisionAction.SELL,
         )
         sell_response = submit_validated_order(
-            session.adapter, sell_order, execution_mode="PAPER", requested_at=sell_day,
+            session.adapter, sell_order, execution_mode="PAPER", requested_at=sell_time,
             configuration_version="cfg-v1", request_repository=request_repo, response_repository=response_repo,
         )
-        sell_fills = session.capture(sell_order.client_order_id, as_of=sell_day)
+        sell_fills = session.capture(sell_order.client_order_id, as_of=sell_time)
         assert sell_response.status.value == "FILLED"
         journal_repo.record_trade(
             decision_id=sell_decision.snapshot_id, fill=sell_fills[0].fill, position_after=0.0,
@@ -184,7 +195,7 @@ class TestRealMarketDataFeedsPaperTradingEndToEnd:
         # session actually produced. --
         monitoring_config = MonitoringConfig(min_sample_count=1)
         event, health = collect_broker(
-            response_repo.list_all(), request_repo.list_all(), as_of_time=sell_day, observed_at=sell_day,
+            response_repo.list_all(), request_repo.list_all(), as_of_time=sell_time, observed_at=sell_time,
             config=monitoring_config, event_id="MONEVT-RD0001", health_id="HEALTH-RD0001",
         )
         assert health.status == ComponentHealthStatus.HEALTHY
@@ -196,7 +207,7 @@ class TestRealMarketDataFeedsPaperTradingEndToEnd:
         equity_history = [(p.as_of_time, p.portfolio_value) for p in session.adapter.accounting.value_series]
         report = compute_paper_performance_report(
             report_id="RPT-RD0001", paper_session_id="SESSION-RD1", equity_history=equity_history,
-            trades=trades, evaluated_at=sell_day, turnover=session.adapter.accounting.turnover(),
+            trades=trades, evaluated_at=sell_time, turnover=session.adapter.accounting.turnover(),
         )
         assert report.num_trades == 2
         # AAPL dropped from 185.64 to 184.25 over this window -- the

@@ -71,6 +71,28 @@ class TestFetchAccessToken:
         token = client.fetch_access_token()
         assert token == "tok-abc123"
 
+    def test_declares_form_urlencoded_content_type_matching_the_grant_type_body(self, monkeypatch) -> None:
+        """External review finding (Session 36 continued): this call
+        site's own declared Content-Type must actually match the shape
+        of the body it sends -- RFC 6749 section 4.4.2 requires a
+        client_credentials token request body to be form-urlencoded,
+        not JSON. `MockTransport` now records the exact `headers`/
+        `json_body` this call site passed (it previously recorded
+        nothing, which is why this specific mismatch went undetected
+        until an external review caught it in the real network-capable
+        transport implementation instead)."""
+        monkeypatch.setenv("TOSS_API_KEY", "k")
+        monkeypatch.setenv("TOSS_API_SECRET", "s")
+        monkeypatch.setenv("TOSS_ACCOUNT_ID", "a")
+        transport = MockTransport(response_body={"access_token": "tok-abc123"})
+        client = TossAuthClient(transport, _live_config())
+        client.fetch_access_token()
+
+        assert transport.last_headers["Content-Type"] == "application/x-www-form-urlencoded"
+        assert transport.last_json_body == {
+            "grant_type": "client_credentials", "client_id": "k", "client_secret": "s",
+        }
+
     def test_missing_access_token_field_raises(self, monkeypatch) -> None:
         monkeypatch.setenv("TOSS_API_KEY", "k")
         monkeypatch.setenv("TOSS_API_SECRET", "s")

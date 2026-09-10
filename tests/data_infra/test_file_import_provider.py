@@ -98,6 +98,25 @@ class TestLocalFileDataProviderNormalize:
         assert bar.provenance.source == "nasdaq_data_link_sharadar"
         assert bar.adjusted_close == pytest.approx(1.4)
         assert bar.close == pytest.approx(1.5)
+        # External review finding (Session 36 continued): matches the
+        # identical fix/test in test_tiingo_provider.py -- see
+        # data_infra.provider.bar_available_time's own docstring.
+        assert bar.available_time == datetime(2010, 6, 15, 20, tzinfo=timezone.utc)
+
+    def test_normalize_parses_adj_high_and_adj_low_columns(self, tmp_path) -> None:
+        _write_csv(
+            tmp_path / "AAA.csv",
+            [{"date": "2010-06-15", "open": "1", "high": "2", "low": "0.5", "close": "1.5", "volume": "100",
+              "adj_close": "1.4", "adj_high": "1.9", "adj_low": "0.45"}],
+            columns=("date", "open", "high", "low", "close", "volume", "adj_close", "adj_high", "adj_low"),
+        )
+        config = FileImportConfig(source_name="test_source", data_dir=tmp_path)
+        provider = LocalFileDataProvider(config)
+        raw = provider.fetch("AAA", utc(2010, 1, 1), utc(2010, 12, 31))
+        [bar] = provider.normalize("AAA", raw)
+        assert bar.high == pytest.approx(2.0)  # raw, unadjusted -- never overwritten
+        assert bar.adjusted_high == pytest.approx(1.9)
+        assert bar.adjusted_low == pytest.approx(0.45)
 
     def test_missing_adj_close_leaves_adjusted_close_none_not_fabricated(self, tmp_path) -> None:
         _write_csv(

@@ -36,7 +36,19 @@ rule), or `sue` (Session 36 continued, ADR-0084 -- Foster, Olsen &
 Shevlin 1984 Standardized Unexpected Earnings; the first genuinely new
 literature category since the Phase 33 20-candidate batch, needing
 quarterly `EarningsPerShareDiluted` rather than any concept an earlier
-score already used) -- using
+score already used), `rd_expenditure` (Session 36 continued, found via
+a GitHub/web search for borrowable strategies -- Chan, Lakonishok &
+Sougiannis 2001 R&D expenditure anomaly, wired through
+`compute_hybrid_ic_series` since it needs price too, and needing one new
+XBRL concept, `ResearchAndDevelopmentExpense`), `short_interest`
+(Session 36 continued, ADR-0099 -- Asquith, Pathak & Ritter 2005 short
+interest anomaly, sourced from a FOURTH, distinct DuckDB catalog,
+`--short-interest-db-path`, populated by `ingest_short_interest_data.py`
+from a local FINRA-derived CSV), `net_stock_issuance` (Pontiff &
+Woodgate 2008 / Fama & French 2008, fundamentals-only, zero new data),
+or `net_operating_assets` (Hirshleifer, Hou, Teoh & Zhang 2004,
+fundamentals-only, needs one new XBRL concept,
+`CashAndCashEquivalentsAtCarryingValue`) -- using
 `strategy_research.signal_ic.compute_fundamentals_ic_series` (or, for
 `shareholder_yield`/`earnings_yield`, `compute_hybrid_ic_series`; or,
 for `quality_minus_junk`/`value_composite`/`combined_factor`,
@@ -80,24 +92,41 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
+from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
+from storage.institutional_holding_repository import DuckDBInstitutionalHoldingRepository  # noqa: E402
+from storage.short_interest_repository import DuckDBShortInterestRepository  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
+    abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
+    asset_turnover_change_score,
     book_to_market_score,
+    cash_holdings_score,
     cashflow_yield_score,
     combined_factor_score,
     dividend_growth_score,
     earnings_yield_score,
     gross_profitability_score,
+    industry_momentum_score,
+    insider_buying_score,
+    institutional_ownership_change_score,
     leverage_score,
+    merton_distance_to_default_score,
     net_margin_score,
+    net_operating_assets_score,
+    net_stock_issuance_score,
+    ohlson_o_score,
+    operating_leverage_score,
     piotroski_f_score,
     quality_minus_junk_score,
+    rd_expenditure_score,
     roa_score,
     roe_score,
     sales_yield_score,
+    share_turnover_score,
     shareholder_yield_score,
+    short_interest_score,
     size_score,
     sloan_accruals_score,
     sue_score,
@@ -122,10 +151,87 @@ _SCORES = {
     "piotroski": piotroski_f_score,
     "sloan_accruals": sloan_accruals_score,
     "dividend_growth": dividend_growth_score,
+    # Session 36 continued additions -- Pontiff & Woodgate 2008 / Fama &
+    # French 2008 net stock issuance, and Hirshleifer, Hou, Teoh & Zhang
+    # 2004 net operating assets, both found via a further GitHub/web
+    # search for borrowable strategies (bkelly-lab/ReplicationCrisis
+    # surfaced these as 2 of its 13 factor themes; that repository's own
+    # exact formulas could not be verified from this sandbox, so these
+    # are built from the original, independently-documented papers
+    # instead). Both fundamentals-only, same _fy_records-based
+    # year-over-year shape as asset_growth_score/dividend_growth_score.
+    "net_stock_issuance": net_stock_issuance_score,
+    "net_operating_assets": net_operating_assets_score,
+    # Session 36 continued additions -- Novy-Marx 2011 operating leverage
+    # and Titman, Wei & Xie 2004 abnormal corporate investment, both
+    # found by continuing this session's mining of the JKP "Global
+    # Factor Data Documentation" PDF per the account owner's "2번
+    # 진행해" instruction. Both fundamentals-only, single-paper-cited
+    # JKP constructions used directly (verified against the PDF).
+    "operating_leverage": operating_leverage_score,
+    "abnormal_investment": abnormal_investment_score,
+    # Session 36 continued addition -- Palazzo 2012 cash holdings
+    # anomaly, found by a systematic pass through the ENTIRE JKP
+    # "Global Factor Data Documentation" PDF's cited-anomaly catalogue
+    # per the account owner's "전부 확인하고 적용할만 한거 적용해"
+    # instruction. Fundamentals-only, single-paper-cited JKP
+    # construction (cash_at), zero new data.
+    "cash_holdings": cash_holdings_score,
     # Session 36 continued addition (ADR-0084) -- Foster, Olsen &
     # Shevlin 1984 Standardized Unexpected Earnings, fundamentals-only
     # (needs quarterly EarningsPerShareDiluted, no price data).
     "sue": sue_score,
+    # Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    # Ohlson 1980 O-Score, a second canonical distress-risk model
+    # alongside altman_z_score. Fundamentals-only, needs Assets/
+    # Liabilities/AssetsCurrent/LiabilitiesCurrent/NetIncomeLoss/
+    # NetCashProvidedByUsedInOperatingActivities (all already ingested),
+    # zero new data. GNP price-level deflator omitted -- see
+    # ohlson_o_score's own docstring for the mathematical (not
+    # result-driven) proof this does not change cross-sectional ranking.
+    # Wired in before any real IC result exists, per RULE 0.8.
+    "ohlson_o": ohlson_o_score,
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Fairfield & Yohn
+    # 2001 / Soliman 2008 change-in-asset-turnover anomaly. Fundamentals-
+    # only, needs Revenues + Assets (both already ingested), zero new
+    # data. Wired in before any real IC result exists, per RULE 0.8.
+    "asset_turnover_change": asset_turnover_change_score,
+}
+
+# Session 36 continued addition (ADR-0086) -- score_fn's have the
+# identical (security_id, as_of_time, repository) shape
+# `FundamentalsScoreFn`/`compute_fundamentals_ic_series` already expect,
+# but the "repository" each needs is a `DuckDBInsiderRepository` (a
+# distinct DuckDB catalog populated by `ingest_insider_transactions.py`),
+# never `fundamentals_repository` -- kept as a separate dict + separate
+# `--insider-db-path` flag rather than merged into `_SCORES`, mirroring
+# `_HYBRID_SCORES`/`_UNIVERSE_SCORES`'s own precedent of a new dict per
+# distinct repository/call shape rather than widening an existing one.
+_INSIDER_SCORES = {
+    "insider_buying": insider_buying_score,
+}
+
+# Session 36 continued addition (ADR-0099) -- same reasoning as
+# _INSIDER_SCORES immediately above, applied to a THIRD, distinct
+# repository type (`DuckDBShortInterestRepository`, populated by
+# `ingest_short_interest_data.py` from a local FINRA-derived CSV, never
+# a live network fetch -- see short_interest_score's own docstring for
+# why). Kept as its own dict + `--short-interest-db-path` flag for the
+# identical reason _INSIDER_SCORES is its own dict rather than merged
+# into _SCORES.
+_SHORT_INTEREST_SCORES = {
+    "short_interest": short_interest_score,
+}
+
+# Session 36 continued addition -- same reasoning as _INSIDER_SCORES/
+# _SHORT_INTEREST_SCORES above, sourced from a FIFTH, distinct DuckDB
+# catalog (--institutional-db-path, a local SEC-Form-13F-derived CSV via
+# ingest_institutional_holdings.py). institutional_ownership_change_
+# score's own signature is also (security_id, as_of_time, repository),
+# so it reuses compute_fundamentals_ic_series unchanged, same as the
+# two dicts above.
+_INSTITUTIONAL_SCORES = {
+    "institutional_ownership_change": institutional_ownership_change_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 10) -- scores whose score_fn
@@ -151,6 +257,31 @@ _HYBRID_SCORES = {
     "book_to_market": book_to_market_score,
     "sales_yield": sales_yield_score,
     "cashflow_yield": cashflow_yield_score,
+    # Session 36 continued -- Chan, Lakonishok & Sougiannis 2001 R&D
+    # expenditure anomaly, found via a GitHub/web search for borrowable
+    # strategies (paperswithbacktest/awesome-systematic-trading). Wired
+    # in before any real IC result exists, per RULE 0.8. Needs
+    # `ResearchAndDevelopmentExpense` -- see `ingest_fundamentals_data.py`'s
+    # now-extended `_DEFAULT_CONCEPTS`.
+    "rd_expenditure": rd_expenditure_score,
+    # Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Datar, Naik &
+    # Radcliffe 1998 share turnover liquidity anomaly, a third
+    # independent liquidity proxy alongside illiquidity/bid_ask_spread
+    # (see share_turnover_score's own docstring for how it differs from
+    # both). Needs CommonStockSharesOutstanding (already ingested) +
+    # volume (already a required PriceBar field) -- zero new data. Wired
+    # in before any real IC result exists, per RULE 0.8.
+    "share_turnover": share_turnover_score,
+    # Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    # Merton 1974 structural credit-risk model, via Bharath & Shumway
+    # 2008's own "naive" distance-to-default simplification. Hybrid
+    # (fundamentals+price), needs zero new data (Liabilities/
+    # CommonStockSharesOutstanding already ingested for altman_z_score/
+    # size_score, plus ordinary price history). A genuinely different
+    # FAMILY from altman_z_score/ohlson_o_score (market-based structural
+    # model, not an accounting-ratio discriminant/logit model). Wired
+    # in before any real IC result exists, per RULE 0.8.
+    "merton_dd": merton_distance_to_default_score,
 }
 
 # Session 36 addition (ADR-0043 Decision 12) -- scores whose score_fn is
@@ -169,6 +300,14 @@ _UNIVERSE_SCORES = {
     # factor_scores.py), so it reuses this same call path with no new
     # plumbing.
     "combined_factor": combined_factor_score,
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Moskowitz &
+    # Grinblatt 1999 industry momentum. Cross-sectional (needs every
+    # security's own sector, via data_infra.universe.get_sector, and
+    # every security's own trailing return to average within its
+    # industry) -- reuses this same call path, same reasoning as
+    # quality_minus_junk_score/value_composite_score above. Wired in
+    # before any real IC result exists, per RULE 0.8.
+    "industry_momentum": industry_momentum_score,
 }
 
 
@@ -185,8 +324,27 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--price-db-path", required=True, type=Path, help="DuckDB catalog from ingest_real_market_data.py (forward returns)")
     parser.add_argument("--fundamentals-db-path", required=True, type=Path, help="DuckDB catalog from ingest_fundamentals_data.py (scores)")
+    parser.add_argument(
+        "--insider-db-path", type=Path, default=None,
+        help="DuckDB catalog from ingest_insider_transactions.py (ADR-0086). Required only for --score insider_buying.",
+    )
+    parser.add_argument(
+        "--short-interest-db-path", type=Path, default=None,
+        help="DuckDB catalog from ingest_short_interest_data.py (ADR-0099). Required only for --score short_interest.",
+    )
+    parser.add_argument(
+        "--institutional-db-path", type=Path, default=None,
+        help="DuckDB catalog from ingest_institutional_holdings.py (ADR-0104). Required only for --score institutional_ownership_change.",
+    )
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE")
-    parser.add_argument("--score", choices=sorted(set(_SCORES) | set(_HYBRID_SCORES) | set(_UNIVERSE_SCORES)), default="roe")
+    parser.add_argument(
+        "--score",
+        choices=sorted(
+            set(_SCORES) | set(_HYBRID_SCORES) | set(_UNIVERSE_SCORES) | set(_INSIDER_SCORES)
+            | set(_SHORT_INTEREST_SCORES) | set(_INSTITUTIONAL_SCORES)
+        ),
+        default="roe",
+    )
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
     parser.add_argument(
         "--end", type=str, default=None,
@@ -204,6 +362,18 @@ def main(argv: list[str] | None = None) -> int:
         else TEST_1.start
     )
 
+    if args.score in _INSIDER_SCORES and args.insider_db_path is None:
+        print(f"ERROR: --score {args.score} requires --insider-db-path (ADR-0086).", file=sys.stderr)
+        return 1
+
+    if args.score in _SHORT_INTEREST_SCORES and args.short_interest_db_path is None:
+        print(f"ERROR: --score {args.score} requires --short-interest-db-path (ADR-0099).", file=sys.stderr)
+        return 1
+
+    if args.score in _INSTITUTIONAL_SCORES and args.institutional_db_path is None:
+        print(f"ERROR: --score {args.score} requires --institutional-db-path (ADR-0104).", file=sys.stderr)
+        return 1
+
     locked = overlaps_any_locked_window(start, end)
     if locked:
         names = ", ".join(w.name for w in locked)
@@ -220,10 +390,52 @@ def main(argv: list[str] | None = None) -> int:
     fundamentals_engine = StorageEngine(StorageConfig(root_dir=args.fundamentals_db_path))
     price_repository = DuckDBDataRepository(price_engine)
     fundamentals_repository = DuckDBFundamentalsRepository(fundamentals_engine)
+    insider_engine = None
+    if args.insider_db_path is not None:
+        insider_engine = StorageEngine(StorageConfig(root_dir=args.insider_db_path))
+    short_interest_engine = None
+    if args.short_interest_db_path is not None:
+        short_interest_engine = StorageEngine(StorageConfig(root_dir=args.short_interest_db_path))
+    institutional_engine = None
+    if args.institutional_db_path is not None:
+        institutional_engine = StorageEngine(StorageConfig(root_dir=args.institutional_db_path))
 
     rebalance_dates = _rebalance_dates(start, end, args.step_months)
 
-    if args.score in _UNIVERSE_SCORES:
+    if args.score in _INSIDER_SCORES:
+        insider_repository = DuckDBInsiderRepository(insider_engine)
+        # insider_buying_score's signature is (security_id, as_of_time,
+        # repository) -- identical shape to FundamentalsScoreFn, so
+        # compute_fundamentals_ic_series is reused unchanged, just with
+        # an insider repository in the "fundamentals_repository" slot
+        # (that parameter is `object`-typed precisely so any repository
+        # sharing this call shape can be passed through it).
+        summary = compute_fundamentals_ic_series(
+            list(universe.symbol_ids), rebalance_dates, _INSIDER_SCORES[args.score],
+            fundamentals_repository=insider_repository, price_repository=price_repository,
+            horizon_days=args.horizon_days,
+        )
+    elif args.score in _SHORT_INTEREST_SCORES:
+        # Same reuse as _INSIDER_SCORES immediately above -- short_
+        # interest_score's signature is also (security_id, as_of_time,
+        # repository).
+        short_interest_repository = DuckDBShortInterestRepository(short_interest_engine)
+        summary = compute_fundamentals_ic_series(
+            list(universe.symbol_ids), rebalance_dates, _SHORT_INTEREST_SCORES[args.score],
+            fundamentals_repository=short_interest_repository, price_repository=price_repository,
+            horizon_days=args.horizon_days,
+        )
+    elif args.score in _INSTITUTIONAL_SCORES:
+        # Same reuse as _INSIDER_SCORES/_SHORT_INTEREST_SCORES above --
+        # institutional_ownership_change_score's signature is also
+        # (security_id, as_of_time, repository).
+        institutional_repository = DuckDBInstitutionalHoldingRepository(institutional_engine)
+        summary = compute_fundamentals_ic_series(
+            list(universe.symbol_ids), rebalance_dates, _INSTITUTIONAL_SCORES[args.score],
+            fundamentals_repository=institutional_repository, price_repository=price_repository,
+            horizon_days=args.horizon_days,
+        )
+    elif args.score in _UNIVERSE_SCORES:
         summary = compute_universe_ic_series(
             list(universe.symbol_ids), rebalance_dates, _UNIVERSE_SCORES[args.score],
             fundamentals_repository=fundamentals_repository, price_repository=price_repository,

@@ -2477,14 +2477,709 @@ pool, **before any real IC result exists for it** -- the same
 "literature-fix, then test, never the other order" discipline RULE 0.8
 requires and every earlier candidate in this document already followed.
 
-**No real result yet**: this session's own outbound network is blocked
-to SEC EDGAR (the same constraint documented throughout this project),
-so raw IC screening cannot run here. The account owner needs to
-re-run `scripts/ingest_fundamentals_data.py` (now including
-`EarningsPerShareDiluted` by default) with real network access before
-`--score sue` produces anything. This paragraph is written before that
-happens, specifically so it cannot later be read as a hypothesis
-selected after seeing a favorable result.
+**Real raw IC result** (account owner re-ran `ingest_fundamentals_data.py`
+with `EarningsPerShareDiluted` now included, then `compute_fundamentals_
+ic_from_catalog.py --score sue`, real 87-symbol `RESEARCH_UNIVERSE_STAGE4`,
+2010-01-01 to `TEST_1.start`): `mean_ic=+0.0189`, `positive_ic_ratio=
+48.53%`, `observations=68` (fewer than most candidates' 79-80, a real
+consequence of needing 12 quarters of history before scoring anything).
+Sign matches the literature-predicted direction, but the magnitude is
+near-zero and the positive-ratio is below 50% -- the same "direction
+right, consistency weak" signature several earlier near-zero candidates
+(`shareholder_yield`, `altman_z`'s own raw screen) already showed.
 
-`REAL_VALIDATION_NOT_COMPLETED` remains the correct classification.
-Total candidates once a real result exists for this one: 31.
+**Real walk-forward/PBO/DSR result** (same run as the rest of the
+31-candidate pool, `--start 2010-01-01 --end 2023-04-28`,
+`RESEARCH_UNIVERSE_STAGE4`, real data): `sue` reaches
+`ROBUSTNESS_PENDING`, not `CANDIDATE` -- `positive_fold_ratio=43.33%`
+(well below the 60% bar) and `deflated_sharpe_ratio=0.419` (well below
+the 0.95 bar). Held-out TEST: net cumulative return -10.26%, Sharpe
+-0.04 (effectively zero), 92 trades. A literature-backed hypothesis,
+real new data, and a real validation run that still does not clear the
+bar -- the 31st candidate to land here, not the exception.
+
+Overall pool result unchanged by adding `sue`: PBO=7.14% (same as the
+30-candidate run), and `altman_z`/`rank_average_ensemble` remain the
+only 2 reaching `CANDIDATE`, both still showing strongly negative
+held-out TEST results (-24.67%/-13.63% net) and therefore still held,
+not promoted. `REAL_VALIDATION_NOT_COMPLETED` remains the correct
+classification for all 31 candidates this project has now produced.
+
+## Session 36 continued Addendum -- insider trading (SEC Form 4), pipeline built, no real result yet
+
+The second of the two new categories identified alongside SUE above
+(ADR-0086). A real, manual feasibility check the account owner ran in
+their own environment (this session's own network is still blocked to
+`sec.gov`) confirmed real EDGAR Form 4 data is fetchable end to end
+(Atom filing list -> `index.json` -> `form4.xml`, real AAPL accession
+`0001140361-26-035636`), and that real sample surfaced a concrete
+methodology requirement before any hypothesis was finalized: the
+sample was a Rule 10b5-1 pre-scheduled sale, not a genuinely
+discretionary trade, so the factor definition below excludes
+10b5-1-flagged transactions from the start rather than after seeing
+what such trades do to a result.
+
+**`insider_buying_score`** (Lakonishok & Lee 2001; Seyhun 1986) --
+`(buy_shares - sell_shares) / (buy_shares + sell_shares)` over the
+trailing 6 months of `transaction_date`, counting only open-market
+Code `P`/`S` transactions with `is_10b5_1_plan == False`. Full data
+pipeline built this session: `InsiderTransaction` model +
+`DuckDBInsiderRepository` (point-in-time-safe on the real SEC filing
+date), 5 new `SecEdgarFundamentalsProvider` Form 4 methods (Tier 1,
+verified byte-for-byte against the real captured AAPL sample), and
+`scripts/ingest_insider_transactions.py`. Wired into both research
+scripts **before any real IC result exists for it** -- `--score
+insider_buying` (`compute_fundamentals_ic_from_catalog.py`, via a new
+independent `--insider-db-path` flag) and `run_long_horizon_validation.py`'s
+walk-forward pool (`_INSIDER_FACTOR_CANDIDATES`, the pool's 32nd
+candidate) -- the identical RULE 0.8 discipline every candidate in this
+document already follows.
+
+**Still no raw IC result -- but a real, structural gap found and fixed
+along the way (ADR-0088)**: the account owner ran real ingestion (87
+symbols, 4877 transactions, `AVB` unresolved same as the fundamentals
+catalog's own known CIK gap) and then the raw-IC screen at this
+project's standard `--start 2010-01-01`. Result: `observations=0`.
+Diagnosed directly against the real catalog rather than guessed at:
+the ingested data's ENTIRE date range (2023-09-15..2026-09-04) sits
+almost completely inside `strategy_research.locked_windows.TEST_1`
+(2023-04-28..2026-08-27) -- `compute_fundamentals_ic_from_catalog.py`'s
+own TEST-1 refusal correctly restricted the raw-IC request to before
+that window, and that pre-TEST-1 range had zero rows of insider data
+at all. Root cause: `fetch_form4_filing_list` made exactly one EDGAR
+request per symbol (the default 40 most recent filings), which for 87
+actively-traded large-caps only reached back a few years from "now,"
+nowhere near 2010. Fixed by adding real pagination (`before_date` on
+`fetch_form4_filing_list`, a new `_fetch_paginated_filing_list` helper
+in the ingestion script walking backward via EDGAR's own `dateb`
+parameter until a `--min-filing-date` target, default 2009-06-01, is
+reached or a safety cap is hit) -- see ADR-0088 for the full account
+and its own test coverage.
+
+**ADR-0088's own fix did not work -- caught by re-running it for
+real, not assumed correct**: the account owner re-ingested (13798
+transactions, up from 4877) and re-ran the raw-IC screen. STILL
+`observations=0`. A live diagnostic (fetching AAPL's real filing list
+twice, once un-paginated and once with `dateb` set to the oldest date
+already seen) proved `dateb` does not filter this endpoint's atom
+response at all -- the two responses were byte-for-byte identical, 0
+new filings. ADR-0089 replaces it with `start` (EDGAR's classic
+0-based offset), verified for real before being trusted the same way:
+`start=100` against AAPL's live history returned exactly the next 100
+filings, 0 overlap with `start=0`. This is the second real, structural
+gap this single feature surfaced from actual use (after the TEST-1-
+overlap discovery above) -- both caught by re-running the real
+pipeline and checking the real database rather than trusting that a
+fix labeled "done" actually worked.
+
+**Still no real IC result**: the account owner needs to re-run the
+now-corrected `ingest_insider_transactions.py` in their own
+environment before `--score insider_buying` can compute anything
+meaningful. Recorded here, before that re-run, specifically so this
+addendum cannot later be read as having picked the factor's exclusion
+rules (Code P/S only, `is_10b5_1_plan == False`) OR the pagination
+mechanism after seeing whether either helps or hurts the result.
+
+## Session 36 continued Addendum -- ML factor-combination: more data + stronger regularization, real result in
+
+The second of the two directions the account owner asked to pursue in
+parallel with the insider-trading addendum above (ADR-0087): "apply ML
+to factor combination -- strengthen regularization + increase data,"
+following on ADR-0043 Decision 5's own real finding that `ml_ridge`
+(regularized) beat `ml_ols` (unregularized) on fold-consistency (58%
+vs 53%) on data that Decision 5's own writeup called "little."
+
+Two changes, decided together, before either's own result exists:
+`MLStrategyParameters.train_window_months` (the `ml_ols`/`ml_ridge`
+candidates' own in-strategy fit lookback) extended from 60 to 84
+months (5 to 7 fiscal-year fundamentals snapshots) -- genuinely more
+historical rows, not denser resampling of the same window (fundamentals
+only change once per fiscal year regardless of sampling cadence, per
+`ml_strategy.py`'s own docstring). `linear_model.CANDIDATE_RIDGES` (the
+CV search grid `ml_ridge` selects from) widened upward to include 500.0
+and 1000.0 alongside every existing weaker candidate.
+
+**Real result** (account owner re-ran `run_long_horizon_validation.py`
+against real data, `RESEARCH_UNIVERSE` now `RESEARCH_UNIVERSE_STAGE4`
+87 symbols, `2010-01-01`..`2023-04-28`, without `--insider-db-path` yet):
+`ml_ols` reaches 55% positive folds (33/60), DSR=0.6418, held-out TEST
+net cumret=+63.34% (Sharpe=0.60); `ml_ridge` reaches 53% (32/60),
+DSR=0.5796, held-out TEST net cumret=+76.12% (Sharpe=0.64). **Neither
+clears the 60%-fold/0.95-DSR `CANDIDATE` bar** -- the same conclusion
+as before this ADR's changes.
+
+**An honest, unflattering observation, not smoothed over**: Decision
+5's original finding was `ml_ridge` (58%) ahead of `ml_ols` (53%) --
+regularization measurably helping. This run shows the OPPOSITE
+ordering: `ml_ols` (55%) very slightly ahead of `ml_ridge` (53%). Two
+real caveats on reading too much into this: (1) the gap in both
+directions is a single fold out of 60 (58%→53% was ~3 folds; 55% vs
+53% here is ~1 fold) -- both are small enough to plausibly be noise,
+not a reversal of a real effect; (2) this is not a clean, isolated A/B
+test of the ADR-0087 change alone -- the universe itself changed
+between Decision 5's run (`RESEARCH_UNIVERSE_STAGE3`, 63 symbols) and
+this one (`RESEARCH_UNIVERSE_STAGE4`, 87 symbols), a real confound this
+comparison cannot separate out. Recorded honestly as "did not reproduce
+the earlier directional pattern in this run," not spun as either
+"regularization doesn't help" or explained away -- per RULE 0.8, a
+result that does not match the hypothesis that motivated the change is
+recorded exactly like one that does.
+
+**Overall pool conclusion unchanged** by these two ML parameter
+changes: PBO=7.14% (same as the pre-ADR-0087 31-candidate run),
+`altman_z` (63% folds, DSR=1.00, held-out TEST net=-24.67%) and
+`rank_average_ensemble` (60% folds, DSR=0.98, held-out TEST
+net=-13.63%) remain the only 2 reaching `CANDIDATE`, both still
+TEST-negative and held, not promoted -- unaffected by ADR-0087 since
+neither is `MLStrategy`-based. Zero candidates `VALIDATED`. This run
+does not yet include `insider_buying` (32nd candidate, ADR-0086) --
+real Form 4 ingestion completed separately this same session (87
+symbols, `AVB` unresolved same as the fundamentals catalog's own known
+CIK gap, 4877 transactions persisted) but the walk-forward run with
+`--insider-db-path` has not been executed yet; that result will be
+recorded separately once it lands.
+
+## Session 36 continued Addendum -- RS Rating (O'Neil/IBD Relative Strength), wired blind
+
+Following the account owner's request to analyze an external repository
+(`dragon1086/prism-insight`, an LLM-agent-driven trading system with no
+backtesting rigor of its own -- explicitly acknowledged in its own
+README, the key philosophical contrast to this project's RULE 0.8/
+PBO-DSR discipline) and then "전부 적용" (apply everything found
+applicable), 5 items were identified; this is the first, price-only and
+requiring no new data pipeline.
+
+**`rs_rating_score`** (O'Neil/IBD Relative Strength Rating) --
+`2*R63 + R126 + R189 + R252`, a weighted sum of trailing 63/126/189/252
+trading-day returns (IBD's own quarterly weighting, most recent quarter
+double-weighted), using only price history already in the catalog. The
+raw weighted-sum score is used directly, NOT IBD's own 1-99
+percentile-rank transform: both `compute_ic_series` (Spearman rank
+correlation) and this project's top-N portfolio sorting are invariant to
+any monotonic transform of a score, so the percentile-rank step is
+mathematically redundant for this project's purposes -- a decision
+recorded in the function's own docstring before any result exists, not
+after.
+
+Wired into `compute_signal_ic_from_catalog.py` (`--strategy rs_rating`)
+and `run_long_horizon_validation.py`'s `_PRICE_FACTOR_CANDIDATES` (the
+pool's 33rd candidate, alongside `insider_buying`'s 32nd) **before any
+real IC or walk-forward result exists for it** -- the same discipline
+every candidate in this document already follows.
+
+**Real raw IC result received** (account owner, `compute_signal_ic_from_catalog.py
+--db-path ./data/real_2010_latest --universe RESEARCH_UNIVERSE --strategy
+rs_rating --start 2010-01-01`, window [2010-01-01, 2023-04-28), 80
+rebalance dates, 73 observations):
+
+```
+mean_ic = -0.0053
+ic_information_ratio = -0.0202
+positive_ic_ratio = 50.68%
+```
+
+Essentially zero, slightly negative -- the RAW IC does not support
+O'Neil/IBD's own hypothesis that recent relative strength predicts
+continued outperformance in this real sample; `positive_ic_ratio`
+sitting at ~51% (statistically indistinguishable from a coin flip at
+this observation count) reinforces that this is noise, not a weak-but-
+real negative signal. Per this project's own RULE 0.8 discipline
+(`ADR-0051`'s own precedent, applied identically here): this raw-IC
+result does NOT get the candidate excluded or its construction
+adjusted -- it stays wired into `run_long_horizon_validation.py`'s pool
+exactly as already built, to be judged later by the full walk-forward/
+PBO/DSR evidence pipeline rather than by this single screening
+statistic in isolation.
+
+## Session 36 continued Addendum -- Residual Momentum and R&D Expenditure Anomaly, wired blind (ADR-0098)
+
+Following the account owner's separate request to search GitHub/the web
+more broadly for similar projects sorted by star count and identify any
+borrowable strategies, `paperswithbacktest/awesome-systematic-trading`
+(13.4k stars, a curated database of published academic-paper-backed
+systematic trading strategies) was cross-referenced against this
+project's ~30+ already-implemented factors, surfacing two genuinely new,
+low-cost candidates -- both authorized for implementation by the
+account owner's follow-up "저기서 찾은거 적용하고" ("apply what was found").
+
+**`residual_momentum_score`** (Blitz, Huij & Martens 2011) -- momentum
+computed on CAPM-residual returns rather than raw returns, hypothesized
+to outperform and be more stable than raw momentum since a share of raw
+momentum's own crash risk is systematic (beta-driven) rather than
+stock-specific. Beta/alpha are estimated on an EARLIER, non-overlapping
+252-trading-day window and applied out-of-sample to a FOLLOWING
+63-trading-day formation window -- a real estimator subtlety caught by
+reasoning about the math (not an empirical peek, RULE 0.8 compliant):
+fitting and scoring residuals on the SAME window would give every
+security a score of ~0 by construction (an OLS identity -- intercept
+-including regression residuals always sum to zero over their own
+estimation sample). Distinct from `idiosyncratic_volatility_score`
+(same market-regression machinery, but that factor keeps only the
+residual STANDARD DEVIATION, discarding sign/mean entirely).
+
+**`rd_expenditure_score`** (Chan, Lakonishok & Sougiannis 2001) --
+`ResearchAndDevelopmentExpense / market_cap`, hypothesized positively
+related to forward returns since GAAP expenses R&D immediately rather
+than capitalizing it, understating R&D-intensive firms' book value and
+near-term earnings relative to the growth that spending is building.
+Needs one new XBRL concept (`ResearchAndDevelopmentExpense`, added to
+`ingest_fundamentals_data.py`'s `_DEFAULT_CONCEPTS` -- zero additional
+real network requests, the same pattern `EarningsPerShareDiluted`
+already established for `sue_score`). A genuinely absent tag reads as
+`0.0` (real zero R&D spending, e.g. banks/retailers), never `None`, via
+`_fy_flow_or_zero` -- the same convention `shareholder_yield_score`'s
+dividend/buyback/issuance concepts already use.
+
+Wired into `compute_signal_ic_from_catalog.py`/`compute_fundamentals_ic_
+from_catalog.py` (`--strategy residual_momentum` / `--score
+rd_expenditure`) and `run_long_horizon_validation.py`'s
+`_PRICE_FACTOR_CANDIDATES`/`_HYBRID_FACTOR_CANDIDATES` (the pool's 34th
+and 35th candidates) **before any real IC or walk-forward result exists
+for either** -- the same discipline every candidate in this document
+already follows. No real result recorded yet.
+
+**Correction (same session, ADR-0100 amendment)**: the account owner
+independently obtained and supplied `bkelly-lab/jkp-data`'s "Global
+Factor Data Documentation" PDF, resolving the earlier data-source
+limitation for `net_operating_assets_score`. Cross-checking against
+JKP's own verified `noa_at = NOA*_t / AT*_t` (same-fiscal-year scaling)
+found this factor's first draft had incorrectly scaled by the PRIOR
+fiscal year's `Assets` -- corrected to the SAME fiscal year, a genuine
+RULE 0.8-compliant fix from better documentation made before any real
+IC result existed for it. `net_stock_issuance_score` was cross-checked
+too and left unchanged -- it already follows the independently
+well-established Fama & French share-count convention, a legitimate
+measure distinct from JKP's own dollar-value alternative.
+
+## Session 36 continued Addendum -- Return Seasonality and Short Interest Anomaly, wired blind (ADR-0099)
+
+The user's follow-up "후보들 진행" ("proceed with the candidates")
+authorized building the two remaining GitHub/web-search-derived
+candidates ADR-0098 had flagged but not yet built.
+
+**`return_seasonality_score`** (Heston & Sadka 2008) -- a security's
+own historical tendency to over/underperform in the SAME calendar month
+across multiple prior years (default 5), averaged. A genuinely
+different computational shape from every other factor in this module:
+it groups price history by calendar month across non-contiguous years
+rather than reading one contiguous trailing window. Price-only, zero
+new data needed. Independently corroborated by `paperswithbacktest/
+awesome-systematic-trading`'s own `12-month-cycle-in-cross-section-of-
+stocks-returns.py` (the k=1 special case of this factor's more general
+averaging).
+
+**`short_interest_score`** (Asquith, Pathak & Ritter 2005) -- the
+NEGATIVE of the most recent `days_to_cover` (short interest quantity /
+average daily volume). The one candidate needing a genuinely NEW data
+source: since this sandboxed session cannot reach `finra.org` to
+observe FINRA's real bulk-file format, a live scraper was NOT built
+(guessing an unverified schema would violate this project's "never
+fabricate provider capabilities" discipline). Instead, mirroring
+`LocalFileDataProvider`'s own established precedent (Phase 31), a new
+`ShortInterestRecord` model + `DuckDBShortInterestRepository` +
+project-owned CSV import schema (`data_infra.providers.short_interest_
+file_import`) + local-file-only CLI (`scripts/ingest_short_interest_
+data.py`, no network call, safe to test directly) were built. A
+report's `available_time` is always `settlement_date` plus a
+conservative 11-calendar-day upper bound on FINRA's own published
+"7 business days" public-dissemination lag -- never the settlement date
+itself.
+
+Also rejected from the same search round, with reasons recorded rather
+than silently dropped: `earnings-quality-factor.py` (overlaps
+substantially with already-implemented `roe`/`sloan_accruals`/
+`leverage`, not a genuinely new anomaly), `payday-anomaly.py` (an
+INDEX-level market-timing signal, not a per-stock factor -- does not
+fit this project's cross-sectional stock-selection architecture -- and
+its own citation is a trading-blog page, not a peer-reviewed paper),
+`consistent-momentum-strategy.py` (no clear peer-reviewed academic
+citation in the source, below this project's citation-quality bar).
+
+Wired into `compute_signal_ic_from_catalog.py` (`--strategy
+return_seasonality`) / `compute_fundamentals_ic_from_catalog.py`
+(`--score short_interest`, requiring a new `--short-interest-db-path`
+flag) and `run_long_horizon_validation.py`'s
+`_PRICE_FACTOR_CANDIDATES`/new `_SHORT_INTEREST_FACTOR_CANDIDATES` (the
+pool's 36th and 37th candidates) **before any real IC or walk-forward
+result exists for either** -- the same discipline every candidate in
+this document already follows. No real result recorded yet; the short
+interest candidate additionally requires the account owner to acquire
+real FINRA data externally and preprocess it into this project's CSV
+schema before any real result can exist for it at all.
+
+## Session 36 continued Addendum -- Net Stock Issuance and Net Operating Assets, wired blind (ADR-0100)
+
+The user's follow-up "다른 프로젝트 더 찾아봐" ("find more other projects")
+surfaced `bkelly-lab/ReplicationCrisis` (Jensen, Kelly & Pedersen 2023,
+Journal of Finance) -- the highest-quality academic source found this
+session, clustering 153 characteristics into 13 themes across 93
+countries. That repository's own exact formulas live in SAS scripts
+and a binary spreadsheet, and its documentation sites
+(`jkpfactors.com`/`nber.org`) are blocked from this sandboxed session's
+network -- rather than guess its exact construction, this project built
+2 of its 13 themes from their own original, independently-verifiable
+underlying papers instead.
+
+**`net_stock_issuance_score`** (Pontiff & Woodgate 2008; Fama & French
+2008) -- the change in log split-adjusted shares outstanding across
+the two most recent fiscal years, using `CommonStockSharesOutstanding`
+(already ingested). Zero new data needed. Score is the negative of the
+log change: net buybacks score higher, net issuance scores lower.
+
+**`net_operating_assets_score`** (Hirshleifer, Hou, Teoh & Zhang 2004)
+-- `(StockholdersEquity - Cash + LongTermDebtNoncurrent) /
+prior_fy_Assets`, the algebraic equivalent of "Operating Assets minus
+Operating Liabilities, scaled by lagged Total Assets" via the
+balance-sheet identity. Needs one new XBRL concept
+(`CashAndCashEquivalentsAtCarryingValue`). Two documented
+simplifications versus the original paper's fuller construction:
+interest-bearing debt uses only `LongTermDebtNoncurrent` (matching
+`leverage_score`'s own precedent), and minority interest/preferred
+stock are omitted (matching `piotroski_f_score`/`leverage_score`'s own
+precedent) rather than approximated.
+
+Wired into `compute_fundamentals_ic_from_catalog.py`'s `_SCORES`
+(`--score net_stock_issuance` / `--score net_operating_assets`) and
+`run_long_horizon_validation.py`'s `_FUNDAMENTALS_FACTOR_CANDIDATES`
+(the pool's 38th and 39th candidates) **before any real IC or
+walk-forward result exists for either** -- the same discipline every
+candidate in this document already follows. No real result recorded
+yet.
+
+## Session 36 continued Addendum -- Operating Leverage and Abnormal Corporate Investment, wired blind (ADR-0101)
+
+Per the account owner's explicit "2번 진행해" instruction, this session
+continued mining the JKP "Global Factor Data Documentation" PDF itself
+(now readable, unlike when ADR-0100 was first written) for further
+single-paper-cited candidates.
+
+**`operating_leverage_score`** (Novy-Marx 2011, Review of Finance) --
+`(COGS + XSGA) / Assets`, RAW (not negated): Novy-Marx's own central
+finding is a POSITIVE risk-return relation (more fixed-cost intensity =
+more operating risk = higher expected return), the opposite sign
+convention from every other risk factor already in this module. Needs
+one new XBRL concept (`SellingGeneralAndAdministrativeExpense`).
+
+**`abnormal_investment_score`** (Titman, Wei & Xie 2004, Journal of
+Financial and Quantitative Analysis) -- current fiscal year's
+capex/sales ratio versus its own trailing 3-fiscal-year average,
+NEGATED (overinvestment predicts lower subsequent returns). Needs one
+new XBRL concept (`PaymentsToAcquirePropertyPlantAndEquipment`).
+
+Wired into `compute_fundamentals_ic_from_catalog.py`'s `_SCORES`
+(`--score operating_leverage` / `--score abnormal_investment`) and
+`run_long_horizon_validation.py`'s `_FUNDAMENTALS_FACTOR_CANDIDATES`
+(the pool's 40th and 41st candidates) **before any real IC or
+walk-forward result exists for either**. No real result recorded yet.
+
+## Session 36 continued Addendum -- full JKP catalogue review, Cash Holdings wired blind (ADR-0102)
+
+The account owner asked directly whether the JKP documentation had been
+checked in full ("jkp 전부 확인한거야?"). It had not -- only
+already-surfaced leads had been checked. Instructed to do so ("전부
+확인하고 적용할만 한거 적용해"), this session read through the
+document's ENTIRE Table 9 (~150 factors, 13 clusters) plus the earlier
+construction tables, not just grepped terms.
+
+**Finding**: everything past the document's own "Other Factors" section
+break (~150 "growth in X scaled by AT/BE/ME" mechanical variants) is
+JKP's own systematic transformation methodology, not individually-cited
+academic findings -- confirms ADR-0101's earlier skip of that family was
+correct.
+
+**One new factor added: `cash_holdings_score`** (Palazzo 2012, Journal
+of Financial Economics) -- `cash_at = CASH/Assets`, RAW (not negated):
+Palazzo's own risk-based finding is that cash-rich firms carry more
+valuable, more systematically-exposed growth options, so cash predicts
+HIGHER subsequent returns. Verified two independent ways (the document's
+own inline formula, and its ordered citation list cross-checked against
+its own References section). Zero new data. Wired into both scripts
+(the pool's 42nd candidate) before any real result exists.
+
+**Three candidates explicitly deferred (not rejected)**, recorded so
+they are not silently dropped: `bidaskhl_21d` (Corwin-Schultz spread
+estimator -- this document only points to the external paper's own
+algorithm, does not give it inline), `netdebt_me` (Penman, Richardson &
+Tuna 2007 -- that paper's actual finding is more nuanced than a simple
+univariate claim, needs to be read directly before trusting a sign),
+`rd5_at`/`ni_ivol` (both need substantially more complex multi-period
+constructions than this project's existing pattern). Two rejected
+outright: `at_be` (algebraically redundant with `leverage_score`),
+`rd_sale` (same underlying paper as the existing `rd_expenditure_score`,
+just a different scaling choice).
+
+## Session 36 continued Addendum -- split-adjusted high/low infrastructure, Bid-Ask Spread factor (ADR-0103)
+
+Per the account owner's "1 2 실행" instruction (build the split-adjusted
+high/low infrastructure `bidaskhl_21d` needed; keep reviewing
+`OpenSourceAP/CrossSection`'s predictor catalogue), both blockers on
+the deferred bid-ask-spread candidate were resolved.
+
+The Corwin & Schultz (2012) estimator's exact formula was found and
+cross-verified two independent ways (a third-party Python
+reimplementation's source, an independent web summary) rather than
+reconstructed from memory. The account owner separately confirmed both
+that paper and Penman/Richardson/Tuna (2007) are paywalled -- but the
+paper was never the real remaining blocker for THIS factor once the
+formula was independently verified; `netdebt_me` remains deferred since
+its own blocker genuinely is needing the original paper read directly.
+
+**Infrastructure**: `PriceBar.adjusted_high`/`.adjusted_low` added
+(Phase 1 spec §5.2 extended) -- `TiingoDataProvider` now parses
+`adjHigh`/`adjLow` from the same EOD response already fetched (zero new
+network requests), `LocalFileDataProvider` gained matching optional CSV
+columns, storage serialization/Parquet columns extended, and every
+`read_parquet(...)` call in `data_repository.py` now passes
+`union_by_name=true` so an account owner's already-ingested real data
+(written before this additive schema change) is never broken -- proven
+by a dedicated regression test.
+
+**`bid_ask_spread_score`** (Amihud & Mendelson 1986, measured via the
+Corwin & Schultz 2012 estimator): average of the daily spread estimate
+over a trailing 21-trading-day window (>= 12 valid observations), RAW
+(not negated) per the same positive risk-return relation
+`illiquidity_score` already established. Uses ONLY `adjusted_high`/
+`adjusted_low` -- `None` for any security whose bars lack them (only
+Tiingo-sourced bars currently have them). Wired into
+`compute_signal_ic_from_catalog.py` and `run_long_horizon_validation.py`
+(the pool's 43rd candidate) before any real result exists. No real
+result recorded yet.
+
+## Session 36 continued Addendum -- Institutional Ownership Change (SEC Form 13F), wired blind (ADR-0104)
+
+The account owner's own idea this session: most large-cap price
+movement is widely believed to come from institutions, not retail
+traders -- can this project track institutional positioning directly?
+("대부분 투자에서 주가를 움직이는건 개미들이 아니라 기관들이라 생각하는데
+기관들에 움직임을 추적할 순 없을까?"). Per the account owner's follow-up
+("깃허브나 온라인에서 별점 높은걸로 찾아서 봐봐" / "아니면 논문"),
+verified SEC Form 13F's standard field semantics against a real
+open-source parser (`dgunning/edgartools`) and an independent web
+summary of SEC's own structured data set -- the two agree.
+
+**Two real, stated limitations**: this session's network is confirmed
+blocked to both `www.sec.gov` and `data.sec.gov`, so SEC's real Form
+13F data set has never been observed directly here; and even with
+access, that data set is CUSIP-keyed, an identifier this project's
+`SecurityMaster` has never carried and has no verified mapping for --
+the first genuinely new kind of data-access gap this session's real-
+data integrations have hit (every earlier one is CIK- or
+`security_id`-keyed already).
+
+**`institutional_ownership_change_score`** (Chen, Jegadeesh & Wermers
+2000): the RAW log change in aggregate institutional shares held
+between the two most recent known quarters -- structurally the same
+YoY log-change shape `net_stock_issuance_score` already uses, NOT
+negated (institutions increasing their position predicts higher
+returns). A full new pipeline was built, mirroring the short-interest/
+FINRA precedent exactly: `InstitutionalHoldingRecord`,
+`DuckDBInstitutionalHoldingRepository`, a local-CSV-only import module
+(`institutional_holding_file_import.py`) and CLI
+(`ingest_institutional_holdings.py`) -- the account owner's own
+workflow resolves each universe security's CUSIP and aggregates SEC's
+real 13F data into this project's own simple schema.
+
+Wired into `compute_fundamentals_ic_from_catalog.py` (`--score
+institutional_ownership_change`, a new `--institutional-db-path` flag)
+and `run_long_horizon_validation.py` (the pool's 44th candidate) before
+any real result exists. No real result recorded yet.
+
+## Session 36 continued Addendum -- Idiosyncratic Skewness, Downside Beta, Share Turnover, wired blind (ADR-0105)
+
+The account owner asked to expand the factor pool as broadly as
+possible ("일단 우리 전략을 최대한 늘리자"). Rather than mine JKP or
+OpenSourceAP/CrossSection again (both already exhausted this session),
+this round used WebSearch directly to verify three well-known,
+single-paper-cited anomalies computable from data already ingested
+(price OHLCV + `CommonStockSharesOutstanding`) -- no new data
+acquisition needed, unlike the institutional-holdings addendum above.
+
+**`idiosyncratic_skewness_score`** (Boyer, Mitton & Vorkink 2010, RFS):
+reuses `idiosyncratic_volatility_score`'s market-model residual
+construction, takes the residuals' skewness instead of their standard
+deviation, negated (higher skewness predicts lower returns -- a
+lottery-preference anomaly). **`downside_beta_score`** (Ang, Chen &
+Xing 2006, RFS): reuses `low_beta_score`'s `Cov/Var` estimator
+restricted to benchmark-down days only, RAW (not negated -- higher
+downside beta predicts higher returns, a ~6%/year premium in the
+original paper). **`share_turnover_score`** (Datar, Naik & Radcliffe
+1998, JFM): average daily `volume/shares_outstanding`, negated (higher
+turnover predicts lower returns, confirmed via WebSearch: "stock
+returns are a decreasing function of the turnover rates") -- a third
+independent liquidity proxy alongside `illiquidity_score` (price-impact-
+based) and `bid_ask_spread_score` (range-based).
+
+Wired into `compute_signal_ic_from_catalog.py` (`idiosyncratic_
+skewness`/`downside_beta`, price-only) and `compute_fundamentals_ic_
+from_catalog.py` (`share_turnover`, hybrid) and `run_long_horizon_
+validation.py` (`_EXPECTED_NAMES` extended to 39) before any real
+result exists. No real result recorded yet for any of the three.
+
+## Session 36 continued Addendum -- High-Volume Return Premium, Asset Turnover Change, Industry Momentum, wired blind (ADR-0106)
+
+The account owner asked to keep expanding the factor pool further
+("가능한 많이 전략을 더 찾아봐"), continuing directly from ADR-0105.
+Three more WebSearch-verified anomalies, again needing no new external
+data acquisition:
+
+**`high_volume_return_premium_score`** (Gervais, Kaniel & Mingelgrin
+2001, JF): average recent volume relative to a prior baseline, RAW -- a
+fourth independent volume/liquidity proxy alongside `illiquidity_score`,
+`bid_ask_spread_score` and `share_turnover_score` (about a RECENT
+CHANGE in a security's own volume, not price impact, range, or a
+turnover level). **`asset_turnover_change_score`** (Fairfield & Yohn
+2001 / Soliman 2008): year-over-year change in Revenues/Assets, RAW --
+a fundamental-momentum/under-reaction story structurally similar to
+`sue_score`/`sloan_accruals_score`, applied to a DuPont-derived signal.
+**`industry_momentum_score`** (Moskowitz & Grinblatt 1999, JF): every
+security's score is its own industry's equal-weighted average trailing
+return, RAW -- the first factor in this project needing sector/industry
+classification, so a new small public accessor, `data_infra.universe.
+get_sector`, was added as a thin wrapper around the existing (module-
+private) `_real_symbol_metadata(symbol).sector` (SEC EDGAR SIC text,
+ADR-0058) rather than reaching into that private function directly.
+
+Wired into `compute_signal_ic_from_catalog.py` (`high_volume_return_
+premium`, price-only), `compute_fundamentals_ic_from_catalog.py`
+(`asset_turnover_change`, fundamentals-only; `industry_momentum`,
+cross-sectional) and `run_long_horizon_validation.py` (`_EXPECTED_
+NAMES` extended to 42) before any real result exists. No real result
+recorded yet for any of the three.
+
+## Session 36 continued Addendum -- Coskewness, an explicit "S-tier" paper request (ADR-0107)
+
+The account owner asked specifically for top-tier, canonical papers
+this round ("전략 더 찾아봐 논문쪽에서 s급이라 판단되는 것들로"), rather than
+continuing the long tail of single-paper anomalies. Most genuinely
+canonical asset-pricing papers are already represented in this
+project's 42 existing factors; **Harvey & Siddique (2000), "Conditional
+Skewness in Asset Pricing Tests," The Journal of Finance 55(3):
+1263-1295** -- one of the most-cited papers in the literature -- was a
+genuinely distinct gap. Formula verified against a primary source (the
+paper's own author's institutional page, people.duke.edu/~charvey):
+`CSK_i = E[e_i * e_m^2] / sqrt(Var(e_i) * Var(e_m))`, where `e_i`/`e_m`
+are demeaned excess returns. Negative coskewness (worsens portfolio
+skewness) earns a return premium; the score is the NEGATIVE of `CSK_i`,
+matching this module's convention.
+
+Distinct from every other risk factor already here: `low_beta_score`/
+`downside_beta_score` are linear market co-movement (first moment);
+`idiosyncratic_skewness_score` is a security's OWN residual shape (no
+market co-movement); coskewness is co-movement with the market's
+SQUARED excess return -- a third-moment cross term. Price-only, needs
+zero new data (daily-returns-over-1-year simplification of the
+original paper's monthly/multi-year estimator, the same simplification
+`low_beta_score`/`downside_beta_score` already make).
+
+Wired into `compute_signal_ic_from_catalog.py` and `run_long_horizon_
+validation.py` (`_EXPECTED_NAMES` extended to 43) before any real
+result exists. No real result recorded yet.
+
+## Session 36 continued Addendum -- Ohlson O-Score, implementing what's implementable (ADR-0108)
+
+Directly continuing the S-tier round, the account owner asked to
+implement whichever S-tier papers are actually implementable, or keep
+searching ("구현 할 수 있는 s급 논문들 구현하거나 더 찾아"). ADR-0106 had
+provisionally excluded **Ohlson (1980), "Financial Ratios and
+Probabilistic Prediction of Bankruptcy," Journal of Accounting Research
+18(1): 109-131** for needing a GNP price-level deflator this project
+has no macro data source for. Revisited with a new, purely
+mathematical argument (not result-driven, so RULE 0.8 is not
+implicated): this module only ever ranks securities cross-sectionally
+at the SAME `as_of_time`; the deflator has one value per date, applied
+identically to every security scored that day, so omitting it shifts
+every security's score by an identical constant and changes NO
+security's rank relative to any other. Omitting the deflator is
+mathematically EXACT for this project's only use case, not a guess.
+
+All 9 O-Score inputs and coefficients verified via WebSearch against at
+least two independent sources each (the same standard already applied
+to Corwin-Schultz and Harvey-Siddique). `ohlson_o_score`
+(fundamentals-only) reuses concepts already ingested for
+`altman_z_score`/`roa_score`/`sloan_accruals_score`/
+`shareholder_yield_score` -- zero new data. Score is the NEGATIVE of
+the raw 9-variable logit `O` value, matching `altman_z_score`'s own
+distress-anomaly direction (healthier = more attractive).
+
+Also explicitly declined this round (fabrication-risk or complexity too
+high to safely implement): Campbell, Hilscher & Szilagyi (2008)'s own
+dynamic hazard model (8 harder-to-verify coefficients on
+exponentially-weighted trailing variables) and Pastor & Stambaugh
+(2003)'s systematic liquidity risk factor (needs a cross-sectional,
+universe-wide aggregate liquidity innovation series -- materially more
+complex new infrastructure than any single-security factor here).
+
+Wired into `compute_fundamentals_ic_from_catalog.py` and
+`run_long_horizon_validation.py` (`_EXPECTED_NAMES` extended to 44)
+before any real result exists. No real result recorded yet.
+
+## Session 36 continued Addendum -- Merton Distance-to-Default, a third distress-risk family (ADR-0109)
+
+Continuing the S-tier round, the account owner asked again to keep
+finding candidates ("더 찾아봐"), now against this session's own
+explicit integrated criteria (canonical-family check by name,
+most-foundational/most-cited, genuinely distinct construction,
+verifiable via reliable sources, implementable without fabrication
+risk). **Merton (1974), "On the Pricing of Corporate Debt," The
+Journal of Finance 29(2): 449-470** is the foundational structural
+credit-risk model underlying the "distance to default" literature -- a
+genuinely different FAMILY from `altman_z_score`/`ohlson_o_score`
+(market-based structural model using price/volatility/capital
+structure, not an accounting-ratio discriminant/logit model). The full
+model needs an iterative numerical solve this project judged too heavy
+for a screening factor; **Bharath & Shumway (2008), "Forecasting
+Default with the Merton Distance to Default Model," RFS 21(3):
+1339-1369** resolves this with a closed-form "naive" simplification
+their own out-of-sample tests find performs at least as well as the
+full iterative model. **Vassalou & Xing (2004), "Default Risk in
+Equity Returns," JF 59(2): 831-868** is cited for the underlying
+return-relevance hypothesis, honestly noted as more conditional/nuanced
+(priced mainly within small-cap/high-BM segments) than a univariate
+score can replicate.
+
+`merton_distance_to_default_score` (hybrid) computes Bharath-Shumway's
+naive DD formula, all components WebSearch-verified against
+independent sources, reusing `Liabilities`/`CommonStockSharesOutstanding`
+(already ingested for `altman_z_score`) and ordinary price history --
+zero new data. RAW (not negated), applying this module's own
+established distress-anomaly convention for internal consistency.
+
+Wired into `compute_fundamentals_ic_from_catalog.py` and
+`run_long_horizon_validation.py` (`_EXPECTED_NAMES` extended to 45)
+before any real result exists. No real result recorded yet.
+
+## Outstanding real results not yet received (tracked so they are not lost)
+
+Two real-data runs remain outstanding in the account owner's own
+Codespace environment, explicitly deferred as of this session ("코드스페이스에서
+하는거 오늘 안에 못 끝내니까 난중에 보네도 되지?" -- confirmed OK to send
+later, not blocking):
+
+1. **`insider_buying_score` real raw IC** -- per the addendum above
+   ("Session 36 continued Addendum -- insider trading"), the account
+   owner still needs to re-run the now-corrected (`start`-offset-based
+   pagination, ADR-0089) `ingest_insider_transactions.py` and then
+   `compute_fundamentals_ic_from_catalog.py --score insider_buying`
+   before this factor has any real IC result at all.
+2. **Full `run_long_horizon_validation.py` walk-forward/PBO/DSR run**
+   including all factors added since the last real 28-candidate run
+   (`sue`, `insider_buying`, `rs_rating`, `residual_momentum`,
+   `rd_expenditure`, `return_seasonality`, `short_interest`,
+   `net_stock_issuance`, `net_operating_assets`, `operating_leverage`,
+   `abnormal_investment`, `cash_holdings`, `bid_ask_spread`,
+   `institutional_ownership_change`, `idiosyncratic_skewness`,
+   `downside_beta`, `share_turnover`, `high_volume_return_premium`,
+   `asset_turnover_change`, `industry_momentum`, `coskewness`,
+   `ohlson_o`, `merton_dd`) -- not yet executed for real against the
+   account owner's own DuckDB catalogs.
+3. **`institutional_ownership_change_score` needs its own new data
+   acquisition first** -- unlike every other pending factor above (a
+   re-run of an existing pipeline), this one needs the account owner to
+   actually acquire SEC Form 13F data, resolve CUSIPs for their universe
+   securities, and aggregate/preprocess it into
+   `ingest_institutional_holdings.py`'s CSV schema before any ingestion
+   can happen at all.
+
+Recorded here explicitly (per the account owner's own request) so
+neither item is silently dropped while this session continues other
+work in parallel.

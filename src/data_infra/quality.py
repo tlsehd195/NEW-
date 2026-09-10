@@ -270,6 +270,10 @@ class DataQualityFramework:
             }
             if bar.adjusted_close is not None:
                 fields["adjusted_close"] = bar.adjusted_close
+            if bar.adjusted_high is not None:
+                fields["adjusted_high"] = bar.adjusted_high
+            if bar.adjusted_low is not None:
+                fields["adjusted_low"] = bar.adjusted_low
             if bar.vwap is not None:
                 fields["vwap"] = bar.vwap
             bad = {name: value for name, value in fields.items() if not math.isfinite(value)}

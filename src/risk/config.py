@@ -126,6 +126,25 @@ class RiskConfig:
     # point, unchanged by ADR-0062 --
     max_factor_exposure: Optional[float] = None
 
+    # -- reentry_cooldown: found comparing this project against an
+    # external repository (dragon1086/prism-insight), Session 36
+    # continued. `None` means "not enforced," same convention as
+    # max_turnover/max_sector_weight -- a human must explicitly set a
+    # value for this to have any effect. Unlike liquidity_state/
+    # sector_by_security's own opt-in parameters, "this security has no
+    # recorded recent exit" is the OVERWHELMINGLY common, legitimate
+    # case (a fresh entry, or a long-held position), not a data gap --
+    # so `PortfolioRiskEngine.assess`'s own `last_exit_time_by_security`
+    # parameter mirrors `liquidity_state`'s "enforced only when the
+    # caller supplies it for this call, simply skipped otherwise"
+    # pattern, NOT `sector_by_security`'s fail-closed-on-missing-entry
+    # pattern -- deliberately, since fail-closed here would reject every
+    # first-time BUY whenever a caller has not wired up exit history,
+    # which is not what a reentry-cooldown limit is meant to do. See
+    # ADR-0093 and LIVE-RISK-POLICY.md item #16 for the full account,
+    # including the still-unratified proposed number --
+    reentry_cooldown_days: Optional[int] = None
+
     # -- minimum number of historical portfolio-value points required
     # before drawdown/portfolio_volatility are computed at all; below
     # this, those fields are honestly None/UNKNOWN rather than computed
@@ -149,6 +168,8 @@ class RiskConfig:
             raise ValueError("max_portfolio_volatility must be positive when configured")
         if self.max_turnover is not None and self.max_turnover <= 0:
             raise ValueError("max_turnover must be positive when configured")
+        if self.reentry_cooldown_days is not None and self.reentry_cooldown_days <= 0:
+            raise ValueError("reentry_cooldown_days must be positive when configured")
         if self.min_history_for_volatility < 2:
             raise ValueError("min_history_for_volatility must be >= 2")
 

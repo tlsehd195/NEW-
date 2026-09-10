@@ -10,15 +10,17 @@ test in this repository."""
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 
 from backtest_helpers import build_repository, make_bars, make_security, trading_days
+from journal_helpers import make_fill, make_order
 from live_helpers import make_approval, make_broker_capabilities, make_live_config
 from predict_helpers import drifting_prices
 
 from backtest.asof import AsOfDataView
 from backtest.clock import BacktestClock, build_daily_checkpoints
 from backtest.engine import BacktestConfig
+from backtest.enums import OrderSide
 
 from broker.config import BrokerConfig
 from broker.enums import BrokerCapability, BrokerOrderStatus, OrderValidationStatus
@@ -55,6 +57,9 @@ from storage.engine import StorageEngine
 from storage.prediction_repository import DuckDBPredictionRepository
 from storage.regime_repository import DuckDBRegimeRepository
 from storage.risk_repository import DuckDBPositionSizingRepository, DuckDBRiskRepository
+
+from trade_journal.enums import DecisionAction, TradeProvenance
+from trade_journal.repository import InMemoryTradeJournalRepository
 
 
 def _scenario():
@@ -297,6 +302,131 @@ class TestSectorLimitPropagatesThroughTheWholeChain:
         )[0]
 
         assert outcome.risk_checked.status in (RiskCheckStatus.PASS, RiskCheckStatus.REDUCE)
+        assert outcome.submission is not None
+
+
+class TestTradeJournalWriteSide:
+    """Session 36 continued -- ADR-0096: `run_cycle` now WRITES a real
+    `TradeRecord` for every real FILLED/PARTIAL_FILLED response,
+    mirroring `paper_runner`'s own identical wiring -- this project's
+    Live Trading pipeline had never once populated the Trade Journal in
+    its production code path before this either."""
+
+    def test_a_filled_buy_is_recorded_as_a_real_trade(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        journal = InMemoryTradeJournalRepository()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.submission is not None and outcome.submission.status == BrokerOrderStatus.FILLED.value
+        trades = journal.list_trades(security_id="AAA")
+        assert len(trades) == 1
+        trade = trades[0]
+        assert trade.side == OrderSide.BUY
+        assert trade.quantity == outcome.submission.response.filled_quantity
+        assert trade.decision_id == outcome.decision.decision_id
+        assert trade.position_after == outcome.submission.response.filled_quantity
+        assert trade.provenance == TradeProvenance.LIVE_TRADING
+
+    def test_a_blocked_order_writes_no_trade(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_sector_weight=0.5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+        journal = InMemoryTradeJournalRepository()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(risk_config),
+            sector_by_security=None, trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.submission is None
+        assert journal.list_trades() == []
+
+    def test_omitted_trade_journal_repository_writes_nothing_and_does_not_crash(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(),
+        )[0]
+
+        assert outcome.submission is not None and outcome.submission.status == BrokerOrderStatus.FILLED.value
+
+
+class TestReentryCooldownPropagatesThroughTheWholeChain:
+    """Session 36 continued -- ADR-0093/ADR-0095/ADR-0096:
+    `last_exit_time_by_security` is now sourced from a REAL
+    `TradeJournalRepository`'s own `list_trades`, mirroring `paper_
+    runner`'s own identical wiring and tests."""
+
+    def _journal_with_exit(self, *, exit_time, position_after: float) -> InMemoryTradeJournalRepository:
+        journal = InMemoryTradeJournalRepository()
+        decision = journal.record_decision(
+            decision_time=exit_time, security_id="AAA", decision=DecisionAction.SELL,
+            order=make_order(order_id="ORD-EXIT", side=OrderSide.SELL),
+        )
+        journal.record_trade(
+            decision_id=decision.snapshot_id,
+            fill=make_fill(order_id="ORD-EXIT", side=OrderSide.SELL, execution_time=exit_time),
+            position_after=position_after, provenance=TradeProvenance.LIVE_TRADING,
+        )
+        return journal
+
+    def test_a_recent_full_exit_rejects_the_new_buy(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+        journal = self._journal_with_exit(exit_time=view.current_time - timedelta(days=2), position_after=0.0)
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(risk_config),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.risk_checked.status == RiskCheckStatus.REJECT
+        assert "reentry_cooldown" in outcome.risk_checked.breached_limits
+        assert outcome.submission is None
+
+    def test_an_exit_outside_the_cooldown_window_does_not_reject(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+        journal = self._journal_with_exit(exit_time=view.current_time - timedelta(days=30), position_after=0.0)
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(risk_config),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert "reentry_cooldown" not in outcome.risk_checked.breached_limits
+        assert outcome.submission is not None
+
+    def test_omitted_trade_journal_repository_is_not_gated_even_with_the_limit_configured(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(risk_config),
+        )[0]
+
+        assert "reentry_cooldown" not in outcome.risk_checked.breached_limits
         assert outcome.submission is not None
 
 

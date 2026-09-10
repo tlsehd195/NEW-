@@ -59,11 +59,30 @@ class PortfolioRiskEngine(Protocol):
         sizing_result: Optional[PositionSizingResult],
         portfolio_state: Optional[PortfolioView],
         *,
+        # Session 37 (external review, ADR-0112): intentionally UNUSED by
+        # `DeterministicPortfolioRiskEngine.assess()`'s own body --
+        # `_compute_risk_state`'s position-weighting fix (Session 36
+        # continued, external review remediation, see the comment above
+        # `position_weights` below) already gets a real mark-to-market
+        # price from `portfolio_state`'s own `PositionView.market_value`
+        # (populated by the caller, e.g. `orchestration.paper_runner`'s
+        # `_portfolio_view`), so this parameter is not this engine's own
+        # source of price truth. Kept on the Protocol (not removed) so a
+        # future concrete `PortfolioRiskEngine` implementation that DOES
+        # need a security's own current price for some other check (e.g.
+        # a price-based liquidity/circuit-breaker rule) can read it
+        # without a signature change rippling through every existing
+        # caller (`orchestration.paper_runner`/`orchestration.
+        # live_runner`/`risk.shadow.run_shadow_evaluation` all already
+        # pass it through) -- removing it now would be a pure signature
+        # cleanup with no behavior change, deferred rather than bundled
+        # into this remediation pass.
         current_price: Optional[float] = None,
         value_history: Optional[Sequence[float]] = None,
         turnover: Optional[float] = None,
         liquidity_state: Optional[str] = None,
         sector_by_security: Optional[dict[str, str]] = None,
+        last_exit_time_by_security: Optional[dict[str, datetime]] = None,
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         experiment_id: Optional[str] = None,
     ) -> RiskCheckedPosition: ...
@@ -100,8 +119,20 @@ class DeterministicPortfolioRiskEngine:
         sector_by_security: Optional[dict[str, str]] = None,
     ) -> PortfolioRiskState:
         config = self._config
+        # Session 36 continued (external review remediation): weights by
+        # real mark-to-market value (`pos.market_value`) when the caller
+        # supplied one, falling back to cost basis (`quantity *
+        # average_cost`, this engine's original behavior, unchanged
+        # where no real price is available) only when it is absent.
+        # `portfolio_state.portfolio_value` (the denominator) is itself
+        # already mark-to-market -- weighting the numerator by cost basis
+        # while the denominator uses current price understated a
+        # position's real weight once its price moved away from cost,
+        # letting real gross/concentration/sector exposure exceed a
+        # configured limit undetected.
         position_weights = {
-            sid: (pos.quantity * pos.average_cost) / portfolio_state.portfolio_value
+            sid: (pos.market_value if pos.market_value is not None else pos.quantity * pos.average_cost)
+            / portfolio_state.portfolio_value
             for sid, pos in portfolio_state.positions.items()
             if pos.quantity != 0
         }
@@ -164,11 +195,12 @@ class DeterministicPortfolioRiskEngine:
         sizing_result: Optional[PositionSizingResult],
         portfolio_state: Optional[PortfolioView],
         *,
-        current_price: Optional[float] = None,
+        current_price: Optional[float] = None,  # intentionally unused here -- see PortfolioRiskEngine.assess's own docstring above
         value_history: Optional[Sequence[float]] = None,
         turnover: Optional[float] = None,
         liquidity_state: Optional[str] = None,
         sector_by_security: Optional[dict[str, str]] = None,
+        last_exit_time_by_security: Optional[dict[str, datetime]] = None,
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         experiment_id: Optional[str] = None,
     ) -> RiskCheckedPosition:
@@ -382,6 +414,26 @@ class DeterministicPortfolioRiskEngine:
                     RiskCheckStatus.REJECT, "liquidity_limit_breached", breached=tuple(breached) + ("liquidity_limit",),
                     final_target_weight=0.0, final_target_quantity=0.0, risk_state=risk_state,
                 )
+
+        # reentry_cooldown -- only evaluated when the caller supplies
+        # last_exit_time_by_security for this call, mirroring
+        # liquidity_limit's own opt-in pattern (see RiskConfig.
+        # reentry_cooldown_days's own docstring for why this is NOT the
+        # sector_limit fail-closed-on-missing-entry pattern: "no recorded
+        # recent exit for this security" is the ordinary case, not a data
+        # gap). Blocks only a NEW BUY, exactly like every other limit in
+        # this function -- a security with no entry in the mapping (never
+        # exited, or exited longer ago than the cooldown) is unaffected.
+        if config.reentry_cooldown_days is not None and last_exit_time_by_security is not None:
+            last_exit_time = last_exit_time_by_security.get(security_id)
+            if last_exit_time is not None:
+                days_since_exit = (as_of_time - last_exit_time).total_seconds() / 86400.0
+                if days_since_exit < config.reentry_cooldown_days:
+                    return build(
+                        RiskCheckStatus.REJECT, "reentry_cooldown_breached",
+                        breached=tuple(breached) + ("reentry_cooldown",),
+                        final_target_weight=0.0, final_target_quantity=0.0, risk_state=risk_state,
+                    )
 
         if weight <= 0:
             return build(

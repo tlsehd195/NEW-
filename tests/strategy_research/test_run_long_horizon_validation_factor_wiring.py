@@ -132,12 +132,55 @@ class TestUniverseFactorFactoryNoLateBindingBug:
 
 
 class TestCandidateTables:
-    """The 4 module-level candidate tables together must reproduce
+    """The 6 module-level candidate tables together must reproduce
     exactly the 20 names in PROJECT_STATUS.md's raw-IC-screening table
-    (ADR-0051), plus the 3 Session 36 additions wired in afterward
+    (ADR-0051), plus the 11 Session 36 additions wired in afterward
     (`idiosyncratic_volatility`, ADR-0053; `combined_factor`, ADR-0054;
-    `sue`, ADR-0084) -- 23 total -- no name collisions with each other,
-    or with the 8 pre-existing candidates already in `strategy_specs`
+    `sue`, ADR-0084; `insider_buying`, ADR-0086; `rs_rating`, found via
+    the dragon1086/prism-insight comparison; `residual_momentum`,
+    `rd_expenditure`, `return_seasonality` and `short_interest`, found
+    via a GitHub/web search for borrowable strategies, paperswithbacktest/
+    awesome-systematic-trading; `net_stock_issuance` and
+    `net_operating_assets`, found via a further GitHub/web search
+    -- bkelly-lab/ReplicationCrisis surfaced these themes, built from
+    the original underlying papers since that repository's own exact
+    formulas could not be verified from this sandbox; `operating_leverage`,
+    `abnormal_investment` and `cash_holdings`, found by mining the JKP
+    "Global Factor Data Documentation" PDF -- the first two from
+    already-surfaced leads ("2번 진행해"), `cash_holdings` from a
+    subsequent SYSTEMATIC pass through the document's entire ~150-factor
+    cited-anomaly catalogue ("전부 확인하고 적용할만 한거 적용해") --
+    all three single-paper-cited JKP constructions used directly,
+    verified against the PDF itself; `bid_ask_spread`, Amihud & Mendelson
+    1986 measured via the Corwin & Schultz 2012 estimator, found while
+    reviewing OpenSourceAP/CrossSection's predictor catalogue -- the
+    first factor needing the `PriceBar.adjusted_high`/`.adjusted_low`
+    infrastructure added this same session, ADR-0103; `institutional_
+    ownership_change`, Chen, Jegadeesh & Wermers 2000, the account
+    owner's own idea this session ("기관들의 움직임을 추적할 순 없을까?") --
+    sourced from a SIXTH, distinct DuckDB catalog, ADR-0104; `idiosyncratic_
+    skewness`, Boyer, Mitton & Vorkink 2010, `downside_beta`, Ang, Chen &
+    Xing 2006, and `share_turnover`, Datar, Naik & Radcliffe 1998, all
+    found via WebSearch literature verification per the account owner's
+    "일단 우리 전략을 최대한 늘리자" instruction, ADR-0105; `high_volume_
+    return_premium`, Gervais, Kaniel & Mingelgrin 2001, `asset_turnover_
+    change`, Fairfield & Yohn 2001 / Soliman 2008, and `industry_momentum`,
+    Moskowitz & Grinblatt 1999 (the first factor needing sector data,
+    `data_infra.universe.get_sector`), all found the same way per the
+    account owner's further "가능한 많이 전략을 더 찾아봐" instruction,
+    ADR-0106; `coskewness`, Harvey & Siddique 2000, found per the account
+    owner's explicit "논문쪽에서 S급이라 판단되는 것들로" (top-tier papers
+    only) instruction, ADR-0107; `ohlson_o`, Ohlson 1980, found per the
+    account owner's further "구현 할 수 있는 s급 논문들 구현하거나 더 찾아"
+    instruction (this session's earlier ADR-0106 had provisionally
+    excluded it for a GNP deflator gap, revisited here with a purely
+    mathematical -- not result-driven -- argument that the deflator does
+    not affect cross-sectional ranking, ADR-0108); `merton_dd`, Merton
+    1974 / Bharath & Shumway 2008, found the same "더 찾아봐" way, the
+    first MARKET-based (not accounting-ratio) structural credit-risk
+    model in this module, ADR-0109 -- all needing zero new data
+    acquisition) -- 45 total -- no name collisions with each other, or
+    with the 8 pre-existing candidates already in `strategy_specs`
     before ADR-0051."""
 
     _EXPECTED_NAMES = {
@@ -147,7 +190,14 @@ class TestCandidateTables:
         "shareholder_yield", "earnings_yield", "book_to_market", "sales_yield",
         "cashflow_yield", "size", "altman_z",
         "quality_minus_junk", "value_composite",
-        "idiosyncratic_volatility", "combined_factor", "sue",
+        "idiosyncratic_volatility", "combined_factor", "sue", "insider_buying", "rs_rating",
+        "residual_momentum", "rd_expenditure", "return_seasonality", "short_interest",
+        "net_stock_issuance", "net_operating_assets",
+        "operating_leverage", "abnormal_investment", "cash_holdings", "bid_ask_spread",
+        "institutional_ownership_change",
+        "idiosyncratic_skewness", "downside_beta", "share_turnover",
+        "high_volume_return_premium", "asset_turnover_change", "industry_momentum",
+        "coskewness", "ohlson_o", "merton_dd",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
@@ -159,14 +209,16 @@ class TestCandidateTables:
         for table in (
             module._PRICE_FACTOR_CANDIDATES, module._FUNDAMENTALS_FACTOR_CANDIDATES,
             module._HYBRID_FACTOR_CANDIDATES, module._UNIVERSE_FACTOR_CANDIDATES,
+            module._INSIDER_FACTOR_CANDIDATES, module._SHORT_INTEREST_FACTOR_CANDIDATES,
+            module._INSTITUTIONAL_FACTOR_CANDIDATES,
         ):
             names.extend(name for name, _hypothesis, _score_fn in table)
         return names
 
-    def test_all_23_expected_names_present_exactly_once(self) -> None:
+    def test_all_45_expected_names_present_exactly_once(self) -> None:
         module = _load_script()
         names = self._all_new_candidate_names(module)
-        assert len(names) == len(set(names)), "duplicate candidate name across the 4 tables"
+        assert len(names) == len(set(names)), "duplicate candidate name across the 6 tables"
         assert set(names) == self._EXPECTED_NAMES
 
     def test_no_collision_with_pre_existing_candidate_names(self) -> None:
@@ -179,6 +231,8 @@ class TestCandidateTables:
         for table in (
             module._PRICE_FACTOR_CANDIDATES, module._FUNDAMENTALS_FACTOR_CANDIDATES,
             module._HYBRID_FACTOR_CANDIDATES, module._UNIVERSE_FACTOR_CANDIDATES,
+            module._INSIDER_FACTOR_CANDIDATES, module._SHORT_INTEREST_FACTOR_CANDIDATES,
+            module._INSTITUTIONAL_FACTOR_CANDIDATES,
         ):
             for name, hypothesis, score_fn in table:
                 assert callable(score_fn), f"{name}'s score_fn is not callable"

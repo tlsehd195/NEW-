@@ -72,3 +72,31 @@ class TestGenerateAndEvaluateCandidateBatch:
         result = build_dataset(10)
         with pytest.raises(ValueError):
             generate_candidate_batch(result.dataset, result.labeled_samples, [], trained_at=utc(2024, 3, 1))
+
+    def test_candidate_ids_are_unique_even_though_every_trainer_starts_its_own_counter_at_one(self) -> None:
+        # External review finding (Session 36 continued): each trainer's
+        # own `_IdAllocator` starts at 1, so combining several trainers
+        # in one batch -- this class's whole documented purpose -- used
+        # to produce candidates that all claimed "CAND-000001".
+        result = build_dataset(15)
+        trainers = [
+            MeanRewardBaselineTrainer(), TrailingWindowMeanTrainer(window=3),
+            TrailingWindowMeanTrainer(window=6), TrailingWindowMeanTrainer(window=9),
+        ]
+        candidates = generate_candidate_batch(result.dataset, result.labeled_samples, trainers, trained_at=utc(2024, 3, 1))
+        ids = [c.candidate_id for c in candidates]
+        assert len(ids) == len(set(ids)) == 4
+
+    def test_a_batch_with_no_collision_keeps_every_trainer_own_id_unchanged(self) -> None:
+        result = build_dataset(15)
+        # advance this trainer's own counter past "1" first, so its next
+        # call (inside the batch below) already lands on "CAND-000002"
+        # and never collides with the other trainer's first "CAND-000001"
+        already_used_trainer = TrailingWindowMeanTrainer(window=3)
+        already_used_trainer.train(result.dataset, result.labeled_samples, trained_at=utc(2024, 3, 1))
+
+        candidates = generate_candidate_batch(
+            result.dataset, result.labeled_samples,
+            [MeanRewardBaselineTrainer(), already_used_trainer], trained_at=utc(2024, 3, 1),
+        )
+        assert [c.candidate_id for c in candidates] == ["CAND-000001", "CAND-000002"]
