@@ -5,6 +5,32 @@ Project context lives in `PROJECT_MASTER_PLAN.md` (Source of Truth) and
 SessionStart hook. This file is only tool-usage rules for Claude Code
 itself in this repo.
 
+## `src/` module map
+
+16 subpackages, ~200 files. Use this to jump straight to the right one
+instead of re-discovering the layout with Glob/Grep each session —
+confirm with `smart-explore`/`Read` once you're in the right package,
+don't re-derive this table.
+
+| Package | Responsibility (Phase) |
+|---|---|
+| `data_infra` | Data ingestion/providers/calendar (Phase 1) |
+| `backtest` | Backtesting engine (Phase 2) |
+| `trade_journal` | Trade Journal (Phase 3) |
+| `storage` | DuckDB/Parquet persistence for Data/TradeJournal/Experiment/Experience repos (Phase 4) |
+| `baseline` | Baseline strategy runner + reporting (Phase 4) |
+| `regime` | Market regime detection — deterministic, point-in-time-safe (Phase 5) |
+| `predict` | Prediction layer: expected_return/probability/volatility/uncertainty — never an order (Phase 6) |
+| `decision` | Decision agent: Prediction+Regime+Portfolio+Risk → BUY/SELL/HOLD/EXIT/NO_TRADE — never creates orders (Phase 7) |
+| `risk` | Position sizing + portfolio risk engine (Phase 8) |
+| `learning` | Learning engine (Phase 9) |
+| `counterfactual` | Counterfactual analysis / performance attribution (Phase 10) |
+| `evolution` | Model evolution (Phase 11) |
+| `ai_gateway` | AI Gateway (Phase 12) |
+| `broker` | Broker adapter — `paper/`, `live/`, `toss/` (Phase 13) |
+| `monitoring` | Monitoring / observability (Phase 14) |
+| `strategy_research` | Strategy research framework (Phase 23) |
+
 ## Reach for these instead of the default, when they apply
 
 - **Exploring code structure** (finding a function/class, understanding
