@@ -9,15 +9,19 @@ ADR-0062's `sector_by_security` parameter specifically."""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+
+import pytest
 
 from backtest_helpers import build_repository, make_bars, make_security, trading_days
+from journal_helpers import make_fill, make_order
 from paper_helpers import make_paper_config
 from predict_helpers import drifting_prices
 
 from backtest.asof import AsOfDataView
 from backtest.clock import BacktestClock, build_daily_checkpoints
 from backtest.engine import BacktestConfig
+from backtest.enums import OrderSide
 
 from broker.enums import BrokerOrderStatus
 from broker.enums import OrderValidationStatus
@@ -46,6 +50,9 @@ from storage.engine import StorageEngine
 from storage.prediction_repository import DuckDBPredictionRepository
 from storage.regime_repository import DuckDBRegimeRepository
 from storage.risk_repository import DuckDBPositionSizingRepository, DuckDBRiskRepository
+
+from trade_journal.enums import DecisionAction, TradeProvenance
+from trade_journal.repository import InMemoryTradeJournalRepository
 
 
 def _scenario():
@@ -141,6 +148,37 @@ class TestOrdersActuallySubmitAndFill:
         # never a fabricated/reset-to-empty state.
         assert second.decision.as_of_time == view.current_time
 
+    def test_risk_state_position_weight_reflects_real_price_not_stale_fill_cost(self) -> None:
+        """External review finding (Session 36 continued): `_portfolio_
+        view` now populates `PositionView.market_value` from the same
+        real reference price it already computes for the aggregate
+        `portfolio_value` -- proving the fix reaches all the way through
+        `run_cycle`'s real chain, not just a risk-engine unit test. The
+        fixture's own steady upward price drift (`_scenario`) means the
+        position's real market value diverges from its average fill
+        cost by the time of this later checkpoint."""
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+
+        first = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
+        assert first.submission is not None and first.submission.status == BrokerOrderStatus.FILLED
+        fill_price = first.submission.avg_fill_price
+
+        clock.index = 130  # far enough past the drift to move price meaningfully
+        second = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
+        risk_state = second.risk_checked.risk_state
+        assert risk_state is not None
+        position = session.account_summary(as_of=view.current_time).positions["AAA"]
+
+        cost_basis_weight = (position.quantity * position.average_cost) / risk_state.portfolio_value
+        # The real weight this session's own fix now reports must differ
+        # from what a cost-basis-only calculation would have reported --
+        # the steady upward drift guarantees current price > fill cost.
+        assert risk_state.position_weights["AAA"] != pytest.approx(cost_basis_weight)
+        assert fill_price is not None and position.average_cost == pytest.approx(fill_price)
+
 
 class TestSectorLimitPropagatesThroughTheWholeChain:
     def test_configured_sector_limit_without_a_mapping_rejects_the_whole_order(self) -> None:
@@ -191,6 +229,142 @@ class TestMaxOrderNotionalPropagatesThroughTheWholeChain:
         assert "max_order_notional" in tight_outcome.risk_checked.breached_limits
         assert tight_outcome.submission is not None
         assert tight_outcome.submission.filled_quantity < loose_outcome.submission.filled_quantity
+
+
+class TestReentryCooldownPropagatesThroughTheWholeChain:
+    """Session 36 continued -- ADR-0093/ADR-0095/ADR-0096:
+    `last_exit_time_by_security` is now sourced from a REAL
+    `TradeJournalRepository`'s own `list_trades`, not fabricated by the
+    test."""
+
+    def _journal_with_exit(self, *, exit_time, position_after: float) -> InMemoryTradeJournalRepository:
+        journal = InMemoryTradeJournalRepository()
+        decision = journal.record_decision(
+            decision_time=exit_time, security_id="AAA", decision=DecisionAction.SELL,
+            order=make_order(order_id="ORD-EXIT", side=OrderSide.SELL),
+        )
+        journal.record_trade(
+            decision_id=decision.snapshot_id,
+            fill=make_fill(order_id="ORD-EXIT", side=OrderSide.SELL, execution_time=exit_time),
+            position_after=position_after, provenance=TradeProvenance.PAPER_TRADING,
+        )
+        return journal
+
+    def test_a_recent_full_exit_rejects_the_new_buy(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+        journal = self._journal_with_exit(exit_time=view.current_time - timedelta(days=2), position_after=0.0)
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(risk_config),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.risk_checked.status == RiskCheckStatus.REJECT
+        assert "reentry_cooldown" in outcome.risk_checked.breached_limits
+        assert outcome.submission is None
+
+    def test_an_exit_outside_the_cooldown_window_does_not_reject(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+        journal = self._journal_with_exit(exit_time=view.current_time - timedelta(days=30), position_after=0.0)
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(risk_config),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert "reentry_cooldown" not in outcome.risk_checked.breached_limits
+        assert outcome.submission is not None
+
+    def test_a_partial_exit_still_holding_a_position_does_not_count(self) -> None:
+        """A SELL that still leaves a nonzero position is ordinary
+        rebalancing, not a full exit -- must not trigger the cooldown
+        even if very recent."""
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+        journal = self._journal_with_exit(exit_time=view.current_time - timedelta(days=1), position_after=5.0)
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(risk_config),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert "reentry_cooldown" not in outcome.risk_checked.breached_limits
+        assert outcome.submission is not None
+
+    def test_omitted_trade_journal_repository_is_not_gated_even_with_the_limit_configured(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, **_components(risk_config))[0]
+
+        assert "reentry_cooldown" not in outcome.risk_checked.breached_limits
+        assert outcome.submission is not None
+
+
+class TestTradeJournalWriteSide:
+    """Session 36 continued -- ADR-0096: `run_cycle` now WRITES a real
+    `TradeRecord` for every real fill, closing the gap that this
+    project's Paper Trading pipeline had never once populated the Trade
+    Journal in its production code path before this."""
+
+    def test_a_filled_buy_is_recorded_as_a_real_trade(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.submission is not None and outcome.submission.filled_quantity
+        trades = journal.list_trades(security_id="AAA")
+        assert len(trades) == 1
+        trade = trades[0]
+        assert trade.side == OrderSide.BUY
+        assert trade.quantity == outcome.submission.filled_quantity
+        assert trade.decision_id == outcome.decision.decision_id
+        assert trade.position_after == outcome.submission.filled_quantity  # started from an empty portfolio
+        assert trade.provenance == TradeProvenance.PAPER_TRADING
+
+    def test_a_rejected_order_writes_no_trade(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_sector_weight=0.5, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+        journal = InMemoryTradeJournalRepository()
+
+        # Same "configured but no mapping supplied" REJECT this project's
+        # own TestSectorLimitPropagatesThroughTheWholeChain already
+        # establishes -- reused here to reliably exercise a REJECT rather
+        # than a merely-reduced BUY.
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(risk_config),
+            sector_by_security=None, trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.submission is None
+        assert journal.list_trades() == []
+
+    def test_omitted_trade_journal_repository_writes_nothing_and_does_not_crash(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, **_components())[0]
+
+        assert outcome.submission is not None and outcome.submission.filled_quantity
 
 
 class TestValueHistoryState:

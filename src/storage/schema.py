@@ -748,6 +748,83 @@ DDL_STATEMENTS: tuple[str, ...] = (
         provenance_schema_version INTEGER NOT NULL
     )
     """,
+    # -- Session 36 continued: Insider Transactions (SEC Form 4) --
+    # ADR-0086. Same low-volume, point-lookup/filter-heavy criterion as
+    # fundamental_records above. provenance_source_record_id (the
+    # accession number + transaction-row identity) is the natural key,
+    # not (security_id, transaction_date) alone -- a single Form 4
+    # filing can report multiple transaction rows for the same insider
+    # on the same date (e.g. separate open-market buys at different
+    # prices), and each is its own real, distinct transaction.
+    """
+    CREATE TABLE IF NOT EXISTS insider_transactions (
+        provenance_source_record_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        reporting_owner_cik TEXT NOT NULL,
+        reporting_owner_name TEXT NOT NULL,
+        is_officer BOOLEAN NOT NULL,
+        is_director BOOLEAN NOT NULL,
+        is_ten_percent_owner BOOLEAN NOT NULL,
+        officer_title TEXT,
+        transaction_date TIMESTAMP NOT NULL,
+        transaction_code TEXT NOT NULL,
+        acquired_disposed_code TEXT NOT NULL,
+        shares DOUBLE NOT NULL,
+        price_per_share DOUBLE,
+        is_10b5_1_plan BOOLEAN NOT NULL,
+        accession_number TEXT NOT NULL,
+        available_time TIMESTAMP NOT NULL,
+        ingestion_time TIMESTAMP NOT NULL,
+        provenance_source TEXT NOT NULL,
+        provenance_source_dataset TEXT NOT NULL,
+        provenance_retrieved_at TIMESTAMP NOT NULL,
+        provenance_data_version TEXT NOT NULL,
+        provenance_schema_version INTEGER NOT NULL
+    )
+    """,
+    # Session 36 continued -- FINRA Rule 4560 equity short interest
+    # reports (data_infra.short_interest_models.ShortInterestRecord).
+    # Natural key = provenance_source_record_id (one row per security
+    # per settlement date), same idempotent-insert shape as
+    # insider_transactions/fundamental_records above.
+    """
+    CREATE TABLE IF NOT EXISTS short_interest_records (
+        provenance_source_record_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        settlement_date TIMESTAMP NOT NULL,
+        short_interest_quantity DOUBLE NOT NULL,
+        average_daily_volume DOUBLE,
+        days_to_cover DOUBLE,
+        available_time TIMESTAMP NOT NULL,
+        ingestion_time TIMESTAMP NOT NULL,
+        provenance_source TEXT NOT NULL,
+        provenance_source_dataset TEXT NOT NULL,
+        provenance_retrieved_at TIMESTAMP NOT NULL,
+        provenance_data_version TEXT NOT NULL,
+        provenance_schema_version INTEGER NOT NULL
+    )
+    """,
+    # Session 36 continued addition -- SEC Form 13F aggregate
+    # institutional holdings (data_infra.institutional_holding_models.
+    # InstitutionalHoldingRecord). Mirrors short_interest_records above
+    # exactly: natural key = provenance_source_record_id (one row per
+    # security per calendar quarter), same idempotent-insert shape.
+    """
+    CREATE TABLE IF NOT EXISTS institutional_holding_records (
+        provenance_source_record_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        quarter_end TIMESTAMP NOT NULL,
+        institutional_shares DOUBLE NOT NULL,
+        num_institutions INTEGER,
+        available_time TIMESTAMP NOT NULL,
+        ingestion_time TIMESTAMP NOT NULL,
+        provenance_source TEXT NOT NULL,
+        provenance_source_dataset TEXT NOT NULL,
+        provenance_retrieved_at TIMESTAMP NOT NULL,
+        provenance_data_version TEXT NOT NULL,
+        provenance_schema_version INTEGER NOT NULL
+    )
+    """,
 )
 
 

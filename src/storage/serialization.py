@@ -32,6 +32,9 @@ from data_infra.enums import (
     SecurityStatus,
 )
 from data_infra.fundamentals_models import FundamentalRecord
+from data_infra.insider_models import InsiderTransaction
+from data_infra.institutional_holding_models import InstitutionalHoldingRecord
+from data_infra.short_interest_models import ShortInterestRecord
 from data_infra.models import (
     BenchmarkPoint,
     CorporateAction,
@@ -190,6 +193,103 @@ def row_to_fundamental_record(row: dict) -> FundamentalRecord:
     )
 
 
+def insider_transaction_to_row(record: InsiderTransaction) -> dict:
+    row = {
+        "security_id": record.security_id,
+        "reporting_owner_cik": record.reporting_owner_cik,
+        "reporting_owner_name": record.reporting_owner_name,
+        "is_officer": record.is_officer,
+        "is_director": record.is_director,
+        "is_ten_percent_owner": record.is_ten_percent_owner,
+        "officer_title": record.officer_title,
+        "transaction_date": to_utc_naive(record.transaction_date),
+        "transaction_code": record.transaction_code,
+        "acquired_disposed_code": record.acquired_disposed_code,
+        "shares": record.shares,
+        "price_per_share": record.price_per_share,
+        "is_10b5_1_plan": record.is_10b5_1_plan,
+        "accession_number": record.accession_number,
+        "available_time": to_utc_naive(record.available_time),
+        "ingestion_time": to_utc_naive(record.ingestion_time),
+    }
+    row.update(provenance_to_row(record.provenance))
+    return row
+
+
+def row_to_insider_transaction(row: dict) -> InsiderTransaction:
+    return InsiderTransaction(
+        security_id=row["security_id"],
+        reporting_owner_cik=row["reporting_owner_cik"],
+        reporting_owner_name=row["reporting_owner_name"],
+        is_officer=bool(row["is_officer"]),
+        is_director=bool(row["is_director"]),
+        is_ten_percent_owner=bool(row["is_ten_percent_owner"]),
+        officer_title=row.get("officer_title"),
+        transaction_date=from_utc_naive(row["transaction_date"]),
+        transaction_code=row["transaction_code"],
+        acquired_disposed_code=row["acquired_disposed_code"],
+        shares=row["shares"],
+        price_per_share=row.get("price_per_share"),
+        is_10b5_1_plan=bool(row["is_10b5_1_plan"]),
+        accession_number=row["accession_number"],
+        available_time=from_utc_naive(row["available_time"]),
+        ingestion_time=from_utc_naive(row["ingestion_time"]),
+        provenance=row_to_provenance(row),
+    )
+
+
+def short_interest_record_to_row(record: ShortInterestRecord) -> dict:
+    row = {
+        "security_id": record.security_id,
+        "settlement_date": to_utc_naive(record.settlement_date),
+        "short_interest_quantity": record.short_interest_quantity,
+        "average_daily_volume": record.average_daily_volume,
+        "days_to_cover": record.days_to_cover,
+        "available_time": to_utc_naive(record.available_time),
+        "ingestion_time": to_utc_naive(record.ingestion_time),
+    }
+    row.update(provenance_to_row(record.provenance))
+    return row
+
+
+def row_to_short_interest_record(row: dict) -> ShortInterestRecord:
+    return ShortInterestRecord(
+        security_id=row["security_id"],
+        settlement_date=from_utc_naive(row["settlement_date"]),
+        short_interest_quantity=row["short_interest_quantity"],
+        average_daily_volume=row.get("average_daily_volume"),
+        days_to_cover=row.get("days_to_cover"),
+        available_time=from_utc_naive(row["available_time"]),
+        ingestion_time=from_utc_naive(row["ingestion_time"]),
+        provenance=row_to_provenance(row),
+    )
+
+
+def institutional_holding_record_to_row(record: InstitutionalHoldingRecord) -> dict:
+    row = {
+        "security_id": record.security_id,
+        "quarter_end": to_utc_naive(record.quarter_end),
+        "institutional_shares": record.institutional_shares,
+        "num_institutions": record.num_institutions,
+        "available_time": to_utc_naive(record.available_time),
+        "ingestion_time": to_utc_naive(record.ingestion_time),
+    }
+    row.update(provenance_to_row(record.provenance))
+    return row
+
+
+def row_to_institutional_holding_record(row: dict) -> InstitutionalHoldingRecord:
+    return InstitutionalHoldingRecord(
+        security_id=row["security_id"],
+        quarter_end=from_utc_naive(row["quarter_end"]),
+        institutional_shares=row["institutional_shares"],
+        num_institutions=(int(row["num_institutions"]) if row.get("num_institutions") is not None else None),
+        available_time=from_utc_naive(row["available_time"]),
+        ingestion_time=from_utc_naive(row["ingestion_time"]),
+        provenance=row_to_provenance(row),
+    )
+
+
 def price_bar_to_row(bar: PriceBar) -> dict:
     row = {
         "security_id": bar.security_id,
@@ -202,6 +302,8 @@ def price_bar_to_row(bar: PriceBar) -> dict:
         "available_time": to_utc_naive(bar.available_time),
         "ingestion_time": to_utc_naive(bar.ingestion_time),
         "adjusted_close": bar.adjusted_close,
+        "adjusted_high": bar.adjusted_high,
+        "adjusted_low": bar.adjusted_low,
         "vwap": bar.vwap,
         "trade_count": bar.trade_count,
         "currency": bar.currency,
@@ -226,6 +328,8 @@ def row_to_price_bar(row: dict) -> PriceBar:
         ingestion_time=from_utc_naive(row["ingestion_time"]),
         provenance=row_to_provenance(row),
         adjusted_close=row.get("adjusted_close"),
+        adjusted_high=row.get("adjusted_high"),
+        adjusted_low=row.get("adjusted_low"),
         vwap=row.get("vwap"),
         trade_count=(int(row["trade_count"]) if row.get("trade_count") is not None else None),
         currency=row.get("currency"),
@@ -237,7 +341,8 @@ def row_to_price_bar(row: dict) -> PriceBar:
 
 PRICE_BAR_COLUMNS = (
     "security_id", "timestamp", "open", "high", "low", "close", "volume",
-    "available_time", "ingestion_time", "adjusted_close", "vwap", "trade_count",
+    "available_time", "ingestion_time", "adjusted_close", "adjusted_high", "adjusted_low",
+    "vwap", "trade_count",
     "currency", "exchange", "event_time", "publication_time",
     "provenance_source", "provenance_source_dataset", "provenance_source_record_id",
     "provenance_retrieved_at", "provenance_data_version", "provenance_schema_version",
@@ -617,6 +722,7 @@ def trade_record_to_payload(trade: TradeRecord) -> dict:
         "realized_pnl": trade.realized_pnl,
         "realized_return": trade.realized_return,
         "holding_period_seconds": _timedelta_seconds(trade.holding_period),
+        "exit_reason": trade.exit_reason,
         "provenance": trade.provenance.value,
         "experiment_id": trade.experiment_id,
         "recorded_at": _dt_iso(trade.recorded_at),
@@ -641,6 +747,7 @@ def payload_to_trade_record(data: dict) -> TradeRecord:
         realized_pnl=data.get("realized_pnl"),
         realized_return=data.get("realized_return"),
         holding_period=_timedelta_from_seconds(data.get("holding_period_seconds")),
+        exit_reason=data.get("exit_reason"),
         provenance=TradeProvenance(data["provenance"]),
         experiment_id=data.get("experiment_id"),
         recorded_at=_dt_from_iso(data.get("recorded_at")),
@@ -1544,6 +1651,8 @@ def provider_quota_state_to_payload(state: ProviderQuotaState) -> dict:
         "last_error_at": _dt_iso(state.last_error_at),
         "last_error_reason": state.last_error_reason,
         "reason": state.reason,
+        "rpd_limit": state.rpd_limit,
+        "tpd_limit": state.tpd_limit,
     }
 
 
@@ -1563,6 +1672,8 @@ def payload_to_provider_quota_state(data: dict) -> ProviderQuotaState:
         last_error_at=_dt_from_iso(data.get("last_error_at")),
         last_error_reason=data.get("last_error_reason"),
         reason=data["reason"],
+        rpd_limit=data.get("rpd_limit"),
+        tpd_limit=data.get("tpd_limit"),
     )
 
 

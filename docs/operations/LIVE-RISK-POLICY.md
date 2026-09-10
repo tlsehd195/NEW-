@@ -44,6 +44,7 @@ claim of financial optimality.
 | 13 | Data failure threshold | `KillSwitchTriggerContext.data_health` | health-status check (`UNAVAILABLE`/`UNKNOWN` trigger) | **DEFINED (Phase 17 addition)** | Before this phase, `KillSwitchTriggerContext` had no `data_health` field at all -- `monitoring.collectors.collect_data_quality` (Phase 14) already computed this signal, but nothing wired it into kill-switch evaluation. Added this phase (`src/broker/live/kill_switch.py`, `Optional[ComponentHealthStatus] = None`, additive/backward-compatible) with a regression test (`tests/broker/live/test_live_kill_switch.py::TestEachTriggerIndependently::test_data_health_unavailable_triggers`). The underlying numeric thresholds (invalid-rate, staleness) are Phase 14's `MonitoringConfig`, already DEFINED. |
 | 14 | Withdrawal (cash-out) policy | *(no field exists, by policy)* | -- | **RESOLVED (Session 36 continued)** | The account owner decided: **no withdrawals, ever -- every realized gain (and any capital, for that matter) stays in the account and is reinvested.** This is not Option A/B/C from the design pass below; it is the option that makes A/B/C all moot, since there is never a withdrawal event for any of them to govern. No field, mechanism, or approval type is added to `src/` -- there is nothing to build, since the resolved policy is the ABSENCE of a withdrawal capability, not a particular shape of one. See "Session 36 continued -- #14 RESOLVED" below. |
 | 15 | Rebalancing cash buffer, Live-specific | `RiskConfig.minimum_cash_ratio` (same field as #9) | `0.05` | **RESOLVED, interim (Session 36 continued)** | The account owner decided: keep the inherited `0.05` (5%) floor as-is for now (Option A) -- explicitly a placeholder, not a final answer. A concrete follow-up is on record: once a real Live track record accumulates, revisit with a regime-conditional buffer (Option C, `regime.enums`'s existing LIQUIDITY/VOLATILITY axes) that increases the cash floor in unfavorable market conditions. Deliberately NOT built now -- designing that mapping ahead of any real Live data would be exactly the premature, unvalidated policy-tuning RULE 0.8 warns against. See "Session 36 continued -- #15 RESOLVED (interim)" below. |
+| 16 | Reentry cooldown | `RiskConfig.reentry_cooldown_days` | `None` (RATIFIED value: **5 trading days**, not yet code-applied) | **UNDEFINED, RATIFIED, WIRED (Session 36 continued, ADR-0093/ADR-0095/ADR-0096/ADR-0097)** | Found comparing this project against an external repository (dragon1086/prism-insight). Enforcement path exists and is active in `PortfolioRiskEngine.assess` via a new opt-in `last_exit_time_by_security: Optional[dict[str, datetime]]` parameter -- REJECTs a new BUY only when the caller supplies a recent exit for that security AND it falls within `reentry_cooldown_days`; a security absent from the mapping (the ordinary case -- never exited, or exited outside the window) is unaffected, mirroring `enforce_liquidity_limit`'s own "opt-in per call, simply skipped if omitted" pattern rather than `max_sector_weight`'s fail-closed-on-missing-entry pattern (see `RiskConfig.reentry_cooldown_days`'s own docstring for why). A new `TradeRecord.exit_reason: Optional[str] = None` field (additive) lets a producer record WHY a position was exited, plumbed through `InMemoryTradeJournalRepository`/`DuckDBTradeJournalRepository`/both Paper and Live `build_trade_record` bridges. `orchestration.paper_runner.run_cycle`/`orchestration.live_runner.run_cycle` now BOTH accept an opt-in `trade_journal_repository` parameter, used for BOTH reads (ADR-0096: queries real Trade Journal history per security, point-in-time safe, and builds `last_exit_time_by_security` from it -- only a FULL exit, `side == SELL` AND `position_after == 0.0`, counts, regardless of `exit_reason`) AND writes (ADR-0097: every real fill is now actually persisted as a `TradeRecord` -- a real, previously-undiscovered gap, since neither orchestration module had ever populated the Trade Journal before ADR-0097, which would have made the read side always see an empty journal). `scripts/run_paper_trading_cycle.py` -- the one real Paper CLI entry point -- now always wires a real `DuckDBTradeJournalRepository` (unconditional) and exposes `--reentry-cooldown-days` (default `None`, included in the run's report/checksum). The account owner ratified the proposed 5-trading-day value -- same "ratified but not baked into the default config" treatment as #1/#5/#6/#7/#10/#11: a human passes `reentry_cooldown_days=5` explicitly (via `--reentry-cooldown-days 5` on the Paper CLI, or the equivalent `RiskConfig` field for Live) for the limit to actually bind. |
 
 ## Summary
 
@@ -51,7 +52,7 @@ claim of financial optimality.
 |---|---|---|
 | DEFINED | 1 | #13 |
 | INHERITED | 6 | #2, #3, #4, #8, #9, #12 |
-| UNDEFINED | 6 | #1, #5, #6, #7, #10, #11 |
+| UNDEFINED | 7 | #1, #5, #6, #7, #10, #11, #16 |
 | RESOLVED | 2 | #14, #15 |
 
 ## DECISION REQUIRED entries
@@ -908,3 +909,78 @@ paths) -- a human passes `max_sector_weight=0.25`/
 is constructed. `max_order_notional`'s own "revisit once real capital
 is confirmed" caveat (ADR-0076) still stands -- ratifying the number
 now does not freeze it against that future revisit.
+
+## Session 36 continued — Proposed value for #16 (NOT a decision)
+
+Fourth of the 5 items identified from comparing this project against
+`dragon1086/prism-insight` (see ADR-0093 for the full technical
+account). Mirroring the exact framing #1/#5/#6/#7/#10 already
+established: what follows is Claude's reasoned proposal for the
+account owner to ratify or revise, not a value this document is
+deciding unilaterally. **This number takes effect on nothing by
+itself** -- `RiskConfig.reentry_cooldown_days` defaults to `None`
+(disabled), and even once set, the check only ever fires on a call
+where the caller also supplies `last_exit_time_by_security` -- which no
+orchestration code does yet (see the table row above).
+
+### #16 — `RiskConfig.reentry_cooldown_days`
+
+**Proposal: 5 trading days.**
+
+The underlying idea (from `prism-insight`'s own use of a cooldown after
+an exit) is to avoid immediately re-buying a security this system just
+sold, before enough new information has actually arrived to justify
+reversing course -- a guard against whipsaw churn, not a claim that 5
+days is empirically optimal for this project's own data (no such study
+exists, nor should one be run before ratification -- that would be the
+same post-hoc-tuning RULE 0.8 forbids). 5 trading days (roughly one
+calendar week) is proposed as a round, conservative starting point:
+long enough that a same-day or next-day reversal driven by noise rather
+than a genuine new signal is blocked, short enough that it does not
+meaningfully constrain a strategy that trades on a `test_window_months`-
+scale cadence (this project's walk-forward candidates rebalance every 1-2
+months, so a 5-day cooldown is a small fraction of the normal holding
+period, not a structural obstacle to any of them). Unlike #1/#5/#6/#7/
+#10, this limit is not yet wired to any real trade history at any
+orchestration layer -- ratifying the number does not, by itself, make
+the check active in Paper or Live trading; that wiring is separate,
+future work.
+
+**A shadow-evaluation harness now exists to gather evidence before
+ratification** (`src/risk/shadow.py`, ADR-0094, the fifth and last of
+the 5 `prism-insight`-derived items): `evaluate_in_shadow` runs the
+real, currently-ratified `RiskConfig` and a candidate one (e.g.
+`reentry_cooldown_days=5`) side by side against the identical inputs,
+returning only the real result to act on while recording whether and
+how the two diverged. Not yet wired into any real orchestration path --
+building that wiring, then running it against real Paper/Live trade
+history, is the natural way to accumulate real "what would this 5-day
+cooldown have changed" evidence before the account owner is asked to
+ratify or revise the number, rather than asking them to ratify a number
+with zero real evidence behind it either way.
+
+## Session 36 continued — Risk limit value RATIFIED by the user (#16)
+
+The account owner reviewed the proposed value above directly and
+ratified it, unchanged:
+
+| # | Field | Proposed | **RATIFIED value** |
+|---|---|---|---|
+| 16 | `RiskConfig.reentry_cooldown_days` | 5 trading days | **5 trading days** |
+
+**Status: RATIFIED (financial-policy decision), not yet CODE-APPLIED,
+now WIRED (ADR-0096).** Two distinct gaps existed, unlike #1/#5/#6/#7/
+#10/#11 which only had the first: (1) same "ratified but not baked into
+the default config" treatment as every earlier ratified item --
+`RiskConfig.reentry_cooldown_days` stays `None` by default, a human
+still passes `reentry_cooldown_days=5` explicitly whenever a real Live
+`RiskConfig` is constructed; (2) the second gap is now closed --
+`orchestration.paper_runner.run_cycle`/`orchestration.live_runner.
+run_cycle` both accept an opt-in `trade_journal_repository` parameter
+that populates `last_exit_time_by_security` from real Trade Journal
+history on every call to `assess` (ADR-0096). Ratifying the number
+settled the policy question; a real Paper/Live run still needs a human
+to both set `reentry_cooldown_days=5` on its `RiskConfig` AND pass
+`trade_journal_repository` to `run_cycle` for the limit to actually
+bind -- omitting either leaves behavior unchanged from before this
+item existed.

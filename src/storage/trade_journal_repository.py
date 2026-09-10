@@ -157,6 +157,7 @@ class DuckDBTradeJournalRepository:
         realized_pnl: Optional[float] = None,
         realized_return: Optional[float] = None,
         holding_period=None,
+        exit_reason: Optional[str] = None,
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         recorded_at: Optional[datetime] = None,
     ) -> TradeRecord:
@@ -192,6 +193,7 @@ class DuckDBTradeJournalRepository:
             realized_pnl=realized_pnl,
             realized_return=realized_return,
             holding_period=holding_period,
+            exit_reason=exit_reason,
             provenance=provenance,
             experiment_id=experiment_id,
             recorded_at=recorded_at or fill.execution_time,

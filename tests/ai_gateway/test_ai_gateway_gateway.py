@@ -6,11 +6,13 @@ handling from section 5.3."""
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from ai_gateway_helpers import make_gateway_config, make_provider_config, make_request, utc
 
 from ai_gateway.enums import RequestStatus, TaskTier
 from ai_gateway.gateway import AIGateway
-from ai_gateway.provider import MockProviderAdapter
+from ai_gateway.provider import MockProviderAdapter, ProviderRateLimitError
 from ai_gateway.quota_manager import QuotaManager
 from ai_gateway.repository import InMemoryAIRequestRepository, InMemoryAIResponseRepository, InMemoryQuotaStateRepository
 
@@ -105,6 +107,68 @@ class TestFailoverRotation:
         qm.mark_billing_detected("a", at=utc(2024, 1, 1, 13))
         response = gateway.generate(make_request(), as_of=utc(2024, 6, 1))
         assert response.provider_id == "b"
+
+
+class TestRateLimitRetryAfterSecondsWiring:
+    """External review finding (Session 36 continued): before this fix,
+    `AIGateway` called `QuotaManager.mark_quota_exhausted` on a
+    `ProviderRateLimitError` WITHOUT ever passing `reset_time` -- so a
+    single transient rate-limit response locked a provider out for the
+    rest of the process's life, with no path back at all (the only
+    other thing that clears `is_available`'s blocking conditions,
+    `record_success`, could never be reached again since `is_available`
+    itself excludes the provider from ever being selected). `MockProvider
+    Adapter`'s own `failure_mode="rate_limit"` never sets `retry_after_
+    seconds` (matching its documented "no network call" design, so this
+    test uses a small local adapter double that does, mirroring the
+    shape a real future adapter parsing a real `Retry-After` header
+    would produce)."""
+
+    class _RateLimitedThenHealthyAdapter:
+        """Raises `ProviderRateLimitError(retry_after_seconds=...)` on
+        every call -- a real caller would only hit this adapter again
+        after the Gateway's own `QuotaManager` considers it available,
+        which (once `retry_after_seconds` correctly reaches `reset_time`)
+        only happens after that many seconds have real passed."""
+
+        provider_id = "a"
+
+        def __init__(self, retry_after_seconds: float) -> None:
+            self._retry_after_seconds = retry_after_seconds
+
+        def generate(self, request):
+            raise ProviderRateLimitError("simulated rate limit", retry_after_seconds=self._retry_after_seconds)
+
+    def test_retry_after_seconds_becomes_the_quota_reset_time_not_a_permanent_lock(self) -> None:
+        a = make_provider_config("a", priority=0)
+        b = make_provider_config("b", priority=1)
+        adapters = {"a": self._RateLimitedThenHealthyAdapter(retry_after_seconds=3600.0), "b": MockProviderAdapter(b)}
+        gateway, qm, *_ = _build(a, b, adapters_by_id=adapters)
+
+        first = gateway.generate(make_request("AIREQ-1"), as_of=utc(2024, 1, 1, 12))
+        assert first.provider_id == "b"  # "a" failed over correctly
+
+        state = qm._repository.get_latest("a")
+        assert state.reset_time == utc(2024, 1, 1, 12) + timedelta(seconds=3600.0)
+
+        # Before the real retry_after_seconds window: still locked out.
+        assert qm.is_available("a", as_of=utc(2024, 1, 1, 12, 30)) is False
+        # After it: available again -- a real, bounded recovery window,
+        # not a permanent lock requiring manual intervention.
+        assert qm.is_available("a", as_of=utc(2024, 1, 1, 13, 30)) is True
+
+    def test_no_retry_after_seconds_leaves_reset_time_unset_unchanged_behavior(self) -> None:
+        """The conservative default (no real signal available) is
+        preserved exactly -- matches `MockProviderAdapter`'s own
+        `failure_mode="rate_limit"`, which never carries one."""
+        a = make_provider_config("a", priority=0)
+        b = make_provider_config("b", priority=1)
+        adapters = {"a": MockProviderAdapter(a, failure_mode="rate_limit"), "b": MockProviderAdapter(b)}
+        gateway, qm, *_ = _build(a, b, adapters_by_id=adapters)
+        gateway.generate(make_request(), as_of=utc(2024, 1, 1, 12))
+        state = qm._repository.get_latest("a")
+        assert state.reset_time is None
+        assert qm.is_available("a", as_of=utc(2024, 6, 1)) is False
 
 
 class TestRetryOnTransientFailure:

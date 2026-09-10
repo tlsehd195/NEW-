@@ -12,7 +12,7 @@ from typing import Optional
 
 import pytest
 
-from backtest_helpers import make_bars, trading_days
+from backtest_helpers import checkpoint, make_bars, trading_days
 from research_helpers import synthetic_multi_year_repository
 from storage_helpers import new_engine
 
@@ -27,28 +27,47 @@ from data_infra.universe import BENCHMARK_SYMBOL
 from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
 from strategy_research.factor_scores import (
+    abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
+    bid_ask_spread_score,
     book_to_market_score,
+    cash_holdings_score,
     cashflow_yield_score,
     combined_factor_score,
+    coskewness_score,
     dividend_growth_score,
+    downside_beta_score,
     earnings_yield_score,
     fifty_two_week_high_score,
+    asset_turnover_change_score,
     gross_profitability_score,
+    high_volume_return_premium_score,
+    idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
+    industry_momentum_score,
     leverage_score,
     long_term_reversal_score,
     low_beta_score,
     low_volatility_score,
     max_effect_score,
+    merton_distance_to_default_score,
     net_margin_score,
+    net_operating_assets_score,
+    net_stock_issuance_score,
+    ohlson_o_score,
+    operating_leverage_score,
     piotroski_f_score,
     quality_minus_junk_score,
+    rd_expenditure_score,
+    residual_momentum_score,
+    return_seasonality_score,
     roa_score,
     roe_score,
+    rs_rating_score,
     sales_yield_score,
+    share_turnover_score,
     shareholder_yield_score,
     short_term_reversal_score,
     size_score,
@@ -166,6 +185,72 @@ class TestLongTermReversalScore:
         data = _view(repo, as_of_time)
 
         assert long_term_reversal_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestRsRatingScore:
+    """Session 36 continued -- O'Neil/IBD Relative Strength Rating,
+    found while comparing this project against an external repository
+    (dragon1086/prism-insight). `2*R63 + R126 + R189 + R252`, weighted
+    toward the most recent quarter."""
+
+    def test_past_winner_scores_higher_than_past_loser(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        repo = synthetic_multi_year_repository(date(2016, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        winner_score = rs_rating_score("TRENDUP", as_of_time, data)
+        loser_score = rs_rating_score("TRENDDOWN", as_of_time, data)
+
+        assert winner_score is not None and loser_score is not None
+        assert winner_score > loser_score  # unlike reversal, RS Rating rewards continued strength
+
+    def test_positive_trend_scores_positive(self) -> None:
+        universe = ("TRENDUP",)
+        repo = synthetic_multi_year_repository(date(2016, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        score = rs_rating_score("TRENDUP", as_of_time, data)
+
+        assert score is not None and score > 0
+
+    def test_insufficient_history_returns_none_not_a_fabricated_score(self) -> None:
+        universe = ("TRENDUP",)
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2020, 6, 1), symbols=universe)
+        as_of_time = _utc(2020, 3, 2)  # well under 252 trading days of history
+        data = _view(repo, as_of_time)
+
+        assert rs_rating_score("TRENDUP", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        universe = ("TRENDUP",)
+        repo = synthetic_multi_year_repository(date(2016, 1, 2), date(2021, 6, 1), symbols=universe)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert rs_rating_score("NONEXISTENT", as_of_time, data) is None
+
+    def test_recent_quarter_is_weighted_more_than_older_quarters(self) -> None:
+        # A security flat for 3 quarters then sharply up in the most
+        # recent quarter must score higher than one sharply up 3
+        # quarters ago then flat since -- the "2x most recent quarter"
+        # weighting is the entire point distinguishing this from a
+        # plain equal-weighted trailing return.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        recent_spike = [100.0] * (len(days) - 63) + [100.0 * (1.01**i) for i in range(63)]
+        old_spike = [100.0 * (1.01**i) for i in range(63)] + [100.0 * (1.01**62)] * (len(days) - 63)
+        repo = InMemoryDataRepository()
+        repo.append_bars(make_bars("RECENTSPIKE", days, recent_spike))
+        repo.append_bars(make_bars("OLDSPIKE", days, old_spike))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        recent_score = rs_rating_score("RECENTSPIKE", as_of_time, data)
+        old_score = rs_rating_score("OLDSPIKE", as_of_time, data)
+
+        assert recent_score is not None and old_score is not None
+        assert recent_score > old_score
 
 
 class TestShortTermReversalScore:
@@ -330,6 +415,294 @@ class TestIdiosyncraticVolatilityScore:
         data = _view(repo, as_of_time)
 
         assert idiosyncratic_volatility_score("NOBENCH", as_of_time, data) is None
+
+
+class TestIdiosyncraticSkewnessScore:
+    """Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Boyer, Mitton &
+    Vorkink (2010)'s expected idiosyncratic skewness. Reuses
+    `idiosyncratic_volatility_score`'s own market-model residual
+    construction, but takes the residuals' third standardized moment
+    (skewness) instead of their standard deviation, and negates it
+    (higher skewness -> lower score, per the paper's own finding)."""
+
+    def test_a_security_with_a_right_skewed_residual_scores_lower_than_a_symmetric_one(self) -> None:
+        # SYMMETRIC has small alternating +/-epsilon noise around beta=1
+        # (zero skewness by construction); SKEWED has that same base
+        # noise PLUS one large, rare positive spike every ~10 days (a
+        # classic right-skew/lottery shape) -- both share the identical
+        # beta and roughly the same variance, isolating skewness alone.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        symmetric_closes = [c * (1.0 + 0.01 * (1 if i % 2 == 0 else -1)) for i, c in enumerate(spy_closes)]
+        skewed_closes = []
+        level = spy_closes[0]
+        for i, c in enumerate(spy_closes):
+            spy_return = c / spy_closes[i - 1] - 1.0 if i > 0 else 0.0
+            spike = 0.08 if i % 10 == 0 else -0.01
+            level = level * (1.0 + spy_return + spike)
+            skewed_closes.append(level)
+        extra_bars = list(make_bars("SYMMETRIC", days, symmetric_closes)) + list(make_bars("SKEWED", days, skewed_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        symmetric_score = idiosyncratic_skewness_score("SYMMETRIC", as_of_time, data)
+        skewed_score = idiosyncratic_skewness_score("SKEWED", as_of_time, data)
+
+        assert symmetric_score is not None and skewed_score is not None
+        assert symmetric_score > skewed_score  # right-skewed residuals -> lower (less attractive) score
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 10))  # far fewer than the 15-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 1, 10), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 9)
+        data = _view(repo, as_of_time)
+
+        assert idiosyncratic_skewness_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert idiosyncratic_skewness_score("NOBENCH", as_of_time, data) is None
+
+    def test_zero_variance_residuals_return_none(self) -> None:
+        # A security EXACTLY 1x SPY every day -- zero-variance residuals,
+        # so skewness (which divides by residual_std**3) is undefined.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        extra_bars = list(make_bars("TWIN", days, spy_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert idiosyncratic_skewness_score("TWIN", as_of_time, data) is None
+
+
+class TestDownsideBetaScore:
+    """Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Ang, Chen &
+    Xing (2006)'s downside risk / downside beta. RAW (not negated) --
+    higher downside beta is the paper's own hypothesized more-attractive
+    direction, the same "no negation" situation `illiquidity_score`
+    already documents."""
+
+    def test_a_security_that_amplifies_only_down_days_scores_higher_than_one_that_does_not(self) -> None:
+        # CRASHY amplifies SPY's move 3x specifically on days SPY falls,
+        # and follows SPY 1x on up days -- high downside beta, ordinary
+        # upside beta. STEADY follows SPY 1x on every day (downside beta
+        # == upside beta == 1). Both realize the identical benchmark
+        # path, isolating the downside-conditioned estimate.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.03 * math.sin(i / 8.0)) for i in range(len(days))]
+        crashy_closes = [spy_closes[0]]
+        steady_closes = [spy_closes[0]]
+        for i in range(1, len(days)):
+            spy_return = spy_closes[i] / spy_closes[i - 1] - 1.0
+            multiplier = 3.0 if spy_return < 0 else 1.0
+            crashy_closes.append(crashy_closes[-1] * (1.0 + multiplier * spy_return))
+            steady_closes.append(steady_closes[-1] * (1.0 + spy_return))
+        extra_bars = list(make_bars("CRASHY", days, crashy_closes)) + list(make_bars("STEADY", days, steady_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        crashy_score = downside_beta_score("CRASHY", as_of_time, data)
+        steady_score = downside_beta_score("STEADY", as_of_time, data)
+
+        assert crashy_score is not None and steady_score is not None
+        assert crashy_score > steady_score  # higher downside beta -> higher (more attractive) score, NOT negated
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 15))  # far fewer than the 20-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 1, 15), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 14)
+        data = _view(repo, as_of_time)
+
+        assert downside_beta_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert downside_beta_score("NOBENCH", as_of_time, data) is None
+
+
+class TestCoskewnessScore:
+    """Session 36 continued (전략 더 찾아봐, 논문쪽에서 S급) -- Harvey &
+    Siddique (2000)'s coskewness. Score is the NEGATIVE of the
+    standardized `E[e_i * e_m^2] / sqrt(Var(e_i) * Var(e_m))` coefficient
+    -- negative coskewness (co-moves negatively with the market's own
+    squared excess return) is more attractive, per the paper's own
+    "negative coskewness earns a higher return" finding."""
+
+    def test_a_negative_coskewness_security_scores_higher_than_a_positive_coskewness_security(self) -> None:
+        # NEGCOSKEW tanks specifically on days SPY makes a LARGE move
+        # (in either direction) -- its return picks up an extra
+        # -0.5*spy_return^2 term, so it co-moves NEGATIVELY with SPY's
+        # own squared excess return (negative coskewness). POSCOSKEW is
+        # the mirror image (+0.5*spy_return^2, positive coskewness).
+        # Both realize the identical SPY path, isolating the coskewness
+        # sign alone.
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.05 * math.sin(i / 6.0)) for i in range(len(days))]
+        negcoskew_closes = [spy_closes[0]]
+        poscoskew_closes = [spy_closes[0]]
+        for i in range(1, len(days)):
+            spy_return = spy_closes[i] / spy_closes[i - 1] - 1.0
+            negcoskew_closes.append(negcoskew_closes[-1] * (1.0 + spy_return - 0.5 * spy_return ** 2))
+            poscoskew_closes.append(poscoskew_closes[-1] * (1.0 + spy_return + 0.5 * spy_return ** 2))
+        extra_bars = list(make_bars("NEGCOSKEW", days, negcoskew_closes)) + list(make_bars("POSCOSKEW", days, poscoskew_closes))
+        repo = _spy_repo(date(2019, 1, 2), date(2021, 6, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        neg_score = coskewness_score("NEGCOSKEW", as_of_time, data)
+        pos_score = coskewness_score("POSCOSKEW", as_of_time, data)
+
+        assert neg_score is not None and pos_score is not None
+        assert neg_score > pos_score  # negative coskewness -> higher (more attractive) score
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 1, 15))  # far fewer than the 20-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 1, 15), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 1, 14)
+        data = _view(repo, as_of_time)
+
+        assert coskewness_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert coskewness_score("NOBENCH", as_of_time, data) is None
+
+
+class TestHighVolumeReturnPremiumScore:
+    """Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Gervais,
+    Kaniel & Mingelgrin (2001)'s high-volume return premium. Score =
+    RAW `recent_avg_volume/baseline_avg_volume - 1` -- higher recent
+    abnormal volume is more attractive, not negated."""
+
+    def test_a_recent_volume_spike_scores_higher_than_flat_volume(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        closes = [100.0 + 0.01 * i for i in range(len(days))]
+        spike_volumes = [1_000.0] * (len(days) - 5) + [10_000.0] * 5
+        # make_bars only accepts one constant volume per call, so build the
+        # spike case's per-day bars directly, one call per distinct volume.
+        spike_bars = []
+        for d, close, vol in zip(days, closes, spike_volumes):
+            spike_bars.extend(make_bars("SPIKE", [d], [close], volume=vol))
+        repo = InMemoryDataRepository(bars=spike_bars + list(make_bars("FLAT", days, closes, volume=1_000.0)))
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        spike_score = high_volume_return_premium_score("SPIKE", as_of_time, data)
+        flat_score = high_volume_return_premium_score("FLAT", as_of_time, data)
+
+        assert spike_score is not None and flat_score is not None
+        assert spike_score > flat_score  # recent volume spike -> higher (more attractive) score
+        assert flat_score == pytest.approx(0.0, abs=1e-9)  # flat volume -> zero abnormal-volume ratio
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 55-observation floor
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 1, 19)
+        data = _view(repo, as_of_time)
+
+        assert high_volume_return_premium_score("THIN", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        assert high_volume_return_premium_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestResidualMomentumScore:
+    """Session 36 continued -- Blitz, Huij & Martens 2011 Residual
+    Momentum, found via a GitHub/web search for borrowable strategies
+    (paperswithbacktest/awesome-systematic-trading). Beta/alpha are
+    estimated on an EARLIER window and applied out-of-sample to a LATER
+    formation window -- fitting and scoring on the identical window would
+    make the residual mean exactly zero by construction (an OLS identity,
+    not a data issue), so every fixture here gives WINNER/LOSER an
+    IDENTICAL price path to SPY during the estimation portion (beta=1,
+    alpha=0 by construction) and only diverges during the tail formation
+    portion."""
+
+    _FORMATION_TAIL_BARS = 64  # 63 formation returns, matching _RESIDUAL_MOMENTUM_FORMATION_DAYS
+
+    def _build_closes(self, days, spy_closes, *, formation_epsilon_fn):
+        """`formation_epsilon_fn(t)` (t = 0..62) gives the extra daily
+        return WINNER/LOSER earns on top of SPY's own daily return during
+        the last `_FORMATION_TAIL_BARS - 1` return steps; `None` closes
+        (before the boundary) exactly mirror `spy_closes`."""
+        boundary = len(days) - self._FORMATION_TAIL_BARS
+        closes = list(spy_closes[:boundary])
+        for i in range(boundary, len(days)):
+            spy_return = spy_closes[i] / spy_closes[i - 1] - 1.0
+            epsilon = formation_epsilon_fn(i - boundary - 1) if i > boundary else 0.0
+            closes.append(closes[-1] * (1.0 + spy_return + epsilon))
+        return closes
+
+    def test_a_recent_out_of_sample_winner_scores_higher_than_a_recent_out_of_sample_loser(self) -> None:
+        days = trading_days(date(2018, 1, 2), date(2021, 6, 1))
+        spy_closes = [100.0 * (1.0003**i) * (1.0 + 0.01 * math.sin(i / 10.0)) for i in range(len(days))]
+        winner_closes = self._build_closes(
+            days, spy_closes, formation_epsilon_fn=lambda t: 0.01 + 0.005 * math.sin(t * 5.0),
+        )
+        loser_closes = self._build_closes(
+            days, spy_closes, formation_epsilon_fn=lambda t: -0.01 + 0.005 * math.sin(t * 5.0),
+        )
+        repo = InMemoryDataRepository()
+        repo.append_bars(make_bars(BENCHMARK_SYMBOL, days, spy_closes))
+        repo.append_bars(make_bars("WINNER", days, winner_closes))
+        repo.append_bars(make_bars("LOSER", days, loser_closes))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        winner_score = residual_momentum_score("WINNER", as_of_time, data)
+        loser_score = residual_momentum_score("LOSER", as_of_time, data)
+
+        assert winner_score is not None and loser_score is not None
+        assert winner_score > 0 > loser_score
+        assert winner_score > loser_score
+
+    def test_insufficient_paired_history_returns_none(self) -> None:
+        days = trading_days(date(2021, 1, 2), date(2021, 3, 1))  # far fewer than the combined 240-observation floor
+        spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        extra_bars = list(make_bars("THIN", days, spy_closes))
+        repo = _spy_repo(date(2021, 1, 2), date(2021, 3, 1), lambda i: spy_closes[i], extra_bars=extra_bars)
+        as_of_time = _utc(2021, 2, 26)
+        data = _view(repo, as_of_time)
+
+        assert residual_momentum_score("THIN", as_of_time, data) is None
+
+    def test_missing_benchmark_data_returns_none(self) -> None:
+        days = trading_days(date(2018, 1, 2), date(2021, 6, 1))
+        closes = [100.0 * (1.0003**i) for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, closes)))  # no SPY bars at all
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        assert residual_momentum_score("NOBENCH", as_of_time, data) is None
 
 
 class TestIlliquidityScore:
@@ -696,6 +1069,91 @@ class TestLeverageScore:
         assert leverage_score("AAA", _utc(2023, 6, 1), repo) is None
 
 
+class TestNetOperatingAssetsScore:
+    """Session 36 continued -- Hirshleifer, Hou, Teoh & Zhang 2004 net
+    operating assets anomaly, found via a further GitHub/web search for
+    borrowable strategies. `(StockholdersEquity - Cash +
+    LongTermDebtNoncurrent) / Assets`, all from the SAME fiscal year --
+    algebraically equivalent to `(Assets - Cash) - (Liabilities -
+    LongTermDebtNoncurrent)` via the balance-sheet identity `Assets -
+    Liabilities == StockholdersEquity`. Denominator corrected to the
+    CONTEMPORANEOUS (not prior) fiscal year's Assets after the account
+    owner supplied JKP's own "Global Factor Data Documentation" PDF,
+    whose own `noa_at = NOA*_t / AT*_t` uses same-year scaling -- a real
+    RULE 0.8-compliant correction from better documentation, made before
+    any real IC result exists for this factor."""
+
+    def test_computes_the_noa_ratio(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "ltd", concept="LongTermDebtNoncurrent", value=10.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        # NOA = (60 - 20 + 10) / 100 (SAME fy assets) = 0.5 -> score = -0.5
+        score = net_operating_assets_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(-0.5)
+
+    def test_missing_long_term_debt_reads_as_zero_not_a_missing_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        # NOA = (60 - 20 + 0) / 100 = 0.4 -> score = -0.4
+        score = net_operating_assets_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(-0.4)
+
+    def test_higher_noa_scores_lower_matching_the_lower_is_more_attractive_convention(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("LOW", "LOW:eq", concept="StockholdersEquity", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW", "LOW:cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW", "LOW:assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:eq", concept="StockholdersEquity", value=80.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:cash", concept="CashAndCashEquivalentsAtCarryingValue", value=5.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        low_score = net_operating_assets_score("LOW", _utc(2023, 6, 1), repo)
+        high_score = net_operating_assets_score("HIGH", _utc(2023, 6, 1), repo)
+        assert low_score > high_score  # lower NOA -> higher (more attractive) score
+
+    def test_missing_stockholders_equity_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        assert net_operating_assets_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_cash_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=100.0, period_end=_utc(2022, 12, 31)))
+
+        assert net_operating_assets_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
+
+        assert net_operating_assets_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "eq", concept="StockholdersEquity", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=0.0, period_end=_utc(2022, 12, 31)))
+
+        assert net_operating_assets_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
 class TestAssetGrowthScore:
     """Session 36 -- ADR-0043 Decision 8: the asset growth anomaly
     (Cooper, Gulen & Schill 2008). The only factor in this module that
@@ -761,6 +1219,122 @@ class TestAssetGrowthScore:
 
         score = asset_growth_score("AAA", _utc(2023, 6, 1), repo)
         assert score == pytest.approx(-0.20)  # still 2021 vs 2022 -- 2023's figure is not yet filed
+
+
+class TestNetStockIssuanceScore:
+    """Session 36 continued -- Pontiff & Woodgate 2008 / Fama & French
+    2008 net stock issuance anomaly, found via a further GitHub/web
+    search for borrowable strategies. Same _fy_records-based YoY-change
+    shape as asset_growth_score, applied to CommonStockSharesOutstanding
+    and using a LOG change (Fama & French's own definition) rather than
+    a simple ratio."""
+
+    def test_score_is_the_negative_of_yoy_log_share_change(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "shares_2021", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "shares_2022", concept="CommonStockSharesOutstanding", value=110.0, period_end=_utc(2022, 12, 31)))
+
+        score = net_stock_issuance_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(-math.log(1.10))
+
+    def test_a_net_buyback_reducing_shares_produces_a_positive_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "shares_2021", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "shares_2022", concept="CommonStockSharesOutstanding", value=90.0, period_end=_utc(2022, 12, 31)))
+
+        score = net_stock_issuance_score("AAA", _utc(2023, 6, 1), repo)
+        assert score is not None and score > 0  # net buyback -> positive (more attractive) score
+
+    def test_heavier_issuance_scores_lower_matching_the_lower_is_more_attractive_convention(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("LIGHT", "LIGHT:shares_2021", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("LIGHT", "LIGHT:shares_2022", concept="CommonStockSharesOutstanding", value=102.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HEAVY", "HEAVY:shares_2021", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("HEAVY", "HEAVY:shares_2022", concept="CommonStockSharesOutstanding", value=130.0, period_end=_utc(2022, 12, 31)))
+
+        light_score = net_stock_issuance_score("LIGHT", _utc(2023, 6, 1), repo)
+        heavy_score = net_stock_issuance_score("HEAVY", _utc(2023, 6, 1), repo)
+        assert light_score > heavy_score  # lighter issuance -> higher (more attractive) score
+
+    def test_only_one_fiscal_year_known_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "shares_2022", concept="CommonStockSharesOutstanding", value=110.0, period_end=_utc(2022, 12, 31)))
+
+        assert net_stock_issuance_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_prior_year_shares_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "shares_2021", concept="CommonStockSharesOutstanding", value=0.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "shares_2022", concept="CommonStockSharesOutstanding", value=110.0, period_end=_utc(2022, 12, 31)))
+
+        assert net_stock_issuance_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestAssetTurnoverChangeScore:
+    """Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Fairfield &
+    Yohn (2001) / Soliman (2008)'s change-in-asset-turnover anomaly.
+    Score = current FY (Revenues/Assets) - prior FY (Revenues/Assets),
+    RAW (an increase is more attractive, not negated)."""
+
+    def test_score_is_the_yoy_change_in_revenues_over_assets(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev_2021", concept="Revenues", value=200.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=1000.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "rev_2022", concept="Revenues", value=300.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=1000.0, period_end=_utc(2022, 12, 31)))
+
+        score = asset_turnover_change_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(0.3 - 0.2)  # (300/1000) - (200/1000)
+
+    def test_rising_turnover_scores_higher_than_falling_turnover(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for sid, rev_2021, rev_2022 in (("RISING", 200.0, 300.0), ("FALLING", 300.0, 200.0)):
+            repo.add_fundamental(_fy_record(sid, f"{sid}:rev_2021", concept="Revenues", value=rev_2021, period_end=_utc(2021, 12, 31)))
+            repo.add_fundamental(_fy_record(sid, f"{sid}:assets_2021", concept="Assets", value=1000.0, period_end=_utc(2021, 12, 31)))
+            repo.add_fundamental(_fy_record(sid, f"{sid}:rev_2022", concept="Revenues", value=rev_2022, period_end=_utc(2022, 12, 31)))
+            repo.add_fundamental(_fy_record(sid, f"{sid}:assets_2022", concept="Assets", value=1000.0, period_end=_utc(2022, 12, 31)))
+
+        rising_score = asset_turnover_change_score("RISING", _utc(2023, 6, 1), repo)
+        falling_score = asset_turnover_change_score("FALLING", _utc(2023, 6, 1), repo)
+        assert rising_score is not None and falling_score is not None
+        assert rising_score > falling_score  # rising turnover -> higher (more attractive) score, RAW
+
+    def test_only_one_fiscal_year_known_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev_2022", concept="Revenues", value=300.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=1000.0, period_end=_utc(2022, 12, 31)))
+
+        assert asset_turnover_change_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_mismatched_period_ends_between_concepts_returns_none(self, tmp_path) -> None:
+        # Revenues and Assets never share a common period_end -- no
+        # period-matched fiscal year can be formed at all.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev_2021", concept="Revenues", value=200.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "rev_2022", concept="Revenues", value=300.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2021q", concept="Assets", value=1000.0, period_end=_utc(2021, 6, 30)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022q", concept="Assets", value=1000.0, period_end=_utc(2022, 6, 30)))
+
+        assert asset_turnover_change_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_assets_in_a_year_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "rev_2021", concept="Revenues", value=200.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=0.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "rev_2022", concept="Revenues", value=300.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022", concept="Assets", value=1000.0, period_end=_utc(2022, 12, 31)))
+
+        assert asset_turnover_change_score("AAA", _utc(2023, 6, 1), repo) is None
 
 
 _PIOTROSKI_TWO_YEAR_CONCEPTS = (
@@ -1368,6 +1942,139 @@ class TestSalesYieldScore:
         assert sales_yield_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
 
 
+class TestRdExpenditureScore:
+    """Session 36 continued -- Chan, Lakonishok & Sougiannis 2001 R&D
+    expenditure anomaly, found via a GitHub/web search for borrowable
+    strategies (paperswithbacktest/awesome-systematic-trading).
+    `ResearchAndDevelopmentExpense / market_cap`, same market-cap
+    construction as `sales_yield_score`. A genuinely absent tag reads as
+    0.0 (real zero R&D spending), never `None` -- the same
+    `_fy_flow_or_zero` reasoning `shareholder_yield_score` already uses
+    for its own dividend/buyback/issuance concepts."""
+
+    def test_computes_rd_expense_over_market_cap(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "rd", concept="ResearchAndDevelopmentExpense", value=150.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = rd_expenditure_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(0.015)  # 150 / (10*1000)
+
+    def test_a_genuinely_absent_concept_reads_as_zero_not_a_missing_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        # No ResearchAndDevelopmentExpense tag at all -- a real company
+        # (e.g. a bank or retailer) that genuinely did no R&D, per
+        # `_fy_flow_or_zero`'s own SEC EDGAR omission-convention docstring.
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        score = rd_expenditure_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        assert score == pytest.approx(0.0)
+
+    def test_higher_rd_intensity_scores_higher(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        # Distinct record_ids across both securities -- `provenance_
+        # source_record_id` is this table's natural key (`ON CONFLICT
+        # DO NOTHING`), not scoped by security_id, so a repeated id
+        # across two securities silently drops the second insert.
+        fundamentals_repo.add_fundamental(_fy_record("HIGH", "rd_high", concept="ResearchAndDevelopmentExpense", value=400.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("HIGH", "shares_high", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("LOW", "rd_low", concept="ResearchAndDevelopmentExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("LOW", "shares_low", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[
+            _price_bar("HIGH", "p1", close=10.0, timestamp=_utc(2023, 5, 25)),
+            _price_bar("LOW", "p2", close=10.0, timestamp=_utc(2023, 5, 25)),
+        ])
+
+        high_score = rd_expenditure_score("HIGH", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+        low_score = rd_expenditure_score("LOW", _utc(2023, 6, 1), fundamentals_repo, price_repo)
+
+        assert high_score is not None and low_score is not None
+        assert high_score > low_score
+
+    def test_missing_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "rd", concept="ResearchAndDevelopmentExpense", value=150.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[_price_bar("AAA", "p1", close=10.0, timestamp=_utc(2023, 5, 25))])
+
+        assert rd_expenditure_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+    def test_missing_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "rd", concept="ResearchAndDevelopmentExpense", value=150.0, period_end=_utc(2022, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=1000.0, period_end=_utc(2022, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[])
+
+        assert rd_expenditure_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+class TestReturnSeasonalityScore:
+    """Session 36 continued -- Heston & Sadka 2008 Return Seasonality,
+    found via a GitHub/web search for borrowable strategies
+    (paperswithbacktest/awesome-systematic-trading, independently
+    confirmed by that repo's own `12-month-cycle-in-cross-section-of-
+    stocks-returns.py`, the k=1 special case of this factor's more
+    general same-calendar-month averaging). A genuinely different
+    computational shape from every other factor here -- groups price
+    history by CALENDAR MONTH across non-contiguous prior years, rather
+    than reading one contiguous trailing window."""
+
+    def _seasonal_closes(self, days, *, seasonal_month: int, seasonal_return: float, base: float = 100.0):
+        price = base
+        seen_years: set[int] = set()
+        closes = []
+        for d in days:
+            if d.month == seasonal_month and d.year not in seen_years:
+                price *= 1.0 + seasonal_return
+                seen_years.add(d.year)
+            closes.append(price)
+        return closes
+
+    def test_a_security_with_a_real_march_seasonal_pattern_scores_higher_than_a_flat_one(self) -> None:
+        days = trading_days(date(2015, 6, 1), date(2021, 3, 20))
+        seasonal_closes = self._seasonal_closes(days, seasonal_month=3, seasonal_return=0.05)
+        flat_closes = [100.0] * len(days)
+        repo = InMemoryDataRepository()
+        repo.append_bars(make_bars("MARCHJUMPER", days, seasonal_closes))
+        repo.append_bars(make_bars("FLAT", days, flat_closes))
+        as_of_time = checkpoint(days[-1])  # a day in March 2021
+        data = _view(repo, as_of_time)
+
+        seasonal_score = return_seasonality_score("MARCHJUMPER", as_of_time, data)
+        flat_score = return_seasonality_score("FLAT", as_of_time, data)
+
+        assert seasonal_score is not None and flat_score is not None
+        assert seasonal_score == pytest.approx(0.05, abs=1e-9)  # exact same-ratio every year, by construction
+        assert flat_score == pytest.approx(0.0, abs=1e-9)
+        assert seasonal_score > flat_score
+
+    def test_fewer_than_min_years_of_same_month_history_returns_none(self) -> None:
+        # Only one prior March exists (2020) before as_of_time in March
+        # 2021 -- below the default min_years=2 floor.
+        days = trading_days(date(2019, 6, 1), date(2021, 3, 20))
+        closes = self._seasonal_closes(days, seasonal_month=3, seasonal_return=0.05)
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, closes)))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert return_seasonality_score("THIN", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2015, 6, 1), date(2021, 3, 20))
+        closes = self._seasonal_closes(days, seasonal_month=3, seasonal_return=0.05)
+        repo = InMemoryDataRepository(bars=list(make_bars("MARCHJUMPER", days, closes)))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert return_seasonality_score("NONEXISTENT", as_of_time, data) is None
+
+
 class TestCashflowYieldScore:
     """Session 36 -- ADR-0043 Decision 12: O'Shaughnessy's price-to-
     cash-flow leg, inverted to a "yield". Negative CFO is directionally
@@ -1449,6 +2156,52 @@ class TestSizeScore:
         assert size_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
 
 
+class TestShareTurnoverScore:
+    """Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Datar, Naik &
+    Radcliffe (1998)'s share turnover liquidity anomaly. Score is the
+    NEGATIVE of average daily turnover (volume / shares outstanding) --
+    the paper's own finding is that returns are a DECREASING function of
+    turnover, so lower turnover is more attractive, matching this
+    module's convention."""
+
+    def test_low_turnover_security_scores_higher_than_high_turnover_security(self, tmp_path) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        closes = [100.0 + 0.01 * i for i in range(len(days))]
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("THIN", "thin_shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=_utc(2018, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("DEEP", "deep_shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=_utc(2018, 12, 31)))
+        # Identical shares outstanding for both -- only VOLUME differs, so
+        # any score difference isolates turnover's dependence on volume.
+        price_repo = InMemoryDataRepository(bars=(
+            list(make_bars("THIN", days, closes, volume=1_000.0)) + list(make_bars("DEEP", days, closes, volume=100_000.0))
+        ))
+        as_of_time = _utc(2020, 1, 4)
+
+        thin_score = share_turnover_score("THIN", as_of_time, fundamentals_repo, price_repo)
+        deep_score = share_turnover_score("DEEP", as_of_time, fundamentals_repo, price_repo)
+
+        assert thin_score is not None and deep_score is not None
+        assert thin_score > deep_score  # lower turnover -> higher (more attractive) score
+
+    def test_missing_shares_outstanding_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        price_repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days))))
+
+        assert share_turnover_score("AAA", _utc(2020, 1, 4), fundamentals_repo, price_repo) is None
+
+    def test_insufficient_volume_observations_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("THIN", "thin_shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=_utc(2018, 12, 31)))
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 20-observation floor
+        price_repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, [100.0] * len(days), volume=1_000.0)))
+
+        assert share_turnover_score("THIN", _utc(2020, 1, 19), fundamentals_repo, price_repo) is None
+
+
 def _altman_fixture(repo, security_id, *, assets=1000.0, current_assets=400.0, current_liabilities=200.0,
                      retained_earnings=300.0, ebit=150.0, liabilities=500.0, revenue=800.0, shares=100.0) -> None:
     for concept, value in (
@@ -1524,6 +2277,168 @@ class TestAltmanZScore:
         price_repo = InMemoryDataRepository(bars=[])
 
         assert altman_z_score("AAA", _utc(2023, 6, 1), fundamentals_repo, price_repo) is None
+
+
+class TestMertonDistanceToDefaultScore:
+    """Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    Merton (1974)'s structural credit-risk model via Bharath & Shumway
+    (2008)'s own "naive" distance-to-default simplification. Score is
+    RAW (not negated) -- a higher distance to default (safer) is more
+    attractive, matching `altman_z_score`'s own distress-anomaly
+    direction. A genuinely different FAMILY from `altman_z_score`/
+    `ohlson_o_score`: market-based (price + volatility + capital
+    structure), not accounting-ratio discriminant/logit."""
+
+    def _price_bars(self, security_id: str, *, close_level: float = 100.0, amplitude: float = 0.01):
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        closes = [close_level * (1.0001 ** i) * (1.0 + amplitude * math.sin(i / 5.0)) for i in range(len(days))]
+        return list(make_bars(security_id, days, closes))
+
+    def test_lower_leverage_scores_higher_than_higher_leverage(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        # Identical price history and shares outstanding for both -- only
+        # Liabilities (face value of debt) differs, isolating leverage's
+        # own effect on distance to default.
+        fundamentals_repo.add_fundamental(_fy_record("LOWLEV", "LOWLEV:shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("LOWLEV", "LOWLEV:liab", concept="Liabilities", value=1000.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("HIGHLEV", "HIGHLEV:shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("HIGHLEV", "HIGHLEV:liab", concept="Liabilities", value=50000.0, period_end=_utc(2019, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=self._price_bars("LOWLEV") + self._price_bars("HIGHLEV"))
+        as_of_time = _utc(2020, 5, 29)
+
+        lowlev_score = merton_distance_to_default_score("LOWLEV", as_of_time, fundamentals_repo, price_repo)
+        highlev_score = merton_distance_to_default_score("HIGHLEV", as_of_time, fundamentals_repo, price_repo)
+
+        assert lowlev_score is not None and highlev_score is not None
+        assert lowlev_score > highlev_score  # less leverage -> further from default -> higher (more attractive) score
+
+    def test_missing_liabilities_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=self._price_bars("AAA"))
+
+        assert merton_distance_to_default_score("AAA", _utc(2020, 5, 29), fundamentals_repo, price_repo) is None
+
+    def test_zero_liabilities_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "liab", concept="Liabilities", value=0.0, period_end=_utc(2019, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=self._price_bars("AAA"))
+
+        assert merton_distance_to_default_score("AAA", _utc(2020, 5, 29), fundamentals_repo, price_repo) is None
+
+    def test_missing_price_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "liab", concept="Liabilities", value=1000.0, period_end=_utc(2019, 12, 31)))
+        price_repo = InMemoryDataRepository(bars=[])
+
+        assert merton_distance_to_default_score("AAA", _utc(2020, 5, 29), fundamentals_repo, price_repo) is None
+
+    def test_insufficient_price_history_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        fundamentals_repo = DuckDBFundamentalsRepository(engine)
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "shares", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2019, 12, 31)))
+        fundamentals_repo.add_fundamental(_fy_record("AAA", "liab", concept="Liabilities", value=1000.0, period_end=_utc(2019, 12, 31)))
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 20-observation floor
+        price_repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days))))
+
+        assert merton_distance_to_default_score("AAA", _utc(2020, 1, 19), fundamentals_repo, price_repo) is None
+
+
+def _ohlson_fixture(repo, security_id, *, assets=1000.0, liabilities=600.0, current_assets=400.0,
+                     current_liabilities=200.0, cfo=100.0, prior_ni=40.0, current_ni=50.0) -> None:
+    for concept, value in (
+        ("Assets", assets), ("Liabilities", liabilities), ("AssetsCurrent", current_assets),
+        ("LiabilitiesCurrent", current_liabilities),
+        ("NetCashProvidedByUsedInOperatingActivities", cfo),
+    ):
+        repo.add_fundamental(_fy_record(security_id, f"{security_id}:{concept}", concept=concept, value=value, period_end=_utc(2022, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:ni_2021", concept="NetIncomeLoss", value=prior_ni, period_end=_utc(2021, 12, 31)))
+    repo.add_fundamental(_fy_record(security_id, f"{security_id}:ni_2022", concept="NetIncomeLoss", value=current_ni, period_end=_utc(2022, 12, 31)))
+
+
+class TestOhlsonOScore:
+    """Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    Ohlson (1980)'s O-Score, a second canonical distress-risk model
+    alongside `altman_z_score`. Score is the NEGATIVE of the raw
+    9-variable logit O value (higher O = more distressed = less
+    attractive), matching the same Dichev (1998)/Campbell-Hilscher-
+    Szilagyi (2008) distress-anomaly direction `altman_z_score` already
+    documents."""
+
+    def test_computes_the_nine_variable_logit_formula(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _ohlson_fixture(repo, "AAA")
+
+        score = ohlson_o_score("AAA", _utc(2023, 6, 1), repo)
+        # SIZE=ln(1000) TLTA=0.6 WCTA=0.2 CLCA=0.5 OENEG=0 NITA=0.05
+        # FUTL=100/600 INTWO=0 CHIN=(50-40)/(50+40)=10/90
+        expected_o = (
+            -1.32 - 0.407 * math.log(1000.0) + 6.03 * 0.6 - 1.43 * 0.2 + 0.0757 * 0.5
+            - 1.72 * 0.0 - 2.37 * 0.05 - 1.83 * (100.0 / 600.0) + 0.285 * 0.0 - 0.521 * (10.0 / 90.0)
+        )
+        assert score == pytest.approx(-expected_o)
+
+    def test_healthier_company_scores_higher_than_distressed_one(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _ohlson_fixture(repo, "HEALTHY")
+        # DISTRESSED: liabilities exceed assets (OENEG=1), negative net
+        # income both years (INTWO=1), thin current ratio, no CFO cushion.
+        _ohlson_fixture(
+            repo, "DISTRESSED", assets=1000.0, liabilities=1500.0, current_assets=200.0,
+            current_liabilities=400.0, cfo=-50.0, prior_ni=-100.0, current_ni=-150.0,
+        )
+
+        healthy_score = ohlson_o_score("HEALTHY", _utc(2023, 6, 1), repo)
+        distressed_score = ohlson_o_score("DISTRESSED", _utc(2023, 6, 1), repo)
+
+        assert healthy_score is not None and distressed_score is not None
+        assert healthy_score > distressed_score
+
+    def test_missing_cfo_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for concept, value in (
+            ("Assets", 1000.0), ("Liabilities", 600.0), ("AssetsCurrent", 400.0), ("LiabilitiesCurrent", 200.0),
+        ):
+            repo.add_fundamental(_fy_record("AAA", f"AAA:{concept}", concept=concept, value=value, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "AAA:ni_2021", concept="NetIncomeLoss", value=40.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "AAA:ni_2022", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+
+        assert ohlson_o_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_only_one_fiscal_year_of_net_income_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for concept, value in (
+            ("Assets", 1000.0), ("Liabilities", 600.0), ("AssetsCurrent", 400.0), ("LiabilitiesCurrent", 200.0),
+            ("NetCashProvidedByUsedInOperatingActivities", 100.0),
+        ):
+            repo.add_fundamental(_fy_record("AAA", f"AAA:{concept}", concept=concept, value=value, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "AAA:ni_2022", concept="NetIncomeLoss", value=50.0, period_end=_utc(2022, 12, 31)))
+
+        assert ohlson_o_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_liabilities_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _ohlson_fixture(repo, "AAA", liabilities=0.0)
+
+        assert ohlson_o_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        _ohlson_fixture(repo, "AAA", assets=0.0)
+
+        assert ohlson_o_score("AAA", _utc(2023, 6, 1), repo) is None
 
 
 def _add_quality_fixture(repo, security_id, *, roe_income=50.0, roe_equity=100.0, leverage_liabilities=100.0, accruals_cfo=60.0, accruals_ni=None) -> None:
@@ -1639,6 +2554,74 @@ class TestValueCompositeScore:
         scores = value_composite_score(["ONLY_ONE"], _utc(2023, 6, 1), repo, price_repo)
 
         assert scores == {}
+
+
+class TestIndustryMomentumScore:
+    """Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Moskowitz &
+    Grinblatt (1999)'s industry momentum. Sector comes from
+    `data_infra.universe.get_sector`, monkeypatched here (as it is
+    imported into `strategy_research.factor_scores`'s own namespace) to
+    a fake security_id -> sector map, so these tests are not coupled to
+    which real symbols this project has actually confirmed a SEC SIC
+    sector for."""
+
+    def _patch_sectors(self, monkeypatch, sector_by_id: dict) -> None:
+        monkeypatch.setattr("strategy_research.factor_scores.get_sector", lambda sid: sector_by_id.get(sid))
+
+    def test_same_industry_members_share_the_identical_score(self, monkeypatch) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        winner_closes = [100.0 + 0.5 * i for i in range(len(days))]
+        loser_closes = [100.0 - 0.05 * i for i in range(len(days))]
+        # A and B are both TECH (a winning industry); C is RETAIL, its own
+        # single-member industry with no peer -- excluded entirely.
+        repo = InMemoryDataRepository(bars=(
+            list(make_bars("A", days, winner_closes)) + list(make_bars("B", days, winner_closes))
+            + list(make_bars("C", days, loser_closes))
+        ))
+        self._patch_sectors(monkeypatch, {"A": "TECH", "B": "TECH", "C": "RETAIL"})
+        as_of_time = _utc(2020, 5, 29)
+
+        scores = industry_momentum_score(["A", "B", "C"], as_of_time, None, repo)
+
+        assert set(scores) == {"A", "B"}  # C excluded -- its industry has only itself
+        assert scores["A"] == pytest.approx(scores["B"])
+
+    def test_a_winning_industry_scores_higher_than_a_losing_industry(self, monkeypatch) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        winner_closes = [100.0 + 0.5 * i for i in range(len(days))]
+        loser_closes = [100.0 - 0.05 * i for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=(
+            list(make_bars("WIN1", days, winner_closes)) + list(make_bars("WIN2", days, winner_closes))
+            + list(make_bars("LOSE1", days, loser_closes)) + list(make_bars("LOSE2", days, loser_closes))
+        ))
+        self._patch_sectors(monkeypatch, {"WIN1": "TECH", "WIN2": "TECH", "LOSE1": "RETAIL", "LOSE2": "RETAIL"})
+        as_of_time = _utc(2020, 5, 29)
+
+        scores = industry_momentum_score(["WIN1", "WIN2", "LOSE1", "LOSE2"], as_of_time, None, repo)
+
+        assert scores["WIN1"] > scores["LOSE1"]  # winning industry -> higher (more attractive) score, RAW
+
+    def test_unknown_sector_excludes_the_security(self, monkeypatch) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        closes = [100.0 + 0.1 * i for i in range(len(days))]
+        repo = InMemoryDataRepository(bars=(
+            list(make_bars("A", days, closes)) + list(make_bars("B", days, closes)) + list(make_bars("UNKNOWN", days, closes))
+        ))
+        self._patch_sectors(monkeypatch, {"A": "TECH", "B": "TECH", "UNKNOWN": None})
+        as_of_time = _utc(2020, 5, 29)
+
+        scores = industry_momentum_score(["A", "B", "UNKNOWN"], as_of_time, None, repo)
+
+        assert "UNKNOWN" not in scores
+        assert set(scores) == {"A", "B"}
+
+    def test_fewer_than_two_scorable_securities_returns_an_empty_dict(self, monkeypatch) -> None:
+        days = trading_days(date(2019, 1, 2), date(2020, 6, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("SOLO", days, [100.0 + i * 0.1 for i in range(len(days))])))
+        self._patch_sectors(monkeypatch, {"SOLO": "TECH"})
+        as_of_time = _utc(2020, 5, 29)
+
+        assert industry_momentum_score(["SOLO"], as_of_time, None, repo) == {}
 
 
 # Fixed per-security fake values for the 9 legs `combined_factor_score`
@@ -1844,3 +2827,323 @@ class TestSueScore:
 
         score_with_superseded_entry = sue_score("AAA", _utc(2023, 2, 1), repo)
         assert score_with_superseded_entry == clean_score
+
+
+class TestOperatingLeverageScore:
+    """Session 36 continued -- Novy-Marx (2011)'s operating leverage
+    anomaly, found by continuing this session's mining of the JKP
+    "Global Factor Data Documentation" PDF. `opex_at = (COGS + XSGA) /
+    Assets`, RAW (not negated) since the paper's own relation is a
+    POSITIVE risk-return one -- the opposite sign convention from
+    `leverage_score`."""
+
+    def test_computes_opex_over_assets(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "sga", concept="SellingGeneralAndAdministrativeExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        # (60 + 20) / 200 = 0.4, RAW (not negated)
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) == pytest.approx(0.4)
+
+    def test_higher_operating_leverage_scores_higher_not_lower(self, tmp_path) -> None:
+        # The opposite sign convention from every other "risk" factor in
+        # this module -- Novy-Marx's own finding is a POSITIVE
+        # risk-return relation, so higher operating leverage must score
+        # HIGHER, not lower.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("LOW", "LOW:cogs", concept="CostOfGoodsAndServicesSold", value=10.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW", "LOW:sga", concept="SellingGeneralAndAdministrativeExpense", value=10.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW", "LOW:assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:sga", concept="SellingGeneralAndAdministrativeExpense", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        low_score = operating_leverage_score("LOW", _utc(2023, 6, 1), repo)
+        high_score = operating_leverage_score("HIGH", _utc(2023, 6, 1), repo)
+        assert high_score > low_score
+
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "sga", concept="SellingGeneralAndAdministrativeExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=0.0, period_end=_utc(2022, 12, 31)))
+
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_sga_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_cogs_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "sga", concept="SellingGeneralAndAdministrativeExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cogs", concept="CostOfGoodsAndServicesSold", value=60.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "sga", concept="SellingGeneralAndAdministrativeExpense", value=20.0, period_end=_utc(2022, 12, 31)))
+
+        assert operating_leverage_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestAbnormalInvestmentScore:
+    """Session 36 continued -- Titman, Wei & Xie (2004)'s Abnormal
+    Corporate Investment anomaly, found by continuing this session's
+    mining of the JKP "Global Factor Data Documentation" PDF. `capex_abn
+    = CAPX_SALE_t / avg(CAPX_SALE 3 prior fiscal years) - 1`, NEGATED
+    (higher abnormal investment -> lower, less attractive score)."""
+
+    def _add_capex_and_sales(self, repo, security_id: str, capex_values, sales_values, start_year: int = 2020) -> None:
+        for offset, (capex, sales) in enumerate(zip(capex_values, sales_values)):
+            year = start_year + offset
+            repo.add_fundamental(_fy_record(
+                security_id, f"{security_id}:capex:{year}", concept="PaymentsToAcquirePropertyPlantAndEquipment",
+                value=capex, period_end=_utc(year, 12, 31),
+            ))
+            repo.add_fundamental(_fy_record(
+                security_id, f"{security_id}:sales:{year}", concept="Revenues",
+                value=sales, period_end=_utc(year, 12, 31),
+            ))
+
+    def test_computes_capex_abn_ratio(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        # capex/sales ratios: 2020=0.10, 2021=0.10, 2022=0.10, 2023=0.20
+        # trailing 3yr avg = 0.10, current = 0.20 -> capex_abn = 0.20/0.10 - 1 = 1.0
+        self._add_capex_and_sales(
+            repo, "AAA",
+            capex_values=[10.0, 10.0, 10.0, 20.0],
+            sales_values=[100.0, 100.0, 100.0, 100.0],
+        )
+
+        score = abnormal_investment_score("AAA", _utc(2024, 6, 1), repo)
+        assert score == pytest.approx(-1.0)
+
+    def test_below_trend_investment_produces_a_positive_score(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        # current ratio (0.05) BELOW the 0.10 trailing average -> capex_abn = -0.5 -> score = +0.5
+        self._add_capex_and_sales(
+            repo, "AAA",
+            capex_values=[10.0, 10.0, 10.0, 5.0],
+            sales_values=[100.0, 100.0, 100.0, 100.0],
+        )
+
+        score = abnormal_investment_score("AAA", _utc(2024, 6, 1), repo)
+        assert score == pytest.approx(0.5)
+
+    def test_fewer_than_four_fiscal_years_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        self._add_capex_and_sales(
+            repo, "AAA",
+            capex_values=[10.0, 10.0, 10.0],
+            sales_values=[100.0, 100.0, 100.0],
+        )
+
+        assert abnormal_investment_score("AAA", _utc(2024, 6, 1), repo) is None
+
+    def test_a_non_positive_sales_year_within_the_window_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        self._add_capex_and_sales(
+            repo, "AAA",
+            capex_values=[10.0, 10.0, 10.0, 20.0],
+            sales_values=[100.0, 100.0, 0.0, 100.0],
+        )
+
+        assert abnormal_investment_score("AAA", _utc(2024, 6, 1), repo) is None
+
+    def test_missing_capex_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        for offset in range(4):
+            year = 2020 + offset
+            repo.add_fundamental(_fy_record(
+                "AAA", f"AAA:sales:{year}", concept="Revenues", value=100.0, period_end=_utc(year, 12, 31),
+            ))
+
+        assert abnormal_investment_score("AAA", _utc(2024, 6, 1), repo) is None
+
+    def test_a_not_yet_filed_latest_fiscal_year_is_excluded_point_in_time(self, tmp_path) -> None:
+        # As of an as_of_time before the 4th fiscal year's figures are
+        # filed, only 3 fiscal years are knowable -- must behave exactly
+        # like the 3-year case (None), never leak the future year's data.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        capex_values = [10.0, 10.0, 10.0, 20.0]
+        sales_values = [100.0, 100.0, 100.0, 100.0]
+        for offset, (capex, sales) in enumerate(zip(capex_values, sales_values)):
+            year = 2020 + offset
+            available_time = _utc(year + 2, 2, 1) if offset == 3 else _utc(year + 1, 2, 1)
+            repo.add_fundamental(_fy_record(
+                "AAA", f"AAA:capex:{year}", concept="PaymentsToAcquirePropertyPlantAndEquipment",
+                value=capex, period_end=_utc(year, 12, 31), available_time=available_time,
+            ))
+            repo.add_fundamental(_fy_record(
+                "AAA", f"AAA:sales:{year}", concept="Revenues",
+                value=sales, period_end=_utc(year, 12, 31), available_time=available_time,
+            ))
+
+        assert abnormal_investment_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestCashHoldingsScore:
+    """Session 36 continued -- Palazzo (2012)'s cash holdings anomaly,
+    found by a systematic pass through the ENTIRE JKP "Global Factor
+    Data Documentation" PDF's cited-anomaly catalogue. `cash_at =
+    CASH/Assets`, RAW (not negated) since Palazzo's own finding is a
+    POSITIVE risk-return relation -- the same sign-convention situation
+    as `operating_leverage_score`."""
+
+    def test_computes_cash_over_assets(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        # 30 / 200 = 0.15, RAW (not negated)
+        assert cash_holdings_score("AAA", _utc(2023, 6, 1), repo) == pytest.approx(0.15)
+
+    def test_higher_cash_holdings_scores_higher_not_lower(self, tmp_path) -> None:
+        # The opposite sign convention from most "safety" intuitions --
+        # Palazzo's own finding is a POSITIVE risk-return relation, so
+        # more cash relative to assets must score HIGHER, not lower.
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("LOW", "LOW:cash", concept="CashAndCashEquivalentsAtCarryingValue", value=10.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("LOW", "LOW:assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:cash", concept="CashAndCashEquivalentsAtCarryingValue", value=80.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("HIGH", "HIGH:assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        low_score = cash_holdings_score("LOW", _utc(2023, 6, 1), repo)
+        high_score = cash_holdings_score("HIGH", _utc(2023, 6, 1), repo)
+        assert high_score > low_score
+
+    def test_zero_or_negative_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=30.0, period_end=_utc(2022, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=0.0, period_end=_utc(2022, 12, 31)))
+
+        assert cash_holdings_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_cash_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "assets", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        assert cash_holdings_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_missing_assets_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "cash", concept="CashAndCashEquivalentsAtCarryingValue", value=30.0, period_end=_utc(2022, 12, 31)))
+
+        assert cash_holdings_score("AAA", _utc(2023, 6, 1), repo) is None
+
+
+class TestBidAskSpreadScore:
+    """Session 36 continued -- Amihud & Mendelson (1986)'s bid-ask
+    spread anomaly, measured via the Corwin & Schultz (2012) high-low
+    estimator. RAW (not negated), the same sign situation
+    `illiquidity_score` already documents. The one factor in this module
+    needing `adjusted_high`/`adjusted_low` (added this session) rather
+    than raw `high`/`low`, since its `gamma` term cross-compares
+    adjacent days' price LEVELS -- an unadjusted split between them
+    would corrupt the estimate."""
+
+    def test_computes_the_average_daily_spread_estimate(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        adj_highs = [102.0] * len(days)
+        adj_lows = [98.0] * len(days)
+        bars = make_bars("AAA", days, closes, adjusted_highs=adj_highs, adjusted_lows=adj_lows)
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        # Every consecutive-day pair has an identical 102/98 high/low
+        # band -- the Corwin-Schultz estimator's own closed-form
+        # reduces, in this constant-band case, to ln(102/98) ~ 0.04.
+        score = bid_ask_spread_score("AAA", as_of_time, data)
+        assert score == pytest.approx(0.04, rel=1e-3)
+
+    def test_a_wider_high_low_band_scores_higher_not_lower(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        tight_bars = make_bars("TIGHT", days, closes, adjusted_highs=[101.0] * len(days), adjusted_lows=[99.0] * len(days))
+        wide_bars = make_bars("WIDE", days, closes, adjusted_highs=[110.0] * len(days), adjusted_lows=[90.0] * len(days))
+        repo = InMemoryDataRepository(bars=list(tight_bars) + list(wide_bars))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        tight_score = bid_ask_spread_score("TIGHT", as_of_time, data)
+        wide_score = bid_ask_spread_score("WIDE", as_of_time, data)
+
+        assert tight_score is not None and wide_score is not None
+        assert wide_score > tight_score  # wider (less liquid) spread -> higher (more attractive) score, RAW not negated
+
+    def test_ignores_raw_high_low_uses_only_adjusted(self) -> None:
+        # Raw high/low set to an absurd, wildly different band (as if an
+        # unadjusted split sat in the window) -- the score must come out
+        # identical to the constant 102/98 adjusted band case above,
+        # proving raw high/low is never read by this factor at all.
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        bars = make_bars(
+            "AAA", days, closes,
+            highs=[1_000_000.0] * len(days), lows=[1.0] * len(days),
+            adjusted_highs=[102.0] * len(days), adjusted_lows=[98.0] * len(days),
+        )
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        score = bid_ask_spread_score("AAA", as_of_time, data)
+        assert score == pytest.approx(0.04, rel=1e-3)
+
+    def test_missing_adjusted_high_low_returns_none(self) -> None:
+        # The default make_bars() output (no adjusted_highs/lows passed)
+        # -- the same gap StooqDataProvider-sourced bars would have.
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        bars = make_bars("AAA", days, closes)
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert bid_ask_spread_score("AAA", as_of_time, data) is None
+
+    def test_fewer_than_12_valid_daily_estimates_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 15))  # far fewer than 12 daily pairs
+        closes = [100.0] * len(days)
+        bars = make_bars("AAA", days, closes, adjusted_highs=[102.0] * len(days), adjusted_lows=[98.0] * len(days))
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert bid_ask_spread_score("AAA", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 3, 1))
+        closes = [100.0] * len(days)
+        bars = make_bars("AAA", days, closes, adjusted_highs=[102.0] * len(days), adjusted_lows=[98.0] * len(days))
+        repo = InMemoryDataRepository(bars=bars)
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        assert bid_ask_spread_score("NONEXISTENT", as_of_time, data) is None

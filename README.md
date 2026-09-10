@@ -11,6 +11,30 @@
 최종 목표: **검증 가능한 방식으로 S&P 500의 장기 수익률을 초과하는 것.**
 (초과수익을 보장하지 않는다.)
 
+## 목차
+
+- [시작하기 전에 반드시 읽어야 할 문서](#시작하기-전에-반드시-읽어야-할-문서)
+- [절대 원칙 (요약)](#절대-원칙-요약)
+- [디렉터리 구조](#디렉터리-구조)
+- [현재 상태](#현재-상태) — Phase 19~31 최신 진행 상황(최신순), 이후 Phase 0~31 전체 이력(연대순)
+- [테스트 실행](#테스트-실행)
+- [영속 저장소 (Phase 4)](#영속-저장소-phase-4)
+- [Market Regime (Phase 5)](#market-regime-phase-5)
+- [Prediction (Phase 6)](#prediction-phase-6)
+- [Decision Agent (Phase 7)](#decision-agent-phase-7)
+- [Position Sizing + Portfolio Risk Engine (Phase 8)](#position-sizing--portfolio-risk-engine-phase-8)
+- [Learning Engine (Phase 9)](#learning-engine-phase-9)
+- [Counterfactual / Attribution (Phase 10)](#counterfactual--attribution-phase-10)
+- [Model Evolution (Phase 11)](#model-evolution-phase-11)
+- [AI Gateway (Phase 12)](#ai-gateway-phase-12)
+- [Toss Securities Adapter (Phase 13)](#toss-securities-adapter-phase-13)
+- [Monitoring (Phase 14)](#monitoring-phase-14)
+- [Paper Trading (Phase 15)](#paper-trading-phase-15)
+- [Live Trading (Phase 16)](#live-trading-phase-16)
+- [Production Safety Review (Phase 17)](#production-safety-review-phase-17)
+- [Paper Trading Performance Report (Phase 18)](#paper-trading-performance-report-phase-18)
+- [개발 원칙](#개발-원칙)
+
 ## 시작하기 전에 반드시 읽어야 할 문서
 
 새 세션(사람이든 Claude Code든)은 아래 순서로 읽으면 프로젝트 전체
@@ -113,8 +137,13 @@ SPY, 2023-01-02~2024-12-31, 8,032 bars, 107 corporate actions)를
 데이터는 사용자의 Codespaces 환경에만 존재하며 이 저장소/이 sandboxed
 세션에는 없다(`data/`는 비어 있고 gitignore 대상).
 
-**Phase 31 — Real Data Acquisition / Historical Universe Data Source
-Audit** (Live Trading은 여전히 구조적으로 불가능). 목표는 새 전략을
+---
+
+### 최신 진행 상황 (Phase 19~31, 최신순)
+
+### Phase 31 — Real Data Acquisition / Historical Universe Data Source Audit
+
+(Live Trading은 여전히 구조적으로 불가능). 목표는 새 전략을
 만들거나 튜닝하는 것이 아니라, 이 프로젝트가 실제로 어떻게 broad
 survivorship-aware 2010~최신 US 주식 데이터를 확보할 수 있는지
 엄밀하게 규명하고 그 확보를 가능케 하는 인프라를 짓는 것이었다. 실
@@ -146,9 +175,11 @@ Toss/Live/RiskConfig/Broker/Risk 코드는
 전혀 건드리지 않음. 상세는
 `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 31 Addendum".
 
-**Phase 30 — Real Historical US Equity Dataset Acquisition,
-Survivorship-Aware Dataset Validation, and Full Walk-Forward
-Execution** (Live Trading은 여전히 구조적으로 불가능). 목표는
+---
+
+### Phase 30 — Real Historical US Equity Dataset Acquisition, Survivorship-Aware Dataset Validation, and Full Walk-Forward Execution
+
+(Live Trading은 여전히 구조적으로 불가능). 목표는
 "survivorship-aware 아키텍처는 있지만 실 broad 검증은 막혀있다"에서
 "실 데이터가 확보·검증되어 기존 walk-forward 파이프라인을 실제로
 실행할 수 있다"로 넘어가는 것이었으나, 환경 네트워크 차단이 근본적으로
@@ -172,8 +203,11 @@ constituent) 구분도 문서화. 신규 테스트 16개(ingestion manifest wiri
 건드리지 않음. 상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의
 "Phase 30 Addendum".
 
-**Phase 29 — Long-Horizon / Broad-US-Universe / Survivorship-Aware Real
-Walk-Forward Validation** (Live Trading은 여전히 구조적으로 불가능). 목표는
+---
+
+### Phase 29 — Long-Horizon / Broad-US-Universe / Survivorship-Aware Real Walk-Forward Validation
+
+(Live Trading은 여전히 구조적으로 불가능). 목표는
 2010-01-01부터 최신까지, 상장폐지/합병/티커 재사용을 포함한 넓은 실
 US 종목 universe로 4개 기존 전략(신규 전략/파라미터 튜닝 없음)을
 survivorship-bias를 최소화한 상태로 재검증하는 것 — "오늘의 승자를
@@ -202,7 +236,10 @@ security 영속성 1개) — 기존 1652개 테스트 전부 유지, 약화 없�
 Broker/Risk 코드는 전혀 건드리지 않음. 신규 문서: ADR-0032. 상세는
 `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 29 Addendum".
 
-**Phase 28 — Real-Data Walk-Forward Execution & Strategy Evidence**
+---
+
+### Phase 28 — Real-Data Walk-Forward Execution & Strategy Evidence
+
 (Live Trading은 여전히 구조적으로 불가능). 목표는 처음으로 실 데이터
 Walk-Forward TEST를 실제 실행하는 것이었으나 이번에도 environment
 BLOCKED(재확인, 변화 없음) — 이번엔 `data/`뿐 아니라 전체 파일시스템을
@@ -222,7 +259,10 @@ REAL`은 정확히 거부(exit 1)되고 `--data-status SYNTHETIC`은 정상
 변화 없음). 상세는 `docs/research/STRATEGY-VALIDATION-REPORT.md`의
 "Phase 28 Addendum".
 
-**Phase 27 — Real-Data Walk-Forward Validation & Strategy Evidence**
+---
+
+### Phase 27 — Real-Data Walk-Forward Validation & Strategy Evidence
+
 (Live Trading은 여전히 구조적으로 불가능 — Toss capability gap 그대로).
 목표는 실 데이터로 실제 Walk-Forward TEST를 실행하는 것이었으나 이번에도
 environment BLOCKED(Phase 26과 동일 진단, 변화 없음). 대신 이번 phase의
@@ -243,7 +283,11 @@ Toss/Live/RiskConfig 코드는 전혀 건드리지 않음. FINAL STATUS:
 **VALIDATION BLOCKED**(환경, 변화 없음) — 실 데이터 실행 커맨드는
 `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 27 Addendum".
 
-**Phase 26 — Long-Horizon Real-Data Validation (재확인)** (Live Trading
+---
+
+### Phase 26 — Long-Horizon Real-Data Validation (재확인)
+
+(Live Trading
 활성화는 여전히 구조적으로 불가능 — Toss capability gap 그대로). 목표는
 Phase 25 인프라를 실제로 더 긴 실 데이터에 적용하는 것이었으나, 이
 세션은 여전히 network egress BLOCKED(위 참조, 이번엔 원인을 정확히
@@ -266,7 +310,11 @@ position 조정, dividend의 total-return 반영까지 전부 기존 코드/테�
 FINAL STATUS: **VALIDATION BLOCKED (환경, 원인 정확히 진단됨)** — 상세는
 `docs/research/STRATEGY-VALIDATION-REPORT.md`의 "Phase 26 Addendum".
 
-**Phase 25 — Long-Horizon Real-Data Strategy Validation** (Live Trading
+---
+
+### Phase 25 — Long-Horizon Real-Data Strategy Validation
+
+(Live Trading
 활성화는 여전히 구조적으로 불가능 — Toss capability gap이 그대로 유일한
 차단 사유다). 목표는 "그럴듯해 보이는 전략 하나 고르기"가 아니라, 기존 4개
 전략 후보의 일반화 가능성을 chronological Train/Validation/Test +
@@ -305,7 +353,11 @@ universe-benchmark 배제) — 기존 1608개 테스트는 전부 그대로 유�
 **VALIDATION BLOCKED**(이 세션 기준 — 인프라는 완성·테스트 완료, 실
 데이터 실행만 환경 제약으로 차단). 상세는 `docs/PROJECT_STATUS.md` 참조.
 
-**Phase 24 — Real Market Data + Expandable US Equity Universe** (Live
+---
+
+### Phase 24 — Real Market Data + Expandable US Equity Universe
+
+(Live
 Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이 그대로
 유일한 차단 사유다). 목표는 종목 수를 늘리는 것 자체가 아니라, 16종목을
 영구적인 시스템 설계로 만들지 않는 확장 가능한 Universe 아키텍처를
@@ -339,7 +391,11 @@ UNKNOWN) 갱신. 신규 테스트 18개 — 기존 1587개 테스트는 전부 �
 약화 없음. Toss/Live 활성화 코드는 전혀 건드리지 않음. 상세는
 `docs/PROJECT_STATUS.md` 참조.
 
-**Phase 23 — Strategy Research & Real Market Data Validation** (Live
+---
+
+### Phase 23 — Strategy Research & Real Market Data Validation
+
+(Live
 Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이 그대로
 유일한 차단 사유다). 이번 phase는 두 가지를 목표로 했다: (1) 실 시장
 데이터 접근성을 이 세션에서 다시 직접 확인하고, (2) 미국 주식 장기 투자에
@@ -373,7 +429,10 @@ Git integrity: Phase 22 검증 HEAD를 origin/main에 fast-forward-only로
 병합(merge commit 0개) 후 새 브랜치 생성. 상세는
 `docs/PROJECT_STATUS.md` 참조.
 
-**Phase 22 — Real-Data Paper Trading / US Long-Term System Hardening**
+---
+
+### Phase 22 — Real-Data Paper Trading / US Long-Term System Hardening
+
 (Live Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이
 그대로 유일한 차단 사유다). 사용자가 실 Toss 자격증명을 여전히 제공할
 수 없다는 전제 아래, Toss 이외의 모든 영역을 "1,000만원 상당 가상
@@ -421,7 +480,11 @@ risk gate Option B 회귀 테스트, timestamp monotonicity) — 기존 1511개
 테스트는 전부 그대로 유지, 약화 없음. 상세는 `docs/PROJECT_STATUS.md`
 참조.
 
-**Phase 21 — Toss Broker Adapter Completion** (Live Trading 활성화는
+---
+
+### Phase 21 — Toss Broker Adapter Completion
+
+(Live Trading 활성화는
 여전히 구조적으로 불가능 — 사유는 바뀌었지만 차단 자체는 그대로다).
 Phase 20에서 사용자가 제공한 Toss 공식 OpenAPI 스펙(Tier 1)을 근거로
 `TossBrokerAdapter`의 나머지 4개 capability
@@ -454,7 +517,11 @@ integration 테스트 포함) — 전부 stub transport만 사용, 실제 네트
 외부는 전혀 수정하지 않음(전략/AI Gateway/Learning/backtest 등은
 범위 밖).
 
-**Phase 20 — Real Market Data Foundation & Documentation Sync** (Live
+---
+
+### Phase 20 — Real Market Data Foundation & Documentation Sync
+
+(Live
 Trading 활성화는 여전히 구조적으로 불가능 — Toss capability gap이
 유일하지만 확실한 차단 사유는 그대로다). 실 미국 주식 시장 데이터를
 안전하게 저장/조회할 수 있는 기반을 additive하게 구축했다: Tiingo를
@@ -485,7 +552,11 @@ POSITIONS/ORDER_STATUS/CANCEL_ORDER 엔드포인트/스키마 확인) Phase 13
 "공식 문서가 오면 분석은 하되 구현은 별도 Phase로 제안"을 요구했기
 때문(다음 권장 Phase로 명시). 상세는 `docs/PROJECT_STATUS.md` 참조.
 
-**Phase 19 — Production Blocker Resolution** (Live Trading 활성화는
+---
+
+### Phase 19 — Production Blocker Resolution
+
+(Live Trading 활성화는
 여전히 구조적으로 불가능. Toss capability gap이 유일하지만 확실한
 차단 사유, `docs/operations/PRODUCTION-READINESS-MATRIX.md` 참조).
 이번 phase는 코드를 전혀 수정하지 않았다 — Toss 공식 도메인 4곳
@@ -498,6 +569,10 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
 정책 결정이 필요한 부분은 DECISION REQUIRED로 남기고 안전성을
 유지하는 것"이었다.
 상세는 `docs/PROJECT_STATUS.md` 참조.
+
+---
+
+### 전체 Phase 이력 (연대순, Phase 0~31)
 
 - Phase 0 — Foundation: 완료 (문서 기반 수립)
 - Phase 1 — Data Infrastructure: 완료 (`src/data_infra/`, 57 tests)

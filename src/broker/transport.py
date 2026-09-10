@@ -58,6 +58,16 @@ class MockTransport:
         self._failure_mode = failure_mode
         self._response_body = response_body if response_body is not None else {"status": "PENDING"}
         self.call_count = 0
+        # Session 36 continued (external review remediation): records
+        # the last call's real arguments so a caller-side test (e.g.
+        # `TossAuthClient.fetch_access_token`'s own declared headers/
+        # body shape) can assert on what was actually sent, without
+        # needing the real network-capable `TossHttpTransport` -- closes
+        # the "wire format never verified" test gap the external review
+        # found for `tests/broker/toss/test_toss_auth.py`.
+        self.last_headers: Optional[dict[str, str]] = None
+        self.last_json_body: Optional[dict] = None
+        self.last_params: Optional[dict] = None
 
     def _respond(self) -> TransportResponse:
         self.call_count += 1
@@ -80,7 +90,11 @@ class MockTransport:
         return TransportResponse(200, self._response_body, None, {})
 
     def post(self, path: str, *, headers: dict[str, str], json_body: dict, timeout: float) -> TransportResponse:
+        self.last_headers = headers
+        self.last_json_body = json_body
         return self._respond()
 
     def get(self, path: str, *, headers: dict[str, str], params: dict, timeout: float) -> TransportResponse:
+        self.last_headers = headers
+        self.last_params = params
         return self._respond()

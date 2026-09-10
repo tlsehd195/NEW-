@@ -91,7 +91,10 @@ pipeline, this phase implements it:
   a `DataProvider` Protocol implementation that reads pre-downloaded,
   already-normalized CSV files from local disk instead of making any
   network call. It defines one explicit CSV schema
-  (`date,open,high,low,close,volume[,adj_close]`) and requires the
+  (`date,open,high,low,close,volume[,adj_close][,adj_high][,adj_low]`
+  -- the two optional adjusted-high/low columns added Session 36
+  continued, alongside `PriceBar.adjusted_high`/`.adjusted_low`, see
+  ADR-0103) and requires the
   caller to supply an honest `source_name` (e.g.
   `"nasdaq_data_link_sharadar"`, `"crsp"`) that becomes
   `Provenance.source` on every persisted bar -- never a hardcoded or

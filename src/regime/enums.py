@@ -19,15 +19,18 @@ from enum import Enum
 
 class RegimeAxis(str, Enum):
     """The five axes PROJECT_MASTER_PLAN.md section 7.6 names as an
-    example classification scheme. Not "the" regime system -- an
+    example classification scheme, plus DISTRIBUTION (Session 36,
+    found while comparing this project against an external repository,
+    dragon1086/prism-insight). Not "the" regime system -- an
     intentionally minimal, documented starting set (Phase 5 spec
-    section 2)."""
+    section 2) that this addition itself demonstrates is meant to grow."""
 
     TREND = "TREND"
     VOLATILITY = "VOLATILITY"
     LIQUIDITY = "LIQUIDITY"
     CORRELATION = "CORRELATION"
     STRESS = "STRESS"
+    DISTRIBUTION = "DISTRIBUTION"
 
 
 class SubjectKind(str, Enum):
@@ -77,10 +80,24 @@ class StressState(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class DistributionState(str, Enum):
+    """IBD-style "distribution day" count over a trailing window --
+    institutional-selling pressure (decline on rising volume), not the
+    Volatility/Stress axes' price-only or drawdown-only view. NORMAL/
+    ELEVATED/HIGH mirrors StressState's own naming since both are
+    "how much selling pressure" classifications, just from different
+    underlying evidence (see regime/features.py::compute_distribution_days)."""
+
+    NORMAL = "NORMAL"
+    ELEVATED = "ELEVATED"
+    HIGH = "HIGH"
+    UNKNOWN = "UNKNOWN"
+
+
 # Maps each axis to the Enum class its RegimeObservation.state string
 # round-trips through. RegimeObservation.state is stored as a plain str
 # (the winning enum member's .value) rather than a typed field, because a
-# single dataclass generic across five different per-axis Enum domains
+# single dataclass generic across six different per-axis Enum domains
 # has no single correct Enum type to declare -- this lookup is how a
 # caller that needs the typed value back gets it: `AXIS_STATE_ENUM[axis](state_str)`.
 AXIS_STATE_ENUM: dict[RegimeAxis, type[Enum]] = {
@@ -89,4 +106,5 @@ AXIS_STATE_ENUM: dict[RegimeAxis, type[Enum]] = {
     RegimeAxis.LIQUIDITY: LiquidityState,
     RegimeAxis.CORRELATION: CorrelationState,
     RegimeAxis.STRESS: StressState,
+    RegimeAxis.DISTRIBUTION: DistributionState,
 }

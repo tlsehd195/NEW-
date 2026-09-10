@@ -39,6 +39,20 @@ class TestSchemaValidation:
         assert bar.security_id == "SEC-AAA"
         assert bar.close == 102.0
 
+    def test_adjusted_high_low_default_to_none(self) -> None:
+        # Session 36 continued addition -- never fabricated for a
+        # provider (e.g. StooqDataProvider) that does not supply them,
+        # the same default `adjusted_close` already has.
+        bar = _bar()
+        assert bar.adjusted_high is None
+        assert bar.adjusted_low is None
+
+    def test_adjusted_high_low_can_be_set_independently_of_raw_high_low(self) -> None:
+        bar = _bar(high=105.0, low=99.0, adjusted_high=52.5, adjusted_low=49.5)
+        assert bar.high == 105.0  # raw, unadjusted -- never overwritten
+        assert bar.adjusted_high == 52.5
+        assert bar.adjusted_low == 49.5
+
     def test_missing_security_id_rejected(self) -> None:
         with pytest.raises(ValueError):
             _bar(security_id="")

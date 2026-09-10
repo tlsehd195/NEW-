@@ -20,7 +20,7 @@ the caller supplies everything this module reads).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from ai_gateway.config import GatewayConfig, ProviderConfig
@@ -108,7 +108,26 @@ class AIGateway:
                     last_status, last_reason = RequestStatus.AUTH_FAILED, str(exc)
                     break
                 except ProviderRateLimitError as exc:
-                    self._quota_manager.mark_quota_exhausted(provider_config.provider_id, at=as_of, reason="rate_limited")
+                    # Session 36 continued (external review remediation):
+                    # passes the error's own real `retry_after_seconds`
+                    # through as `reset_time` when a real adapter
+                    # supplied one -- before this fix, `reset_time` was
+                    # never passed at all, which (combined with a
+                    # separate `QuotaManager.is_available` rollover-
+                    # refill gap, also fixed this session) meant a
+                    # single transient rate-limit response could
+                    # permanently lock the provider out for the life of
+                    # the process. Absent (today's MockProviderAdapter
+                    # never sets it), behavior is unchanged from before:
+                    # no automatic recovery window, matching this
+                    # project's own "never fabricate a value" discipline.
+                    reset_time = (
+                        as_of + timedelta(seconds=exc.retry_after_seconds)
+                        if exc.retry_after_seconds is not None else None
+                    )
+                    self._quota_manager.mark_quota_exhausted(
+                        provider_config.provider_id, at=as_of, reason="rate_limited", reset_time=reset_time,
+                    )
                     last_status, last_reason = RequestStatus.RATE_LIMITED, str(exc)
                     break
                 except ProviderTimeoutError as exc:

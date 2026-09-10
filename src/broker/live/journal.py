@@ -59,13 +59,13 @@ def build_fill_from_broker_response(
 def build_trade_record(
     fill: Fill, *, trade_id: str, decision_id: str, position_after: float,
     realized_pnl: Optional[float] = None, realized_return: Optional[float] = None,
-    experiment_id: Optional[str] = None,
+    exit_reason: Optional[str] = None, experiment_id: Optional[str] = None,
 ) -> TradeRecord:
     return TradeRecord(
         trade_id=trade_id, decision_id=decision_id, order_id=fill.order_id, security_id=fill.security_id,
         timestamp=fill.execution_time, side=fill.side, quantity=fill.quantity, execution_price=fill.price,
         reference_price=fill.reference_price, slippage=fill.slippage_cost,
         transaction_cost=fill.commission + fill.spread_cost, position_after=position_after, fill=fill,
-        realized_pnl=realized_pnl, realized_return=realized_return,
+        realized_pnl=realized_pnl, realized_return=realized_return, exit_reason=exit_reason,
         provenance=TradeProvenance.LIVE_TRADING, experiment_id=experiment_id,
     )

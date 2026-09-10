@@ -21,11 +21,13 @@ from storage_helpers import new_engine
 
 from data_infra.calendar import US_EQUITY
 from data_infra.fundamentals_models import FundamentalRecord
+from data_infra.insider_models import InsiderTransaction
 from data_infra.models import Provenance
 from data_infra.universe import PILOT_UNIVERSE_V1
 
 from storage.data_repository import DuckDBDataRepository
 from storage.fundamentals_repository import DuckDBFundamentalsRepository
+from storage.insider_repository import DuckDBInsiderRepository
 
 from strategy_research.locked_windows import TEST_1
 
@@ -696,3 +698,76 @@ class TestCombinedFactorScoreOption:
         out = capsys.readouterr().out
         assert "Fundamentals Signal IC: combined_factor" in out
         assert "observations=0" not in out
+
+
+class TestInsiderBuyingScoreOption:
+    """Session 36 continued -- ADR-0086. `insider_buying_score` is
+    sourced from a THIRD, distinct DuckDB catalog (`--insider-db-path`,
+    `DuckDBInsiderRepository`) rather than `--fundamentals-db-path` --
+    regression guard that the CLI's `_INSIDER_SCORES` branch actually
+    wires that separate repository through, and that the missing-flag
+    guard fires before any catalog is opened."""
+
+    def _insider_txn(self, security_id, record_id, *, transaction_date, transaction_code, shares):
+        return InsiderTransaction(
+            security_id=security_id, reporting_owner_cik="0001000000", reporting_owner_name="Test Insider",
+            is_officer=True, is_director=False, is_ten_percent_owner=False, officer_title="CEO",
+            transaction_date=transaction_date, transaction_code=transaction_code,
+            acquired_disposed_code="A" if transaction_code == "P" else "D",
+            shares=shares, price_per_share=50.0, is_10b5_1_plan=False,
+            accession_number=f"ACCN-{record_id}", available_time=transaction_date, ingestion_time=transaction_date,
+            provenance=Provenance(
+                source="sec_edgar", source_dataset=f"sec_edgar_form4_{security_id}",
+                source_record_id=record_id, retrieved_at=transaction_date, data_version="v1",
+            ),
+        )
+
+    def test_missing_insider_db_path_is_refused(self, tmp_path, capsys) -> None:
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals"),
+            "--score", "insider_buying",
+            "--start", "2010-01-01",
+        ])
+        assert exit_code == 1
+        assert "--insider-db-path" in capsys.readouterr().err
+
+    def test_computes_an_ic_summary_from_the_insider_catalog(self, tmp_path, capsys) -> None:
+        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
+        daily_drifts = {symbols[0]: 1.0008, symbols[1]: 0.9995}
+
+        price_engine = new_engine(tmp_path, name="price_insider")
+        price_repo = DuckDBDataRepository(price_engine, calendars={"US_EQUITY": US_EQUITY})
+        for symbol in symbols:
+            closes = [100.0 * (daily_drifts[symbol]**i) for i in range(len(days))]
+            price_repo.append_bars(make_bars(symbol, days, closes))
+        price_engine.close()
+
+        insider_engine = new_engine(tmp_path, name="insider")
+        insider_repo = DuckDBInsiderRepository(insider_engine)
+        insider_repo.add_insider_transaction(
+            self._insider_txn(symbols[0], "buy1", transaction_date=datetime(2018, 5, 1, tzinfo=timezone.utc), transaction_code="P", shares=10_000.0)
+        )
+        insider_repo.add_insider_transaction(
+            self._insider_txn(symbols[1], "sell1", transaction_date=datetime(2018, 5, 1, tzinfo=timezone.utc), transaction_code="S", shares=10_000.0)
+        )
+        insider_engine.close()
+
+        module = _load_script()
+        exit_code = module.main([
+            "--price-db-path", str(tmp_path / "price_insider"),
+            "--fundamentals-db-path", str(tmp_path / "fundamentals_unused_insider"),
+            "--insider-db-path", str(tmp_path / "insider"),
+            "--universe", "PILOT_UNIVERSE",
+            "--score", "insider_buying",
+            "--start", "2018-06-01",
+            "--end", "2019-01-01",
+            "--step-months", "1",
+            "--horizon-days", "20",
+        ])
+
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "Fundamentals Signal IC: insider_buying" in out

@@ -22,7 +22,7 @@ class TestAxisIndependence:
 
         composite = RegimeDetector(RegimeConfig()).compute_composite(view, "AAA")
         ids = [obs.regime_id for obs in composite.axes.values()]
-        assert len(ids) == len(set(ids)) == 5
+        assert len(ids) == len(set(ids)) == len(RegimeAxis)
         assert set(composite.axes.keys()) == set(RegimeAxis)
 
     def test_axes_can_disagree_independently(self) -> None:

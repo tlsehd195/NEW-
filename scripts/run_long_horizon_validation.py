@@ -122,6 +122,9 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
+from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
+from storage.institutional_holding_repository import DuckDBInstitutionalHoldingRepository  # noqa: E402
+from storage.short_interest_repository import DuckDBShortInterestRepository  # noqa: E402
 
 from strategy_research.classification import (  # noqa: E402
     CandidateClassification,
@@ -133,24 +136,46 @@ from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pb
 from ml.ml_strategy import MLStrategy, MLStrategyParameters, ridge_cv_builder  # noqa: E402
 from strategy_research.ensemble_strategy import RankAverageEnsembleParameters, RankAverageEnsembleStrategy  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
+    abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
+    asset_turnover_change_score,
+    bid_ask_spread_score,
     book_to_market_score,
+    cash_holdings_score,
     cashflow_yield_score,
     combined_factor_score,
+    coskewness_score,
     dividend_growth_score,
+    downside_beta_score,
     earnings_yield_score,
     fifty_two_week_high_score,
     gross_profitability_score,
+    high_volume_return_premium_score,
+    idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
     illiquidity_score,
+    industry_momentum_score,
+    insider_buying_score,
+    institutional_ownership_change_score,
     long_term_reversal_score,
     low_beta_score,
     max_effect_score,
+    merton_distance_to_default_score,
+    net_operating_assets_score,
+    net_stock_issuance_score,
+    ohlson_o_score,
+    operating_leverage_score,
     piotroski_f_score,
     quality_minus_junk_score,
+    rd_expenditure_score,
+    residual_momentum_score,
+    return_seasonality_score,
+    rs_rating_score,
     sales_yield_score,
+    share_turnover_score,
     shareholder_yield_score,
+    short_interest_score,
     short_term_reversal_score,
     size_score,
     sloan_accruals_score,
@@ -235,6 +260,52 @@ _PRICE_FACTOR_CANDIDATES = (
     # above already established (ADR-0051's own precedent, explicitly
     # re-applied here rather than treated as a new decision).
     ("idiosyncratic_volatility", "Ang, Hodrick, Xing & Zhang 2006 idiosyncratic volatility anomaly, price-only", idiosyncratic_volatility_score),
+    # Session 36 continued -- O'Neil/IBD Relative Strength Rating, found
+    # while comparing this project against an external repository
+    # (dragon1086/prism-insight). Wired in before any real walk-forward
+    # result exists, per RULE 0.8. Raw (unpercentiled) score -- IBD's
+    # 1-99 percentile-rank transform is a monotonic transform and thus
+    # invariant for both Spearman IC and top-N portfolio sorting, so it
+    # is mathematically redundant here (see factor_scores.py docstring).
+    ("rs_rating", "O'Neil/IBD Relative Strength Rating, price-only", rs_rating_score),
+    # Session 36 continued -- Blitz, Huij & Martens 2011 Residual
+    # Momentum, found via a GitHub/web search for borrowable strategies
+    # (paperswithbacktest/awesome-systematic-trading). Wired in before
+    # any real walk-forward result exists, per RULE 0.8.
+    ("residual_momentum", "Blitz, Huij & Martens 2011 residual momentum, price-only", residual_momentum_score),
+    # Session 36 continued -- Heston & Sadka 2008 Return Seasonality,
+    # found via the same GitHub/web search. Wired in before any real
+    # walk-forward result exists, per RULE 0.8.
+    ("return_seasonality", "Heston & Sadka 2008 return seasonality, price-only", return_seasonality_score),
+    # Session 36 continued -- Amihud & Mendelson 1986 bid-ask spread
+    # anomaly, measured via the Corwin & Schultz 2012 high-low
+    # estimator, found while continuing to review OpenSourceAP/
+    # CrossSection's predictor catalogue per the account owner's "1 2
+    # 실행" instruction. Needs PriceBar.adjusted_high/.adjusted_low
+    # (added this session, ADR-0103) -- returns None for any security
+    # whose bars lack them. Wired in before any real walk-forward result
+    # exists, per RULE 0.8.
+    ("bid_ask_spread", "Amihud & Mendelson 1986 bid-ask spread anomaly (Corwin-Schultz estimator), price-only", bid_ask_spread_score),
+    # Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Boyer, Mitton &
+    # Vorkink 2010 expected idiosyncratic skewness (lottery-preference
+    # anomaly, realized-not-expected proxy, distinct from both max_effect
+    # and idiosyncratic_volatility -- see its own docstring) and Ang,
+    # Chen & Xing 2006 downside beta (a downside-conditioned Cov/Var
+    # estimate, distinct from low_beta's pooled-window beta). Both
+    # price-only, needing zero new data. Wired in before any real
+    # walk-forward result exists, per RULE 0.8.
+    ("idiosyncratic_skewness", "Boyer, Mitton & Vorkink 2010 expected idiosyncratic skewness, price-only", idiosyncratic_skewness_score),
+    ("downside_beta", "Ang, Chen & Xing 2006 downside risk / downside beta, price-only", downside_beta_score),
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Gervais, Kaniel &
+    # Mingelgrin 2001 high-volume return premium, price+volume only,
+    # needing zero new data. Wired in before any real walk-forward
+    # result exists, per RULE 0.8.
+    ("high_volume_return_premium", "Gervais, Kaniel & Mingelgrin 2001 high-volume return premium, price+volume", high_volume_return_premium_score),
+    # Session 36 continued (전략 더 찾아봐, 논문쪽에서 S급) -- Harvey &
+    # Siddique 2000 coskewness, one of the most-cited papers in the
+    # asset-pricing literature, price-only, needing zero new data. Wired
+    # in before any real walk-forward result exists, per RULE 0.8.
+    ("coskewness", "Harvey & Siddique 2000 coskewness, price-only", coskewness_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),
@@ -249,6 +320,50 @@ _FUNDAMENTALS_FACTOR_CANDIDATES = (
     # discipline ADR-0051/ADR-0053/ADR-0054 already established for
     # every earlier candidate here).
     ("sue", "Foster, Olsen & Shevlin 1984 standardized unexpected earnings, fundamentals-only", sue_score),
+    # Session 36 continued -- Pontiff & Woodgate 2008 / Fama & French
+    # 2008 net stock issuance and Hirshleifer, Hou, Teoh & Zhang 2004
+    # net operating assets, both found via a further GitHub/web search
+    # for borrowable strategies (bkelly-lab/ReplicationCrisis surfaced
+    # these as 2 of its 13 factor themes; built from the original
+    # papers since that repository's own exact formulas could not be
+    # verified from this sandbox). Wired in before any real
+    # walk-forward result exists for either, per RULE 0.8.
+    ("net_stock_issuance", "Pontiff & Woodgate 2008 / Fama & French 2008 net stock issuance, fundamentals-only", net_stock_issuance_score),
+    ("net_operating_assets", "Hirshleifer, Hou, Teoh & Zhang 2004 net operating assets, fundamentals-only", net_operating_assets_score),
+    # Session 36 continued -- Novy-Marx 2011 operating leverage and
+    # Titman, Wei & Xie 2004 abnormal corporate investment, both found
+    # by continuing this session's mining of the JKP "Global Factor Data
+    # Documentation" PDF per the account owner's "2번 진행해" instruction
+    # to keep searching that document's ~150-factor catalogue. Both are
+    # single-paper-cited JKP constructions used directly (verified
+    # against the PDF's exact formulas), unlike net_stock_issuance/
+    # net_operating_assets which needed an original-paper workaround.
+    # Wired in before any real walk-forward result exists for either,
+    # per RULE 0.8.
+    ("operating_leverage", "Novy-Marx 2011 operating leverage, fundamentals-only", operating_leverage_score),
+    ("abnormal_investment", "Titman, Wei & Xie 2004 abnormal corporate investment, fundamentals-only", abnormal_investment_score),
+    # Session 36 continued -- Palazzo 2012 cash holdings anomaly, found
+    # by a systematic pass through the ENTIRE JKP "Global Factor Data
+    # Documentation" PDF's cited-anomaly catalogue (Table 9, ~150
+    # factors across 13 clusters) per the account owner's "전부
+    # 확인하고 적용할만 한거 적용해" instruction -- not just the
+    # already-surfaced leads operating_leverage/abnormal_investment came
+    # from. Single-paper-cited JKP construction (cash_at), zero new
+    # data. Wired in before any real result exists, per RULE 0.8.
+    ("cash_holdings", "Palazzo 2012 cash holdings anomaly, fundamentals-only", cash_holdings_score),
+    # Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    # Ohlson 1980 O-Score, a second canonical distress-risk model
+    # alongside altman_z_score, fundamentals-only, zero new data (see
+    # ohlson_o_score's own docstring for the GNP-deflator omission's
+    # mathematical justification). Wired in before any real walk-forward
+    # result exists, per RULE 0.8.
+    ("ohlson_o", "Ohlson 1980 O-Score distress-risk model, fundamentals-only", ohlson_o_score),
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Fairfield & Yohn
+    # 2001 / Soliman 2008 change-in-asset-turnover anomaly, fundamentals-
+    # only, needs Revenues + Assets (both already ingested), zero new
+    # data. Wired in before any real walk-forward result exists, per
+    # RULE 0.8.
+    ("asset_turnover_change", "Fairfield & Yohn 2001 / Soliman 2008 change-in-asset-turnover anomaly, fundamentals-only", asset_turnover_change_score),
 )
 _HYBRID_FACTOR_CANDIDATES = (
     ("shareholder_yield", "O'Shaughnessy shareholder yield, fundamentals+price", shareholder_yield_score),
@@ -258,6 +373,29 @@ _HYBRID_FACTOR_CANDIDATES = (
     ("cashflow_yield", "O'Shaughnessy price-to-cashflow yield, fundamentals+price", cashflow_yield_score),
     ("size", "Banz 1981 size effect (SMB basis), fundamentals+price", size_score),
     ("altman_z", "Altman 1968 Z-Score as a stock-selection signal, fundamentals+price", altman_z_score),
+    # Session 36 continued -- Chan, Lakonishok & Sougiannis 2001 R&D
+    # expenditure anomaly, found via a GitHub/web search for borrowable
+    # strategies (paperswithbacktest/awesome-systematic-trading). Wired
+    # in before any real walk-forward result exists, per RULE 0.8. Needs
+    # `ResearchAndDevelopmentExpense` -- see `ingest_fundamentals_data.py`'s
+    # now-extended `_DEFAULT_CONCEPTS`.
+    ("rd_expenditure", "Chan, Lakonishok & Sougiannis 2001 R&D expenditure anomaly, fundamentals+price", rd_expenditure_score),
+    # Session 36 continued (일단 우리 전략을 최대한 늘리자) -- Datar, Naik &
+    # Radcliffe 1998 share turnover liquidity anomaly, a third
+    # independent liquidity proxy alongside illiquidity/bid_ask_spread
+    # (see share_turnover_score's own docstring for how it differs from
+    # both). Needs CommonStockSharesOutstanding (already ingested) +
+    # volume (already a required PriceBar field), fundamentals+price.
+    # Wired in before any real walk-forward result exists, per RULE 0.8.
+    ("share_turnover", "Datar, Naik & Radcliffe 1998 share turnover liquidity anomaly, fundamentals+price", share_turnover_score),
+    # Session 36 continued (구현 할 수 있는 s급 논문들 구현하거나 더 찾아) --
+    # Merton 1974 structural credit-risk model via Bharath & Shumway
+    # 2008's naive distance-to-default simplification, fundamentals+
+    # price, zero new data, a genuinely different FAMILY from
+    # altman_z/ohlson_o (market-based structural model, not an
+    # accounting-ratio discriminant/logit model). Wired in before any
+    # real walk-forward result exists, per RULE 0.8.
+    ("merton_dd", "Merton 1974 / Bharath & Shumway 2008 naive distance-to-default, fundamentals+price", merton_distance_to_default_score),
 )
 _UNIVERSE_FACTOR_CANDIDATES = (
     ("quality_minus_junk", "Asness, Frazzini & Pedersen quality-minus-junk (3-pillar simplification), cross-sectional", quality_minus_junk_score),
@@ -273,6 +411,50 @@ _UNIVERSE_FACTOR_CANDIDATES = (
     # class of concern the SLB/size concentration finding already
     # raised for a different candidate), not a reason to exclude it.
     ("combined_factor", "9-leg rank-averaged combination of every Session 36 sign-matching candidate, cross-sectional", combined_factor_score),
+    # Session 36 continued (가능한 많이 전략을 더 찾아봐) -- Moskowitz &
+    # Grinblatt 1999 industry momentum, cross-sectional (needs every
+    # security's own sector via data_infra.universe.get_sector, ADR-0058
+    # real SEC EDGAR SIC data). Wired in before any real walk-forward
+    # result exists, per RULE 0.8.
+    ("industry_momentum", "Moskowitz & Grinblatt 1999 industry momentum, cross-sectional", industry_momentum_score),
+)
+# Session 36 continued (ADR-0086) -- sourced from a THIRD, distinct
+# DuckDB catalog (--insider-db-path, SEC Form 4 filings via
+# ingest_insider_transactions.py) rather than --fundamentals-db-path,
+# so kept as its own tuple/CLI flag rather than merged into
+# _FUNDAMENTALS_FACTOR_CANDIDATES -- but insider_buying_score's own
+# signature is (security_id, as_of_time, repository), identical in
+# shape to every score in _FUNDAMENTALS_FACTOR_CANDIDATES, so it reuses
+# _fundamentals_factor_factory/FundamentalsFactorStrategy unchanged,
+# just with the insider repository passed in the "fundamentals_repository"
+# slot (same reuse `compute_fundamentals_ic_from_catalog.py` already
+# applies for its own _INSIDER_SCORES branch). Wired in before any real
+# IC result exists for it, same RULE 0.8 discipline as `sue` above.
+_INSIDER_FACTOR_CANDIDATES = (
+    ("insider_buying", "Lakonishok & Lee 2001 / Seyhun 1986 net insider-purchase ratio, insider-transactions-only", insider_buying_score),
+)
+# Session 36 continued (ADR-0099) -- same reasoning as
+# _INSIDER_FACTOR_CANDIDATES immediately above, sourced from a FOURTH,
+# distinct DuckDB catalog (--short-interest-db-path, a local FINRA-
+# derived CSV via ingest_short_interest_data.py) rather than any
+# existing --*-db-path flag. short_interest_score's own signature is
+# also (security_id, as_of_time, repository), so it reuses
+# _fundamentals_factor_factory unchanged, same as insider_buying above.
+_SHORT_INTEREST_FACTOR_CANDIDATES = (
+    ("short_interest", "Asquith, Pathak & Ritter 2005 short interest anomaly, short-interest-reports-only", short_interest_score),
+)
+# Session 36 continued (ADR-0104) -- same reasoning as
+# _SHORT_INTEREST_FACTOR_CANDIDATES immediately above, sourced from a
+# FIFTH, distinct DuckDB catalog (--institutional-db-path, a local SEC
+# Form 13F-derived CSV via ingest_institutional_holdings.py) rather than
+# any existing --*-db-path flag. The account owner's own idea this
+# session (institutional investors, not retail, are widely believed to
+# move most large-cap prices -- can this project track them?).
+# institutional_ownership_change_score's own signature is also
+# (security_id, as_of_time, repository), so it reuses
+# _fundamentals_factor_factory unchanged, same as short_interest above.
+_INSTITUTIONAL_FACTOR_CANDIDATES = (
+    ("institutional_ownership_change", "Chen, Jegadeesh & Wermers 2000 institutional-holdings-change anomaly, institutional-holdings-only", institutional_ownership_change_score),
 )
 
 
@@ -357,6 +539,37 @@ def main() -> int:
             "entirely and every other candidate runs exactly as before this flag existed."
         ),
     )
+    parser.add_argument(
+        "--insider-db-path", type=Path, default=None,
+        help=(
+            "Path to the DuckDB catalog scripts/ingest_insider_transactions.py already "
+            "populated (ADR-0086). Optional -- when omitted, the 'insider_buying' "
+            "candidate (SEC Form 4-based, src/strategy_research/factor_scores.py's "
+            "insider_buying_score) is skipped entirely and every other candidate runs "
+            "exactly as before this flag existed."
+        ),
+    )
+    parser.add_argument(
+        "--short-interest-db-path", type=Path, default=None,
+        help=(
+            "Path to the DuckDB catalog scripts/ingest_short_interest_data.py already "
+            "populated (ADR-0099). Optional -- when omitted, the 'short_interest' "
+            "candidate (FINRA-based, src/strategy_research/factor_scores.py's "
+            "short_interest_score) is skipped entirely and every other candidate runs "
+            "exactly as before this flag existed."
+        ),
+    )
+    parser.add_argument(
+        "--institutional-db-path", type=Path, default=None,
+        help=(
+            "Path to the DuckDB catalog scripts/ingest_institutional_holdings.py already "
+            "populated (ADR-0104). Optional -- when omitted, the "
+            "'institutional_ownership_change' candidate (SEC Form 13F-based, "
+            "src/strategy_research/factor_scores.py's "
+            "institutional_ownership_change_score) is skipped entirely and every other "
+            "candidate runs exactly as before this flag existed."
+        ),
+    )
     parser.add_argument("--initial-capital", type=float, default=10_000.0, help="Matches PAPER_CAPITAL_USD (broker.paper.us_longterm_config), not a currency-converted figure")
     parser.add_argument("--train-fraction", type=float, default=0.6, help="Chronological split: fraction of [start,end] reserved for TRAIN (fixed before this script's first real-data run, never tuned against a result)")
     parser.add_argument("--validation-fraction", type=float, default=0.2, help="Chronological split: fraction reserved for VALIDATION; remaining fraction is the held-out TEST window")
@@ -420,6 +633,21 @@ def main() -> int:
     if args.fundamentals_db_path is not None:
         fundamentals_engine = StorageEngine(StorageConfig(root_dir=args.fundamentals_db_path))
         fundamentals_repository = DuckDBFundamentalsRepository(fundamentals_engine)
+    insider_engine = None
+    insider_repository = None
+    if args.insider_db_path is not None:
+        insider_engine = StorageEngine(StorageConfig(root_dir=args.insider_db_path))
+        insider_repository = DuckDBInsiderRepository(insider_engine)
+    short_interest_engine = None
+    short_interest_repository = None
+    if args.short_interest_db_path is not None:
+        short_interest_engine = StorageEngine(StorageConfig(root_dir=args.short_interest_db_path))
+        short_interest_repository = DuckDBShortInterestRepository(short_interest_engine)
+    institutional_engine = None
+    institutional_repository = None
+    if args.institutional_db_path is not None:
+        institutional_engine = StorageEngine(StorageConfig(root_dir=args.institutional_db_path))
+        institutional_repository = DuckDBInstitutionalHoldingRepository(institutional_engine)
 
     try:
         # Real SPY TOTAL_RETURN benchmark, same construction as Phase
@@ -630,6 +858,39 @@ def main() -> int:
                     _universe_factor_factory(security_ids, fundamentals_repository, repository, score_fn, f"{name}_v1"),
                 ))
 
+        if insider_repository is not None:
+            # ADR-0086: gated independently of --fundamentals-db-path
+            # above -- a run can supply --insider-db-path alone (or
+            # both flags together), since this candidate needs only the
+            # insider-transactions catalog, never the fundamentals one.
+            for name, hypothesis, score_fn in _INSIDER_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _fundamentals_factor_factory(security_ids, insider_repository, score_fn, f"{name}_v1"),
+                ))
+
+        if short_interest_repository is not None:
+            # ADR-0099: gated independently of every other --*-db-path
+            # flag, same reasoning as insider_repository immediately
+            # above -- this candidate needs only the short-interest
+            # catalog.
+            for name, hypothesis, score_fn in _SHORT_INTEREST_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _fundamentals_factor_factory(security_ids, short_interest_repository, score_fn, f"{name}_v1"),
+                ))
+
+        if institutional_repository is not None:
+            # ADR-0104: gated independently of every other --*-db-path
+            # flag, same reasoning as short_interest_repository
+            # immediately above -- this candidate needs only the
+            # institutional-holdings catalog.
+            for name, hypothesis, score_fn in _INSTITUTIONAL_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _fundamentals_factor_factory(security_ids, institutional_repository, score_fn, f"{name}_v1"),
+                ))
+
         # experiment_id: deterministic from caller-supplied run
         # configuration only (never datetime.now()/utcnow() -- rule
         # 0-11) -- the SAME configuration run twice always yields the
@@ -662,6 +923,17 @@ def main() -> int:
                 # count -- a materially different report from an
                 # otherwise-identical configuration without it.
                 "fundamentals_included": fundamentals_repository is not None,
+                # Session 36 continued (ADR-0086): a run WITH
+                # --insider-db-path adds the insider_buying candidate --
+                # same collision-prevention reasoning as
+                # fundamentals_included immediately above.
+                "insider_included": insider_repository is not None,
+                # Session 36 continued (ADR-0099): identical collision-
+                # prevention reasoning for --short-interest-db-path.
+                "short_interest_included": short_interest_repository is not None,
+                # Session 36 continued (ADR-0104): identical collision-
+                # prevention reasoning for --institutional-db-path.
+                "institutional_included": institutional_repository is not None,
                 # The actual candidate set evaluated -- catches "a
                 # candidate was added/removed" (e.g. 6 vs 8 candidates
                 # above). NOT a full code-identity/git-commit hash (this
@@ -882,6 +1154,12 @@ def main() -> int:
         engine.close()
         if fundamentals_engine is not None:
             fundamentals_engine.close()
+        if insider_engine is not None:
+            insider_engine.close()
+        if short_interest_engine is not None:
+            short_interest_engine.close()
+        if institutional_engine is not None:
+            institutional_engine.close()
 
 
 if __name__ == "__main__":

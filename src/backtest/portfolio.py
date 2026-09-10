@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from backtest.enums import OrderSide
 
@@ -35,6 +35,20 @@ class PositionView:
     security_id: str
     quantity: float
     average_cost: float
+    # Session 36 continued (external review remediation): this
+    # position's real, mark-to-market value (`quantity * current_price`)
+    # when the caller building this view had a real current price for
+    # it -- `None` (the default, unchanged for every pre-existing
+    # caller) when it did not. `risk.engine.DeterministicPortfolioRiskEngine`
+    # uses this, falling back to `quantity * average_cost` (cost basis)
+    # only when it is absent, matching this project's existing "a real
+    # current price marks to market; absent one, cost basis is the best
+    # honest fallback" precedent (`orchestration.paper_runner.
+    # _portfolio_view`'s own docstring). Cost-basis-only position
+    # weighting understates a position's real market weight once its
+    # price has moved away from cost, letting real gross/concentration/
+    # sector exposure exceed a configured risk limit undetected.
+    market_value: Optional[float] = None
 
 
 @dataclass(frozen=True)

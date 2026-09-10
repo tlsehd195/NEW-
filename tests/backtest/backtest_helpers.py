@@ -58,23 +58,39 @@ def make_bars(
     *,
     volume: float = 200_000.0,
     source: str = "test_source",
+    highs: Sequence[float] | None = None,
+    lows: Sequence[float] | None = None,
+    adjusted_highs: Sequence[float] | None = None,
+    adjusted_lows: Sequence[float] | None = None,
 ) -> list[PriceBar]:
+    """`highs`/`lows`/`adjusted_highs`/`adjusted_lows` are optional,
+    per-day overrides (each, if given, must be the same length as
+    `days`) -- added Session 36 continued for
+    `bid_ask_spread_score`'s tests, which need explicit control over a
+    day's high/low (and their split-adjusted counterparts) rather than
+    the default fixed +-0.5% band derived from `close`. Every existing
+    caller that does not pass them keeps the exact same bars as before."""
     assert len(days) == len(closes)
+    for name, values in (("highs", highs), ("lows", lows), ("adjusted_highs", adjusted_highs), ("adjusted_lows", adjusted_lows)):
+        if values is not None:
+            assert len(values) == len(days), f"{name} must be the same length as days"
     bars = []
-    for d, close in zip(days, closes):
+    for i, (d, close) in enumerate(zip(days, closes)):
         bars.append(
             PriceBar(
                 security_id=security_id,
                 timestamp=checkpoint(d, 0),
                 open=close,
-                high=close * 1.005,
-                low=close * 0.995,
+                high=highs[i] if highs is not None else close * 1.005,
+                low=lows[i] if lows is not None else close * 0.995,
                 close=close,
                 volume=volume,
                 available_time=checkpoint(d),
                 ingestion_time=checkpoint(d),
                 provenance=make_provenance(f"{security_id}-{d.isoformat()}", d, source),
                 adjusted_close=close,
+                adjusted_high=adjusted_highs[i] if adjusted_highs is not None else None,
+                adjusted_low=adjusted_lows[i] if adjusted_lows is not None else None,
             )
         )
     return bars

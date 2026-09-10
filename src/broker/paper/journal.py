@@ -29,6 +29,7 @@ def build_trade_record(
     position_after: float,
     realized_pnl: Optional[float] = None,
     realized_return: Optional[float] = None,
+    exit_reason: Optional[str] = None,
     experiment_id: Optional[str] = None,
 ) -> TradeRecord:
     """`decision_id`/`position_after`/`realized_pnl` are caller-supplied
@@ -38,13 +39,16 @@ def build_trade_record(
     `position_after`/`realized_pnl` require the account state at the
     moment this fill was applied, which this module deliberately does
     not hold (no side-effecting account access -- a pure bridge
-    function only)."""
+    function only). `exit_reason` (Session 36 continued -- see
+    `TradeRecord.exit_reason`'s own docstring) is likewise caller-
+    supplied: this module has no way to know WHY a SELL happened, only
+    that one did."""
     fill = fill_record.fill
     return TradeRecord(
         trade_id=trade_id, decision_id=decision_id, order_id=fill_record.client_order_id,
         security_id=fill.security_id, timestamp=fill.execution_time, side=fill.side, quantity=fill.quantity,
         execution_price=fill.price, reference_price=fill.reference_price, slippage=fill.slippage_cost,
         transaction_cost=fill.commission + fill.spread_cost, position_after=position_after, fill=fill,
-        realized_pnl=realized_pnl, realized_return=realized_return,
+        realized_pnl=realized_pnl, realized_return=realized_return, exit_reason=exit_reason,
         provenance=TradeProvenance.PAPER_TRADING, experiment_id=experiment_id,
     )

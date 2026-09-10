@@ -32,11 +32,11 @@ def empty_portfolio(as_of_time: datetime = _DEFAULT_AS_OF, cash: float = 100_000
 
 def portfolio_holding(
     as_of_time: datetime, security_id: str, quantity: float = 100.0, average_cost: float = 90.0,
-    cash: float = 50_000.0, portfolio_value: float = 100_000.0,
+    cash: float = 50_000.0, portfolio_value: float = 100_000.0, market_value: Optional[float] = None,
 ) -> PortfolioView:
     return PortfolioView(
         as_of_time=as_of_time, cash=cash,
-        positions={security_id: PositionView(security_id, quantity, average_cost)},
+        positions={security_id: PositionView(security_id, quantity, average_cost, market_value=market_value)},
         portfolio_value=portfolio_value,
     )
 

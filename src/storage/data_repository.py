@@ -95,6 +95,20 @@ class DuckDBDataRepository:
         # add_corporate_action so a write is never served stale.
         self._bars_cache: dict[str, list[PriceBar]] = {}
         self._corporate_actions_cache: dict[str, list[CorporateAction]] = {}
+        # Session 36 continued addition: every `read_parquet(...)` call
+        # over `self._price_bars_dir` below passes `union_by_name=true`.
+        # `PriceBar`'s own columns have grown before (e.g. `vwap`/
+        # `trade_count`) and will again -- each `write_batch` call always
+        # writes the CURRENT full `PRICE_BAR_COLUMNS` tuple, but a file
+        # written before a given column existed has a genuinely different
+        # Arrow schema (missing that column entirely, not just NULL in
+        # it). DuckDB's plain multi-file `read_parquet(glob)` is not
+        # guaranteed to reconcile differing schemas across files in the
+        # glob; `union_by_name=true` makes that reconciliation explicit
+        # (missing columns read back as NULL), so an old real ingestion
+        # someone already has on disk is never broken by a later,
+        # additive schema change like this session's `adjusted_high`/
+        # `adjusted_low` addition.
 
     # -- DataRepository Protocol --------------------------------------
 
@@ -110,7 +124,7 @@ class DuckDBDataRepository:
             bars: list[PriceBar] = []
         else:
             sql = (
-                f"SELECT * FROM read_parquet('{glob_pattern(self._price_bars_dir)}') "
+                f"SELECT * FROM read_parquet('{glob_pattern(self._price_bars_dir)}', union_by_name=true) "
                 "WHERE security_id = ? ORDER BY timestamp"
             )
             cur = self._engine.connection.execute(sql, [security_id])
@@ -208,7 +222,7 @@ class DuckDBDataRepository:
         files = existing_files(self._price_bars_dir)
         if not files:
             return ()
-        sql = f"SELECT * FROM read_parquet('{glob_pattern(self._price_bars_dir)}')"
+        sql = f"SELECT * FROM read_parquet('{glob_pattern(self._price_bars_dir)}', union_by_name=true)"
         cur = self._engine.connection.execute(sql)
         return tuple(row_to_price_bar(r) for r in _rows(cur))
 
@@ -230,7 +244,7 @@ class DuckDBDataRepository:
             placeholders = ", ".join(["?"] * len(security_ids))
             sql = (
                 "SELECT DISTINCT security_id, timestamp, provenance_source, provenance_data_version "
-                f"FROM read_parquet('{glob_pattern(self._price_bars_dir)}') "
+                f"FROM read_parquet('{glob_pattern(self._price_bars_dir)}', union_by_name=true) "
                 f"WHERE security_id IN ({placeholders})"
             )
             cur = self._engine.connection.execute(sql, security_ids)

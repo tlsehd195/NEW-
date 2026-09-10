@@ -115,3 +115,22 @@ class TestSelectRidgeViaExpandingWindowCv:
         ]
         chosen = select_ridge_via_expanding_window_cv(samples, ["x"], folds=3)
         assert chosen in CANDIDATE_RIDGES
+
+
+class TestCandidateRidgesGridADR0087:
+    """ADR-0087: the account owner's "strengthen regularization"
+    direction -- the CV search grid was widened upward (never had
+    weaker candidates removed) so a materially stronger penalty than
+    the prior maximum (100.0) is reachable if warranted."""
+
+    def test_grid_includes_the_new_stronger_candidates(self) -> None:
+        assert 500.0 in CANDIDATE_RIDGES
+        assert 1000.0 in CANDIDATE_RIDGES
+
+    def test_every_prior_candidate_value_is_still_present(self) -> None:
+        # Widening must never silently drop a weaker option a real
+        # prior run may have selected.
+        assert {0.001, 0.01, 0.1, 1.0, 10.0, 100.0} <= set(CANDIDATE_RIDGES)
+
+    def test_grid_is_sorted_ascending(self) -> None:
+        assert list(CANDIDATE_RIDGES) == sorted(CANDIDATE_RIDGES)

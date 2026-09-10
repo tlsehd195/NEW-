@@ -75,6 +75,51 @@ class TestConcentrationLimit:
         assert checked.final_target_weight <= 0.20 + 1e-9
 
 
+class TestPositionWeightUsesMarketValueNotCostBasis:
+    """External review finding (Session 36 continued): `position_weights`
+    used to be `quantity * average_cost / portfolio_value` -- cost basis
+    in the numerator, mark-to-market in the denominator (`portfolio_
+    value` is already real market value). A position whose price rose
+    well past its cost basis had its real, current weight understated,
+    letting real concentration/gross exposure exceed a configured limit
+    undetected. `PositionView.market_value` (new, optional) fixes this;
+    absent (the default, every pre-existing caller/test unaffected),
+    behavior is unchanged."""
+
+    def test_position_weight_reflects_real_appreciation_not_stale_cost(self) -> None:
+        # Bought 100 shares at $10 (cost basis $1,000) -- now worth $100/
+        # share ($10,000 real market value). All cash is in this one
+        # position, so portfolio_value == this position's own real value.
+        held = portfolio_holding(
+            T, "BBB", quantity=100.0, average_cost=10.0, cash=0.0,
+            portfolio_value=10_000.0, market_value=10_000.0,
+        )
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_drawdown=None, max_portfolio_volatility=None))
+        sizer = DeterministicPositionSizer()
+        hold_decision = make_decision(T, action=DecisionAction.HOLD)
+        sizing = sizer.size("BBB", T, hold_decision, FakePrediction(0.10), None, held, current_price=100.0)
+        checked = engine.assess("BBB", T, sizing, held, current_price=100.0, value_history=None)
+
+        # The real, current weight -- 100% of the portfolio, not the
+        # stale ~10% a cost-basis numerator over a mark-to-market
+        # denominator would have reported.
+        assert checked.risk_state.position_weights["BBB"] == pytest.approx(1.0)
+        assert checked.risk_state.concentration == pytest.approx(1.0)
+        assert checked.risk_state.gross_exposure == pytest.approx(1.0)
+
+    def test_absent_market_value_falls_back_to_cost_basis_unchanged(self) -> None:
+        """No behavior change for a caller that never supplies
+        `market_value` (every pre-existing production/test call site,
+        until this session's own `orchestration.paper_runner` wiring)."""
+        held = portfolio_holding(T, "BBB", quantity=100.0, average_cost=10.0, cash=9_000.0, portfolio_value=10_000.0)
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(max_drawdown=None, max_portfolio_volatility=None))
+        sizer = DeterministicPositionSizer()
+        hold_decision = make_decision(T, action=DecisionAction.HOLD)
+        sizing = sizer.size("BBB", T, hold_decision, FakePrediction(0.10), None, held, current_price=100.0)
+        checked = engine.assess("BBB", T, sizing, held, current_price=100.0, value_history=None)
+        assert checked.risk_state.position_weights["BBB"] == pytest.approx(0.10)  # 1,000 cost / 10,000 -- unchanged
+
+
 class TestCashMinimumViolation:
     def test_cash_minimum_breach_reduces_the_position(self) -> None:
         config = PositionSizingConfig(max_position_weight=0.90, cost_safety_margin=0.0)
@@ -288,6 +333,103 @@ class TestLiquidityViolation:
         assert checked.status == RiskCheckStatus.PASS
 
 
+class TestReentryCooldown:
+    """Session 36 continued -- found comparing this project against an
+    external repository (dragon1086/prism-insight). `last_exit_time_by_
+    security` is caller-supplied and opt-in, mirroring `liquidity_state`
+    (enforced only when the caller supplies it for THIS call, simply
+    skipped otherwise) rather than `sector_by_security` (fail-closed
+    when configured but the mapping/entry is missing) -- deliberately,
+    since "this security has no recorded recent exit" is the ordinary
+    case (a fresh entry), not a data gap. See RiskConfig.
+    reentry_cooldown_days's own docstring."""
+
+    def test_a_recent_exit_within_the_cooldown_window_rejects(self) -> None:
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess(
+            "AAA", T, sizing, empty_portfolio(), current_price=50.0,
+            last_exit_time_by_security={"AAA": utc(2024, 5, 29)},  # 3 days before T (2024-06-01)
+        )
+        assert checked.status == RiskCheckStatus.REJECT
+        assert checked.reason == "reentry_cooldown_breached"
+        assert "reentry_cooldown" in checked.breached_limits
+
+    def test_an_exit_exactly_at_the_cooldown_boundary_is_no_longer_blocked(self) -> None:
+        """`days_since_exit < reentry_cooldown_days` is a strict `<` --
+        `reentry_cooldown_days=5` means "wait AT LEAST 5 days," so
+        exactly 5 days since exit has already cleared the cooldown
+        (PASS), while one day short of it (4 days) still rejects."""
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None))
+
+        at_boundary = engine.assess(
+            "AAA", T, sizing, empty_portfolio(), current_price=50.0,
+            last_exit_time_by_security={"AAA": utc(2024, 5, 27)},  # exactly 5 days before T
+        )
+        assert at_boundary.status == RiskCheckStatus.PASS
+
+        just_inside = engine.assess(
+            "AAA", T, sizing, empty_portfolio(), current_price=50.0,
+            last_exit_time_by_security={"AAA": utc(2024, 5, 28)},  # 4 days before T -- still within cooldown
+        )
+        assert just_inside.status == RiskCheckStatus.REJECT
+        assert just_inside.reason == "reentry_cooldown_breached"
+
+    def test_an_exit_past_the_cooldown_window_does_not_reject(self) -> None:
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess(
+            "AAA", T, sizing, empty_portfolio(), current_price=50.0,
+            last_exit_time_by_security={"AAA": utc(2024, 5, 20)},  # well past 5 days before T
+        )
+        assert checked.status == RiskCheckStatus.PASS
+
+    def test_a_security_absent_from_the_mapping_is_not_gated(self) -> None:
+        """The ordinary case: this security was never exited (or the
+        caller has no record of it) -- must PASS, not fail closed, since
+        that is not the same as "cooldown data is unavailable" the way a
+        missing sector entry is."""
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess(
+            "AAA", T, sizing, empty_portfolio(), current_price=50.0,
+            last_exit_time_by_security={"BBB": utc(2024, 5, 30)},
+        )
+        assert checked.status == RiskCheckStatus.PASS
+
+    def test_omitted_mapping_entirely_is_not_gated(self) -> None:
+        """Mirrors `test_omitted_liquidity_state_is_not_gated` -- a
+        caller that has not wired up exit-history tracking at all sees
+        no change in behavior, even with reentry_cooldown_days set."""
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess("AAA", T, sizing, empty_portfolio(), current_price=50.0, last_exit_time_by_security=None)
+        assert checked.status == RiskCheckStatus.PASS
+
+    def test_not_configured_skips_the_check_even_with_a_recent_exit_supplied(self) -> None:
+        sizing = _sized_buy()
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(reentry_cooldown_days=None, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess(
+            "AAA", T, sizing, empty_portfolio(), current_price=50.0,
+            last_exit_time_by_security={"AAA": utc(2024, 5, 31)},
+        )
+        assert checked.status == RiskCheckStatus.PASS
+
+    def test_hold_and_sell_are_never_blocked_by_the_cooldown(self) -> None:
+        held = portfolio_holding(T, "AAA", quantity=100.0, average_cost=90.0)
+        sizer = DeterministicPositionSizer()
+        hold_decision = make_decision(T, action=DecisionAction.HOLD)
+        sizing = sizer.size("AAA", T, hold_decision, FakePrediction(0.10), None, held, current_price=95.0)
+        engine = DeterministicPortfolioRiskEngine(RiskConfig(reentry_cooldown_days=5, max_drawdown=None, max_portfolio_volatility=None))
+        checked = engine.assess(
+            "AAA", T, sizing, held, current_price=95.0,
+            last_exit_time_by_security={"AAA": utc(2024, 5, 31)},
+        )
+        assert checked.status == RiskCheckStatus.PASS
+        assert checked.reason == "no_new_risk_limit_applicable"
+
+
 class TestUnknownPortfolioState:
     def test_missing_portfolio_state_is_unknown(self) -> None:
         sizing = _sized_buy()
@@ -343,6 +485,12 @@ class TestInvalidConfiguration:
     def test_risk_config_rejects_too_small_min_history(self) -> None:
         with pytest.raises(ValueError):
             RiskConfig(min_history_for_volatility=1)
+
+    def test_risk_config_rejects_non_positive_reentry_cooldown_days(self) -> None:
+        with pytest.raises(ValueError):
+            RiskConfig(reentry_cooldown_days=0)
+        with pytest.raises(ValueError):
+            RiskConfig(reentry_cooldown_days=-1)
 
 
 class TestNaNAndInfiniteValues:

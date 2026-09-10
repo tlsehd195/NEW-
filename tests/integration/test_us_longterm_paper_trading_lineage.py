@@ -102,6 +102,18 @@ class TestUSLongTermPaperTradingFullLineage:
     def test_ingestion_to_performance_report_survives_restart(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("MARKET_DATA_API_KEY", "test-key")
         buy_day, mark_day = utc(2024, 1, 2), utc(2024, 6, 3)
+        # Session 36 continued (external review remediation): a bar's
+        # `available_time` is now end-of-session (20:00 UTC) on its own
+        # date, not the bare midnight-UTC event date `buy_day` itself
+        # (`data_infra.provider.bar_available_time`) -- the actual
+        # `as_of` moment passed to `run_buy_and_hold_paper_session` must
+        # be realistically AFTER that, matching how a real caller (e.g.
+        # `scripts/run_paper_trading_cycle.py`, via `backtest.clock.
+        # build_daily_checkpoints`'s own 20:00 UTC default) would
+        # actually invoke it. `buy_day` itself stays at midnight --
+        # still used below to match `PriceBar.timestamp` (the bar's own
+        # event date), a separate field from `available_time`.
+        buy_time = utc(2024, 1, 2, 20)
 
         # -- 1. Real (non-mock) provider, real IngestionRunner, real
         # on-disk DuckDB repository for every symbol in the subset. --
@@ -139,7 +151,7 @@ class TestUSLongTermPaperTradingFullLineage:
         journal_repo = DuckDBTradeJournalRepository(engine)
 
         buy_result = run_buy_and_hold_paper_session(
-            _UNIVERSE_SUBSET, mds, session, buy_time=buy_day, configuration_version="cfg-v1",
+            _UNIVERSE_SUBSET, mds, session, buy_time=buy_time, configuration_version="cfg-v1",
             request_repository=request_repo, response_repository=response_repo,
         )
         assert len(buy_result.orders) == 3

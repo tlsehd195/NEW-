@@ -176,7 +176,7 @@ UNKNOWN where Phase 20 also found nothing.
 | Symbol limits | **UNKNOWN** | **UNKNOWN** |
 | Rate limits | **UNKNOWN** | **UNKNOWN** |
 | Corporate action availability | Yes -- "explicit, separate Split/Dividend APIs" per Tier 2 sources (ADR-0025) | **No** -- `StooqDataProvider` documents `supports_corporate_actions=False` by design (Phase 22); no corporate-action feed found in any source |
-| Adjusted/unadjusted price availability | Both -- raw OHLCV plus a separate adjusted-close field per Tier 2 sources | Unadjusted (raw) CSV only; `StooqDataProvider.normalize()` always sets `adjusted_close=None` |
+| Adjusted/unadjusted price availability | Both -- raw OHLCV plus separate adjusted-close/-high/-low fields per Tier 2 sources (the latter two parsed starting Session 36 continued, ADR-0103 -- always present in the same response, just never read before) | Unadjusted (raw) CSV only; `StooqDataProvider.normalize()` always sets `adjusted_close`/`adjusted_high`/`adjusted_low` to `None` |
 | Delayed/real-time | **UNKNOWN** (irrelevant to this project's EOD/long-term use case either way) | **UNKNOWN** |
 | Licensing / redistribution restrictions | **UNKNOWN** -- not found in Tier 2 sources | **UNKNOWN** -- ADR-0025 already flags Stooq as having "weakest documentation of licensing/redistribution terms" among the candidates considered |
 

@@ -79,6 +79,10 @@ class TestNormalize:
         assert bars[0].adjusted_close is None  # never fabricated -- Stooq's adjustment shape is unconfirmed
         assert bars[0].timestamp == utc(2024, 1, 2)
         assert bars[0].provenance.source == "stooq"
+        # External review finding (Session 36 continued): matches the
+        # identical fix/test in test_tiingo_provider.py -- see
+        # data_infra.provider.bar_available_time's own docstring.
+        assert bars[0].available_time == utc(2024, 1, 2, 20)
 
     def test_data_version_is_stable_across_different_fetched_as_of_values(self) -> None:
         transport = _StubTransport(_VALID_CSV)

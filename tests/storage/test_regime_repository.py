@@ -58,7 +58,7 @@ class TestIdempotency:
         c2 = regime_repo.record_composite(composite)
         assert c1.composite_id == c2.composite_id
         assert len(regime_repo.list_composites()) == 1
-        assert len(regime_repo.list_observations(subject_id="AAA")) == 5
+        assert len(regime_repo.list_observations(subject_id="AAA")) == len(RegimeAxis)
         engine.close()
 
     def test_recording_the_same_observation_twice_does_not_duplicate(self, tmp_path) -> None:

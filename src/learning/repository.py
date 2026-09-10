@@ -7,6 +7,7 @@ See docs/specifications/PHASE-9-learning-engine.md section 15.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Optional, Protocol
 
 from learning.models import CandidateModelArtifact, EvaluationResult, LearningExperimentRecord, TrainingDataset
@@ -64,9 +65,23 @@ class CandidateModelRepository(Protocol):
 
 
 class InMemoryCandidateModelRepository:
+    """Assigns its own `candidate_id` at record time (ignoring whatever
+    id the caller's trainer put on the artifact) -- external review
+    finding (Session 36 continued): trainers each carry their own
+    process-local `_IdAllocator` starting at 1 (see
+    `learning.trainer`/`evolution.trainer`), so `evolution.pipeline
+    .generate_candidate_batch`'s documented multi-trainer use produces
+    multiple candidates that all claim "CAND-000001". Mirrors
+    `storage.learning_repository.DuckDBCandidateModelRepository`, which
+    already reassigns `candidate_id` from its own sequence for the same
+    reason -- this in-memory reference implementation must do the same
+    so it isn't the one repository where that collision silently
+    overwrites a distinct candidate under a colliding id."""
+
     def __init__(self) -> None:
         self._candidates: dict[str, CandidateModelArtifact] = {}
         self._natural_keys: dict[tuple, str] = {}
+        self._next_id = 1
 
     @staticmethod
     def _key(c: CandidateModelArtifact) -> tuple:
@@ -77,6 +92,8 @@ class InMemoryCandidateModelRepository:
         existing_id = self._natural_keys.get(key)
         if existing_id is not None:
             return self._candidates[existing_id]
+        candidate = dataclasses.replace(candidate, candidate_id=f"CAND-{self._next_id:06d}")
+        self._next_id += 1
         self._candidates[candidate.candidate_id] = candidate
         self._natural_keys[key] = candidate.candidate_id
         return candidate
@@ -102,9 +119,18 @@ class EvaluationRepository(Protocol):
 
 
 class InMemoryEvaluationRepository:
+    """Assigns its own `evaluation_id` at record time -- same collision
+    reasoning as `InMemoryCandidateModelRepository` above: `Evaluator`
+    carries a process-local `_IdAllocator`, so two `Evaluator` instances
+    (or `evolution.pipeline.evaluate_candidate_batch` runs sharing one
+    across multiple candidates from colliding-id trainers) can produce
+    evaluations that both claim "EVAL-000001". Mirrors
+    `storage.learning_repository.DuckDBEvaluationRepository`."""
+
     def __init__(self) -> None:
         self._evaluations: dict[str, EvaluationResult] = {}
         self._natural_keys: dict[tuple, str] = {}
+        self._next_id = 1
 
     @staticmethod
     def _key(e: EvaluationResult) -> tuple:
@@ -115,6 +141,8 @@ class InMemoryEvaluationRepository:
         existing_id = self._natural_keys.get(key)
         if existing_id is not None:
             return self._evaluations[existing_id]
+        evaluation = dataclasses.replace(evaluation, evaluation_id=f"EVAL-{self._next_id:06d}")
+        self._next_id += 1
         self._evaluations[evaluation.evaluation_id] = evaluation
         self._natural_keys[key] = evaluation.evaluation_id
         return evaluation
