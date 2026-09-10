@@ -45,3 +45,43 @@ itself in this repo.
 - Editing `configs/live/**`, `src/broker/live/{kill_switch,safety_gate,
   approval}.py`, or `.env` without the user's explicit in-chat
   confirmation for that specific change — also hook-enforced.
+
+## Skill-observation capture (task-observer)
+
+Before the first tool call of any session — and before writing or
+proposing a plan, not merely before executing one — invoke the
+task-observer skill AND execute its Session Start Protocol (storage
+check, frontmatter scan, review trigger). Loading the skill and running
+the protocol are separate steps; a session that loads the file and stops
+has activated nothing. Any turn that will involve a tool call counts; do
+not classify the session as "too simple" from its opening message.
+
+After completing each task, check the observation records written this
+session and report a one-line summary (ids and titles, or "none logged
+and why").
+
+Loading a skill is not complete until you have queried the observation
+log for OPEN observations naming it and read their bodies:
+```
+grep -l "skill:.*<skill-name>" \
+  /home/user/NEW-/skill-observations/observation-log/*.md
+```
+Apply their insights to the current work, even if the skill file hasn't
+been updated yet. Run this at every skill load, however many skills load
+in one session.
+
+The task-observer workspace for this project is:
+```
+/home/user/NEW-/skill-observations
+```
+Every path the skill uses derives from that root and nothing else:
+```
+/home/user/NEW-/skill-observations/observation-log/
+/home/user/NEW-/skill-observations/cross-cutting-principles.md
+/home/user/NEW-/skill-updates/
+/home/user/NEW-/skill-updates/PENDING.md
+```
+Never resolve any of them from the current working directory. This
+project's skills are installed at project scope (`.agents/skills/` /
+`.claude/skills/`, committed to the repo), so the log is pinned inside
+the repo too, not at a user/global path.

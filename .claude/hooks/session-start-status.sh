@@ -8,6 +8,17 @@ if [ -f docs/PROJECT_STATUS.md ]; then
   STATUS_EXCERPT=$(head -c 4000 docs/PROJECT_STATUS.md)
 fi
 
+OBS_DIR="$(pwd)/skill-observations"
+OBS_MSG="Invoke the task-observer skill before the first tool call (see CLAUDE.md)."
+OPEN_COUNT=$(find "$OBS_DIR/observation-log" -maxdepth 1 -name '*.md' -exec grep -l '^status: open$' {} + 2>/dev/null | wc -l | tr -d ' ' || true)
+LAST_REVIEW=$(cat "$OBS_DIR/last-review-date.txt" 2>/dev/null || echo never)
+if [ "${OPEN_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+  OBS_MSG="$OBS_MSG $OPEN_COUNT open observations; last review: $LAST_REVIEW."
+  if [ "$LAST_REVIEW" = "never" ]; then
+    OBS_MSG="$OBS_MSG Offer the review."
+  fi
+fi
+
 CONTEXT=$(cat <<EOF
 Autonomous AI Investment System (aiinvest) — session context recovery:
 
@@ -27,6 +38,9 @@ known safety-critical files).
 
 --- docs/PROJECT_STATUS.md (excerpt, first 4000 chars) ---
 ${STATUS_EXCERPT}
+
+--- task-observer ---
+${OBS_MSG}
 EOF
 )
 
