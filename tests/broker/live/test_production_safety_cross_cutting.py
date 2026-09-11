@@ -260,18 +260,20 @@ class TestFailureRecoveryMatrixDefaultsToNoTrade:
         assert account.available is False
         assert account.cash is None  # never fabricated as 0.0
 
-    def test_position_unavailable_returns_an_explicit_empty_result_not_a_fabricated_position(self) -> None:
-        """MockBrokerAdapter's "account_unavailable" mode (its only
-        account/position failure simulation) returns `()` for
-        get_positions rather than a per-position `available=False`
-        marker -- a real, honestly-documented ambiguity between "no
-        positions held" and "positions unknown" this review surfaces as
-        a Known Issue rather than silently treating as equivalent to a
-        confirmed flat position (see docs/operations/
-        PRODUCTION-READINESS-MATRIX.md)."""
+    def test_position_unavailable_raises_never_a_fabricated_flat_position(self) -> None:
+        """ADR-0117: MockBrokerAdapter's "account_unavailable" mode used
+        to return `()` for get_positions -- indistinguishable from "no
+        positions held", the exact ambiguity this project's fail-closed
+        discipline exists to prevent. get_positions has no list-level
+        `available` field the way BrokerAccountSnapshot does, so it
+        raises instead (this fixes MockBrokerAdapter's own simulated
+        failure specifically -- the separate, still-open Toss-adapter
+        `()`-ambiguity noted in docs/operations/
+        PRODUCTION-READINESS-MATRIX.md's Positions row is a different,
+        real-adapter-specific limitation, not addressed here)."""
         adapter = MockBrokerAdapter(BrokerConfig(), failure_mode="account_unavailable")
-        positions = adapter.get_positions(as_of=utc(2024, 1, 2))
-        assert positions == ()
+        with pytest.raises(BrokerTransportError):
+            adapter.get_positions(as_of=utc(2024, 1, 2))
 
     def test_order_status_unavailable_via_capability_gap_is_unknown_not_guessed(self, monkeypatch) -> None:
         """Phase 21: TossBrokerAdapter.get_order_status is now

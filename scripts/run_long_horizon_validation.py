@@ -116,7 +116,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from backtest.contribution import compute_contribution_report_from_fills  # noqa: E402
 from backtest.strategy import BuyAndHoldStrategy  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
-from data_infra.calendar import US_EQUITY  # noqa: E402
+from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
 from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
@@ -627,7 +627,16 @@ def main() -> int:
     )
 
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
-    repository = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+    # ADR-0117: US_EQUITY (data_infra.calendar) is explicitly Phase-1-
+    # scope-only (3 holiday dates, all from 2024) -- a real walk-forward
+    # run here spans many years (e.g. 2010-2023+), and BacktestEngine.run
+    # consults this calendar to build one checkpoint per "trading day"
+    # (src/backtest/engine.py -> build_daily_checkpoints), so using the
+    # toy calendar would generate a checkpoint on every real US market
+    # holiday outside 2024. US_EQUITY_NYSE is a rule-derived calendar
+    # spanning 2000-2035 (see its own docstring for exactly what it does
+    # and does not cover).
+    repository = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY_NYSE})
     fundamentals_engine = None
     fundamentals_repository = None
     if args.fundamentals_db_path is not None:

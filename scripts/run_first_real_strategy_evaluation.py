@@ -54,7 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from backtest.strategy import BuyAndHoldStrategy  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
-from data_infra.calendar import US_EQUITY  # noqa: E402
+from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
 from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
@@ -101,7 +101,7 @@ def main() -> int:
     report_path = args.report_out or (args.db_path / "first_real_strategy_evaluation.json")
 
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
-    repository = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY})
+    repository = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY_NYSE})
 
     try:
         # -- Build the real SPY TOTAL_RETURN benchmark, for the first

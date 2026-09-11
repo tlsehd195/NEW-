@@ -25,6 +25,7 @@ is recorded as part of this model's fixed `ModelSpec.hyperparameters`.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
@@ -51,8 +52,14 @@ def _solve_linear_system(matrix: list[list[float]], vector: list[float]) -> list
     n = len(vector)
     augmented = [list(matrix[i]) + [vector[i]] for i in range(n)]
     for col in range(n):
-        pivot_row = max(range(col, n), key=lambda r: abs(augmented[r][col]))
-        if abs(augmented[pivot_row][col]) < 1e-12:
+        pivot_row = max(range(col, n), key=lambda r: abs(augmented[r][col]) if math.isfinite(augmented[r][col]) else -1.0)
+        pivot_value = augmented[pivot_row][col]
+        # `abs(nan) < 1e-12` is False (every comparison against NaN is
+        # False in Python) -- a NaN-poisoned input previously sailed
+        # straight through this guard and produced a "successful" fit
+        # with all-NaN coefficients instead of raising, contradicting
+        # this function's own "never a fabricated fit" docstring claim.
+        if not math.isfinite(pivot_value) or abs(pivot_value) < 1e-12:
             raise ValueError("singular matrix -- cannot fit linear model on this data")
         augmented[col], augmented[pivot_row] = augmented[pivot_row], augmented[col]
         pivot_value = augmented[col][col]

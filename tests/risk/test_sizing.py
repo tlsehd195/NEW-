@@ -140,6 +140,29 @@ class TestExistingPosition:
         assert result.reason == "no_new_sizing_for_no_trade"
         assert result.proposed_target_quantity == 0.0
 
+    def test_hold_with_unknown_portfolio_state_is_unknown_not_a_fabricated_pass(self) -> None:
+        # ADR-0117: "keep the current position" is only a meaningful
+        # target when the current position is actually known -- the
+        # previous behavior returned PASS with proposed_target_quantity
+        # fabricated to 0.0 (and proposed_target_weight left None) even
+        # though the real current position was genuinely unknown,
+        # violating both this model's own docstring
+        # ("proposed_target_weight: None only when status is UNKNOWN")
+        # and this project's fail-closed discipline (§1.4: "Position
+        # Unknown -> 신규 주문 차단").
+        sizer = DeterministicPositionSizer()
+        decision = make_decision(T, action=DecisionAction.HOLD)
+        result = sizer.size("AAA", T, decision, FakePrediction(0.15), None, None, current_price=95.0)
+        assert result.status == RiskCheckStatus.UNKNOWN
+        assert result.reason == "portfolio_state_unavailable"
+
+    def test_no_trade_with_unknown_portfolio_state_is_unknown_not_a_fabricated_pass(self) -> None:
+        sizer = DeterministicPositionSizer()
+        decision = make_decision(T, action=DecisionAction.NO_TRADE)
+        result = sizer.size("AAA", T, decision, FakePrediction(0.15), None, None, current_price=50.0)
+        assert result.status == RiskCheckStatus.UNKNOWN
+        assert result.reason == "portfolio_state_unavailable"
+
     def test_buy_with_an_unexpected_existing_position_is_unknown_not_a_crash(self) -> None:
         sizer = DeterministicPositionSizer()
         held = portfolio_holding(T, "AAA", quantity=100.0, average_cost=90.0)

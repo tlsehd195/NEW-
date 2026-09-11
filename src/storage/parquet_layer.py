@@ -32,8 +32,15 @@ import pyarrow.parquet as pq
 def write_batch(directory: Path, rows: Sequence[dict], *, columns: Sequence[str]) -> Path:
     """Writes ``rows`` (each a flat dict keyed by ``columns``) as one new,
     immutable Parquet file under ``directory``. Returns the final path.
-    Writing an empty batch is a no-op (returns None-like sentinel handled
-    by callers; here we simply skip if there is nothing to write)."""
+    An empty ``rows`` is NOT a no-op here -- it still writes a real,
+    empty Parquet file and returns its path (ADR-0117 correction; this
+    docstring previously, incorrectly, claimed it skips). Every real
+    caller in this codebase (``storage.data_repository.append_bars``/
+    ``append_raw_payloads``) already guards against calling this with
+    an empty ``rows`` itself, so the discrepancy has never actually
+    been reachable in production -- but a future caller relying on
+    this docstring's old claim would get a spurious empty file on
+    disk, not the no-op it expected."""
     directory.mkdir(parents=True, exist_ok=True)
     table = pa.Table.from_pylist([{c: row.get(c) for c in columns} for row in rows])
 

@@ -117,10 +117,16 @@ class TestAccountUnavailablePreservesUnknown:
         assert account.cash is None  # never fabricated as 0.0
         assert account.unavailable_reason is not None
 
-    def test_positions_unavailable_returns_empty_not_zero_holdings(self) -> None:
+    def test_positions_unavailable_raises_never_a_fabricated_empty_holdings(self) -> None:
+        # ADR-0117: an empty tuple here would be indistinguishable from
+        # "zero real positions" -- a real caller (e.g. building a
+        # PortfolioView) could not tell "we asked and there are none"
+        # apart from "we don't actually know." get_positions() has no
+        # list-level `available` field the way BrokerAccountSnapshot
+        # does, so it must raise instead of silently returning ().
         broker = MockBrokerAdapter(make_broker_config(), failure_mode="account_unavailable")
-        positions = broker.get_positions(as_of=utc(2024, 1, 2))
-        assert positions == ()
+        with pytest.raises(BrokerTransportError):
+            broker.get_positions(as_of=utc(2024, 1, 2))
 
 
 class TestCapabilities:

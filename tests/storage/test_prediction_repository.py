@@ -3,6 +3,7 @@ lineage for the persistent Prediction store (Phase 6 spec section 11, 13)."""
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import date
 
 from backtest_helpers import build_repository, make_bars, trading_days
@@ -114,4 +115,24 @@ class TestProvenanceAndVersionLineage:
         assert reloaded.method_version == prediction.method_version
         assert reloaded.data_version == prediction.data_version
         assert reloaded.model_version == prediction.model_version
+        engine.close()
+
+
+class TestGetAsOfTieBreak:
+    def test_a_genuine_as_of_time_tie_deterministically_prefers_the_higher_prediction_id(self, tmp_path) -> None:
+        # ADR-0117: two predictions for the same security/as_of_time (a
+        # different method so the natural-key dedup doesn't collapse
+        # them) used to resolve a tie via a bare
+        # `ORDER BY as_of_time DESC LIMIT 1`.
+        engine = new_engine(tmp_path)
+        repo = DuckDBPredictionRepository(engine)
+        base = _prediction()
+        first = dataclasses.replace(base, prediction_id="PRED-000001", method="drift_v1")
+        second = dataclasses.replace(base, prediction_id="PRED-000002", as_of_time=first.as_of_time, method="random_walk_v1")
+        repo.record(first)
+        repo.record(second)
+
+        result = repo.get_as_of("AAA", first.as_of_time)
+        assert result is not None
+        assert result.prediction_id == "PRED-000002"
         engine.close()

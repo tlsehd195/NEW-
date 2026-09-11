@@ -99,6 +99,27 @@ class TestPointInTimeLookup:
         assert too_early is None
         engine.close()
 
+    def test_a_genuine_as_of_time_tie_deterministically_prefers_the_higher_decision_id(self, tmp_path) -> None:
+        # ADR-0117: two decisions for the same security at the exact
+        # same as_of_time (a different prediction_id so the natural-key
+        # dedup doesn't collapse them) used to resolve a tie via a bare
+        # `ORDER BY as_of_time DESC LIMIT 1` -- unspecified which row a
+        # SQL engine returns on a tie without a secondary ORDER BY key.
+        from datetime import datetime, timezone
+
+        from risk_helpers import make_decision
+
+        engine = new_engine(tmp_path)
+        decision_repo = DuckDBDecisionRepository(engine)
+        as_of = datetime(2024, 6, 1, 20, tzinfo=timezone.utc)
+        decision_repo.record(make_decision(as_of, decision_id="DEC-OUT-000001", prediction_id="PRED-000001"))
+        decision_repo.record(make_decision(as_of, decision_id="DEC-OUT-000002", prediction_id="PRED-000002"))
+
+        result = decision_repo.get_as_of("AAA", as_of)
+        assert result is not None
+        assert result.decision_id == "DEC-OUT-000002"
+        engine.close()
+
 
 class TestProvenanceAndLineage:
     def test_provenance_filter_isolates_categories(self, tmp_path) -> None:

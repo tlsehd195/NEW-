@@ -60,14 +60,11 @@ class TiingoDataProvider:
         self._config = config
         self._transport = transport
 
-    def _headers_with_token(self) -> dict[str, str]:
+    def _auth_params(self) -> dict[str, str]:
         # Tiingo authenticates via a `token` query parameter, not a
         # bearer header (Tier 2 documentation) -- resolved once per
         # call, never cached/logged, mirroring broker.toss.auth's
         # "resolve transiently, never persist" discipline.
-        return {}
-
-    def _auth_params(self) -> dict[str, str]:
         api_key = resolve_api_key(self._config)
         return {"token": api_key, "format": "json"}
 

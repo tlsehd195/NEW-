@@ -1,7 +1,7 @@
 [project]
 name = "aiinvest"
 version = "0.1.0"
-description = "Autonomous AI Investment System — Phase 4: Baseline Models + Persistent Storage"
+description = "Autonomous AI Investment System — see docs/PROJECT_STATUS.md for current progress"
 requires-python = ">=3.11"
 readme = "README.md"
 dependencies = [

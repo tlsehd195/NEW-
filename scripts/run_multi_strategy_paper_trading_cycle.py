@@ -70,8 +70,9 @@ from broker.paper.market_data import InMemoryPaperMarketDataSource  # noqa: E402
 from broker.paper.session import PaperTradingSession  # noqa: E402
 from broker.paper.us_longterm_config import PAPER_CAPITAL_USD  # noqa: E402
 from broker.paper.us_longterm_runner import run_buy_and_hold_paper_session  # noqa: E402
+from broker.pipeline import seed_broker_pipeline_ids  # noqa: E402
 
-from data_infra.calendar import US_EQUITY  # noqa: E402
+from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
 from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 
 from orchestration.paper_runner import PaperRunnerState, compute_portfolio_snapshot, run_cycle  # noqa: E402
@@ -210,6 +211,7 @@ def _run_buy_and_hold_strategy(
     order_repository = DuckDBPaperOrderRepository(store_engine)
     request_repository = DuckDBBrokerRequestRepository(store_engine)
     response_repository = DuckDBBrokerResponseRepository(store_engine)
+    seed_broker_pipeline_ids(request_repository, response_repository)
 
     already_bought = len(order_repository.list_all()) > 0
     skipped_symbols: tuple = ()
@@ -278,7 +280,7 @@ def main(argv=None) -> int:
     sector_by_security = {s.symbol: s.sector for s in universe.symbols if s.sector is not None}
 
     data_engine = StorageEngine(StorageConfig(root_dir=args.db_path))
-    repository = DuckDBDataRepository(data_engine, calendars={"US_EQUITY": US_EQUITY})
+    repository = DuckDBDataRepository(data_engine, calendars={"US_EQUITY": US_EQUITY_NYSE})
 
     calendar = repository.get_trading_calendar("US_EQUITY")
     checkpoints = build_daily_checkpoints(calendar, args.start, args.end)

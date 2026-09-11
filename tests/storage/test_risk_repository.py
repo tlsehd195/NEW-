@@ -171,3 +171,60 @@ class TestProvenanceAndLineage:
         assert reloaded_risk.sizing_version == checked.sizing_version
         assert reloaded_risk.strategy_version is None
         engine.close()
+
+
+class TestGetAsOfTieBreak:
+    def test_position_sizing_tie_deterministically_prefers_the_higher_sizing_id(self, tmp_path) -> None:
+        # ADR-0117: two sizing results for the same security/as_of_time
+        # (a different decision_id so the natural-key dedup doesn't
+        # collapse them) used to resolve a tie via a bare
+        # `ORDER BY as_of_time DESC LIMIT 1`.
+        from datetime import datetime, timezone
+
+        from risk.models import PositionSizingResult
+        from trade_journal.enums import DecisionAction
+
+        as_of = datetime(2024, 6, 1, 20, tzinfo=timezone.utc)
+
+        def _sizing(sizing_id: str, decision_id: str) -> PositionSizingResult:
+            return PositionSizingResult(
+                sizing_id=sizing_id, security_id="AAA", as_of_time=as_of, status=RiskCheckStatus.PASS,
+                reason="normal_sizing", decision_id=decision_id, decision_action=DecisionAction.BUY,
+                proposed_target_weight=0.1, proposed_target_quantity=50.0, current_weight=0.0,
+                current_quantity=0.0, sizing_version="sizer-v1", feature_version="feat-v1",
+            )
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBPositionSizingRepository(engine)
+        repo.record(_sizing("SIZE-000001", "DEC-OUT-000001"))
+        repo.record(_sizing("SIZE-000002", "DEC-OUT-000002"))
+
+        result = repo.get_as_of("AAA", as_of)
+        assert result is not None
+        assert result.sizing_id == "SIZE-000002"
+        engine.close()
+
+    def test_risk_checked_tie_deterministically_prefers_the_higher_risk_id(self, tmp_path) -> None:
+        from datetime import datetime, timezone
+
+        from risk.models import RiskCheckedPosition
+
+        as_of = datetime(2024, 6, 1, 20, tzinfo=timezone.utc)
+
+        def _checked(risk_id: str, sizing_id: str) -> RiskCheckedPosition:
+            return RiskCheckedPosition(
+                risk_id=risk_id, security_id="AAA", as_of_time=as_of, status=RiskCheckStatus.PASS,
+                reason="normal_sizing", breached_limits=(), final_target_weight=0.1, final_target_quantity=50.0,
+                sizing_id=sizing_id, decision_id="DEC-OUT-000001", prediction_id=None,
+                risk_state=None, risk_version="risk-v1", feature_version="feat-v1",
+            )
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBRiskRepository(engine)
+        repo.record(_checked("RISK-000001", "SIZE-000001"))
+        repo.record(_checked("RISK-000002", "SIZE-000002"))
+
+        result = repo.get_as_of("AAA", as_of)
+        assert result is not None
+        assert result.risk_id == "RISK-000002"
+        engine.close()

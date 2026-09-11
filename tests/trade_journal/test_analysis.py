@@ -32,9 +32,14 @@ class TestExecutionError:
         fill = make_fill(price=99.0, reference_price=100.0)
         assert compute_execution_error(fill) == pytest.approx(-0.01)
 
-    def test_zero_reference_price_does_not_crash(self) -> None:
+    def test_zero_reference_price_is_none_not_a_fabricated_zero(self) -> None:
+        # ADR-0117: a 0 reference_price makes the ratio genuinely
+        # undefined -- returning 0.0 (the previous behavior) fabricated
+        # "no execution error" instead of "cannot be computed",
+        # contradicting this module's own stated "never estimate a
+        # value and present it as fact" discipline.
         fill = make_fill(price=0.0, reference_price=0.0)
-        assert compute_execution_error(fill) == 0.0
+        assert compute_execution_error(fill) is None
 
 
 def _repo_with_bars(closes: dict[date, float]) -> InMemoryDataRepository:

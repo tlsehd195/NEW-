@@ -22,6 +22,18 @@ def _adapter(config=None, bars=()):
     return PaperBrokerAdapter(config, mds), mds
 
 
+class TestGetAccountCurrency:
+    def test_paper_account_currency_is_usd_not_krw(self) -> None:
+        # ADR-0117: Paper accounting is natively USD-denominated
+        # (PortfolioAccounting/PriceBar price exclusively in USD,
+        # ADR-0025/ADR-0026 -- see broker.paper.us_longterm_config's own
+        # docstring) -- get_account used to hardcode currency="KRW",
+        # mislabeling every real Paper account snapshot's currency.
+        adapter, _ = _adapter()
+        account = adapter.get_account(as_of=utc(2024, 1, 2))
+        assert account.currency == "USD"
+
+
 class TestNormalFill:
     def test_market_order_fills_against_reference_bar(self) -> None:
         adapter, _ = _adapter(bars=[make_bar(available_time=utc(2024, 1, 2))])

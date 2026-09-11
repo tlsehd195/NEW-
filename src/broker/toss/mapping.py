@@ -224,8 +224,11 @@ def parse_holdings_response(response: TransportResponse, *, as_of_time: datetime
     the Protocol: a genuine read failure raises (`BrokerTransportError`
     or one of the auth/rate-limit/provider errors) rather than
     returning `()`, so only a *successful* empty-holdings response ever
-    produces an empty tuple. `MockBrokerAdapter`'s pre-existing
-    `account_unavailable` -> `()` behavior is unrelated and unchanged."""
+    produces an empty tuple. `MockBrokerAdapter`'s own
+    `account_unavailable` simulation used to return `()` for
+    `get_positions` too -- the same ambiguity, in the test double
+    rather than here -- and has since been aligned to raise as well
+    (ADR-0117)."""
     _raise_for_transport_level_failure(response)
 
     if response.body is None:

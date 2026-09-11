@@ -145,6 +145,17 @@ class DeterministicPositionSizer:
             return build(RiskCheckStatus.UNKNOWN, "decision_unavailable")
 
         if decision.action in (DecisionAction.HOLD, DecisionAction.NO_TRADE):
+            if portfolio_state is None:
+                # "Keep the current position" is only a meaningful
+                # target when the current position is actually known --
+                # `current_weight`/`current_quantity` above are placeholder
+                # defaults (None/0.0), not a real "keep this" target, when
+                # portfolio_state is None. Returning PASS with those
+                # placeholders (the previous behavior) violated this
+                # model's own `proposed_target_weight` docstring ("None
+                # only when status is UNKNOWN") and fail-closed §1.4
+                # ("Position Unknown -> 신규 주문 차단") -- ADR-0117.
+                return build(RiskCheckStatus.UNKNOWN, "portfolio_state_unavailable")
             return build(
                 RiskCheckStatus.PASS, f"no_new_sizing_for_{decision.action.value.lower()}",
                 target_weight=current_weight, target_quantity=current_quantity,

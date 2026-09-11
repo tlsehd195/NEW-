@@ -111,7 +111,11 @@ class DuckDBDecisionRepository:
         if provenance is not None:
             sql += " AND provenance = ?"
             params.append(provenance.value)
-        sql += " ORDER BY as_of_time DESC LIMIT 1"
+        # Tie-break on decision_id (ADR-0117): decision_id's own
+        # monotonically-increasing ids make the lexicographically-largest
+        # one on a genuine as_of_time tie the most-recently-recorded
+        # candidate, matching InMemoryDecisionRepository's identical fix.
+        sql += " ORDER BY as_of_time DESC, decision_id DESC LIMIT 1"
         row = self._engine.connection.execute(sql, params).fetchone()
         if row is None:
             return None
