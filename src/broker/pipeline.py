@@ -18,7 +18,7 @@ from typing import Optional
 from broker.errors import BrokerError
 from broker.models import BrokerOrderResponse, BrokerRequestRecord, BrokerResponseRecord, ValidatedOrder
 from broker.protocol import BrokerAdapter
-from broker.repository import BrokerRequestRepository, BrokerResponseRepository, OrderStatusEventRepository
+from broker.repository import BrokerRequestRepository, BrokerResponseRepository
 
 from trade_journal.enums import TradeProvenance
 
@@ -33,9 +33,49 @@ class _IdAllocator:
         self._next_id += 1
         return value
 
+    def advance_past(self, ids: list[str]) -> None:
+        """Seeds this allocator past the highest numeric suffix among
+        `ids` that starts with this allocator's own prefix -- a no-op
+        if none do. Never moves `_next_id` backward (a smaller max seen
+        on a later call, e.g. an empty `list_all()`, never un-seeds an
+        allocator that has already advanced)."""
+        needle = f"{self._prefix}-"
+        max_seen = 0
+        for value in ids:
+            if not value.startswith(needle):
+                continue
+            try:
+                max_seen = max(max_seen, int(value[len(needle):]))
+            except ValueError:
+                continue
+        self._next_id = max(self._next_id, max_seen + 1)
+
 
 _request_ids = _IdAllocator("BROKREQ")
 _log_response_ids = _IdAllocator("BROKRESLOG")
+
+
+def seed_broker_pipeline_ids(
+    request_repository: Optional[BrokerRequestRepository] = None,
+    response_repository: Optional[BrokerResponseRepository] = None,
+) -> None:
+    """Restart-safety seeding (same pattern established elsewhere this
+    session -- `ai_gateway.QuotaManager`/`storage.data_repository`'s
+    `_compute_next_raw_batch_id`/`broker.paper.adapter.
+    restore_observation_id_watermark`): `_request_ids`/`_log_response_ids`
+    are process-lifetime module counters that otherwise restart at 1
+    every process invocation. `DuckDBBrokerRequestRepository.record`/
+    `DuckDBBrokerResponseRepository.record` dedupe on the caller-
+    assigned id itself (this log has no other natural key -- see this
+    module's own docstring), so a post-restart id colliding with an
+    already-persisted, UNRELATED row would return that stale row
+    instead of raising, silently discarding the real new order's own
+    audit entry. Call this once, right after constructing the real
+    repositories, before any real `submit_validated_order` call."""
+    if request_repository is not None:
+        _request_ids.advance_past([r.request_id for r in request_repository.list_all()])
+    if response_repository is not None:
+        _log_response_ids.advance_past([r.response_id for r in response_repository.list_all()])
 
 
 def submit_validated_order(
@@ -47,7 +87,6 @@ def submit_validated_order(
     configuration_version: str,
     request_repository: Optional[BrokerRequestRepository] = None,
     response_repository: Optional[BrokerResponseRepository] = None,
-    status_repository: Optional[OrderStatusEventRepository] = None,
 ) -> BrokerOrderResponse:
     request_record = BrokerRequestRecord(
         request_id=_request_ids.allocate(), broker_id=adapter.broker_id, operation="submit_order",

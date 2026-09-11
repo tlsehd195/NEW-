@@ -43,9 +43,14 @@ class MockBrokerAdapter:
     no position/cash change), `"partial_fill"` (exactly half the
     requested quantity fills), `"unavailable"` (every call raises
     `BrokerTransportError`, simulating "broker unavailable"/timeout at
-    the domain level), `"account_unavailable"` (`get_account`/
-    `get_positions` report `available=False`), `"status_unknown"`
-    (`get_order_status` always reports `UNKNOWN`)."""
+    the domain level), `"account_unavailable"` (`get_account` reports
+    `available=False`; `get_positions` raises `BrokerTransportError`
+    for the same simulated condition -- its own `tuple[BrokerPosition,
+    ...]` return type has no list-level availability field the way
+    `BrokerAccountSnapshot` does, so an empty tuple would be
+    indistinguishable from "zero real positions" rather than "unknown,
+    ADR-0117"), `"status_unknown"` (`get_order_status` always reports
+    `UNKNOWN`)."""
 
     def __init__(
         self,
@@ -200,7 +205,12 @@ class MockBrokerAdapter:
     def get_positions(self, *, as_of: datetime) -> tuple[BrokerPosition, ...]:
         self._check_available()
         if self._failure_mode == "account_unavailable":
-            return ()
+            # An empty tuple here would be indistinguishable from "zero
+            # real positions" -- fail-closed like `get_account`'s own
+            # available=False, but expressed as a raise since this
+            # method's tuple return type has no list-level availability
+            # field to set (ADR-0117).
+            raise BrokerTransportError(f"simulated account unavailable for {self.broker_id!r}")
         return tuple(
             BrokerPosition(
                 security_id=security_id, as_of_time=as_of, available=True, unavailable_reason=None,

@@ -9,6 +9,7 @@ estimate a value and present it as fact (ADR-0009 point 4).
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Optional
 
 from data_infra.repository import DataRepository
 
@@ -17,12 +18,14 @@ from backtest.fills import Fill
 from trade_journal.models import AlternativeOutcome
 
 
-def compute_execution_error(fill: Fill) -> float:
+def compute_execution_error(fill: Fill) -> Optional[float]:
     """(actual fill price - reference price) / reference price — the
     realized cost of spread + slippage as a return, for a Fill that
-    already happened. See Phase 3 spec section 7.1."""
+    already happened. See Phase 3 spec section 7.1. `None` (never a
+    fabricated `0.0`, ADR-0117) when `reference_price` is 0 -- the
+    ratio is genuinely undefined, not "no execution error.\""""
     if fill.reference_price == 0:
-        return 0.0
+        return None
     return (fill.price - fill.reference_price) / fill.reference_price
 
 

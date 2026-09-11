@@ -110,7 +110,9 @@ class DuckDBPositionSizingRepository:
         if provenance is not None:
             sql += " AND provenance = ?"
             params.append(provenance.value)
-        sql += " ORDER BY as_of_time DESC LIMIT 1"
+        # Tie-break on sizing_id (ADR-0117) -- see
+        # storage.decision_repository's identical fix for the reasoning.
+        sql += " ORDER BY as_of_time DESC, sizing_id DESC LIMIT 1"
         row = self._engine.connection.execute(sql, params).fetchone()
         if row is None:
             return None
@@ -194,7 +196,9 @@ class DuckDBRiskRepository:
         if provenance is not None:
             sql += " AND provenance = ?"
             params.append(provenance.value)
-        sql += " ORDER BY as_of_time DESC LIMIT 1"
+        # Tie-break on risk_id (ADR-0117) -- see
+        # storage.decision_repository's identical fix for the reasoning.
+        sql += " ORDER BY as_of_time DESC, risk_id DESC LIMIT 1"
         row = self._engine.connection.execute(sql, params).fetchone()
         if row is None:
             return None

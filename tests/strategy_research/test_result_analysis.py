@@ -48,6 +48,22 @@ class TestFoldDistributionSummary:
         assert summary.mean_return is None
         assert summary.stdev_return is None
 
+    def test_median_on_an_even_fold_count_averages_the_two_middle_values(self) -> None:
+        # ADR-0117: `sorted(returns)[len(returns) // 2]` picks the
+        # UPPER of the two middle values on an even-length list instead
+        # of averaging them -- e.g. for [0.01, 0.02, 0.03, 0.04] it
+        # returned 0.03 (index 2) instead of the true median 0.025,
+        # a systematic upward bias whenever fold_count is even (a
+        # common, not edge, case for a real walk-forward run).
+        folds = [_fold(0.04, "BULL"), _fold(0.01, "BEAR"), _fold(0.03, "BULL"), _fold(0.02, "BULL")]
+        summary = fold_distribution_summary(folds)
+        assert summary.median_return == pytest.approx(0.025)
+
+    def test_median_on_an_odd_fold_count_is_the_middle_value(self) -> None:
+        folds = [_fold(0.05, "BULL"), _fold(-0.02, "BEAR"), _fold(0.03, "BULL")]
+        summary = fold_distribution_summary(folds)
+        assert summary.median_return == pytest.approx(0.03)
+
 
 class TestRegimeConditionalSummary:
     def test_buckets_by_regime_and_computes_per_bucket_win_rate(self) -> None:

@@ -133,6 +133,25 @@ class TestPnl:
         )
         assert portfolio.realized_pnl == pytest.approx(-100.0)
 
+    def test_realized_pnl_with_nonzero_spread_and_slippage_subtracts_commission_only(self) -> None:
+        # ADR-0117: the pre-existing tests above pin spread_cost=
+        # slippage_cost=0 on both legs, so `- fill.commission` (the H-2
+        # fix, ADR-0114) and the old, buggy `- fill.total_cost` (=
+        # commission + spread_cost + slippage_cost) happen to produce
+        # IDENTICAL results there -- neither test actually exercises
+        # the double-counting bug H-2 fixed. This one uses `_fill`'s own
+        # real defaults (spread_cost=0.5, slippage_cost=0.5) on both
+        # legs so the two formulas diverge, proving the fix stays fixed.
+        portfolio = PortfolioAccounting(initial_cash=10_000.0)
+        portfolio.apply_fill(_fill(side=OrderSide.BUY, quantity=10, price=100.0, commission=1.0))
+        portfolio.apply_fill(
+            _fill(side=OrderSide.SELL, quantity=10, price=120.0, commission=1.0,
+                  decision_day=3, execution_day=4)
+        )
+        # (120.0 - 100.0) * 10 - commission(1.0) = 199.0, never
+        # - total_cost(1.0 + 0.5 + 0.5 = 2.0) = 198.0.
+        assert portfolio.realized_pnl == pytest.approx(199.0)
+
     def test_unrealized_pnl_reflects_mark_to_market(self) -> None:
         portfolio = PortfolioAccounting(10_000.0)
         portfolio.apply_fill(_fill(side=OrderSide.BUY, quantity=10, price=100.0))

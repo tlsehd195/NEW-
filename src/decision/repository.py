@@ -89,4 +89,12 @@ class InMemoryDecisionRepository:
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda d: d.as_of_time)
+        # Tie-break on decision_id (ADR-0117): `max()` alone, on a genuine
+        # `as_of_time` tie, arbitrarily picks whichever candidate this
+        # dict happens to iterate first (insertion order) -- deterministic
+        # within one process, but not a meaningful choice, and not
+        # guaranteed to match the DuckDB-backed implementation's own
+        # `ORDER BY` tie-break. `_IdAllocator`'s ids increase
+        # monotonically, so the lexicographically-largest id is the
+        # most-recently-recorded candidate.
+        return max(candidates, key=lambda d: (d.as_of_time, d.decision_id))

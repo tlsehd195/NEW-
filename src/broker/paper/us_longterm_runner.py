@@ -39,21 +39,32 @@ from broker.pipeline import submit_validated_order
 from broker.repository import BrokerRequestRepository, BrokerResponseRepository
 from broker.validation import build_validated_order
 
+from data_infra.versioning import compute_data_version
+
 from risk.enums import RiskCheckStatus
 from risk.models import RiskCheckedPosition
 
 from trade_journal.enums import TradeProvenance
 
 
-class _IdAllocator:
-    def __init__(self, prefix: str) -> None:
-        self._prefix = prefix
-        self._next_id = 1
-
-    def allocate(self) -> str:
-        value = f"{self._prefix}-{self._next_id:06d}"
-        self._next_id += 1
-        return value
+def _synthetic_id(prefix: str, *, buy_time: datetime, security_id: str) -> str:
+    """These risk/sizing/decision ids are never persisted to any table
+    of their own (this function's whole "lineage" for a buy_and_hold
+    order is synthetic, folded only into `compute_client_order_id`'s
+    hash) -- so there is no real sequence to seed a restart-safe
+    counter from. A per-call `-000001`-style counter (the previous
+    implementation) collided across calls: every invocation of this
+    function re-minted the SAME id for a given symbol's position in
+    `security_ids`, so a second call sharing the same `buy_time` (a
+    legitimate retry with no persisted order yet, or two similarly
+    configured buy_and_hold strategies run in the same process)
+    produced the exact same `client_order_id`, and the paper adapter's
+    own idempotent-submit logic then silently treated the second,
+    genuinely-intended buy as a replay of the first. Deriving the id
+    from `(buy_time, security_id)` instead is naturally unique per
+    real economic event and needs no counter/seeding at all."""
+    digest = compute_data_version({"buy_time": buy_time.isoformat(), "security_id": security_id})
+    return f"{prefix}-{digest[:12]}"
 
 
 @dataclass(frozen=True)
@@ -103,10 +114,6 @@ def run_buy_and_hold_paper_session(
     `monitoring.collectors.collect_broker` reads is populated exactly
     once per real order, with no separate/duplicate submission needed
     to also produce it."""
-    risk_ids = _IdAllocator("RISK-BAH")
-    sizing_ids = _IdAllocator("SIZE-BAH")
-    decision_ids = _IdAllocator("DEC-BAH")
-
     account = session.adapter.get_account(as_of=buy_time)
     if not account.available or account.cash is None:
         return BuyAndHoldRunResult(
@@ -147,10 +154,12 @@ def run_buy_and_hold_paper_session(
             continue
 
         risk_checked = RiskCheckedPosition(
-            risk_id=risk_ids.allocate(), security_id=security_id, as_of_time=buy_time,
+            risk_id=_synthetic_id("RISK-BAH", buy_time=buy_time, security_id=security_id),
+            security_id=security_id, as_of_time=buy_time,
             status=RiskCheckStatus.PASS, reason="buy_and_hold_initial_allocation", breached_limits=(),
             final_target_weight=None, final_target_quantity=quantity,
-            sizing_id=sizing_ids.allocate(), decision_id=decision_ids.allocate(), prediction_id=None,
+            sizing_id=_synthetic_id("SIZE-BAH", buy_time=buy_time, security_id=security_id),
+            decision_id=_synthetic_id("DEC-BAH", buy_time=buy_time, security_id=security_id), prediction_id=None,
             risk_state=None, risk_version="buy_and_hold_reference_runner_v1",
             feature_version="buy_and_hold_reference_runner_v1", provenance=TradeProvenance.PAPER_TRADING,
         )

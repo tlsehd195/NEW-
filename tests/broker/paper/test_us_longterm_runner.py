@@ -12,6 +12,10 @@ from broker.paper.market_data import InMemoryPaperMarketDataSource
 from broker.paper.session import PaperTradingSession
 from broker.paper.us_longterm_runner import run_buy_and_hold_paper_session
 
+from storage.broker_repository import DuckDBBrokerRequestRepository, DuckDBBrokerResponseRepository
+from storage.config import StorageConfig
+from storage.engine import StorageEngine
+
 
 def utc(year: int, month: int, day: int, hour: int = 12) -> datetime:
     return datetime(year, month, day, hour, tzinfo=timezone.utc)
@@ -65,6 +69,39 @@ class TestEqualWeightAllocation:
         assert len(first.orders) == 1
         remaining_cash = session.adapter.get_account(as_of=buy_time).cash
         assert remaining_cash < 1000.0  # cash was actually spent, not simulated
+
+    def test_two_calls_on_different_days_get_distinguishable_audit_trail_ids(self, tmp_path) -> None:
+        """Every previous call to this function re-minted the SAME
+        synthetic decision_id/sizing_id/risk_id ("DEC-BAH-000001" etc,
+        an in-function counter reset to 1 every call) for the first
+        symbol processed, regardless of which real buy_time/security it
+        was actually for -- a real BrokerRequestRecord audit trail could
+        not tell two genuinely different real runs' decisions apart by
+        decision_id alone. Deriving the id from (buy_time, security_id)
+        instead makes it unique per real economic event, independent of
+        how many times this function has been called before."""
+        mds = InMemoryPaperMarketDataSource([
+            make_bar(security_id="AAA", available_time=utc(2024, 1, 2), close=100.0),
+            make_bar(security_id="AAA", available_time=utc(2024, 2, 1), close=100.0),
+        ])
+        engine = StorageEngine(StorageConfig(root_dir=tmp_path / "store"))
+        request_repository = DuckDBBrokerRequestRepository(engine)
+        response_repository = DuckDBBrokerResponseRepository(engine)
+
+        config = make_paper_config(initial_cash=1000.0, max_participation=1.0)
+        run_buy_and_hold_paper_session(
+            ["AAA"], mds, PaperTradingSession(config, mds), buy_time=utc(2024, 1, 2), configuration_version="cfg-v1",
+            request_repository=request_repository, response_repository=response_repository,
+        )
+        run_buy_and_hold_paper_session(
+            ["AAA"], mds, PaperTradingSession(config, mds), buy_time=utc(2024, 2, 1), configuration_version="cfg-v1",
+            request_repository=request_repository, response_repository=response_repository,
+        )
+
+        recorded = request_repository.list_all()
+        assert len(recorded) == 2
+        decision_ids = {r.decision_id for r in recorded}
+        assert len(decision_ids) == 2, "two calls for different real buy_times must not share a synthetic decision_id"
 
 
 class TestSkipsSymbolsHonestly:

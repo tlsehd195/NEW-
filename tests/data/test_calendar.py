@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, time
 
-from data_infra.calendar import KR_EQUITY, US_EQUITY, SimpleTradingCalendar
+from data_infra.calendar import KR_EQUITY, US_EQUITY, US_EQUITY_NYSE, SimpleTradingCalendar
 from data_infra.repository import InMemoryDataRepository
 
 
@@ -45,6 +45,53 @@ class TestTradingCalendar:
 
     def test_us_and_kr_calendars_have_distinct_timezones(self) -> None:
         assert US_EQUITY.timezone != KR_EQUITY.timezone
+
+
+class TestUsEquityNyseRuleBasedCalendar:
+    """ADR-0117: US_EQUITY's own module docstring explicitly warns it is
+    Phase-1-scope-only (3 holiday dates, one year) -- a real multi-year
+    walk-forward/paper-trading run using it would generate a checkpoint
+    on every real US market holiday outside 2024
+    (`backtest.engine.BacktestEngine.run` -> `build_daily_checkpoints`
+    consults this calendar directly). US_EQUITY_NYSE is a rule-derived
+    calendar covering a much wider real range; these pin known, real
+    NYSE holiday dates as a spot-check on the rules themselves (not
+    generated from the same code being tested)."""
+
+    def test_2024_holidays_match_the_real_published_nyse_calendar(self) -> None:
+        # New Year's, MLK, Presidents, Good Friday, Memorial, Juneteenth,
+        # Independence, Labor, Thanksgiving, Christmas.
+        expected = {
+            date(2024, 1, 1), date(2024, 1, 15), date(2024, 2, 19), date(2024, 3, 29),
+            date(2024, 5, 27), date(2024, 6, 19), date(2024, 7, 4), date(2024, 9, 2),
+            date(2024, 11, 28), date(2024, 12, 25),
+        }
+        for day in expected:
+            assert US_EQUITY_NYSE.is_trading_day(day) is False, f"{day} should be a holiday"
+
+    def test_a_saturday_holiday_is_observed_the_preceding_friday(self) -> None:
+        # July 4, 2020 fell on a Saturday -- observed Friday July 3, 2020.
+        assert US_EQUITY_NYSE.is_trading_day(date(2020, 7, 3)) is False
+        assert US_EQUITY_NYSE.is_trading_day(date(2020, 7, 4)) is False  # Saturday anyway
+
+    def test_a_sunday_holiday_is_observed_the_following_monday(self) -> None:
+        # Christmas 2022 fell on a Sunday -- observed Monday Dec 26, 2022.
+        assert US_EQUITY_NYSE.is_trading_day(date(2022, 12, 26)) is False
+
+    def test_juneteenth_is_not_a_holiday_before_2022(self) -> None:
+        # NYSE began observing Juneteenth in 2022 -- June 19, 2019 (a
+        # Wednesday) was an ordinary trading day.
+        assert US_EQUITY_NYSE.is_trading_day(date(2019, 6, 19)) is True
+
+    def test_juneteenth_is_a_holiday_from_2022_onward(self) -> None:
+        assert US_EQUITY_NYSE.is_trading_day(date(2022, 6, 20)) is False  # observed (6/19 was Sunday)
+
+    def test_an_ordinary_weekday_across_a_multi_year_span_is_still_a_trading_day(self) -> None:
+        assert US_EQUITY_NYSE.is_trading_day(date(2015, 6, 10)) is True
+        assert US_EQUITY_NYSE.is_trading_day(date(2010, 3, 15)) is True
+
+    def test_covers_a_wide_multi_decade_range_not_just_one_year(self) -> None:
+        assert len(US_EQUITY_NYSE.holidays) > 100  # 2000-2035, ~9-10/year
 
 
 class TestRepositoryCalendarAccess:

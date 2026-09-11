@@ -77,7 +77,9 @@ class InMemoryPositionSizingRepository:
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda r: r.as_of_time)
+        # Tie-break on sizing_id (ADR-0117) -- see decision.repository's
+        # identical fix for the full reasoning.
+        return max(candidates, key=lambda r: (r.as_of_time, r.sizing_id))
 
 
 class RiskRepository(Protocol):
@@ -144,4 +146,6 @@ class InMemoryRiskRepository:
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda c: c.as_of_time)
+        # Tie-break on risk_id (ADR-0117) -- see decision.repository's
+        # identical fix for the full reasoning.
+        return max(candidates, key=lambda c: (c.as_of_time, c.risk_id))

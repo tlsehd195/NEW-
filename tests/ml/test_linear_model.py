@@ -57,6 +57,29 @@ class TestRecoversKnownLinearRelationship:
         assert model.predict({"x": 10}) == pytest.approx(48.0, abs=1e-4)
 
 
+class TestNeverFabricatesAFitOnPoisonedInput:
+    def test_a_nan_feature_value_raises_instead_of_producing_nan_coefficients(self) -> None:
+        # `abs(nan) < 1e-12` is False in Python (every NaN comparison
+        # is False), so the singularity guard used to let a NaN pivot
+        # sail straight through and return a "successfully fitted"
+        # model whose every coefficient was NaN -- silently fabricating
+        # a fit rather than raising, contradicting this module's own
+        # documented discipline (module docstring: "Raises ValueError
+        # on a singular matrix rather than returning a
+        # fabricated/garbage solution").
+        samples = [
+            _Sample(features={"x": 1.0}, target=2.0),
+            _Sample(features={"x": float("nan")}, target=3.0),
+            _Sample(features={"x": 3.0}, target=4.0),
+        ]
+        model = LinearRegressionModel(feature_ids=["x"])
+        with pytest.raises(ValueError):
+            model.fit(samples)
+        # And even if fit() somehow swallowed the error, coefficients
+        # must never be left NaN -- assert the model stays unfitted.
+        assert model.coefficients is None
+
+
 class TestHonestAboutMissingState:
     def test_predict_before_fit_raises(self) -> None:
         model = LinearRegressionModel(feature_ids=["x"])

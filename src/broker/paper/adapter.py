@@ -364,7 +364,11 @@ class PaperBrokerAdapter:
         snapshot = self._accounting.snapshot_view(as_of)
         return BrokerAccountSnapshot(
             broker_id=self.broker_id, as_of_time=as_of, available=True, unavailable_reason=None,
-            cash=snapshot.cash, buying_power=snapshot.cash, currency="KRW",
+            # USD, not KRW -- Paper accounting is natively USD-denominated
+            # (`PortfolioAccounting`/`PriceBar` price exclusively in USD,
+            # ADR-0025/ADR-0026; see `broker.paper.us_longterm_config`'s
+            # own docstring). ADR-0117.
+            cash=snapshot.cash, buying_power=snapshot.cash, currency="USD",
         )
 
     def get_positions(self, *, as_of: datetime) -> tuple[BrokerPosition, ...]:

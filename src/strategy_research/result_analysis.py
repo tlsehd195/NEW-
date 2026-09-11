@@ -25,6 +25,7 @@ omitted or approximated.
 
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass
 from typing import Optional
 
@@ -63,7 +64,11 @@ def fold_distribution_summary(folds: list[dict]) -> FoldDistributionSummary:
         fold_count=len(folds),
         win_rate=(wins / len(folds)) if folds else None,
         mean_return=_mean(returns),
-        median_return=(sorted(returns)[len(returns) // 2] if returns else None),
+        # `statistics.median` (not `sorted(...)[len//2]`, which is the
+        # upper element on an even-length list, not the true median --
+        # ADR-0117), matching `walk_forward_evaluation.py`'s own
+        # convention for the same statistic.
+        median_return=(statistics.median(returns) if returns else None),
         stdev_return=_stdev(returns),
         worst_return=(min(returns) if returns else None),
         best_return=(max(returns) if returns else None),

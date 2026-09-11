@@ -75,6 +75,19 @@ class RawProviderOutput:
 
 
 class AIProviderAdapter(Protocol):
+    """A real implementation's `generate()` (and any other method that
+    can hit a provider rate limit) MUST populate `ProviderRateLimitError.
+    retry_after_seconds` from the provider's own response (e.g. an HTTP
+    `Retry-After` header or an equivalent field the provider's API
+    documents) whenever the provider actually supplies one. `ai_gateway.
+    gateway.AIGateway` can only open an automatic quota-recovery window
+    from a REAL signal -- it never fabricates one (`ProviderRateLimitError`'s
+    own docstring) -- so an adapter that raises the error with
+    `retry_after_seconds=None` when the provider's response genuinely
+    included a usable value leaves that provider locked out for the
+    life of the process, indistinguishable from a provider that
+    supplied nothing at all (ADR-0117)."""
+
     provider_id: str
 
     def generate(self, request: AIRequest) -> RawProviderOutput: ...
