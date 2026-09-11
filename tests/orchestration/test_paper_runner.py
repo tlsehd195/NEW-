@@ -458,6 +458,65 @@ class TestTradeJournalWriteSide:
         assert sell_trade.holding_period == sell_fill.execution_time - buy_fill.execution_time
         assert sell_trade.position_after == 0.0
 
+    def test_an_unknown_broker_average_cost_never_fabricates_realized_pnl(self) -> None:
+        """Session 37 (ADR-0115, external review N-16): before this fix,
+        `position_average_cost` was read from `portfolio.positions[...]
+        .average_cost` -- `_portfolio_view`'s own `PositionView.
+        average_cost`, a non-Optional `float` field that MUST fabricate
+        `0.0` whenever the broker's own `BrokerPosition.average_cost`
+        (genuinely `Optional[float]`) is unknown. That silently turned
+        "cost basis unknown" into "cost basis is exactly zero," making
+        realized_pnl the entire sale proceeds instead of the honest
+        `None` this module's own docstring promises. Reading straight
+        from `account.positions` (the raw `BrokerPosition`) instead
+        preserves a genuine `None` through to the recorded TradeRecord."""
+        from broker.paper.session import AccountSummary
+        from broker.models import BrokerPosition
+
+        repo, config, bars = _reversal_scenario()
+        view, clock, checkpoints = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+        components = _components()
+
+        real_account_summary = session.account_summary
+        sell_outcome = None
+        for offset in range(0, len(checkpoints) - 100):
+            clock.index = 100 + offset
+            real_summary = real_account_summary(as_of=view.current_time)
+            aaa_position = real_summary.positions.get("AAA")
+            about_to_sell_with_known_cost = aaa_position is not None and aaa_position.quantity > 0
+
+            if about_to_sell_with_known_cost:
+                # Report AAA's average_cost as genuinely unknown for this
+                # one cycle -- everything else (quantity, cash) is real.
+                unknown_cost_position = BrokerPosition(
+                    security_id="AAA", as_of_time=aaa_position.as_of_time, available=True,
+                    unavailable_reason=None, quantity=aaa_position.quantity, average_cost=None,
+                )
+                stub_summary = AccountSummary(
+                    as_of_time=real_summary.as_of_time, cash=real_summary.cash,
+                    positions={**real_summary.positions, "AAA": unknown_cost_position},
+                )
+                session.account_summary = lambda *, as_of, _s=stub_summary: _s
+            else:
+                session.account_summary = real_account_summary
+
+            outcome = run_cycle(
+                ["AAA"], view.current_time, view, session, trade_journal_repository=journal, **components,
+            )[0]
+            if outcome.submission is not None and outcome.decision.action.value == "SELL":
+                sell_outcome = outcome
+                break
+
+        assert sell_outcome is not None, "fixture must produce a real SELL -- see _reversal_scenario's own docstring"
+        sell_trades = [t for t in journal.list_trades(security_id="AAA") if t.side == OrderSide.SELL]
+        assert len(sell_trades) == 1
+        # The bug: without the fix, this would be a large fabricated
+        # profit (the entire sale proceeds, cost basis wrongly zero).
+        assert sell_trades[0].realized_pnl is None
+        assert sell_trades[0].realized_return is None
+
     def test_omitted_trade_journal_repository_still_omits_realized_fields_by_default(self) -> None:
         """Regression guard: TradeJournalRepositoryLike widening
         record_trade's signature (Session 37) must not change behavior

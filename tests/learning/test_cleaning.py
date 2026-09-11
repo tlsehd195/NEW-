@@ -52,6 +52,38 @@ class TestInvalidTimestamp:
         assert results[0].reason == "missing_decision"
         assert results[0].sample_as_of_time is None
 
+    def test_a_decision_with_no_resolvable_time_is_unknown_not_a_crash(self) -> None:
+        """Session 37 (ADR-0115, external review, previously-remaining
+        MEDIUM): before this fix, this exclusion only applied when
+        `config.require_sample_as_of_time` was True -- a dead guard in
+        practice, since a real `DecisionSnapshot.decision_time` can
+        never actually be None (its own `__post_init__` requires a
+        timezone-aware value). This proves the exclusion is now
+        unconditional even against a malformed/legacy decision object
+        that duck-types past that validation (e.g. a raw DB row from
+        before this field existed) -- the one case that, before this
+        fix, would have let `sample_as_of_time=None` reach `learning.
+        dataset.build_training_dataset`'s chronological sort and crash
+        it, regardless of `require_sample_as_of_time`."""
+        import types
+
+        journal, records = build_journal_with_closed_trades(1)
+        real_decision = journal.get_decision(records[0].decision_id)
+        malformed_decision = types.SimpleNamespace(
+            decision_time=None, security_id=real_decision.security_id,
+        )
+
+        class _StubJournal:
+            def get_decision(self, decision_id):
+                return malformed_decision
+
+        for require in (True, False):
+            cleaner = DataCleaner(DataCleaningConfig(require_sample_as_of_time=require))
+            results = cleaner.clean([records[0]], _StubJournal(), provenance=TradeProvenance.HISTORICAL_SIMULATION)
+            assert results[0].status == SampleStatus.UNKNOWN
+            assert results[0].reason == "missing_decision"
+            assert results[0].sample_as_of_time is None
+
 
 class TestInvalidNumeric:
     def test_nan_reward_is_invalid(self) -> None:

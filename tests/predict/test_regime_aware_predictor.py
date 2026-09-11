@@ -19,6 +19,7 @@ from predict_helpers import build_repository, drifting_prices, make_bars, tradin
 
 from predict.config import PredictionConfig
 from predict.predictor import DriftPredictor, RegimeAwarePredictor
+from predict.repository import InMemoryPredictionRepository
 
 from regime.enums import RegimeAxis
 
@@ -66,6 +67,52 @@ class TestRegimeAwarePredictor:
         if aware.regime_context["VOLATILITY"] != "EXTREME" and plain.expected_return is not None:
             assert aware.expected_return == plain.expected_return
             assert aware.confidence == plain.confidence
+
+    def test_allocates_its_own_independent_prediction_id_not_the_wrapped_drift_predictors(self) -> None:
+        """Session 37 (ADR-0115, external review, previously-remaining
+        MEDIUM): before this fix, `RegimeAwarePredictor.predict()`
+        reused `base.prediction_id` (the internal DriftPredictor's own
+        id) verbatim as its own result's `prediction_id` -- there was no
+        way to give it an id independent of whatever the wrapped
+        DriftPredictor happened to allocate, no matter how the caller
+        constructed it. `starting_id` now controls this predictor's own
+        allocator directly, proving the two are genuinely decoupled."""
+        days = trading_days(date(2024, 1, 2), date(2024, 8, 30))
+        bars = make_bars("AAA", days, drifting_prices(days))
+        repo = build_repository(bars=bars)
+        view = view_at(repo, days, len(days) - 1)
+
+        plain = DriftPredictor().predict(view, "AAA")  # its internal drift also starts at PRED-000001
+        aware = RegimeAwarePredictor(starting_id=100).predict(view, "AAA")
+        assert aware.prediction_id == "PRED-000100"
+        assert aware.prediction_id != plain.prediction_id
+
+    def test_recording_both_predictions_in_the_same_repository_loses_neither(self) -> None:
+        """The concrete payoff of independently-seedable ids: a caller
+        that coordinates starting_id across predictor instances sharing
+        one repository (the same `starting_id`-offsetting convention
+        this codebase already uses for a single orchestration run's
+        other id-allocating components, e.g. `orchestration.
+        paper_strategies.RunCycleStartingIds`) can now persist both a
+        plain DriftPredictor result and a RegimeAwarePredictor result
+        for the same security/as_of_time without one overwriting the
+        other -- pre-fix, reusing the wrapped predictor's id made that
+        structurally impossible no matter what the caller did."""
+        days = trading_days(date(2024, 1, 2), date(2024, 8, 30))
+        bars = make_bars("AAA", days, drifting_prices(days))
+        repo_data = build_repository(bars=bars)
+        view = view_at(repo_data, days, len(days) - 1)
+
+        plain = DriftPredictor().predict(view, "AAA")
+        aware = RegimeAwarePredictor(starting_id=100).predict(view, "AAA")
+
+        prediction_repo = InMemoryPredictionRepository()
+        prediction_repo.record(plain)
+        prediction_repo.record(aware)
+
+        assert prediction_repo.get(plain.prediction_id) == plain
+        assert prediction_repo.get(aware.prediction_id) == aware
+        assert len(prediction_repo.list_all(security_id="AAA")) == 2
 
     def test_fails_closed_the_same_way_as_the_wrapped_predictor(self) -> None:
         days = trading_days(date(2024, 1, 2), date(2024, 1, 31))

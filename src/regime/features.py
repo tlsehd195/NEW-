@@ -104,7 +104,19 @@ def compute_trend(points: Sequence[PricePoint], config: RegimeConfig) -> tuple[T
     `value` is the relative gap `(short_ma - long_ma) / long_ma`."""
     required = config.trend_long_window
     reliability = data_completeness(len(points), required)
-    if len(points) < required or reliability < config.min_data_completeness:
+    # Session 37 (ADR-0115, external review, previously-remaining
+    # MEDIUM): `reliability < config.min_data_completeness` alone,
+    # without `len(points) < required`, is intentionally NOT checked
+    # here -- `data_completeness()` computes `min(1.0, available /
+    # required)` against this SAME `required`, so once `len(points) >=
+    # required`, reliability is always exactly 1.0, which can never be
+    # less than a `min_data_completeness` in [0, 1]. Checking it
+    # separately would therefore never change the outcome; `len(points)
+    # < required` alone is already the complete, exact gate for this
+    # axis. (Volatility/Stress genuinely need their own separate
+    # reliability check below -- their gate's length condition is NOT
+    # `< required`, so reliability there is not similarly redundant.)
+    if len(points) < required:
         return TrendState.UNKNOWN, None, reliability
 
     prices = [p.price for p in points]
@@ -178,7 +190,10 @@ def compute_liquidity(
 
     required = config.liquidity_baseline_window
     reliability = data_completeness(len(volumes), required)
-    if len(volumes) < required or reliability < config.min_data_completeness:
+    # See compute_trend's own comment on this same pattern -- reliability
+    # against this SAME `required` can never independently fall below
+    # `min_data_completeness` once `len(volumes) >= required`.
+    if len(volumes) < required:
         return LiquidityState.UNKNOWN, None, reliability
 
     recent = _mean(volumes[-config.liquidity_recent_window :])
@@ -216,7 +231,8 @@ def compute_correlation(
 
     required = config.correlation_window + 1
     reliability = data_completeness(len(common_ts), required)
-    if len(common_ts) < required or reliability < config.min_data_completeness:
+    # See compute_trend's own comment on this same pattern.
+    if len(common_ts) < required:
         return CorrelationState.UNKNOWN, None, reliability
 
     window_ts = common_ts[-required:]
@@ -294,7 +310,8 @@ def compute_distribution_days(
 
     required = config.distribution_window + 1  # +1: the oldest scored day needs a prior day to compare volume against
     reliability = data_completeness(len(points), required)
-    if len(points) < required or reliability < config.min_data_completeness:
+    # See compute_trend's own comment on this same pattern.
+    if len(points) < required:
         return DistributionState.UNKNOWN, None, reliability
 
     window = points[-required:]

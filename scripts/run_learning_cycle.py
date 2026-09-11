@@ -202,6 +202,18 @@ def main(argv=None) -> int:
     print(f"Test metrics: {_metrics_dict(evaluation.test_metrics)}")
     print(f"Report written to: {args.out}")
     engine.close()
+    # Session 37 (ADR-0115, external review N-15): before this fix, this
+    # was an unconditional `return 0` -- a dataset that built but was
+    # INSUFFICIENT_SAMPLES (empty TRAIN/VALIDATION, the exact n=1 case
+    # ADR-0115's own dataset.py fix now correctly flags) still made
+    # `run_learning_pipeline` mark `experiment.status="FAILED"`, but
+    # this script reported success regardless -- only a totally empty
+    # journal (the earlier `return 1` above) was ever detectable by a
+    # scheduler reading this process's own exit code, not a dataset
+    # that built but could not actually train or validate anything.
+    if experiment.status != "COMPLETED":
+        print(f"FAILED: experiment status is {experiment.status!r}, not COMPLETED", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -184,6 +184,18 @@ class TestMissingOrInvalidData:
         assert decision.action == DecisionAction.NO_TRADE
         assert decision.decision_reason == "regime_stress_high"
 
+    def test_no_trade_when_regime_stress_unknown(self) -> None:
+        # Same fail-closed treatment as trend UNKNOWN above -- an
+        # unknown stress reading is not evidence of low/normal stress
+        # and must not fall through to a directional decision
+        # (ADR-0115).
+        agent = BaselineRuleDecisionAgent()
+        prediction = make_prediction(expected_return=0.02, confidence=0.9)
+        regime = make_composite(stress_state=StressState.UNKNOWN.value)
+        decision = agent.decide("AAA", _utc(2024, 6, 1), prediction, regime, empty_portfolio(_utc(2024, 6, 1)))
+        assert decision.action == DecisionAction.NO_TRADE
+        assert decision.decision_reason == "regime_stress_unknown"
+
     def test_regime_entirely_absent_does_not_block_a_decision(self) -> None:
         """Regime is a gate only when available -- Prediction is the
         mandatory input, Regime is an additional check applied only when

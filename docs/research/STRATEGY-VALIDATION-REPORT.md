@@ -952,7 +952,7 @@ objective, per ADR-0034 Decision 4 -- both hold simultaneously).
 After Phase 31, the user obtained real 2010-2026 Tiingo data in their
 own network-enabled environment (outside this sandboxed session) and
 ran `scripts/run_long_horizon_validation.py --data-status REAL`
-against all 4 existing strategies over the full PILOT_UNIVERSE (16
+against all 4 existing strategies over the full PILOT_UNIVERSE (15
 symbols). This produced this project's first-ever real walk-forward
 result: 76 real folds per strategy.
 
@@ -1017,7 +1017,7 @@ This is not a failure of this project's infrastructure -- it is the
 evidence-classification system correctly refusing to let a
 fold-consistency-only signal be mistaken for real, reproducible skill.
 The correct conclusion at this point is `REAL_VALIDATION_NOT_COMPLETED`
-for all 4 strategies against the current 16-symbol, survivorship-biased
+for all 4 strategies against the current 15-symbol, survivorship-biased
 PILOT_UNIVERSE -- not that no signal exists anywhere, only that none of
 the 4 existing strategies clears this project's own evidentiary bar on
 this specific dataset. Per this project's RULE 0.8/no-post-hoc-tuning
@@ -1030,12 +1030,12 @@ hypothesis (e.g. the broader/less survivorship-biased universe
 identified as the actual next requirement), decided before seeing its
 own result, not after.
 
-## 40-Symbol (RESEARCH_UNIVERSE Stage 2) Re-Validation
+## 39-Symbol (RESEARCH_UNIVERSE Stage 2) Re-Validation
 
 Per `docs/decisions/ADR-0036-research-universe-stage2-expansion.md`,
-the universe was widened from `PILOT_UNIVERSE_V1` (16 symbols, mostly
-mega-cap tech/growth) to `RESEARCH_UNIVERSE_STAGE2` (40 symbols,
-sector-balanced) specifically to test whether the 16-symbol PBO=62.86%
+the universe was widened from `PILOT_UNIVERSE_V1` (15 symbols, mostly
+mega-cap tech/growth) to `RESEARCH_UNIVERSE_STAGE2` (39 symbols,
+sector-balanced) specifically to test whether the 15-symbol PBO=62.86%
 finding above was a concentration-risk artifact rather than evidence
 about the strategies themselves -- decided and documented *before* this
 result existed, per RULE 0.8. The user re-ran
@@ -1059,7 +1059,7 @@ trend_volatility: evidence=ROBUSTNESS_PENDING -- 61% of 76 real folds positive (
 
 **Still no strategy reaches CANDIDATE**, but the failure mode changed
 in an important way: PBO across all 4 candidates dropped from 62.86%
-(16-symbol) to 0.00% (40-symbol) -- the specific "picked the best of
+(15-symbol) to 0.00% (39-symbol) -- the specific "picked the best of
 several noisy trials" concern PBO exists to catch is essentially gone
 at this breadth. `trend_volatility` is now blocked by DSR alone (0.93
 vs the 0.95 bar), the closest any candidate has come to CANDIDATE in
@@ -1142,7 +1142,7 @@ Per Phase 32's own discipline (governing instructions section 50):
 every claim below is labeled OBSERVED (directly present in the report
 data actually relayed into this session), INFERRED (a computation over
 OBSERVED data), HYPOTHESIS (a plausible but unconfirmed explanation),
-or UNKNOWN (this session's repository checkout has no real 40-symbol
+or UNKNOWN (this session's repository checkout has no real 39-symbol
 report file -- `data/` is `.gitignore`d and empty here, confirmed by
 direct search -- so anything needing fold-level, regime-level, or
 per-security detail beyond what was already pasted into this
@@ -1206,7 +1206,7 @@ portfolio-construction bug, rather than construction being the primary
 cause on its own. `long_term_momentum`'s relatively less-bad held-out
 result (30.67% net, still 62pp behind SPY) is then most plausibly
 attributable to whatever broad long-only market exposure ("beta")
-happened to be embedded in a 40-symbol, mostly-large-cap universe
+happened to be embedded in a 39-symbol, mostly-large-cap universe
 during a rally -- not to any stock-picking skill from the momentum
 ranking itself, since IC data does not support that ranking having any.
 
@@ -1250,7 +1250,7 @@ to "no information" than "a strong reversed signal."
 **INFERRED**: this is now 3 independent, pre-committed rule-based
 hypotheses tested with the same rigorous methodology (momentum,
 low-volatility, trend+volatility-filter) against this specific
-40-symbol universe over 2010-2023-04-28, and **none shows positive
+39-symbol universe over 2010-2023-04-28, and **none shows positive
 forward-predictive power.** `trend_volatility`'s real walk-forward
 fold-consistency (61% positive folds, the only one of 4 candidates to
 clear that bar) is therefore better explained by broad market
@@ -1626,11 +1626,11 @@ this session alone.
 **Ninth update -- universe breadth (Stage 3) built, per the user's own
 explicit direction to proceed toward completion; not yet observed
 against real data.** `RESEARCH_UNIVERSE_STAGE3` (`data_infra/universe.py`)
-adds 24 hand-curated symbols to Stage 2's 40, selected by a documented,
+adds 24 hand-curated symbols to Stage 2's 39, selected by a documented,
 non-cherry-picked rule: closing this project's own confirmed GICS
 sector gaps (Real Estate and Materials were completely absent from
 Stage 2; Utilities had only 1 symbol). Every CLI script's `--universe
-RESEARCH_UNIVERSE` alias now resolves to Stage 3 (64 symbols) by
+RESEARCH_UNIVERSE` alias now resolves to Stage 3 (63 symbols) by
 default. Same hand-curation honesty discipline as every prior stage:
 NOT verified real index membership, NOT survivorship-bias mitigation
 -- see ADR-0044 for the full symbol list, sector rationale, and request-
@@ -1645,11 +1645,11 @@ price and fundamentals ingestion for the new symbols must run in the
 user's own network-enabled environment before any Stage 3 result
 exists.
 
-**Tenth update -- real Stage 3 (64-symbol) result received: first-ever
+**Tenth update -- real Stage 3 (63-symbol) result received: first-ever
 CANDIDATE, immediately undercut by its own held-out TEST result; pool
 PBO rose rather than fell.** The user completed real ingestion for the
 24 new symbols and ran `run_long_horizon_validation.py --universe
-RESEARCH_UNIVERSE --data-status REAL` against the real 64-symbol
+RESEARCH_UNIVERSE --data-status REAL` against the real 63-symbol
 catalog (2010-01-01..2023-04-28). `leverage` reached
 `evidence=CANDIDATE` -- the first candidate in this project's history
 to clear all three walk-forward gates (60% positive folds, PBO=0.39<0.5,
@@ -1911,7 +1911,7 @@ For `buy_and_hold` and `trend_volatility`, UNKNOWN whether their gap
 to SPY is more attributable to signal weakness or construction --
 `buy_and_hold` has no signal at all (by design, a reference baseline)
 so its entire 52.68pp gap to SPY is pure portfolio-construction/
-universe-composition (this 40-symbol equal-ish-weighted basket vs.
+universe-composition (this 39-symbol equal-ish-weighted basket vs.
 SPY's cap-weighted, mega-cap-AI-heavy composition during this specific
 rally) -- INFERRED from that structural fact, not from decomposing
 `trend_volatility`'s filter-driven cash exposure, which is UNKNOWN
@@ -2189,7 +2189,7 @@ zero reach CANDIDATE.
 
 `REAL_VALIDATION_NOT_COMPLETED` remains the correct classification for
 all 4 strategies. This addendum does not change that conclusion; it
-sharpens it -- the concentration-risk explanation for the 16-symbol
+sharpens it -- the concentration-risk explanation for the 15-symbol
 PBO finding is now largely ruled out (PBO here is 0.00%), and the
 project's own held-out discipline surfaced a second, independent
 reason none of these 4 candidates should be traded with real capital

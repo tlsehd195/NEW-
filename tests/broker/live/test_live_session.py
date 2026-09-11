@@ -213,6 +213,69 @@ class TestReleaseKillSwitchPreservesReconciliationRequirement:
         assert session.operational_state == OperationalState.READY
 
 
+class TestReconcileOrderRequiresEveryOrderResolved:
+    """Session 37 (ADR-0115, external review N-1): before this fix,
+    `reconcile_order` transitioned `RECONCILIATION_REQUIRED` -> `ACTIVE`
+    as soon as THIS ONE call returned MATCHED, regardless of whether any
+    *other* `client_order_id` the session tracks was still genuinely
+    UNKNOWN -- silently resuming new submissions before every open order
+    had actually gone through reconciliation, contradicting
+    `release_kill_switch`'s own documented "정산 전 재개 금지" invariant
+    (which this fix now makes `reconcile_order` honor too)."""
+
+    def test_reconciling_one_healthy_order_does_not_clear_another_orders_unknown(self) -> None:
+        session = _session()
+        ctx = _gate_ctx(session)
+        healthy = _order(client_order_id="CID-1", security_id="AAA")
+        broken = _order(client_order_id="CID-2", security_id="BBB")
+        session.submit(healthy, requested_at=utc(2024, 1, 2), gate_context=ctx)
+        session.submit(broken, requested_at=utc(2024, 1, 2), gate_context=ctx)
+
+        # CID-2's submission response was lost -- a real BrokerError would
+        # have set this same UNKNOWN value via submit()'s own except-branch;
+        # injected directly here (matching TestReleaseKillSwitchPreserves
+        # ReconciliationRequirement's own precedent) so CID-1 stays exactly
+        # as submit() left it: correctly tracked, never actually broken.
+        session._internal_status[broken.client_order_id] = BrokerOrderStatus.UNKNOWN  # type: ignore[attr-defined]
+        session._operational_state = OperationalState.RECONCILIATION_REQUIRED  # type: ignore[attr-defined]
+
+        result = session.reconcile_order(healthy.client_order_id, as_of=utc(2024, 1, 3))
+        assert result.status.value == "MATCHED"
+        # The bug: reconciling CID-1 (which was never wrong) must not
+        # resume the whole session while CID-2 is still unresolved.
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+        assert session._internal_status[broken.client_order_id] == BrokerOrderStatus.UNKNOWN  # type: ignore[attr-defined]
+
+        third_ctx = _gate_ctx(session)
+        outcome = session.submit(
+            _order(client_order_id="CID-3", security_id="CCC"), requested_at=utc(2024, 1, 3), gate_context=third_ctx,
+        )
+        assert outcome.submitted is False
+        assert outcome.error == "reconciliation_required"
+
+    def test_reconciling_the_last_unresolved_order_does_resume(self) -> None:
+        session = _session()
+        ctx = _gate_ctx(session)
+        healthy = _order(client_order_id="CID-1", security_id="AAA")
+        broken = _order(client_order_id="CID-2", security_id="BBB")
+        session.submit(healthy, requested_at=utc(2024, 1, 2), gate_context=ctx)
+        session.submit(broken, requested_at=utc(2024, 1, 2), gate_context=ctx)
+        session._internal_status[broken.client_order_id] = BrokerOrderStatus.UNKNOWN  # type: ignore[attr-defined]
+        session._operational_state = OperationalState.RECONCILIATION_REQUIRED  # type: ignore[attr-defined]
+
+        session.reconcile_order(healthy.client_order_id, as_of=utc(2024, 1, 3))
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+
+        # CID-2 gets independently corrected to match the broker's real,
+        # already-FILLED status (e.g. an operator-driven correction) --
+        # now every tracked order is resolved, so reconciling it too
+        # (a trivial MATCH) is the one that actually resumes the session.
+        session._internal_status[broken.client_order_id] = BrokerOrderStatus.FILLED  # type: ignore[attr-defined]
+        result = session.reconcile_order(broken.client_order_id, as_of=utc(2024, 1, 4))
+        assert result.status.value == "MATCHED"
+        assert session.operational_state == OperationalState.ACTIVE
+
+
 class TestScenario11DuplicateClientOrderId:
     def test_duplicate_submission_returns_same_response_no_new_order(self) -> None:
         session = _session()

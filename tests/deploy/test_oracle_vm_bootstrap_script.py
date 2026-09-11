@@ -8,6 +8,7 @@ docstring -- if either drifts (e.g. a flag renamed in one but not the
 other), a human copying either one verbatim would run something
 subtly different from what was actually tested.
 """
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -97,3 +98,53 @@ def test_presence_only_flags_appear_in_both_places():
     for flag in PRESENCE_ONLY_FLAGS:
         assert flag in bootstrap_text, f"{flag} missing from bootstrap script"
         assert flag in cycle_text, f"{flag} missing from ADR-0075 docstring"
+
+
+def _extract_private_clone_command(text: str) -> str:
+    marker = "git -c http.extraheader"
+    idx = text.index(marker)
+    end = text.index("\n", idx)
+    return text[idx:end]
+
+
+def test_private_clone_never_embeds_the_token_in_the_clone_url():
+    # ADR-0115: `git clone https://<token>@host/...` makes git persist
+    # that URL, token included, into the clone's .git/config
+    # permanently -- contradicting this script's own promise (and
+    # ORACLE-CLOUD-DEPLOYMENT.md's) that the token is never written to
+    # disk. The token must only ever reach git as a one-off `-c` value.
+    clone_line = _extract_private_clone_command(_read(BOOTSTRAP_SCRIPT))
+    assert "GH_TOKEN}@" not in clone_line
+    assert '"$REPO_URL"' in clone_line
+
+
+def test_private_clone_command_does_not_persist_the_token_to_git_config(tmp_path):
+    # Real local git repo standing in for a real private GitHub remote
+    # -- proves the actual clone command line this script runs never
+    # writes the token to .git/config, by actually running it.
+    source = tmp_path / "source"
+    source.mkdir()
+    for args in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "t@example.com"],
+        ["git", "config", "user.name", "t"],
+    ):
+        subprocess.run(args, cwd=source, check=True)
+    (source / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "f.txt"], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=source, check=True)
+
+    dest = tmp_path / "clone"
+    fake_token = "FAKE_SECRET_TOKEN_12345"
+    clone_line = _extract_private_clone_command(_read(BOOTSTRAP_SCRIPT))
+    script = (
+        f'REPO_URL="file://{source}"\n'
+        f'REPO_DIR="{dest}"\n'
+        f'GH_TOKEN="{fake_token}"\n'
+        f"{clone_line}\n"
+    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+    config_text = (dest / ".git" / "config").read_text()
+    assert fake_token not in config_text

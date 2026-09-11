@@ -6,6 +6,8 @@ checkable without running it: the YAML is well-formed, it invokes the
 same scripts with the ratified flags, and no secret value is ever
 hardcoded into the file.
 """
+import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -110,3 +112,82 @@ def test_both_state_directories_are_restored_and_reuploaded():
             f"{step.get('name')} must upload with if: always() so a failed "
             "run does not silently lose already-written state"
         )
+
+
+def test_both_restore_steps_defend_against_a_wrapped_artifact_zip():
+    """Session 37 (ADR-0115, external review N-14): `actions/upload-
+    artifact@v4` may wrap a single-directory upload in a subfolder named
+    after that directory instead of flattening its contents to the zip
+    root -- undetected, a wrapped zip would look exactly like "no prior
+    catalog" to every downstream step (the marker file `catalog.duckdb`
+    would be one level too deep), forcing a full re-request every run
+    and risking a repeat of ADR-0085's rate-limit incident. Both restore
+    steps must check for and flatten a single wrapping subfolder."""
+    steps = _steps(_load())
+    restore_steps = [s for s in steps if s.get("name", "").startswith("Restore previous")]
+    assert len(restore_steps) == 2
+    for step in restore_steps:
+        run_text = step.get("run", "")
+        assert "catalog.duckdb" in run_text, f"{step['name']} has no marker-file check for a wrapped zip"
+        assert "find" in run_text and "-maxdepth 1" in run_text, f"{step['name']} has no single-subfolder detection"
+
+
+def test_the_flatten_logic_actually_promotes_a_wrapped_subfolders_contents():
+    """Real, executable proof the flatten snippet works -- not just that
+    matching text is present in the workflow file. Reproduces the exact
+    shell logic used by both restore steps (kept byte-for-byte identical
+    to the workflow via the substring assertion below) against a real
+    temp directory shaped the way a wrapped `actions/upload-artifact@v4`
+    zip would extract."""
+    flatten_snippet = (
+        'if [ ! -f "$DIR/catalog.duckdb" ]; then\n'
+        '  SUBDIRS=$(find "$DIR" -mindepth 1 -maxdepth 1 -type d)\n'
+        '  SUBDIR_COUNT=$(printf \'%s\\n\' "$SUBDIRS" | grep -c . || true)\n'
+        '  if [ "$SUBDIR_COUNT" = "1" ] && [ -f "$SUBDIRS/catalog.duckdb" ]; then\n'
+        '    echo "Artifact was wrapped in a subfolder ($SUBDIRS) -- flattening"\n'
+        '    cp -r "$SUBDIRS"/. "$DIR"/\n'
+        '    rm -rf "$SUBDIRS"\n'
+        "  fi\n"
+        "fi\n"
+    )
+    def _normalized(text: str) -> str:
+        # YAML block-scalar indentation is not semantically meaningful
+        # here -- compare line content only, ignoring leading whitespace.
+        return "\n".join(line.strip() for line in text.strip().splitlines())
+
+    run_text = _run_text(_steps(_load()))
+    normalized_run_text = _normalized(run_text)
+    # The real workflow substitutes $MARKET_DATA_DIR/$PAPER_STORE_DIR for
+    # $DIR -- confirm the same logic, modulo that one variable name, is
+    # really what's in the file (not just a similarly-worded comment).
+    for var in ("MARKET_DATA_DIR", "PAPER_STORE_DIR"):
+        assert _normalized(flatten_snippet.replace("$DIR", f"${var}")) in normalized_run_text, (
+            f"the workflow's {var} restore step no longer matches the tested flatten snippet"
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        wrapped = root / "real_market_data"
+        wrapped.mkdir()
+        (wrapped / "catalog.duckdb").write_text("real catalog content")
+        (wrapped / "parquet").mkdir()
+        (wrapped / "parquet" / "marker.parquet").write_text("x")
+
+        script = f'DIR="{root}"\n{flatten_snippet}'
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+
+        assert (root / "catalog.duckdb").read_text() == "real catalog content"
+        assert (root / "parquet" / "marker.parquet").exists()
+        assert not wrapped.exists()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Unwrapped case (today's actual, un-reproduced-locally behavior,
+        # or a future upload-artifact version that doesn't wrap) must be
+        # a complete no-op -- never touched, never mistaken for wrapped.
+        root = Path(tmp)
+        (root / "catalog.duckdb").write_text("already at top level")
+        script = f'DIR="{root}"\n{flatten_snippet}'
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert (root / "catalog.duckdb").read_text() == "already at top level"

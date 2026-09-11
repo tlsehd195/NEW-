@@ -126,6 +126,33 @@ class TestPartialFailure:
         result = runner.run(["AAA"], utc(2024, 1, 1), utc(2024, 1, 10))
         assert result.status == IngestionStatus.FAILED
 
+    def test_a_raw_exception_from_normalize_fails_only_that_symbol(self) -> None:
+        """Session 37 (ADR-0115, external review, previously-remaining
+        MEDIUM): `normalize()`/`append_bars()` used to sit outside
+        `_ingest_one`'s try/except -- unlike `fetch()`'s own
+        TransientProviderError/PermanentProviderError handling, a raw
+        exception out of normalize (here, a malformed record whose
+        `available_time` is naive, tripping `PriceBar.__post_init__`'s
+        own tz-aware requirement) was not a `ProviderError` at all, so it
+        propagated straight out of `run()` -- aborting every OTHER
+        symbol in the same call, not just the one bad record."""
+        good_record = _raw_record("AAA", 2)
+        bad_record = dict(_raw_record("BAD", 2))
+        bad_record["available_time"] = bad_record["available_time"].replace(tzinfo=None)  # malformed: naive
+        dataset = {"AAA": [good_record], "BAD": [bad_record], "CCC": [_raw_record("CCC", 2)]}
+        provider = MockDataProvider(dataset)
+        repo = InMemoryDataRepository()
+        runner = IngestionRunner(provider, repo, sleep_fn=_no_sleep)
+
+        result = runner.run(["AAA", "BAD", "CCC"], utc(2024, 1, 1), utc(2024, 1, 10))
+
+        assert result.status == IngestionStatus.PARTIAL_SUCCESS
+        by_symbol = {r.security_id: r for r in result.results}
+        assert by_symbol["AAA"].status == IngestionStatus.SUCCESS
+        assert by_symbol["BAD"].status == IngestionStatus.FAILED
+        assert by_symbol["BAD"].error is not None
+        assert by_symbol["CCC"].status == IngestionStatus.SUCCESS
+
 
 class TestCheckpointRecovery:
     def test_resumed_run_skips_already_completed_symbols(self) -> None:

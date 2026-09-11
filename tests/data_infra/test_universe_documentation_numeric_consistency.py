@@ -84,6 +84,25 @@ class TestProjectStatusMatchesActualCounts:
         assert "PILOT 15 + Stage2 24" in _PROJECT_STATUS
         assert "이제 63종목" in _PROJECT_STATUS
 
+    def test_no_additional_stale_40_or_16_symbol_prose_beyond_the_two_known_phase22_mentions(self) -> None:
+        # ADR-0115: the external review's own critique of this test file
+        # was that it only pins the exact strings ADR-0112 fixed, so any
+        # OTHER stale "40종목"/"16종목" sentence (same class of error,
+        # just not one of the originally-cited locations) goes
+        # undetected. This counts total occurrences instead of matching
+        # specific sentences, so a newly-introduced stale mention (in
+        # either direction) fails this test rather than only being
+        # caught by another manual review. The only two legitimate
+        # "16종목" mentions left in the document both name Phase 22's
+        # own, textually distinct 16-ticker US long-term universe
+        # (AAPL/MSFT/.../SPY -- genuinely 16 real symbols, not
+        # PILOT_UNIVERSE_V1/RESEARCH_UNIVERSE_STAGE2) -- "40종목" has no
+        # legitimate referent anywhere in this document at all.
+        import re
+
+        assert len(re.findall(r"40종목", _PROJECT_STATUS)) == 0
+        assert len(re.findall(r"16종목", _PROJECT_STATUS)) == 2
+
     def test_stage3_24_symbol_breakdown_sums_to_24_not_25(self) -> None:
         # The external review's own finding: 4 (Real Estate) + 4
         # (Materials) + 3 (Utilities) + "나머지 N" must sum to 24 --

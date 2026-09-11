@@ -139,6 +139,12 @@ class BaselineRuleDecisionAgent:
             if trend_obs is not None and trend_obs.state == TrendState.UNKNOWN.value:
                 return build(DecisionAction.NO_TRADE, "regime_trend_unknown")
             stress_obs = regime.get(RegimeAxis.STRESS)
+            if stress_obs is not None and stress_obs.state == StressState.UNKNOWN.value:
+                # Same fail-closed treatment as the trend-UNKNOWN gate
+                # above -- an unknown stress state is not evidence of
+                # low stress, so it must not fall through to a
+                # directional decision (ADR-0115).
+                return build(DecisionAction.NO_TRADE, "regime_stress_unknown")
             if stress_obs is not None and stress_obs.state == StressState.HIGH.value:
                 return build(DecisionAction.NO_TRADE, "regime_stress_high")
 

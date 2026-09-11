@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from monitoring_helpers import make_config, utc
 
+import pytest
+
+from monitoring.config import MonitoringConfig
 from monitoring.drift import detect_distribution_shift, detect_mean_shift, detect_variance_shift
 from monitoring.enums import DriftStatus, MonitoringComponent
 
@@ -140,6 +143,25 @@ class TestDistributionShift:
             config=config, as_of_time=utc(2024, 1, 2), drift_id="D1",
         )
         assert result.status == DriftStatus.UNKNOWN
+
+
+class TestMinDriftSampleCountFloor:
+    def test_a_threshold_of_one_is_rejected_at_construction(self) -> None:
+        # detect_mean_shift/detect_variance_shift compute sample
+        # variance with an (n - 1) denominator; a threshold of 1 would
+        # let a single-sample window pass the sample-size gate and
+        # then crash with ZeroDivisionError instead of producing
+        # DriftStatus.UNKNOWN (ADR-0115).
+        with pytest.raises(ValueError, match="min_drift_sample_count"):
+            MonitoringConfig(min_drift_sample_count=1)
+
+    def test_a_threshold_of_two_is_the_lowest_accepted_value(self) -> None:
+        config = MonitoringConfig(min_drift_sample_count=2)
+        result = detect_mean_shift(
+            [1.0, 1.0], [2.0, 2.0], component=MonitoringComponent.PREDICTION, metric_name="expected_return",
+            config=config, as_of_time=utc(2024, 1, 2), drift_id="D1",
+        )
+        assert result.status in (DriftStatus.NO_DRIFT, DriftStatus.DRIFT_DETECTED, DriftStatus.UNKNOWN)
 
 
 class TestDeterministicReplay:

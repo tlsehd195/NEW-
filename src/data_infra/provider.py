@@ -76,6 +76,32 @@ def bar_available_time(event_date: datetime) -> datetime:
     return event_date + END_OF_SESSION_OFFSET
 
 
+def clamp_ingestion_time(batch_ingestion_time: datetime, available_time: datetime) -> datetime:
+    """Session 37 (ADR-0115, external review N-3): `ingestion_time` must
+    never be earlier than `available_time`
+    (`quality.py::_check_ingestion_precedes_availability`, ERROR
+    severity) -- a record cannot have been ingested before the fact it
+    reports became knowable. Every provider in this package stamps
+    `ingestion_time` from a single batch-level value (the caller's
+    `fetch(..., end=...)`, this module's own docstring on
+    `END_OF_SESSION_OFFSET` explains why), not each bar's own real
+    retrieval instant. That batch-level value can legitimately fall
+    BEFORE `bar_available_time()` for the most recent bar in the batch
+    (e.g. a month-end/current-day bar, whenever `end` is an earlier
+    clock time on the same calendar day as the bar's own event date) --
+    an inversion with no real-world meaning, not evidence of an actual
+    look-ahead leak. Clamping up to `available_time` in that case is the
+    honest, conservative choice: it is always true that ingestion did
+    not happen before the fact became available, so
+    `max(batch_ingestion_time, available_time)` never asserts anything
+    false, unlike leaving the earlier batch-level value in place and
+    violating the invariant outright. `Provenance.retrieved_at` is
+    intentionally left unclamped by every caller of this function --
+    it records the real, honest batch fetch time and is not subject to
+    this invariant."""
+    return max(batch_ingestion_time, available_time)
+
+
 class ProviderError(Exception):
     """Base class for DataProvider failures."""
 
@@ -310,17 +336,32 @@ class IngestionRunner:
         if raw_records is None:
             return IngestionRecordResult(security_id, IngestionStatus.FAILED, 0, last_error)
 
-        bars = self._provider.normalize(security_id, raw_records)
+        # Session 37 (ADR-0115, external review, previously-remaining
+        # MEDIUM): `normalize()`/`append_bars()` used to sit outside the
+        # try/except above -- unlike `fetch()`, any raw exception either
+        # one raised (a malformed record's ValueError, a repository
+        # constraint violation) propagated straight out of `run()`,
+        # aborting the loop over `security_ids` entirely and losing
+        # every symbol not yet processed, not just this one. This now
+        # gives normalize/append the same per-symbol-failure isolation
+        # `fetch()`'s TransientProviderError/PermanentProviderError
+        # handling already had, so one bad symbol degrades to a single
+        # FAILED result instead of taking the whole multi-symbol run
+        # down with it.
+        try:
+            bars = self._provider.normalize(security_id, raw_records)
 
-        new_bars: list[PriceBar] = []
-        for bar in bars:
-            key = (bar.security_id, bar.timestamp, bar.provenance.source, bar.provenance.data_version)
-            if key in self._seen_keys:
-                continue  # idempotent: already ingested this exact record
-            self._seen_keys.add(key)
-            new_bars.append(bar)
+            new_bars: list[PriceBar] = []
+            for bar in bars:
+                key = (bar.security_id, bar.timestamp, bar.provenance.source, bar.provenance.data_version)
+                if key in self._seen_keys:
+                    continue  # idempotent: already ingested this exact record
+                self._seen_keys.add(key)
+                new_bars.append(bar)
 
-        self._repository.append_bars(new_bars)
+            self._repository.append_bars(new_bars)
+        except Exception as exc:
+            return IngestionRecordResult(security_id, IngestionStatus.FAILED, 0, f"{type(exc).__name__}: {exc}")
         return IngestionRecordResult(security_id, IngestionStatus.SUCCESS, len(new_bars), None)
 
     @staticmethod

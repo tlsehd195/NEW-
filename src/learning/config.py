@@ -18,7 +18,19 @@ from data_infra.versioning import compute_data_version
 @dataclass(frozen=True)
 class DataCleaningConfig:
     version: str = "data_cleaning_config_v1"
-    require_sample_as_of_time: bool = True  # a sample whose decision cannot be resolved is UNKNOWN, not silently skipped
+    # A sample whose decision cannot be resolved, or whose decision has
+    # no resolvable time, is UNKNOWN, not silently skipped -- this is
+    # now unconditional (Session 37, ADR-0115, external review,
+    # previously-remaining MEDIUM): `DecisionSnapshot.decision_time` is
+    # a required, non-Optional field everywhere a real DecisionSnapshot
+    # is constructed, so `require_sample_as_of_time=False` could never
+    # actually admit a record with an unresolvable time in practice --
+    # and if it somehow did, `learning.dataset.build_training_dataset`'s
+    # own chronological sort would crash on the resulting `None`. This
+    # field is kept for backward compatibility but no longer changes
+    # `DataCleaner`'s behavior either way.
+    require_sample_as_of_time: bool = True
+
     require_realized_outcome: bool = True  # a sample with no realized_return is EXCLUDED, not fabricated as 0.0
 
     def configuration_version(self) -> str:

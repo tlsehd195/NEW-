@@ -837,6 +837,21 @@ def _fy_record(security_id, record_id, *, concept, value, period_end, available_
     )
 
 
+def _split_action(security_id, record_id, *, effective, ratio="2:1"):
+    from data_infra.enums import CorporateActionType
+    from data_infra.models import CorporateAction
+
+    return CorporateAction(
+        security_id=security_id, action_type=CorporateActionType.SPLIT,
+        available_time=effective, ingestion_time=effective,
+        provenance=Provenance(
+            source="sec_edgar", source_dataset=f"sec_edgar_split_{security_id}",
+            source_record_id=record_id, retrieved_at=effective, data_version="v1",
+        ),
+        event_time=effective, effective_time=effective, details={"ratio": ratio},
+    )
+
+
 def _q_record(security_id, record_id, *, concept, value, period_end, available_time=None, fiscal_period="Q2"):
     available_time = available_time or period_end
     return FundamentalRecord(
@@ -1273,6 +1288,54 @@ class TestNetStockIssuanceScore:
         repo.add_fundamental(_fy_record("AAA", "shares_2022", concept="CommonStockSharesOutstanding", value=110.0, period_end=_utc(2022, 12, 31)))
 
         assert net_stock_issuance_score("AAA", _utc(2023, 6, 1), repo) is None
+
+    def test_a_pure_split_produces_a_fake_issuance_signal_without_price_repository(self, tmp_path) -> None:
+        """Session 37 (ADR-0115, external review N-11): a 2:1 split
+        between the two fiscal year-ends mechanically doubles the raw
+        `CommonStockSharesOutstanding` even though no real issuance
+        happened -- `-ln(2) ≈ -0.69`, a large false dilution signal.
+        Pins the pre-existing (unadjusted) behavior when no
+        `price_repository` is supplied, matching this fix's backward-
+        compatibility guarantee."""
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "shares_2021", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "shares_2022", concept="CommonStockSharesOutstanding", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        score = net_stock_issuance_score("AAA", _utc(2023, 6, 1), repo)
+        assert score == pytest.approx(-math.log(2.0))
+
+    def test_a_pure_split_produces_no_signal_once_price_repository_is_supplied(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "shares_2021", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "shares_2022", concept="CommonStockSharesOutstanding", value=200.0, period_end=_utc(2022, 12, 31)))
+
+        split = _split_action("AAA", "AAA-split", effective=_utc(2022, 6, 15))
+        price_repo = InMemoryDataRepository(corporate_actions=[split])
+        price_view = _view(price_repo, _utc(2023, 6, 1))
+
+        score = net_stock_issuance_score("AAA", _utc(2023, 6, 1), repo, price_repository=price_view)
+        # Split-adjusted prior year: 100 * 2 = 200 -- identical to
+        # current year, so zero real issuance/buyback signal remains.
+        assert score == pytest.approx(0.0, abs=1e-9)
+
+    def test_a_real_buyback_alongside_a_split_still_shows_the_real_signal(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        # 2:1 split (100 -> 200 mechanically) plus a real buyback down to 180.
+        repo.add_fundamental(_fy_record("AAA", "shares_2021", concept="CommonStockSharesOutstanding", value=100.0, period_end=_utc(2021, 12, 31)))
+        repo.add_fundamental(_fy_record("AAA", "shares_2022", concept="CommonStockSharesOutstanding", value=180.0, period_end=_utc(2022, 12, 31)))
+
+        split = _split_action("AAA", "AAA-split", effective=_utc(2022, 6, 15))
+        price_repo = InMemoryDataRepository(corporate_actions=[split])
+        price_view = _view(price_repo, _utc(2023, 6, 1))
+
+        score = net_stock_issuance_score("AAA", _utc(2023, 6, 1), repo, price_repository=price_view)
+        # Split-adjusted prior: 100 * 2 = 200; real change: 180/200 -- a
+        # genuine (small) net buyback, positive score.
+        assert score == pytest.approx(-math.log(180.0 / 200.0))
+        assert score > 0
 
 
 class TestAssetTurnoverChangeScore:

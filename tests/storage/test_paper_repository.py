@@ -125,3 +125,55 @@ class TestFullSessionRestartAgainstDuckDB:
         assert before.cash == after.cash
         assert before.positions["AAA"].quantity == after.positions["AAA"].quantity
         engine2.close()
+
+    def test_a_status_observation_recorded_after_restart_is_not_silently_dropped(self, tmp_path) -> None:
+        """Session 37 (ADR-0115, external review N-6): before this fix,
+        `PaperTradingSession.restore()` never seeded the restored
+        adapter's `_observation_ids` allocator past what a prior process
+        already persisted -- its first freshly generated id after
+        restart always started back at "PAPEROSTAT-000001" again. Once
+        that collided with a row `status_repo` already had from before
+        the restart, `DuckDBOrderStatusEventRepository.record()`'s
+        natural-key dedup on `observation_id` silently returned the
+        STALE pre-restart row instead of persisting the genuinely new
+        one -- so a status change that happened *after* restart (here,
+        an order finally reaching FILLED) never actually reached the
+        database at all."""
+        engine = new_engine(tmp_path)
+        order_repo = DuckDBPaperOrderRepository(engine)
+        fill_repo = DuckDBPaperFillRepository(engine)
+        status_repo = DuckDBOrderStatusEventRepository(engine)
+
+        config = make_paper_config(max_participation=0.10)
+        mds = InMemoryPaperMarketDataSource([make_bar(available_time=utc(2024, 1, 2), volume=1_000.0)])
+        session = PaperTradingSession(config, mds, order_repository=order_repo, fill_repository=fill_repo, status_repository=status_repo)
+
+        order = make_validated_order(quantity=250.0)
+        session.submit(order, requested_at=utc(2024, 1, 2))  # fills up to 100 -- PARTIAL_FILLED
+        mds.register(make_bar(timestamp=utc(2024, 1, 3), available_time=utc(2024, 1, 3), volume=1_000.0))
+        session.advance(utc(2024, 1, 3))  # fills up to another 100 (200 total) -- still PARTIAL_FILLED
+        assert status_repo.get_latest(order.client_order_id).status == BrokerOrderStatus.PARTIAL_FILLED
+        engine.close()
+
+        engine2 = new_engine(tmp_path)
+        order_repo2 = DuckDBPaperOrderRepository(engine2)
+        fill_repo2 = DuckDBPaperFillRepository(engine2)
+        status_repo2 = DuckDBOrderStatusEventRepository(engine2)
+        mds2 = InMemoryPaperMarketDataSource([
+            make_bar(available_time=utc(2024, 1, 2), volume=1_000.0),
+            make_bar(timestamp=utc(2024, 1, 3), available_time=utc(2024, 1, 3), volume=1_000.0),
+        ])
+        restored = PaperTradingSession.restore(
+            config, mds2, order_repository=order_repo2, fill_repository=fill_repo2, status_repository=status_repo2,
+            as_of=utc(2024, 1, 3),
+        )
+
+        # A genuinely new event, only possible after restart: the final
+        # 50 shares fill, taking the order from PARTIAL_FILLED to FILLED.
+        mds2.register(make_bar(timestamp=utc(2024, 1, 4), available_time=utc(2024, 1, 4), volume=1_000.0))
+        restored.advance(utc(2024, 1, 4))
+
+        latest = status_repo2.get_latest(order.client_order_id)
+        assert latest.status == BrokerOrderStatus.FILLED
+        assert latest.filled_quantity == 250.0
+        engine2.close()

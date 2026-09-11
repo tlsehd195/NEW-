@@ -70,7 +70,39 @@ def evaluate_candidate_batch(
     labeled_samples: Sequence[LabeledSample],
     *,
     evaluated_at: datetime,
+    trainers: Optional[Sequence[CandidateTrainer]] = None,
     evaluator: Optional[Evaluator] = None,
 ) -> list[EvaluationResult]:
+    """`trainers`, when given, must be the same length as `candidates`
+    and in the same order `generate_candidate_batch` produced them in
+    (one trainer per candidate) -- each candidate is then evaluated
+    with ITS OWN trainer's optional `predict(candidate, sample)` method
+    (ADR-0049), exactly like `learning.pipeline.run_learning_pipeline`
+    already does for a single candidate/trainer pair.
+
+    Session 37 (ADR-0115, external review, previously-remaining MEDIUM):
+    before `trainers` existed, every candidate here was always evaluated
+    with `predict_fn=None` -- `Evaluator.evaluate`'s own fallback in
+    that case predicts the SAME constant `candidate.parameters[
+    "predicted_value"]` for every sample, which is only correct for a
+    constant-output trainer (`MeanRewardBaselineTrainer`/
+    `TrailingWindowMeanTrainer`). A genuinely feature-based trainer
+    (e.g. `learning.linear_trainer.LinearRegressionTrainer`, which DOES
+    implement its own per-sample `predict`) was silently misevaluated
+    as if it, too, only ever predicted one constant value -- structurally
+    unable to distinguish a real per-sample model from a baseline in any
+    comparison this batch feeds. Omit `trainers` (the default) to keep
+    every existing caller's behavior unchanged."""
     evaluator = evaluator or Evaluator()
-    return [evaluator.evaluate(c, dataset, labeled_samples, evaluated_at=evaluated_at) for c in candidates]
+    if trainers is not None and len(trainers) != len(candidates):
+        raise ValueError(
+            f"trainers ({len(trainers)}) must be the same length as candidates ({len(candidates)}) "
+            "-- one trainer per candidate, in the same order generate_candidate_batch produced them"
+        )
+    predict_fns: Sequence[Optional[object]] = (
+        [getattr(t, "predict", None) for t in trainers] if trainers is not None else [None] * len(candidates)
+    )
+    return [
+        evaluator.evaluate(c, dataset, labeled_samples, evaluated_at=evaluated_at, predict_fn=pf)
+        for c, pf in zip(candidates, predict_fns)
+    ]

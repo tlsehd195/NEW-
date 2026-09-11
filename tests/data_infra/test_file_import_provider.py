@@ -118,6 +118,34 @@ class TestLocalFileDataProviderNormalize:
         assert bar.adjusted_high == pytest.approx(1.9)
         assert bar.adjusted_low == pytest.approx(0.45)
 
+    def test_a_current_day_bar_never_has_ingestion_time_before_available_time(self, tmp_path) -> None:
+        """Session 37 (ADR-0115, external review N-3): `ingestion_time`
+        is stamped from the batch-level `_fetched_as_of` (== the caller's
+        own `end` argument to `fetch()`), a single fixed value across an
+        entire date range -- while `available_time` is
+        `bar_available_time(timestamp)` (that bar's own event date plus
+        20h), computed per-bar. Querying up through the bar's own event
+        date (e.g. `end == timestamp`, the common "as of today" case)
+        left `ingestion_time` (midnight) BEFORE `available_time`
+        (20:00 the same day) for every such CSV import, unconditionally
+        violating `quality.py::_check_ingestion_precedes_availability`
+        (ERROR severity) -- reproducible 100% of the time."""
+        _write_csv(
+            tmp_path / "AAA.csv",
+            [{"date": "2010-06-15", "open": "1", "high": "2", "low": "0.5", "close": "1.5", "volume": "100", "adj_close": "1.4"}],
+        )
+        config = FileImportConfig(source_name="test_source", data_dir=tmp_path)
+        provider = LocalFileDataProvider(config)
+        # end == the bar's own event date -- the previously-inverted case.
+        raw = provider.fetch("AAA", utc(2010, 6, 15), utc(2010, 6, 15))
+        [bar] = provider.normalize("AAA", raw)
+        assert bar.ingestion_time >= bar.available_time
+        assert bar.available_time == datetime(2010, 6, 15, 20, tzinfo=timezone.utc)
+        assert bar.ingestion_time == datetime(2010, 6, 15, 20, tzinfo=timezone.utc)  # clamped up
+        # provenance.retrieved_at records the real, honest batch fetch
+        # time -- intentionally left unclamped.
+        assert bar.provenance.retrieved_at == utc(2010, 6, 15)
+
     def test_missing_adj_close_leaves_adjusted_close_none_not_fabricated(self, tmp_path) -> None:
         _write_csv(
             tmp_path / "AAA.csv",

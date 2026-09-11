@@ -46,6 +46,23 @@ class TestInitialize:
         qm.initialize(make_provider_config("a", enabled=False), at=utc(2024, 1, 1))
         assert qm.is_available("a", as_of=utc(2024, 1, 1)) is False
 
+    def test_billing_status_defaults_to_confirmed_free_unchanged(self) -> None:
+        qm = _manager()
+        state = qm.initialize(make_provider_config("a"), at=utc(2024, 1, 1))
+        assert state.billing_status == BillingStatus.CONFIRMED_FREE
+
+    def test_billing_status_can_be_initialized_as_unknown(self) -> None:
+        """Session 37 (ADR-0115, external review, previously-remaining
+        MEDIUM): before `initialize()` took a `billing_status` param, a
+        caller who genuinely did not yet know a provider's billing
+        status was forced into `CONFIRMED_FREE` anyway -- the opposite
+        of `BillingStatus.UNKNOWN`'s own "if in doubt, stop using it"
+        contract. This proves the escape hatch exists and is honored by
+        `is_available`."""
+        qm = _manager()
+        qm.initialize(make_provider_config("a"), at=utc(2024, 1, 1), billing_status=BillingStatus.UNKNOWN)
+        assert qm.is_available("a", as_of=utc(2024, 1, 1)) is False
+
 
 class TestSuccessAndErrorRecording:
     def test_success_decrements_remaining_requests(self) -> None:
@@ -139,6 +156,40 @@ class TestQuotaExhaustionAndReset:
         state = qm.record_error("a", at=utc(2024, 1, 3), reason="timeout:x")
         assert state.remaining_requests == 1  # refilled, not still 0
         assert state.reset_time is None  # the rollover was consumed
+
+    def test_naturally_exhausted_provider_self_heals_after_a_day(self) -> None:
+        """Session 37 (ADR-0115, external review N-2): before this fix,
+        `record_success` decrementing `remaining_requests` to 0 through
+        ordinary usage never set a `reset_time` at all (only
+        `mark_quota_exhausted` did) -- and `_effective_state`'s refill
+        only fires when `reset_time` is set AND elapsed, so a provider
+        that ran out the ordinary way could never self-heal and stayed
+        permanently unavailable for the rest of the process, unlike one
+        exhausted via `mark_quota_exhausted`. This proves natural
+        exhaustion now opens the same kind of rolling window and the
+        provider recovers on its own."""
+        qm = _manager()
+        qm.initialize(make_provider_config("a", rpd_limit=1), at=utc(2024, 1, 1))
+        state = qm.record_success("a", at=utc(2024, 1, 1, 13), usage=None)
+        assert state.remaining_requests == 0
+        assert state.reset_time == utc(2024, 1, 2, 13)
+        assert qm.is_available("a", as_of=utc(2024, 1, 1, 14)) is False
+
+        # Still exhausted right up to the window -- not an immediate heal.
+        assert qm.is_available("a", as_of=utc(2024, 1, 2, 12)) is False
+        # Rolled over: refilled and available again, without ever calling
+        # mark_quota_exhausted.
+        assert qm.is_available("a", as_of=utc(2024, 1, 2, 14)) is True
+
+    def test_natural_exhaustion_does_not_clobber_an_already_open_window(self) -> None:
+        qm = _manager()
+        qm.initialize(make_provider_config("a", rpd_limit=1), at=utc(2024, 1, 1))
+        qm.mark_quota_exhausted("a", at=utc(2024, 1, 1, 13), reset_time=utc(2024, 1, 1, 20))
+        # record_success is only reachable pre-rollover if is_available was
+        # bypassed by the caller; the reset_time it already carries must be
+        # preserved verbatim, not overwritten by the natural-exhaustion path.
+        state = qm.record_success("a", at=utc(2024, 1, 1, 14), usage=None)
+        assert state.reset_time == utc(2024, 1, 1, 20)
 
 
 class TestBillingConfirmedFreeRecovery:

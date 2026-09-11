@@ -92,7 +92,20 @@ def build_training_dataset(
     valid_results = [r for r in cleaning_results if r.status == SampleStatus.VALID]
     valid_results.sort(key=lambda r: r.sample_as_of_time)
     if config.sampling.max_samples is not None:
-        valid_results = valid_results[: config.sampling.max_samples]
+        # Session 37 (ADR-0115, external review, previously-remaining
+        # MEDIUM): keeps the MOST RECENT `max_samples`, not the
+        # earliest. `valid_results[:max_samples]` on an ascending-sorted
+        # (oldest-first) list discarded the newest experience on every
+        # re-training run once the journal grew past the cap -- the
+        # exact opposite of what a re-training loop needs (ADR-0113's
+        # entire purpose is learning from the freshest real paper-
+        # trading experience, not being permanently pinned to whatever
+        # was earliest the first time the cap was ever hit). Re-sorted
+        # ascending afterward so the chronological TRAIN/VALIDATION/TEST
+        # split below still sees oldest-to-newest order within the kept
+        # subset (already true here -- `valid_results` was sorted
+        # ascending just above).
+        valid_results = valid_results[-config.sampling.max_samples:]
 
     records_by_trade_id = {r.trade_id: r for r in scoped_records}
     labeler = Labeler(config.labeling)
@@ -141,7 +154,22 @@ def build_training_dataset(
         "as_of_cutoff": as_of_cutoff.isoformat() if as_of_cutoff is not None else None,
     })
 
-    quality_status = "OK" if n > 0 else "INSUFFICIENT_SAMPLES"
+    # Session 37 (ADR-0115, external review N-10): `n > 0` alone was
+    # not enough -- `n_train = int(n * split.train_fraction)` (and
+    # `n_val` likewise) rounds DOWN to 0 whenever `n` is small enough
+    # (e.g. exactly 1 sample with the default 0.7 train_fraction), so
+    # `quality_status` reported "OK" for a dataset whose TRAIN split
+    # was actually empty. `learning.pipeline.run_learning_pipeline`
+    # gates its experiment's `status` field directly on this value
+    # ("COMPLETED" iff "OK"), so that experiment was marked COMPLETED
+    # even though `MeanRewardBaselineTrainer.train()` could only
+    # "train" its documented empty-TRAIN fallback (a fabricated
+    # constant 0.0, honestly recorded as `train_sample_count=0` in its
+    # own `parameters` but otherwise indistinguishable downstream from
+    # a real trained baseline). A dataset with no usable TRAIN or
+    # VALIDATION samples cannot train or be validated at all, so it is
+    # not "OK" no matter how many raw samples it started from.
+    quality_status = "OK" if (n > 0 and train_samples and val_samples) else "INSUFFICIENT_SAMPLES"
 
     dataset = TrainingDataset(
         dataset_id=id_allocator.allocate(),

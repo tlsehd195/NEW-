@@ -33,10 +33,17 @@ class DuckDBModelStatusTransitionRepository:
 
     def record(self, transition: ModelStatusTransition) -> ModelStatusTransition:
         conn = self._engine.connection
+        # Session 37 (ADR-0115, external review N-9): `passed` included
+        # -- see evolution.repository.InMemoryModelStatusTransitionRepository
+        # ._key's own comment for why a retry that later passes must not
+        # collide with an earlier failed attempt's key.
         existing = conn.execute(
             "SELECT payload_json FROM model_status_transitions WHERE "
-            "candidate_id = ? AND from_status = ? AND to_status = ? AND criteria_version = ?",
-            [transition.candidate_id, transition.from_status.value, transition.to_status.value, transition.criteria_version],
+            "candidate_id = ? AND from_status = ? AND to_status = ? AND criteria_version = ? AND passed = ?",
+            [
+                transition.candidate_id, transition.from_status.value, transition.to_status.value,
+                transition.criteria_version, transition.passed,
+            ],
         ).fetchone()
         if existing is not None:
             return payload_to_model_status_transition(json_loads(existing[0]))

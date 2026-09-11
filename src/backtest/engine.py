@@ -139,6 +139,51 @@ class BacktestEngine:
             integrity.check_duplicate_intents(intents, checkpoint)
 
             next_checkpoint = checkpoints[index + 1] if index + 1 < len(checkpoints) else None
+            if intents and next_checkpoint is not None:
+                # Session 37 (ADR-0115, external review N-7): every fill
+                # below executes at `next_checkpoint`'s close and is
+                # applied to `portfolio` synchronously, within THIS
+                # iteration -- well before iteration index+1's own
+                # top-of-loop corporate-action block (lines 114-122
+                # above) would otherwise apply anything effective by
+                # `next_checkpoint`. That ordering corrupted every split/
+                # dividend at a checkpoint boundary: a post-split buy got
+                # `apply_split`'s blind multiply applied to it a second
+                # time once iteration index+1 ran (it was already
+                # bought at the real, already-adjusted market price); an
+                # ex-date buy wrongly received a dividend declared for
+                # holders as of the day before; and a position sold via
+                # this same fill had already been removed from
+                # `portfolio.positions` by the time the dividend it WAS
+                # entitled to (held through the prior close) would have
+                # been applied. Applying `next_checkpoint`'s own
+                # corporate actions here, before any fill, fixes all
+                # three: existing holdings get correctly split-adjusted
+                # and paid the dividend BEFORE the new fill lands (so the
+                # new fill is never double-adjusted or wrongly paid), and
+                # a same-checkpoint sell still receives the dividend it
+                # earned before being removed. `CorporateActionApplier.
+                # apply` is idempotent per `provenance.source_record_id`,
+                # so iteration index+1's own top-of-loop pass safely
+                # no-ops on whatever was already applied here.
+                for security_id in sorted(tracked_ids):
+                    next_actions = self._repository.get_corporate_actions(
+                        security_id, next_checkpoint - timedelta(days=400), next_checkpoint,
+                        as_of_time=next_checkpoint,
+                    )
+                    for action in next_actions:
+                        integrity.check_corporate_action_timing(action, next_checkpoint)
+                    warnings = corporate_action_applier.apply(next_actions, portfolio, next_checkpoint)
+                    for warning in warnings:
+                        integrity.record(
+                            "corporate_action_correctness", IntegritySeverity.WARNING, warning, next_checkpoint
+                        )
+                # Keeps portfolio_view consistent with the portfolio it
+                # was snapshotted from (the same invariant every other
+                # portfolio.apply_*() call in this loop already
+                # maintains, e.g. right after apply_fill below) -- the
+                # block above just mutated `portfolio` directly.
+                portfolio_view = portfolio.snapshot_view(checkpoint)
             if next_checkpoint is None:
                 for intent in intents:
                     all_orders.append(

@@ -68,6 +68,7 @@ from backtest.clock import BacktestClock, build_daily_checkpoints  # noqa: E402
 from broker.paper.config import PaperTradingConfig  # noqa: E402
 from broker.paper.market_data import InMemoryPaperMarketDataSource  # noqa: E402
 from broker.paper.session import PaperTradingSession  # noqa: E402
+from broker.paper.us_longterm_config import PAPER_CAPITAL_USD  # noqa: E402
 from broker.paper.us_longterm_runner import run_buy_and_hold_paper_session  # noqa: E402
 
 from data_infra.calendar import US_EQUITY  # noqa: E402
@@ -246,7 +247,17 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--start", required=True, type=_parse_date)
     parser.add_argument("--end", required=True, type=_parse_date)
-    parser.add_argument("--initial-capital", type=float, default=1_000_000.0)
+    parser.add_argument(
+        "--initial-capital", type=float, default=None,
+        help=(
+            "Applies to every requested strategy uniformly when given. "
+            "When omitted: PaperTradingConfig's own default "
+            f"({PaperTradingConfig().initial_cash}) for run_cycle-kind "
+            f"strategies, PAPER_CAPITAL_USD ({PAPER_CAPITAL_USD}) for "
+            "buy_and_hold-kind strategies (ADR-0028's own reference "
+            "capital, not the generic default -- ADR-0115)."
+        ),
+    )
     parser.add_argument("--max-sector-weight", type=float, default=None)
     parser.add_argument("--max-order-notional", type=float, default=None)
     parser.add_argument("--max-drawdown", type=float, default=None)
@@ -303,7 +314,16 @@ def main(argv=None) -> int:
         market_data_source = InMemoryPaperMarketDataSource(bars)
         clock = BacktestClock(checkpoints)
         view = AsOfDataView(repository, clock)
-        paper_config = PaperTradingConfig(initial_cash=args.initial_capital)
+        if args.initial_capital is not None:
+            capital = args.initial_capital
+        elif spec.kind == PaperStrategyKind.BUY_AND_HOLD:
+            # ADR-0028's own reference capital, not the generic
+            # PaperTradingConfig default -- see --initial-capital's
+            # help text and ADR-0115.
+            capital = PAPER_CAPITAL_USD
+        else:
+            capital = PaperTradingConfig().initial_cash
+        paper_config = PaperTradingConfig(initial_cash=capital)
 
         paper_store = args.paper_store_root / name
         store_engine = StorageEngine(StorageConfig(root_dir=paper_store))

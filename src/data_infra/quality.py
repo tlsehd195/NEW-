@@ -557,7 +557,15 @@ class DataQualityFramework:
                     continue
                 before = [b for b in ordered if b.timestamp < effective]
                 after = [b for b in ordered if b.timestamp >= effective]
-                if not before or not after or before[-1].close <= 0:
+                # Session 37 (ADR-0115, external review, previously-remaining
+                # MEDIUM): `after[0].close` is the divisor below -- an
+                # unguarded 0 there raised ZeroDivisionError and crashed the
+                # entire DQ run for every bar, not just this one security's
+                # split check. `before[-1].close` was already guarded; this
+                # extends the same "a non-positive close makes no economic
+                # sense to divide by, skip this one check" treatment to the
+                # other side of the ratio.
+                if not before or not after or before[-1].close <= 0 or after[0].close <= 0:
                     continue
                 observed_ratio = before[-1].close / after[0].close
                 relative_error = abs(observed_ratio - ratio) / ratio

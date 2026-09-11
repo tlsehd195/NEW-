@@ -15,11 +15,14 @@ type — read-only with respect to Phase 2's outputs (ADR-0009).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from backtest.engine import BacktestConfig, BacktestResult
 from backtest.enums import OrderSide
 from backtest.portfolio import PortfolioAccounting
+
+if TYPE_CHECKING:
+    from backtest.fills import Fill
 
 from trade_journal.enums import DecisionAction, TradeProvenance
 from trade_journal.repository import TradeJournalRepository
@@ -58,6 +61,19 @@ def ingest_backtest_result(
       does not reflect corporate-action-driven cash/quantity changes
       that occurred inside the original BacktestEngine run between
       fills, since those events are not exposed on BacktestResult.
+      Session 37 (ADR-0115, external review, previously-remaining
+      MEDIUM): a fill is now only replayed into `portfolio` once every
+      order up through its own `execution_time` has had its
+      DecisionSnapshot recorded -- a second order sharing the SAME
+      checkpoint (decision_time) as an earlier one no longer sees that
+      earlier order's fill in its own portfolio_state, since that fill
+      does not actually execute until the NEXT checkpoint. Before this
+      fix, `portfolio.apply_fill()` ran immediately after each order's
+      own decision was recorded, so a later same-checkpoint order's
+      portfolio_state snapshot silently included a fill that, in the
+      original BacktestEngine run, had not happened yet as of that
+      shared decision_time -- a real look-ahead leak into the
+      Experience Dataset this Journal ultimately feeds.
     - DecisionSnapshot.market_state is left {} — Phase 2's Order does not
       retain the decision-time reference price it was validated against.
 
@@ -78,29 +94,12 @@ def ingest_backtest_result(
 
     portfolio = PortfolioAccounting(config.initial_capital)
     position_opened_at: dict[str, object] = {}
+    # Fills recorded but not yet replayed into `portfolio` -- each
+    # settles once we reach an order whose own decision_time is at or
+    # past that fill's execution_time (see docstring above).
+    pending: list[tuple["Fill", str]] = []
 
-    for order in result.orders:
-        decision_action = DecisionAction(order.side.value)  # BUY or SELL — Phase 2 never emits HOLD/EXIT/NO_TRADE
-
-        decision = journal.record_decision(
-            decision_time=order.decision_time,
-            security_id=order.security_id,
-            decision=decision_action,
-            order=order,
-            portfolio_state=portfolio.snapshot_view(order.decision_time),
-            market_state={},
-            features=order.features,  # ADR-0048 — None for every Strategy that doesn't set OrderIntent.features
-            strategy_version=strategy_version,
-            execution_version=EXECUTION_VERSION,
-            provenance=provenance,
-            experiment_id=exp_id,
-            data_version=None,  # documented limitation — see docstring
-        )
-
-        fill = fills_by_order_id.get(order.order_id)
-        if fill is None:
-            continue  # REJECTED / NOT_EXECUTED / CANCELLED — decision recorded, no trade
-
+    def _settle(fill: "Fill", decision_snapshot_id: str) -> None:
         prior_position = portfolio.positions.get(fill.security_id)
         prior_quantity = prior_position.quantity if prior_position is not None else 0.0
         if fill.side == OrderSide.BUY and prior_quantity == 0:
@@ -125,7 +124,7 @@ def ingest_backtest_result(
                 position_opened_at.pop(fill.security_id, None)
 
         journal.record_trade(
-            decision_id=decision.snapshot_id,
+            decision_id=decision_snapshot_id,
             fill=fill,
             position_after=position_after,
             experiment_id=exp_id,
@@ -134,6 +133,40 @@ def ingest_backtest_result(
             holding_period=holding_period,
             provenance=provenance,
         )
+
+    for order in result.orders:
+        still_pending: list[tuple["Fill", str]] = []
+        for pending_fill, pending_decision_id in pending:
+            if pending_fill.execution_time <= order.decision_time:
+                _settle(pending_fill, pending_decision_id)
+            else:
+                still_pending.append((pending_fill, pending_decision_id))
+        pending = still_pending
+
+        decision_action = DecisionAction(order.side.value)  # BUY or SELL — Phase 2 never emits HOLD/EXIT/NO_TRADE
+
+        decision = journal.record_decision(
+            decision_time=order.decision_time,
+            security_id=order.security_id,
+            decision=decision_action,
+            order=order,
+            portfolio_state=portfolio.snapshot_view(order.decision_time),
+            market_state={},
+            features=order.features,  # ADR-0048 — None for every Strategy that doesn't set OrderIntent.features
+            strategy_version=strategy_version,
+            execution_version=EXECUTION_VERSION,
+            provenance=provenance,
+            experiment_id=exp_id,
+            data_version=None,  # documented limitation — see docstring
+        )
+
+        fill = fills_by_order_id.get(order.order_id)
+        if fill is None:
+            continue  # REJECTED / NOT_EXECUTED / CANCELLED — decision recorded, no trade
+        pending.append((fill, decision.snapshot_id))
+
+    for pending_fill, pending_decision_id in pending:
+        _settle(pending_fill, pending_decision_id)
 
     return IngestSummary(
         decisions_recorded=len(journal.list_decisions()) - decisions_before,

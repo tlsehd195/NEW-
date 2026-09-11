@@ -88,6 +88,19 @@
 
 ## 현재 상태
 
+**이후 진행 상황(Session 32~37) 안내**: 아래 "최신 진행 상황(Phase
+19~31, 최신순)" 목록은 Phase 31(Session 31) 시점에 작성된 것으로
+고정되어 있다. Phase 31 이후에도 작업은 계속되었다 — 사용자가 확보한
+두 건의 독립적인 외부 코드 리뷰(HIGH/MEDIUM/LOW 심각도 분류) 결과를
+검증·반영하는 Session 32~37 원격 검토 사이클(`docs/decisions/
+ADR-0111`~`ADR-0114`: kill switch/Toss 인코딩/AI Gateway 쿼터 복구/
+포지션 가중치/point-in-time 가용성/모델 id 충돌 등 HIGH 다수 수정,
+유니버스 수치 오기 정정, `main` 병합, Paper Trading/Learning Engine
+중복 배선 정리, 제3자 2차 전수 재리뷰 HIGH 3건 수정)이 그 이후에
+진행되었으며, 이 Phase 번호 체계와는 별개로 `docs/PROJECT_STATUS.md`의
+"Current Phase"/세션별 로그가 항상 가장 최신 상태를 기록하는 원본이다
+(이 섹션은 그 요약을 복제하지 않는다 — 상세는 `PROJECT_STATUS.md` 참조).
+
 Phase 16이 `PROJECT_MASTER_PLAN.md`에 정의된 원래 마지막 공식 Phase다.
 **Phase 17/18/19/20/21/22/23/24/25/26/27/28/29/30/31은 Master Plan의 정식 Phase가 아니라, Live
 전환 전에 발견된 안전성·검증 문제를 보완하고 실제 시장 데이터/브로커
@@ -1040,9 +1053,13 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
 전체 테스트: **최신 카운트는 `docs/PROJECT_STATUS.md` 참조**
 (Phase 1+2+...+19 = 1399 + Phase 20 신규 49 = 1448 + Phase 21 신규
 63 = 1511 + Phase 22 신규 36 = 1547 + Phase 23 신규 40 = 1587 +
-Phase 24 신규 18 = 1605 + Phase 25 신규 30 = 1638 + Phase 26 신규 2 = 1640 +
-Phase 27 신규 9 = 1649 + Phase 28 신규 3 = 1652 + Phase 29 신규 19 = 1671 +
-Phase 30 신규 16 = 1687 + Phase 31 신규 27 = 1714;
+Phase 24 신규 18 = 1605 (Phase 24 자체 실행 결과, `PROJECT_STATUS.md`
+Session 25 절 실측 확인) + Phase 25 시작 시 재측정한 실제 baseline은
+1608 (1605와의 +3 차이는 두 세션 사이 원인이 문서에 기록되어 있지
+않음 — 추측 없이 그대로 병기) + Phase 25 신규 30 = 1638 + Phase 26
+신규 2 = 1640 + Phase 27 신규 9 = 1649 + Phase 28 신규 3 = 1652 +
+Phase 29 신규 19 = 1671 + Phase 30 신규 16 = 1687 + Phase 31 신규
+27 = 1714;
 정확한 최종 숫자는 이 Phase의 최종 전체 테스트 실행 결과를 따른다).
 
 ## 테스트 실행

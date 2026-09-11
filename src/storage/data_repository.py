@@ -77,7 +77,7 @@ class DuckDBDataRepository:
         self._calendars: dict[str, TradingCalendar] = dict(calendars or {})
         self._price_bars_dir = engine.config.parquet_dir / "price_bars"
         self._raw_market_data_dir = engine.config.parquet_dir / "raw_market_data"
-        self._next_raw_batch_id = 1
+        self._next_raw_batch_id = self._compute_next_raw_batch_id()
         # Per-security in-memory cache of this instance's own reads, keyed
         # by security_id, each held sorted by timestamp -- populated
         # lazily by _bars_for_security/_corporate_actions_for_security on
@@ -110,6 +110,27 @@ class DuckDBDataRepository:
         # additive schema change like this session's `adjusted_high`/
         # `adjusted_low` addition.
 
+    def _compute_next_raw_batch_id(self) -> int:
+        """Session 37 (ADR-0115, external review, previously-remaining
+        MEDIUM): seeds the batch_id counter past every batch_id already
+        persisted, mirroring the `advance_past`/`starting_id` restart-
+        safe pattern already established elsewhere in this codebase
+        (ADR-0073). Without this, a fresh process's counter always
+        restarted at 1 -- `raw_ingestion_batches.batch_id` is a PRIMARY
+        KEY with no `ON CONFLICT` handling, so the very next
+        `append_raw_payloads()` call after a restart, whenever its
+        freshly generated "RAW-000001" collided with an already-
+        persisted row, crashed outright (a PK violation) rather than
+        silently misbehaving -- restart-resume of raw ingestion was
+        therefore structurally broken, not just degraded."""
+        row = self._engine.connection.execute(
+            "SELECT batch_id FROM raw_ingestion_batches ORDER BY batch_id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return 1
+        suffix = row[0].rsplit("-", 1)[-1]
+        return int(suffix) + 1 if suffix.isdigit() else 1
+
     # -- DataRepository Protocol --------------------------------------
 
     def _bars_for_security(self, security_id: str) -> list[PriceBar]:
@@ -123,11 +144,19 @@ class DuckDBDataRepository:
         if not files:
             bars: list[PriceBar] = []
         else:
+            # Session 37 (ADR-0115, external review, previously-remaining
+            # MEDIUM): the glob path is bound as a real query parameter,
+            # not f-string-interpolated into the SQL text -- DuckDB
+            # supports binding `read_parquet(?)`'s own path/glob argument
+            # exactly like any other parameter (verified directly), so
+            # there is no need to trust that a filesystem path never
+            # contains a character (a single quote, primarily) that would
+            # otherwise corrupt the surrounding SQL string literal.
             sql = (
-                f"SELECT * FROM read_parquet('{glob_pattern(self._price_bars_dir)}', union_by_name=true) "
+                "SELECT * FROM read_parquet(?, union_by_name=true) "
                 "WHERE security_id = ? ORDER BY timestamp"
             )
-            cur = self._engine.connection.execute(sql, [security_id])
+            cur = self._engine.connection.execute(sql, [glob_pattern(self._price_bars_dir), security_id])
             bars = [row_to_price_bar(r) for r in _rows(cur)]
         self._bars_cache[security_id] = bars
         return bars
@@ -222,8 +251,10 @@ class DuckDBDataRepository:
         files = existing_files(self._price_bars_dir)
         if not files:
             return ()
-        sql = f"SELECT * FROM read_parquet('{glob_pattern(self._price_bars_dir)}', union_by_name=true)"
-        cur = self._engine.connection.execute(sql)
+        # See `_bars_for_security`'s own comment on binding the glob path
+        # as a real parameter rather than f-string-interpolating it.
+        sql = "SELECT * FROM read_parquet(?, union_by_name=true)"
+        cur = self._engine.connection.execute(sql, [glob_pattern(self._price_bars_dir)])
         return tuple(row_to_price_bar(r) for r in _rows(cur))
 
     def append_bars(self, new_bars: Sequence[PriceBar]) -> int:
@@ -242,12 +273,15 @@ class DuckDBDataRepository:
         files = existing_files(self._price_bars_dir)
         if files:
             placeholders = ", ".join(["?"] * len(security_ids))
+            # See `_bars_for_security`'s own comment on binding the glob
+            # path as a real parameter rather than f-string-interpolating
+            # it.
             sql = (
                 "SELECT DISTINCT security_id, timestamp, provenance_source, provenance_data_version "
-                f"FROM read_parquet('{glob_pattern(self._price_bars_dir)}', union_by_name=true) "
+                "FROM read_parquet(?, union_by_name=true) "
                 f"WHERE security_id IN ({placeholders})"
             )
-            cur = self._engine.connection.execute(sql, security_ids)
+            cur = self._engine.connection.execute(sql, [glob_pattern(self._price_bars_dir), *security_ids])
             existing_keys = {tuple(row) for row in cur.fetchall()}
 
         rows_to_write = []
@@ -314,11 +348,10 @@ class DuckDBDataRepository:
         files = existing_files(self._raw_market_data_dir)
         if not files:
             return []
-        sql = (
-            f"SELECT * FROM read_parquet('{glob_pattern(self._raw_market_data_dir)}') "
-            "WHERE security_id = ? ORDER BY ingestion_time"
-        )
-        cur = self._engine.connection.execute(sql, [security_id])
+        # See `_bars_for_security`'s own comment on binding the glob path
+        # as a real parameter rather than f-string-interpolating it.
+        sql = "SELECT * FROM read_parquet(?) WHERE security_id = ? ORDER BY ingestion_time"
+        cur = self._engine.connection.execute(sql, [glob_pattern(self._raw_market_data_dir), security_id])
         return [
             {
                 "security_id": r["security_id"],

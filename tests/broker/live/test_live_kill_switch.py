@@ -107,6 +107,33 @@ class TestEachTriggerIndependently:
         )
         assert reason == "abnormal_order_frequency"
 
+    def test_daily_loss_unmeasurable_triggers_when_the_limit_is_configured(self) -> None:
+        """Session 37 (ADR-0115, external review N-17): before this fix,
+        a configured `max_daily_loss` with an unmeasurable `daily_loss`
+        (`None` -- e.g. a data gap this cycle) silently fell through
+        with no trigger at all, unlike `account_state_known`/
+        `position_state_known`'s own fail-closed treatment of an
+        unknown state."""
+        reason = evaluate_kill_switch_triggers(
+            _ctx(daily_loss=None, config=make_live_config(max_daily_loss=500.0))
+        )
+        assert reason == "daily_loss_unmeasurable"
+
+    def test_daily_loss_unmeasurable_does_not_trigger_when_the_limit_is_unconfigured(self) -> None:
+        """Unaffected by this fix: `max_daily_loss` unset still means
+        "not enforced," so an unmeasurable `daily_loss` is simply
+        irrelevant, exactly as before."""
+        assert evaluate_kill_switch_triggers(_ctx(daily_loss=None)) is None
+
+    def test_order_frequency_unmeasurable_triggers_when_the_limit_is_configured(self) -> None:
+        reason = evaluate_kill_switch_triggers(
+            _ctx(orders_in_last_hour=None, config=make_live_config(max_order_frequency_per_hour=10))
+        )
+        assert reason == "order_frequency_unmeasurable"
+
+    def test_order_frequency_unmeasurable_does_not_trigger_when_the_limit_is_unconfigured(self) -> None:
+        assert evaluate_kill_switch_triggers(_ctx(orders_in_last_hour=None)) is None
+
 
 class TestEngageAndRelease:
     def test_engage_records_system_as_trigger(self) -> None:

@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 from data_infra.models import PriceBar, Provenance
-from data_infra.provider import PermanentProviderError, bar_available_time
+from data_infra.provider import PermanentProviderError, bar_available_time, clamp_ingestion_time
 from data_infra.providers.stooq_config import StooqConfig
 from data_infra.providers.stooq_transport import StooqHttpTransport
 from data_infra.versioning import compute_data_version
@@ -127,7 +127,12 @@ class StooqDataProvider:
                     # see `data_infra.provider.bar_available_time`'s own
                     # docstring -- matches the identical fix in tiingo.py.
                     available_time=bar_available_time(timestamp),
-                    ingestion_time=as_of,
+                    # Session 37 (ADR-0115, external review N-3): clamped
+                    # -- see `data_infra.provider.clamp_ingestion_time`'s
+                    # own docstring for why the batch-level `as_of` can
+                    # otherwise fall before this bar's own available_time
+                    # for a month-end/current-day bar.
+                    ingestion_time=clamp_ingestion_time(as_of, bar_available_time(timestamp)),
                     provenance=provenance,
                     adjusted_close=None,  # never fabricated -- see module docstring
                     currency="USD",
