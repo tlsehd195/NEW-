@@ -152,7 +152,7 @@ fields are `None`, never estimated" principle, applied here to mean
   — the instruction is explicit ("처음부터 HMM/Transformer/Deep Learning
   등을 사용하지 않는다"), and no baseline yet exists to know whether a
   more complex model would even be worth its added opacity/overfitting
-  risk (`PROJECT_MASTER_PLAN.md` §85-86's "baseline first" principle,
+  risk (`PROJECT_MASTER_PLAN.md` §13.6's "baseline first" principle,
   already applied to strategies in Phase 4, applied here to regime
   models).
 - **A full percentile computed over the entire historical sample**
@@ -176,7 +176,7 @@ fields are `None`, never estimated" principle, applied here to mean
   more than the regime-scoped feature metadata (`feature_version`,
   `method_version`, `configuration_version`) already on
   `RegimeObservation`. A general registry is exactly the kind of
-  "정의되지 않은 미래 요구사항을 위해 설계" `PROJECT_MASTER_PLAN.md` §73
+  "정의되지 않은 미래 요구사항을 위해 설계" `PROJECT_MASTER_PLAN.md` §1.2
   warns against; the versioning fields are structured so a future,
   broader registry can absorb them without a schema rewrite.
 - **Computing Stress from Volatility + Drawdown + Correlation** (a

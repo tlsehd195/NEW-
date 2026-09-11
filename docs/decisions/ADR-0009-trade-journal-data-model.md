@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-24
 **Deciders:** Claude Code (Phase 3 session), pending project owner review
-**Related documents:** `PROJECT_MASTER_PLAN.md` §30-36, §92,
+**Related documents:** `PROJECT_MASTER_PLAN.md` §7, §24,
 `docs/specifications/PHASE-3-trade-journal.md`, Phase 2
 `src/backtest/{orders,fills,portfolio}.py`
 
@@ -11,7 +11,7 @@
 
 ## Context
 
-`PROJECT_MASTER_PLAN.md` §92 states the Trade Journal must be "경험
+`PROJECT_MASTER_PLAN.md` §24 states the Trade Journal must be "경험
 메모리," not a log table — meaning every field a future Learning Engine
 (Phase 9), Counterfactual/Attribution module (Phase 10), or Model
 Evolution process (Phase 11) might need should already have a place in
@@ -35,7 +35,7 @@ rather than requiring a parallel schema update.
 
 ### 2. Every Journal record type is `@dataclass(frozen=True)`
 
-Immutability (`PROJECT_MASTER_PLAN.md` §11, applied to the Journal
+Immutability (`PROJECT_MASTER_PLAN.md` §7, applied to the Journal
 itself) is enforced by the Python language (`FrozenInstanceError` on
 assignment), not by a documented convention. This is the same choice
 Phase 1 (`data_infra.models`) and Phase 2 (`backtest.orders.Order`,
@@ -49,7 +49,7 @@ introducing a different one.
 the interface itself makes silent mutation structurally unreachable. A
 correction is `record_correction(target_type, target_id, reason,
 corrected_fields, ...)`, appended alongside the original. This mirrors
-`PROJECT_MASTER_PLAN.md` §11's Raw-layer immutability pattern
+`PROJECT_MASTER_PLAN.md` §7's Raw-layer immutability pattern
 (RAW → validation → corrected/normalized version, never an overwrite),
 applied one layer up, to the Journal's own records rather than to
 market data.
@@ -98,7 +98,7 @@ for a future Phase 2 follow-up, rather than resolved unilaterally here.
 - **Mutable Journal records with an explicit `updated_at` field instead
   of a separate `CorrectionRecord`**: Rejected — this reintroduces
   exactly the "silently changes what the AI is understood to have known"
-  risk `PROJECT_MASTER_PLAN.md` §11 and this project's fail-closed
+  risk `PROJECT_MASTER_PLAN.md` §7 and this project's fail-closed
   philosophy exist to prevent. An append-only correction trail is
   strictly more auditable at a small storage cost.
 - **Extending `BacktestEngine` now to expose per-decision data-version

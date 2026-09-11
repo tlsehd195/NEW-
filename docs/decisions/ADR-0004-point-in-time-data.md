@@ -3,8 +3,8 @@
 **Status:** Accepted
 **Date:** 2026-08-24
 **Deciders:** Claude Code (Phase 1 session), pending project owner review
-**Related documents:** `PROJECT_MASTER_PLAN.md` §16, §29 (Point-in-Time
-Principle, Look-ahead Guard), `docs/specifications/PHASE-1-data-infrastructure.md`
+**Related documents:** `PROJECT_MASTER_PLAN.md` §7.2 (Point-in-Time
+Principle), `docs/specifications/PHASE-1-data-infrastructure.md`
 §10, §12, §15, §16
 
 ---
@@ -16,7 +16,7 @@ a decision simulated at time `T` must never see information that did not
 exist (from the system's point of view) at `T`. Getting this wrong
 invalidates every backtest and every trained model built on top of it,
 no matter how good the resulting metrics look
-(`PROJECT_MASTER_PLAN.md` §53, §92; Phase 1 spec §16). This ADR fixes how
+(`PROJECT_MASTER_PLAN.md` §1.1; Phase 1 spec §16). This ADR fixes how
 point-in-time correctness is enforced at the data layer, since Phase 1
 is the only layer where it can be enforced structurally — every later
 phase (Backtest, Feature, Decision) inherits this guarantee rather than
@@ -106,12 +106,12 @@ same-day decision, could be exactly the size of a real leakage bug.
   that causes look-ahead bias in naive backtests (using a data
   provider's as-of-today dataset applied uniformly to all historical
   dates). The master plan explicitly calls this out as a failure mode to
-  design against (`PROJECT_MASTER_PLAN.md` §1.1, §16).
+  design against (`PROJECT_MASTER_PLAN.md` §1.1, §7.3).
 - **Leaving look-ahead filtering as a documented responsibility of
   caller code** (e.g., "Backtest engine must remember to filter by
   `available_time`"): Rejected — a convention that must be remembered
   correctly by every future caller, forever, is exactly the kind of
-  fragile safety mechanism `PROJECT_MASTER_PLAN.md` §90 (Fail-Closed)
+  fragile safety mechanism `PROJECT_MASTER_PLAN.md` §1.4 (Fail-Closed)
   argues against. Enforcing it once, structurally, inside the
   `DataRepository` implementation removes an entire class of future bugs.
 - **Defaulting missing `available_time` to `event_time`** (optimistic):

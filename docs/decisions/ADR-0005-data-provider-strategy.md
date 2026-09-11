@@ -3,7 +3,10 @@
 **Status:** Accepted
 **Date:** 2026-08-24
 **Deciders:** Claude Code (Phase 1 session), pending project owner review
-**Related documents:** `PROJECT_MASTER_PLAN.md` §21-22, §40-41,
+**Related documents:** `PROJECT_MASTER_PLAN.md` §21, §6.2 (provider
+redundancy/failover, applied here by analogy from AI providers to
+market data providers -- the master plan does not separately address
+market data provider strategy), §1.4,
 `docs/specifications/PHASE-1-data-infrastructure.md` §19-20
 
 ---
@@ -15,8 +18,9 @@ The Phase 1 initialization instruction is explicit: "이번 Phase에서는
 provider selection weigh official documentation, API limits, licensing,
 historical coverage, point-in-time capability, adjusted-data semantics,
 cost, and stability — never adopting a provider merely because it is
-free or convenient. `PROJECT_MASTER_PLAN.md` §22 additionally requires
-that the system not be structurally dependent on any single provider.
+free or convenient. `PROJECT_MASTER_PLAN.md` §6.2's own provider-
+redundancy principle, applied here by analogy, additionally argues
+against the system being structurally dependent on any single provider.
 
 ## Decision
 
@@ -48,7 +52,7 @@ that the system not be structurally dependent on any single provider.
    - License terms for storage, redistribution, and commercial/research
      use are explicit. Any unclear term is recorded as `UNKNOWN` and
      treated as blocking for that use case (`PROJECT_MASTER_PLAN.md`
-     §41; Phase 1 spec §20).
+     §1.4, the same fail-closed default; Phase 1 spec §20).
    - Historical coverage matches the backtest period the project
      actually intends to use.
    - The provider's data can be reasoned about in point-in-time terms
@@ -62,7 +66,7 @@ that the system not be structurally dependent on any single provider.
    - Cost (including what happens beyond any free tier) and stability
      (uptime, deprecation history) are assessed — "free" alone is
      explicitly insufficient justification (`PROJECT_MASTER_PLAN.md`
-     §40's closing rule, restated here).
+     §1.3's own discipline, restated here).
 5. **Security**: no provider API key exists in this repository or this
    phase. `.env.example` reserves `MARKET_DATA_API_KEY` as a name
    placeholder only (Phase 1 spec §20).
@@ -76,11 +80,11 @@ that the system not be structurally dependent on any single provider.
   before its point-in-time/licensing suitability has been evaluated,
   potentially requiring rework.
 - **Integrate two or more providers now for redundancy**
-  (`PROJECT_MASTER_PLAN.md` §22 mentions failover): Rejected for Phase
+  (`PROJECT_MASTER_PLAN.md` §6.2 mentions failover, by analogy): Rejected for Phase
   1 — redundancy/failover across real providers is a legitimate future
   concern, but building it before a single provider has even been
   evaluated is speculative complexity Phase 1 explicitly avoids
-  (`PROJECT_MASTER_PLAN.md` §84).
+  (`PROJECT_MASTER_PLAN.md` §1.3).
 - **Skip building a `DataProvider` interface at all until a real
   provider is chosen**: Rejected — the interface is what makes the
   ingestion reliability properties (retry, idempotency, partial failure,

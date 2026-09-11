@@ -10,10 +10,10 @@
 ## Context
 
 Phase 1 needs to choose a storage technology for the Raw/Clean/Derived
-data layers (`PROJECT_MASTER_PLAN.md` §2.5, §18). The choice must serve
+data layers (`PROJECT_MASTER_PLAN.md` §7, §18). The choice must serve
 this and future phases: Backtesting (Phase 2), ML training (Phase 9),
 Decision Replay, Trade Journal, and eventually Live Trading — without
-requiring a rewrite later, per `PROJECT_MASTER_PLAN.md` §49.
+requiring a rewrite later, per `PROJECT_MASTER_PLAN.md` §1.2 (complexity is the lowest priority, added only when needed).
 
 Candidates evaluated, per the criteria required by the initialization
 instruction (development convenience, analysis speed, data size,
@@ -50,7 +50,7 @@ Phase 1 spec §12). Concretely:
   deferred to Phase 2 (Backtesting) or an explicit Phase 1 follow-up,
   once real data volume/query patterns are known. Building it now
   against only mock data would be premature optimization
-  (`PROJECT_MASTER_PLAN.md` §84 — "복잡성을 위해 복잡한 시스템을 만들지
+  (`PROJECT_MASTER_PLAN.md` §1.3 — "복잡성을 위해 복잡한 시스템을 만들지
   않는다").
 
 ## Reasoning
@@ -64,7 +64,7 @@ Phase 1 spec §12). Concretely:
 - Zero operational overhead: no server process to run/manage in a
   single-developer research phase, which keeps Phase 0/1's "Foundation
   first, minimal viable system" principle intact
-  (`PROJECT_MASTER_PLAN.md` §21, §85).
+  (`PROJECT_MASTER_PLAN.md` §21, §20).
 - Parquet as the underlying file format gives us: (a) natural
   immutability (a Parquet file is written once per ingestion batch,
   matching Raw-layer append-only semantics), (b) portability if the
@@ -109,8 +109,8 @@ Phase 1 spec §12). Concretely:
 - Analytical workloads (backtests, feature computation) will be fast
   against a DuckDB/Parquet backend once implemented.
 - No server to operate; storage is just files, which is easy to reason
-  about, back up, and reproduce (supports `PROJECT_MASTER_PLAN.md` §53
-  Reproducibility).
+  about, back up, and reproduce (supports `PROJECT_MASTER_PLAN.md` §1.3's
+  own Reproducibility question).
 - Clear migration path to PostgreSQL later if concurrency demands grow.
 
 ### Negative / Trade-offs
