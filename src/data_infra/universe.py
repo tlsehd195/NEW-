@@ -295,6 +295,22 @@ _SP500_PIT_CONFIRMED_LISTED_FROM: dict[str, str] = {
     "UPS": "2002-07-22", "V": "2009-12-21", "VLO": "2004-04-29", "WELL": "2009-01-30",
 }
 
+# Session 37 (ADR-0122): the FIRST real, confirmed S&P 500 REMOVAL date
+# this project has ever recorded for a symbol already present in one
+# of its own universes. Sourced from the real `fja05680/sp500`
+# `sp500_ticker_start_end.csv` fetched this session (ADR-0120/ADR-0121:
+# `AVB`'s interval ends `2026-08-18`), independently cross-verified via
+# WebSearch against real news coverage: AvalonBay Communities and
+# Equity Residential completed a merger of equals on 2026-08-17,
+# forming "Vivmark Residential" trading under a new ticker (`VMRK`)
+# from 2026-08-18 -- Reddit replaced `AVB` in the S&P 500 the same day.
+# `AVB` as a distinct, independently tradeable security genuinely
+# stopped existing on this date; this is not a guess or an inference
+# from the dataset alone -- two independent real sources agree.
+_SP500_PIT_CONFIRMED_LISTED_TO: dict[str, str] = {
+    "AVB": "2026-08-18",
+}
+
 
 def _real_symbol_metadata(symbol: str) -> SymbolMetadata:
     """Builds one `SymbolMetadata` using `_REAL_SEC_SECTOR_AND_EXCHANGE`
@@ -305,8 +321,10 @@ def _real_symbol_metadata(symbol: str) -> SymbolMetadata:
     `listed_from` from `_SP500_PIT_CONFIRMED_LISTED_FROM` when
     available (ADR-0061) -- an independent data source from `sector`/
     `exchange`, so a symbol can have either, both, or neither
-    populated. `listed_to` is never set here (see that dict's own
-    comment for why)."""
+    populated. `listed_to` is populated from `_SP500_PIT_CONFIRMED_
+    LISTED_TO` (ADR-0122) when a real, cross-verified removal date
+    exists -- still `None` for every other symbol, since ADR-0061's
+    own dataset had confirmed zero removals at the time it ran."""
     found = _REAL_SEC_SECTOR_AND_EXCHANGE.get(symbol)
     sector, exchange = found if found is not None else (None, None)
     listed_from_str = _SP500_PIT_CONFIRMED_LISTED_FROM.get(symbol)
@@ -314,7 +332,14 @@ def _real_symbol_metadata(symbol: str) -> SymbolMetadata:
         datetime.strptime(listed_from_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         if listed_from_str is not None else None
     )
-    return SymbolMetadata(symbol=symbol, sector=sector, exchange=exchange, listed_from=listed_from)
+    listed_to_str = _SP500_PIT_CONFIRMED_LISTED_TO.get(symbol)
+    listed_to = (
+        datetime.strptime(listed_to_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if listed_to_str is not None else None
+    )
+    return SymbolMetadata(
+        symbol=symbol, sector=sector, exchange=exchange, listed_from=listed_from, listed_to=listed_to,
+    )
 
 
 def get_sector(symbol: str) -> Optional[str]:

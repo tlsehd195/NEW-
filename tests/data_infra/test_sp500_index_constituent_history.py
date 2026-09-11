@@ -18,7 +18,9 @@ from data_infra.providers.sp500_index_constituent_history import (
     TickerMembershipInterval,
     build_sp500_index_universe_memberships,
     constituents_as_of,
+    dataset_coverage_start,
     history_for_ticker,
+    left_censored_tickers,
     parse_ticker_intervals,
     removed_since,
 )
@@ -235,3 +237,46 @@ class TestBuildSp500IndexUniverseMemberships:
         assert by_ticker["FB"].is_member_at(datetime(2020, 1, 1, tzinfo=timezone.utc)) is True
         assert by_ticker["FB"].is_member_at(datetime(2023, 1, 1, tzinfo=timezone.utc)) is False
         assert by_ticker["META"].is_member_at(datetime(2023, 1, 1, tzinfo=timezone.utc)) is True
+
+
+class TestDatasetCoverageStart:
+    def test_returns_the_earliest_start_date_across_all_intervals(self) -> None:
+        intervals = (
+            TickerMembershipInterval(ticker="GE", start_date=date(1996, 1, 2), end_date=None),
+            TickerMembershipInterval(ticker="TSLA", start_date=date(2020, 12, 21), end_date=None),
+        )
+        assert dataset_coverage_start(intervals) == date(1996, 1, 2)
+
+    def test_returns_none_for_empty_intervals(self) -> None:
+        assert dataset_coverage_start(()) is None
+
+
+class TestLeftCensoredTickers:
+    def test_ticker_starting_at_coverage_start_is_left_censored(self) -> None:
+        intervals = (
+            TickerMembershipInterval(ticker="GE", start_date=date(1996, 1, 2), end_date=None),
+            TickerMembershipInterval(ticker="TSLA", start_date=date(2020, 12, 21), end_date=None),
+        )
+        assert left_censored_tickers(intervals) == frozenset({"GE"})
+
+    def test_ticker_with_a_confirmed_later_start_is_not_left_censored(self) -> None:
+        intervals = (
+            TickerMembershipInterval(ticker="GE", start_date=date(1996, 1, 2), end_date=None),
+            TickerMembershipInterval(ticker="TSLA", start_date=date(2020, 12, 21), end_date=None),
+        )
+        assert "TSLA" not in left_censored_tickers(intervals)
+
+    def test_re_entering_ticker_is_not_left_censored_by_a_later_interval_sharing_the_coverage_date(self) -> None:
+        """A ticker whose GENUINE earliest interval starts well after
+        the dataset's coverage start must never be flagged, even if
+        (contrived, but must be handled correctly) some other,
+        chronologically later interval for the same ticker happened to
+        also start exactly on the coverage-start date."""
+        intervals = (
+            TickerMembershipInterval(ticker="X", start_date=date(2010, 1, 1), end_date=date(2015, 1, 1)),
+            TickerMembershipInterval(ticker="Y", start_date=date(1996, 1, 2), end_date=None),
+        )
+        assert left_censored_tickers(intervals) == frozenset({"Y"})
+
+    def test_empty_intervals_returns_empty_set(self) -> None:
+        assert left_censored_tickers(()) == frozenset()

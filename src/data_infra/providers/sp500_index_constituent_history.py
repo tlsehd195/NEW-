@@ -60,12 +60,12 @@ third-party sources now agree on the same date for the same event.
 4. **`start_date` for a ticker already present at the dataset's very
    first row (1996-01-02, e.g. `GE`) is left-censored** -- it is the
    dataset's own coverage start, not that ticker's real S&P 500 join
-   date (GE has been a member since long before 1996). This module
-   does not flag left-censoring explicitly (unlike
-   `sp500_pit_membership.reconstruct_intervals`, which does) -- a
-   caller treating every `start_date == 1996-01-02` as a real join
-   date would be wrong; this caveat is the enforcement point until a
-   future phase adds an explicit flag.
+   date (GE has been a member since long before 1996). `left_censored_
+   tickers()` (ADR-0122) makes this queryable rather than only stated
+   in prose (unlike `sp500_pit_membership.reconstruct_intervals`,
+   which has always had an explicit per-interval flag) -- a caller
+   treating every `start_date == 1996-01-02` as a real join date would
+   be wrong regardless of which query path they use.
 5. **Ticker-keyed, not corporate-identity-keyed** -- identical caveat
    `sp500_pit_membership.py`/ADR-0061 already documented: a ticker
    rename (e.g. `FB`->`META`) looks like one ticker leaving and a
@@ -181,6 +181,38 @@ def removed_since(
 
 def _to_utc_datetime(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+
+def dataset_coverage_start(intervals: Sequence[TickerMembershipInterval]) -> Optional[date]:
+    """The earliest `start_date` across every interval in the parsed
+    dataset -- the real coverage boundary before which this dataset
+    simply has no information at all. Returns `None` for an empty
+    sequence, never a fabricated date."""
+    return min((iv.start_date for iv in intervals), default=None)
+
+
+def left_censored_tickers(intervals: Sequence[TickerMembershipInterval]) -> frozenset:
+    """Tickers whose EARLIEST membership interval starts exactly at
+    the dataset's own coverage start (module docstring, honesty
+    discipline item 2) -- their real join date is unknown and may
+    predate the dataset entirely. Identical concept to
+    `sp500_pit_membership.ReconstructedMembershipInterval.left_censored`,
+    applied here to this dataset's own interval shape -- this module
+    previously only stated the caveat in prose; this function makes it
+    queryable. A ticker with a LATER interval that happens to also
+    start at the coverage-start date is not flagged unless that is
+    genuinely its earliest recorded interval (a ticker re-entering the
+    index decades later never becomes left-censored merely because the
+    dataset itself started on that same calendar date)."""
+    start = dataset_coverage_start(intervals)
+    if start is None:
+        return frozenset()
+    earliest_start_by_ticker: dict = {}
+    for iv in intervals:
+        current = earliest_start_by_ticker.get(iv.ticker)
+        if current is None or iv.start_date < current:
+            earliest_start_by_ticker[iv.ticker] = iv.start_date
+    return frozenset(ticker for ticker, s in earliest_start_by_ticker.items() if s == start)
 
 
 def build_sp500_index_universe_memberships(
