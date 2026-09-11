@@ -43,6 +43,25 @@
 
 **멀티 전략 페이퍼 트레이딩 러너 구현 완료 (ADR-0110)**: 사용자가 "멀티 전략 ㄱㄱ"로 착수 지시. 구현 전 `scripts/run_paper_trading_cycle.py`를 다시 정독하다가 정정할 점을 발견·공개: 이 세션이 이전에 "지금 매일 도는 건 Buy & Hold"라고 설명했었는데, 실제 코드는 `DriftPredictor` + `BaselineRuleDecisionAgent` + `DeterministicPositionSizer` + `DeterministicPortfolioRiskEngine`로 구성된 실제(단, 단순한 규칙 기반) 매일 의사결정 파이프라인을 돌리고 있었음 — 진짜 순수 Buy & Hold 함수(`broker.paper.us_longterm_runner.run_buy_and_hold_paper_session`)는 이미 만들어져 있었지만 이번까지 실제 스케줄에는 한 번도 연결된 적이 없었음. 이 부정확했던 설명을 정정하고, 신규 `orchestration.paper_strategies` 레지스트리에 이미 존재/검증된 컴포넌트만으로 구성된 전략 3개를 등록: `baseline_rule`(기존 로직 그대로, 동작 불변), `random_walk_baseline`(`RandomWalkPredictor` — "예측 불가능" 귀무가설 기준선, 통계적 대조군), `buy_and_hold`(드디어 이름으로 실행 가능하게 배선). 신규 `scripts/run_multi_strategy_paper_trading_cycle.py`가 `--strategies` 플래그로 지정된 N개 전략을 각각 완전히 독립된 `--paper-store-root/<이름>/` 하위 계좌·주문·체결·기록으로 돌림 — 트랙레코드가 서로 섞이거나 소급 적용되지 않음(이전 질문에 답했던 원칙을 코드로 실제 구현). 시세 카탈로그는 한 번만 읽어 모든 전략이 공유(Tiingo 호출 횟수가 전략 개수와 무관하다는 이전 답변을 코드로 증명). RULE 0.8 준수: 45개 팩터 후보는 실측 검증 결과가 없으므로 이 레지스트리에 아직 하나도 등록하지 않음 — 순수 인프라만 구축. `run_paper_trading_cycle.py`는 내부적으로 이 레지스트리를 쓰도록 리팩터링됐을 뿐 동작은 완전히 동일(회귀 테스트로 증명: 동일 입력에 대해 신규 멀티 전략 스크립트로 `baseline_rule` 하나만 돌린 결과가 기존 단일 전략 스크립트 결과와 정확히 일치). 새 테스트 18개(`test_paper_strategies.py` 11개, `test_run_multi_strategy_paper_trading_cycle_cli.py` 7개) 추가, 기존 `test_run_paper_trading_cycle_cli.py` 10개 전부 무변경 통과. 여전히 실제 GitHub Actions 일일 스케줄(`paper_trading_cycle.yml`)은 손대지 않음 — 멀티 전략 스크립트를 실제 스케줄에 연결할지는 별도로 사용자가 결정할 사항.
 
+### Completed (Session 37 계속 — WIKI Prices 대량 커버리지 체크 스크립트 추가, ADR-0126 Decision 4)
+
+사용자가 "1번 2번 진행"(유니버스 대조 + 실제 DB 반영)으로 지시. 이
+저장소에 이미 있던 실데이터(`data/sp500_ticker_start_end.csv`,
+fja05680/sp500, ADR-0120에서 받아둔 것)로 S&P 500에서 실제로 제외된
+적 있는 티커가 총 737개(2018년 이전 제외만 575개)임을 확인 — 지난번
+DELL/DTV/LNKD/TWX/YHOO 5개 수동 확인을 넘어서는 대조 대상 확보.
+
+신규 `scripts/check_wiki_prices_delisted_coverage.py`: 이 737개
+후보 티커 각각에 대해 사용자의 로컬 WIKI_PRICES.csv를 한 번 스트리밍
+하며 실거래(`volume>0`) 데이터가 있는지, 있다면 첫/마지막 실거래
+날짜가 그 티커의 실제 S&P 500 제외일과 얼마나 맞아떨어지는지(DELL
+사례처럼)까지 자동으로 리포트. 네트워크 호출 없음, 로컬 파일 2개만
+읽음. 신규 테스트 10개, 실제 `sp500_ticker_start_end.csv` 파싱도
+직접 확인. **DB 반영(2번)은 실제 WIKI_PRICES.csv가 사용자 본인
+Codespace에만 있어서 이 세션에서는 대신 실행할 수 없음** — 사용자가
+직접 실행해서 결과를 알려주면 그 다음 단계(실제 커버된 티커만 변환
++ import_external_market_data.py로 최종 반영)로 진행하기로 함.
+
 ### Completed (Session 37 계속 — Quandl WIKI Prices(Kaggle 미러)로 무료 상장폐지 가격 데이터 확보, ADR-0126)
 
 사용자가 CRSP/WRDS·Norgate·EODHD·Sharadar 등 유료 옵션을 전부 "유료는

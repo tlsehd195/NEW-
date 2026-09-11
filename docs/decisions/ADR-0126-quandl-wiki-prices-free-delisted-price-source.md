@@ -98,6 +98,30 @@ convention (`ingest_short_interest_data.py`/`import_external_market_data.py`
 itself already report, rather than fail on, a request for a symbol
 with zero real data).
 
+## Decision 4 -- Bulk coverage check against the real S&P 500 removed-ticker list, not just 5 hand-picked names
+
+Decision 1's evidence was 5 tickers checked by hand. This project
+already has a real, previously-fetched list of every ticker that has
+ever left the S&P 500 (`data/sp500_ticker_start_end.csv`, `fja05680/
+sp500`, ADR-0120) -- 737 distinct tickers with a real `end_date`, 575
+of them on or before this dataset's 2018-03-27 freeze date. This is
+exactly the candidate set worth checking in bulk, rather than continuing
+to spot-check names one at a time.
+
+`scripts/check_wiki_prices_delisted_coverage.py` (new) streams the raw
+`WIKI_PRICES.csv` once, keeps only rows for tickers in that removed-
+ticker set, drops `volume == 0` dummy rows (Decision 2's filter), and
+reports which candidate tickers have any real rows at all, each one's
+real first/last date, and its recorded S&P 500 `end_date`(s) for
+comparison -- the same DELL-style "does the real data's last date line
+up with the real corporate event" check, done for every candidate at
+once instead of one grep at a time. This session ran it against the
+real, already-present `sp500_ticker_start_end.csv` to confirm it parses
+correctly (735/737-ish candidates load without error); running it
+against the actual `WIKI_PRICES.csv` still requires the account owner's
+own environment (this sandbox never had that file) -- the real
+coverage-count results are pending that run.
+
 ## Consequences
 
 ### Positive
@@ -153,17 +177,23 @@ with zero real data).
 
 ## Tests
 
-11 new tests (`tests/data_infra/test_convert_quandl_wiki_prices_to_
-file_import_csv.py`), using fixture rows shaped exactly like the real
-`DELL`/`AAPL` rows the account owner reported this session -- including
-one true end-to-end test that pipes this script's output directly into
-`scripts/import_external_market_data.py`, proving the two scripts'
-schemas actually agree in practice.
+21 new tests total: 11 in `tests/data_infra/test_convert_quandl_wiki_
+prices_to_file_import_csv.py`, using fixture rows shaped exactly like
+the real `DELL`/`AAPL` rows the account owner reported this session --
+including one true end-to-end test that pipes this script's output
+directly into `scripts/import_external_market_data.py`, proving the
+two scripts' schemas actually agree in practice; 10 in
+`tests/data_infra/test_check_wiki_prices_delisted_coverage.py` for the
+bulk coverage-check script (Decision 4).
 
 ## Status of Implementation at Time of This ADR
 
-`scripts/convert_quandl_wiki_prices_to_file_import_csv.py` (new, no
-network call, pure CSV->CSV transform). No changes to
-`data_infra/providers/file_import.py` or
-`scripts/import_external_market_data.py` -- both already supported
-this exact workflow.
+`scripts/convert_quandl_wiki_prices_to_file_import_csv.py` and
+`scripts/check_wiki_prices_delisted_coverage.py` (both new, no network
+call, pure CSV transforms). No changes to `data_infra/providers/
+file_import.py` or `scripts/import_external_market_data.py` -- both
+already supported this exact workflow. The real bulk coverage numbers
+(how many of the 737 ever-removed S&P 500 tickers this dataset
+actually covers) are pending the account owner running `check_wiki_
+prices_delisted_coverage.py` against their own downloaded
+`WIKI_PRICES.csv`.
