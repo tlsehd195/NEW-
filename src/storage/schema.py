@@ -233,12 +233,14 @@ DDL_STATEMENTS: tuple[str, ...] = (
     # the way per-security OHLCV bars are -- the same criterion ADR-0010
     # section 1 already applied to Benchmark data, applied again here
     # (docs/specifications/PHASE-5-market-regime.md section 11).
-    """
-    CREATE SEQUENCE IF NOT EXISTS regime_observation_id_seq START 1
-    """,
-    """
-    CREATE SEQUENCE IF NOT EXISTS regime_composite_id_seq START 1
-    """,
+    #
+    # No id sequence here (ADR-0118): regime_id/composite_id are the
+    # caller-assigned natural PRIMARY KEY below, the same pattern
+    # broker_requests/broker_responses already use (see storage.
+    # broker_repository's own module docstring) -- an earlier revision
+    # of this schema created regime_observation_id_seq/regime_composite_
+    # id_seq for this purpose and never consumed either via nextval;
+    # removed as genuinely dead DDL rather than left undocumented.
     """
     CREATE TABLE IF NOT EXISTS regime_observations (
         regime_id TEXT PRIMARY KEY,
