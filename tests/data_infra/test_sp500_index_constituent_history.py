@@ -8,12 +8,15 @@ provider.py`)."""
 from __future__ import annotations
 
 import csv
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
+from data_infra.models import UniverseMembership
 from data_infra.providers.sp500_index_constituent_history import (
+    SP500_INDEX_HISTORICAL_UNIVERSE_NAME,
     TickerMembershipInterval,
+    build_sp500_index_universe_memberships,
     constituents_as_of,
     history_for_ticker,
     parse_ticker_intervals,
@@ -178,3 +181,57 @@ class TestRemovedSince:
         )
         result = removed_since(intervals, date(2020, 1, 1))
         assert [iv.ticker for iv in result] == ["A", "B"]
+
+
+class TestBuildSp500IndexUniverseMemberships:
+    def test_open_ended_interval_becomes_valid_to_none(self) -> None:
+        intervals = (TickerMembershipInterval(ticker="GE", start_date=date(1996, 1, 2), end_date=None),)
+        memberships = build_sp500_index_universe_memberships(intervals)
+        assert memberships == [
+            UniverseMembership(
+                security_id="GE",
+                universe=SP500_INDEX_HISTORICAL_UNIVERSE_NAME,
+                valid_from=datetime(1996, 1, 2, tzinfo=timezone.utc),
+                valid_to=None,
+            )
+        ]
+
+    def test_closed_interval_becomes_valid_to_set(self) -> None:
+        intervals = (TickerMembershipInterval(ticker="FB", start_date=date(2013, 12, 23), end_date=date(2022, 6, 9)),)
+        memberships = build_sp500_index_universe_memberships(intervals)
+        assert memberships[0].valid_from == datetime(2013, 12, 23, tzinfo=timezone.utc)
+        assert memberships[0].valid_to == datetime(2022, 6, 9, tzinfo=timezone.utc)
+
+    def test_one_membership_record_per_interval_not_per_ticker(self) -> None:
+        """A ticker with two non-contiguous intervals (left and
+        re-entered the index) must produce two separate
+        UniverseMembership records, not one collapsed record --
+        DataRepository.get_universe already ORs across multiple
+        records for the same security_id, so both stay independently
+        queryable."""
+        intervals = (
+            TickerMembershipInterval(ticker="AAL", start_date=date(1996, 1, 2), end_date=date(1997, 1, 15)),
+            TickerMembershipInterval(ticker="AAL", start_date=date(2015, 3, 23), end_date=date(2024, 9, 23)),
+        )
+        memberships = build_sp500_index_universe_memberships(intervals)
+        assert len(memberships) == 2
+        assert all(m.security_id == "AAL" for m in memberships)
+        assert all(m.universe == SP500_INDEX_HISTORICAL_UNIVERSE_NAME for m in memberships)
+
+    def test_empty_intervals_produces_empty_list(self) -> None:
+        assert build_sp500_index_universe_memberships(()) == []
+
+    def test_is_member_at_correctly_answers_from_the_built_records(self) -> None:
+        """End-to-end sanity check against UniverseMembership's own
+        is_member_at, the exact method DataRepository.get_universe
+        calls -- confirms the built records actually answer the
+        point-in-time question this whole module exists for."""
+        intervals = (
+            TickerMembershipInterval(ticker="FB", start_date=date(2013, 12, 23), end_date=date(2022, 6, 9)),
+            TickerMembershipInterval(ticker="META", start_date=date(2022, 6, 9), end_date=None),
+        )
+        memberships = build_sp500_index_universe_memberships(intervals)
+        by_ticker = {m.security_id: m for m in memberships}
+        assert by_ticker["FB"].is_member_at(datetime(2020, 1, 1, tzinfo=timezone.utc)) is True
+        assert by_ticker["FB"].is_member_at(datetime(2023, 1, 1, tzinfo=timezone.utc)) is False
+        assert by_ticker["META"].is_member_at(datetime(2023, 1, 1, tzinfo=timezone.utc)) is True

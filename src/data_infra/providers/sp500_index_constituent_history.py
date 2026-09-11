@@ -76,11 +76,15 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional, Sequence
 
+from data_infra.models import UniverseMembership
+
 _REQUIRED_COLUMNS = ("ticker", "start_date", "end_date")
+
+SP500_INDEX_HISTORICAL_UNIVERSE_NAME = "SP500_INDEX_HISTORICAL"
 
 
 @dataclass(frozen=True)
@@ -173,3 +177,72 @@ def removed_since(
             key=lambda iv: iv.end_date,
         )
     )
+
+
+def _to_utc_datetime(d: date) -> datetime:
+    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+
+def build_sp500_index_universe_memberships(
+    intervals: Sequence[TickerMembershipInterval],
+) -> list[UniverseMembership]:
+    """Converts real `fja05680/sp500` ticker-interval data into
+    `UniverseMembership` records for the `SP500_INDEX_HISTORICAL`
+    universe -- one record PER INTERVAL, never per ticker. A ticker
+    that left and later re-entered the index (e.g. real `AAL`:
+    1996-01-02 to 1997-01-15, then 2015-03-23 to 2024-09-23) gets two
+    separate `UniverseMembership` records; `DataRepository.get_universe`
+    (Phase 1, unmodified) already correctly ORs across every stored
+    record for the same `security_id`, so both intervals are
+    independently queryable without any change to that method.
+
+    Deliberately NOT built via `UniverseDefinition`/`build_universe_
+    memberships` (`data_infra.universe`) -- `SymbolMetadata` carries
+    exactly one `listed_from`/`listed_to` pair per symbol and
+    structurally cannot represent a ticker with multiple,
+    non-contiguous membership intervals. This universe is also not a
+    tradeable universe a strategy is ever handed (ADR-0033 Decision
+    1's three-concept distinction: "historical index constituent
+    universe" is a different question from "historical tradable
+    universe") -- it exists purely so
+    `DataRepository.get_universe("US_EQUITY", SP500_INDEX_HISTORICAL_
+    UNIVERSE_NAME, as_of_time=...)` can answer "which tickers were
+    real S&P 500 constituents on this historical date, including
+    tickers no longer in today's index," for survivorship-bias
+    research/audit use, never as a `security_ids` argument to a
+    `Strategy` constructor.
+
+    Left-censoring is passed through unchanged (see this module's own
+    docstring, Decision 3.2 in ADR-0120) -- a `start_date` at the
+    source dataset's own coverage start (1996-01-02) is stored as-is,
+    not corrected or flagged here.
+
+    **`end_date` is treated as an EXCLUSIVE `valid_to` boundary**,
+    matching `UniverseMembership.valid_to`'s own project-wide half-open
+    `[valid_from, valid_to)` convention (`SecurityMaster` docs the
+    identical convention) -- `is_member_at(end_date)` therefore returns
+    `False`, not `True`, even though `TickerMembershipInterval.contains`
+    (this module's OWN query function, used by `constituents_as_of`)
+    treats `end_date` as inclusive. This is a deliberate, disclosed
+    interpretive choice, not an oversight: the real `FB`/`META` row
+    pair shares the identical date (`FB.end_date == META.start_date ==
+    2022-06-09`) for what is genuinely one continuous handoff, not two
+    securities simultaneously in the index for a day -- treating
+    `valid_to` as exclusive here is what makes the two converted
+    records non-overlapping. A caller reading raw
+    `TickerMembershipInterval`s (via `constituents_as_of`/`history_for_
+    ticker`) sees inclusive `end_date` semantics; a caller querying the
+    persisted `UniverseMembership` records (via `DataRepository.
+    get_universe`) sees exclusive `valid_to` semantics -- both are
+    internally consistent with their own module's convention, but this
+    boundary-day difference between the two query paths is real and
+    intentional, not a bug to reconcile."""
+    return [
+        UniverseMembership(
+            security_id=iv.ticker,
+            universe=SP500_INDEX_HISTORICAL_UNIVERSE_NAME,
+            valid_from=_to_utc_datetime(iv.start_date),
+            valid_to=_to_utc_datetime(iv.end_date) if iv.end_date is not None else None,
+        )
+        for iv in intervals
+    ]

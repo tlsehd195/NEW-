@@ -29,11 +29,28 @@ matching `LocalFileDataProvider`/ADR-0037's external-dataset
 discipline -- large or frequently-refreshed third-party source files
 are never checked in, only the code that consumes them).
 
+`--db-path`, when supplied, additionally PERSISTS every parsed
+interval as a `UniverseMembership` record (via `data_infra.providers.
+sp500_index_constituent_history.build_sp500_index_universe_
+memberships`) into a DuckDB catalog at that path, under the
+`SP500_INDEX_HISTORICAL` universe name -- making the data queryable
+afterward via `DuckDBDataRepository.get_universe("US_EQUITY",
+SP500_INDEX_HISTORICAL_UNIVERSE_NAME, as_of_time=...)`. This does NOT
+touch `SecurityMaster`/price-bar tables or any existing universe
+(`PILOT_UNIVERSE_V1`/`RESEARCH_UNIVERSE_STAGE*`) -- it is purely
+additive rows in the same `universe_membership` table, distinguished
+by the `universe` column. The underlying insert is idempotent
+(`ON CONFLICT (security_id, universe, valid_from) DO NOTHING`,
+`storage.data_repository.DuckDBDataRepository.add_universe_membership`,
+unmodified) -- re-running this script against a fresh copy of the
+source file is always safe.
+
 Usage:
     python3 scripts/fetch_sp500_index_history.py \\
         --as-of 2026-09-11 \\
         --out ./data/sp500_index_membership_report.json \\
-        --save-csv ./data/sp500_ticker_start_end.csv
+        --save-csv ./data/sp500_ticker_start_end.csv \\
+        --db-path ./data/sp500_index_history_db
 """
 
 from __future__ import annotations
@@ -49,12 +66,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data_infra.providers.sp500_index_constituent_history import (  # noqa: E402
+    SP500_INDEX_HISTORICAL_UNIVERSE_NAME,
+    build_sp500_index_universe_memberships,
     constituents_as_of,
     history_for_ticker,
     parse_ticker_intervals,
     removed_since,
 )
 from data_infra.versioning import compute_data_version  # noqa: E402
+from storage.config import StorageConfig  # noqa: E402
+from storage.data_repository import DuckDBDataRepository  # noqa: E402
+from storage.engine import StorageEngine  # noqa: E402
 
 _SOURCE_URL = (
     "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv"
@@ -81,6 +103,7 @@ def main(argv=None) -> int:
     parser.add_argument("--removed-since", type=str, default=None, help="Optional YYYY-MM-DD; also report tickers removed on/after this date")
     parser.add_argument("--tickers", nargs="+", default=None, help="Optional explicit ticker list to report full history for")
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds (default: 30)")
+    parser.add_argument("--db-path", type=Path, default=None, help="Optional directory for a DuckDB catalog to persist every interval as a UniverseMembership record (created if it does not exist)")
     args = parser.parse_args(argv)
 
     as_of = datetime.strptime(args.as_of, "%Y-%m-%d").date()
@@ -132,6 +155,20 @@ def main(argv=None) -> int:
             for t in args.tickers
         }
 
+    persisted_count = None
+    if args.db_path is not None:
+        engine = StorageEngine(StorageConfig(root_dir=args.db_path))
+        repository = DuckDBDataRepository(engine)
+        memberships = build_sp500_index_universe_memberships(intervals)
+        for record in memberships:
+            repository.add_universe_membership(record)
+        persisted_count = len(memberships)
+        print(
+            f"Persisted {persisted_count} UniverseMembership records under "
+            f"{SP500_INDEX_HISTORICAL_UNIVERSE_NAME!r} to {args.db_path}",
+            flush=True,
+        )
+
     checksum = compute_data_version({
         "as_of": as_of.isoformat(),
         "constituents": constituents,
@@ -158,6 +195,8 @@ def main(argv=None) -> int:
         "removed_since": args.removed_since,
         "removed_tickers": removed_report,
         "ticker_history": ticker_history_report,
+        "db_path": str(args.db_path) if args.db_path is not None else None,
+        "universe_membership_records_persisted": persisted_count,
         "data_version_checksum": checksum,
     }
 
