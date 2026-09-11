@@ -14,6 +14,7 @@ from data_infra.institutional_holding_models import thirteen_f_available_time
 from data_infra.provider import PermanentProviderError
 from data_infra.providers.institutional_holding_file_import import (
     InstitutionalHoldingFileImportConfig,
+    load_combined_institutional_holdings_csv,
     load_institutional_holdings_csv,
     load_institutional_holdings_csvs,
 )
@@ -97,3 +98,62 @@ class TestLoadInstitutionalHoldingsCsvsBatch:
 
         with pytest.raises(PermanentProviderError):
             load_institutional_holdings_csvs(config, ["AAA", "NOPE"], retrieved_at=utc(2026, 9, 3))
+
+
+class TestLoadCombinedInstitutionalHoldingsCsv:
+    def _write_combined_csv(self, tmp_path, rows: list[str], filename: str = "combined.csv"):
+        header = "security_id,quarter_end,institutional_shares,num_institutions\n"
+        path = tmp_path / filename
+        path.write_text(header + "\n".join(rows) + "\n")
+        return path
+
+    def test_groups_multiple_symbols_from_one_file(self, tmp_path) -> None:
+        path = self._write_combined_csv(tmp_path, ["AAA,2026-06-30,1000000,42", "BBB,2026-06-30,2000000,60"])
+
+        result = load_combined_institutional_holdings_csv(
+            path, source_name="sec_13f_manual_aggregation", retrieved_at=utc(2026, 9, 3)
+        )
+
+        assert set(result) == {"AAA", "BBB"}
+        assert result["AAA"][0].institutional_shares == 1000000.0
+        assert result["BBB"][0].institutional_shares == 2000000.0
+        assert result["AAA"][0].provenance.source == "sec_13f_manual_aggregation"
+
+    def test_multiple_rows_for_the_same_symbol_are_grouped_together(self, tmp_path) -> None:
+        path = self._write_combined_csv(tmp_path, ["AAA,2026-03-31,800000,40", "AAA,2026-06-30,1000000,42"])
+
+        result = load_combined_institutional_holdings_csv(
+            path, source_name="sec_13f_manual_aggregation", retrieved_at=utc(2026, 9, 3)
+        )
+
+        assert len(result["AAA"]) == 2
+
+    def test_optional_num_institutions_can_be_blank(self, tmp_path) -> None:
+        path = self._write_combined_csv(tmp_path, ["AAA,2026-06-30,1000000,"])
+
+        result = load_combined_institutional_holdings_csv(
+            path, source_name="sec_13f_manual_aggregation", retrieved_at=utc(2026, 9, 3)
+        )
+
+        assert result["AAA"][0].num_institutions is None
+
+    def test_missing_file_raises_permanent_provider_error(self, tmp_path) -> None:
+        with pytest.raises(PermanentProviderError):
+            load_combined_institutional_holdings_csv(
+                tmp_path / "nope.csv", source_name="sec_13f_manual_aggregation", retrieved_at=utc(2026, 9, 3)
+            )
+
+    def test_missing_security_id_column_raises_permanent_provider_error(self, tmp_path) -> None:
+        path = tmp_path / "bad.csv"
+        path.write_text("quarter_end,institutional_shares\n2026-06-30,1000000\n")
+        with pytest.raises(PermanentProviderError):
+            load_combined_institutional_holdings_csv(
+                path, source_name="sec_13f_manual_aggregation", retrieved_at=utc(2026, 9, 3)
+            )
+
+    def test_empty_security_id_value_raises_permanent_provider_error(self, tmp_path) -> None:
+        path = self._write_combined_csv(tmp_path, [",2026-06-30,1000000,"])
+        with pytest.raises(PermanentProviderError):
+            load_combined_institutional_holdings_csv(
+                path, source_name="sec_13f_manual_aggregation", retrieved_at=utc(2026, 9, 3)
+            )

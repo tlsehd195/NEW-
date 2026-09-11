@@ -31,11 +31,19 @@ where the CSV files actually came from -- same `Provenance.source`
 discipline `import_external_market_data.py`'s own docstring already
 establishes.
 
-Usage:
+Usage (one CSV per symbol):
     python3 scripts/ingest_short_interest_data.py \\
         --source-name finra_manual_export \\
         --data-dir /path/to/preprocessed/csv/files \\
         --universe RESEARCH_UNIVERSE \\
+        --as-of 2026-09-05 \\
+        --db-path ./data/short_interest_data
+
+Usage (one combined CSV covering every symbol, `security_id` as an
+extra column -- avoids manually splitting into N per-symbol files):
+    python3 scripts/ingest_short_interest_data.py \\
+        --source-name finra_manual_export \\
+        --combined-csv /path/to/finra_short_interest.csv \\
         --as-of 2026-09-05 \\
         --db-path ./data/short_interest_data
 """
@@ -53,6 +61,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from data_infra.provider import PermanentProviderError  # noqa: E402
 from data_infra.providers.short_interest_file_import import (  # noqa: E402
     ShortInterestFileImportConfig,
+    load_combined_short_interest_csv,
     load_short_interest_csv,
 )
 from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
@@ -75,7 +84,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Honest name of the external source these CSV files actually came from "
         "(e.g. finra_manual_export). Becomes Provenance.source.",
     )
-    parser.add_argument("--data-dir", required=True, type=Path, help="Directory containing one <security_id>.csv per symbol")
+    parser.add_argument("--data-dir", type=Path, default=None, help="Directory containing one <security_id>.csv per symbol (mutually exclusive with --combined-csv)")
+    parser.add_argument("--combined-csv", type=Path, default=None, help="One CSV covering every symbol, with security_id as an extra column (mutually exclusive with --data-dir)")
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE", help="Named universe from src/data_infra/universe.py")
     parser.add_argument("--symbols", nargs="+", default=None, help="Explicit symbol list, overriding --universe entirely")
     parser.add_argument("--as-of", required=True, type=_parse_date, help="YYYY-MM-DD, stands in for this run's real-world timestamp (retrieved_at/ingestion_time) -- never derived from wall-clock time")
@@ -83,14 +93,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest-out", type=Path, default=None, help="Where to write the JSON reproducibility manifest (default: <db-path>/short_interest_ingestion_manifest.json)")
     args = parser.parse_args(argv)
 
+    if (args.data_dir is None) == (args.combined_csv is None):
+        print("FATAL: exactly one of --data-dir or --combined-csv must be given", file=sys.stderr)
+        return 1
+
     manifest_path = args.manifest_out or (args.db_path / "short_interest_ingestion_manifest.json")
 
     if args.symbols is not None:
         symbols = list(args.symbols)
     else:
         symbols = list(_UNIVERSES[args.universe].symbol_ids)
-
-    config = ShortInterestFileImportConfig(source_name=args.source_name, data_dir=args.data_dir)
 
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
     repository = DuckDBShortInterestRepository(engine)
@@ -100,14 +112,40 @@ def main(argv: list[str] | None = None) -> int:
         missing_symbols = []
         total_records_persisted = 0
 
-        for i, symbol in enumerate(symbols, start=1):
+        if args.combined_csv is not None:
             try:
-                records = load_short_interest_csv(config, symbol, retrieved_at=args.as_of)
+                combined_records = load_combined_short_interest_csv(
+                    args.combined_csv, source_name=args.source_name, retrieved_at=args.as_of,
+                )
             except PermanentProviderError as exc:
-                print(f"  [{i}/{len(symbols)}] {symbol}: {exc}", flush=True)
-                missing_symbols.append(symbol)
-                per_symbol_results.append({"security_id": symbol, "records_persisted": 0, "error": str(exc)})
-                continue
+                print(f"FATAL: {exc}", file=sys.stderr)
+                return 1
+            print(f"Parsed {args.combined_csv}: {len(combined_records)} distinct symbol(s) found in the file.", flush=True)
+        else:
+            combined_records = None
+            config = ShortInterestFileImportConfig(source_name=args.source_name, data_dir=args.data_dir)
+
+        for i, symbol in enumerate(symbols, start=1):
+            if combined_records is not None:
+                records = combined_records.get(symbol)
+                if records is None:
+                    exc_message = (
+                        f"symbol={symbol!r} not present in combined CSV {args.combined_csv} "
+                        f"(this module requires a security_id column matching every requested symbol -- "
+                        f"see data_infra.providers.short_interest_file_import module docstring)"
+                    )
+                    print(f"  [{i}/{len(symbols)}] {symbol}: {exc_message}", flush=True)
+                    missing_symbols.append(symbol)
+                    per_symbol_results.append({"security_id": symbol, "records_persisted": 0, "error": exc_message})
+                    continue
+            else:
+                try:
+                    records = load_short_interest_csv(config, symbol, retrieved_at=args.as_of)
+                except PermanentProviderError as exc:
+                    print(f"  [{i}/{len(symbols)}] {symbol}: {exc}", flush=True)
+                    missing_symbols.append(symbol)
+                    per_symbol_results.append({"security_id": symbol, "records_persisted": 0, "error": str(exc)})
+                    continue
 
             repository.add_short_interest_records(records)
             total_records_persisted += len(records)
@@ -134,7 +172,8 @@ def main(argv: list[str] | None = None) -> int:
             ),
             "data_status": "REAL",
             "source_name": args.source_name,
-            "data_dir": str(args.data_dir),
+            "data_dir": str(args.data_dir) if args.data_dir is not None else None,
+            "combined_csv": str(args.combined_csv) if args.combined_csv is not None else None,
             "universe_name": args.universe if args.symbols is None else None,
             "symbols": list(symbols),
             "symbol_count": len(symbols),

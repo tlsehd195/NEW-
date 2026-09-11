@@ -109,3 +109,84 @@ class TestIngestInstitutionalHoldingsCli:
         source = _SCRIPT_PATH.read_text()
         for forbidden in ("import requests", "urllib.request", "http.client"):
             assert forbidden not in source, f"{forbidden!r} must not appear in a script that claims to make no network call"
+
+
+class TestIngestInstitutionalHoldingsCliCombinedCsv:
+    def _write_combined_csv(self, tmp_path: Path, rows: list[str]) -> Path:
+        header = "security_id,quarter_end,institutional_shares,num_institutions\n"
+        path = tmp_path / "combined.csv"
+        path.write_text(header + "\n".join(rows) + "\n")
+        return path
+
+    def test_combined_csv_runs_end_to_end_without_per_symbol_files(self, tmp_path) -> None:
+        module = _load_script()
+        combined_csv = self._write_combined_csv(
+            tmp_path,
+            ["AAA,2026-03-31,800000,40", "AAA,2026-06-30,1000000,42", "BBB,2026-06-30,2000000,60"],
+        )
+
+        db_path = tmp_path / "db"
+        exit_code = module.main(
+            [
+                "--source-name", "sec_13f_manual_aggregation",
+                "--combined-csv", str(combined_csv),
+                "--symbols", "AAA", "BBB",
+                "--as-of", "2026-09-06",
+                "--db-path", str(db_path),
+            ]
+        )
+        assert exit_code == 0
+
+        manifest = json.loads((db_path / "institutional_holdings_ingestion_manifest.json").read_text())
+        assert manifest["combined_csv"] == str(combined_csv)
+        assert manifest["data_dir"] is None
+        assert manifest["total_records_persisted"] == 3
+        assert manifest["missing_symbols"] == []
+
+    def test_symbol_absent_from_combined_csv_is_reported_as_missing(self, tmp_path) -> None:
+        module = _load_script()
+        combined_csv = self._write_combined_csv(tmp_path, ["AAA,2026-06-30,1000000,42"])
+
+        db_path = tmp_path / "db"
+        exit_code = module.main(
+            [
+                "--source-name", "sec_13f_manual_aggregation",
+                "--combined-csv", str(combined_csv),
+                "--symbols", "AAA", "NOFILE",
+                "--as-of", "2026-09-06",
+                "--db-path", str(db_path),
+            ]
+        )
+        assert exit_code == 1
+
+        manifest = json.loads((db_path / "institutional_holdings_ingestion_manifest.json").read_text())
+        assert manifest["missing_symbols"] == ["NOFILE"]
+
+    def test_neither_data_dir_nor_combined_csv_is_rejected(self, tmp_path) -> None:
+        module = _load_script()
+        exit_code = module.main(
+            [
+                "--source-name", "sec_13f_manual_aggregation",
+                "--symbols", "AAA",
+                "--as-of", "2026-09-06",
+                "--db-path", str(tmp_path / "db"),
+            ]
+        )
+        assert exit_code == 1
+
+    def test_both_data_dir_and_combined_csv_is_rejected(self, tmp_path) -> None:
+        module = _load_script()
+        data_dir = tmp_path / "csvs"
+        data_dir.mkdir()
+        combined_csv = self._write_combined_csv(tmp_path, ["AAA,2026-06-30,1000000,42"])
+        exit_code = module.main(
+            [
+                "--source-name", "sec_13f_manual_aggregation",
+                "--data-dir", str(data_dir),
+                "--combined-csv", str(combined_csv),
+                "--symbols", "AAA",
+                "--as-of", "2026-09-06",
+                "--db-path", str(tmp_path / "db"),
+            ]
+        )
+        assert exit_code == 1

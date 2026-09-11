@@ -108,3 +108,84 @@ class TestIngestShortInterestDataCli:
         source = _SCRIPT_PATH.read_text()
         for forbidden in ("import requests", "urllib.request", "http.client"):
             assert forbidden not in source, f"{forbidden!r} must not appear in a script that claims to make no network call"
+
+
+class TestIngestShortInterestDataCliCombinedCsv:
+    def _write_combined_csv(self, tmp_path: Path, rows: list[str]) -> Path:
+        header = "security_id,settlement_date,short_interest_quantity,average_daily_volume,days_to_cover\n"
+        path = tmp_path / "combined.csv"
+        path.write_text(header + "\n".join(rows) + "\n")
+        return path
+
+    def test_combined_csv_runs_end_to_end_without_per_symbol_files(self, tmp_path) -> None:
+        module = _load_script()
+        combined_csv = self._write_combined_csv(
+            tmp_path,
+            ["AAA,2026-07-31,80000,40000,2.0", "AAA,2026-08-15,100000,50000,2.0", "BBB,2026-08-15,200000,100000,2.0"],
+        )
+
+        db_path = tmp_path / "db"
+        exit_code = module.main(
+            [
+                "--source-name", "finra_manual_export",
+                "--combined-csv", str(combined_csv),
+                "--symbols", "AAA", "BBB",
+                "--as-of", "2026-09-03",
+                "--db-path", str(db_path),
+            ]
+        )
+        assert exit_code == 0
+
+        manifest = json.loads((db_path / "short_interest_ingestion_manifest.json").read_text())
+        assert manifest["combined_csv"] == str(combined_csv)
+        assert manifest["data_dir"] is None
+        assert manifest["total_records_persisted"] == 3
+        assert manifest["missing_symbols"] == []
+
+    def test_symbol_absent_from_combined_csv_is_reported_as_missing(self, tmp_path) -> None:
+        module = _load_script()
+        combined_csv = self._write_combined_csv(tmp_path, ["AAA,2026-08-15,100000,50000,2.0"])
+
+        db_path = tmp_path / "db"
+        exit_code = module.main(
+            [
+                "--source-name", "finra_manual_export",
+                "--combined-csv", str(combined_csv),
+                "--symbols", "AAA", "NOFILE",
+                "--as-of", "2026-09-03",
+                "--db-path", str(db_path),
+            ]
+        )
+        assert exit_code == 1
+
+        manifest = json.loads((db_path / "short_interest_ingestion_manifest.json").read_text())
+        assert manifest["missing_symbols"] == ["NOFILE"]
+
+    def test_neither_data_dir_nor_combined_csv_is_rejected(self, tmp_path) -> None:
+        module = _load_script()
+        exit_code = module.main(
+            [
+                "--source-name", "finra_manual_export",
+                "--symbols", "AAA",
+                "--as-of", "2026-09-03",
+                "--db-path", str(tmp_path / "db"),
+            ]
+        )
+        assert exit_code == 1
+
+    def test_both_data_dir_and_combined_csv_is_rejected(self, tmp_path) -> None:
+        module = _load_script()
+        data_dir = tmp_path / "csvs"
+        data_dir.mkdir()
+        combined_csv = self._write_combined_csv(tmp_path, ["AAA,2026-08-15,100000,50000,2.0"])
+        exit_code = module.main(
+            [
+                "--source-name", "finra_manual_export",
+                "--data-dir", str(data_dir),
+                "--combined-csv", str(combined_csv),
+                "--symbols", "AAA",
+                "--as-of", "2026-09-03",
+                "--db-path", str(tmp_path / "db"),
+            ]
+        )
+        assert exit_code == 1
