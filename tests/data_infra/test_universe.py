@@ -22,6 +22,7 @@ from data_infra.universe import (
     UniverseDefinition,
     _real_symbol_metadata,
     _SP500_PIT_CONFIRMED_LISTED_FROM,
+    _SP500_PIT_CONFIRMED_LISTED_TO,
     build_security_masters,
     build_universe_memberships,
     get_sector,
@@ -167,9 +168,14 @@ class TestResearchUniverseStage4:
         assert RESEARCH_UNIVERSE_STAGE4.name == RESEARCH_UNIVERSE_STAGE3.name  # same named universe, later stage
 
     def test_stage4_symbols_carry_no_listed_to_and_only_real_confirmed_listed_from(self) -> None:
-        """Same real-vs-honest-None split as Stage 2's own test above."""
+        """Same real-vs-honest-None split as Stage 2's own test above.
+        `AVB` is the one confirmed exception since ADR-0122: a real,
+        cross-verified S&P 500 removal date, not a fabricated one."""
         for entry in RESEARCH_UNIVERSE_STAGE4.symbols:
-            assert entry.listed_to is None
+            if entry.symbol in _SP500_PIT_CONFIRMED_LISTED_TO:
+                assert entry.listed_to is not None
+            else:
+                assert entry.listed_to is None
             assert entry.source == "manual_curation"
             if entry.symbol in _SP500_PIT_CONFIRMED_LISTED_FROM:
                 assert entry.listed_from is not None
@@ -253,6 +259,18 @@ class TestRealSymbolMetadata:
         avb = _real_symbol_metadata("AVB")
         assert avb.sector == "Real Estate Investment Trusts"
         assert avb.listed_from == datetime(2007, 1, 10, tzinfo=timezone.utc)
+
+    def test_avb_has_a_real_confirmed_listed_to_after_its_2026_merger(self) -> None:
+        # ADR-0122: AVB's real, cross-verified S&P 500 removal date
+        # (fja05680/sp500's real interval end, independently confirmed
+        # via news of the AvalonBay/Equity Residential merger) -- the
+        # first real listed_to this project has ever recorded.
+        metadata = _real_symbol_metadata("AVB")
+        assert metadata.listed_to == datetime(2026, 8, 18, tzinfo=timezone.utc)
+
+    def test_a_symbol_with_no_confirmed_removal_leaves_listed_to_none(self) -> None:
+        metadata = _real_symbol_metadata("MSFT")
+        assert metadata.listed_to is None
 
 
 class TestGetSector:
@@ -377,6 +395,26 @@ class TestConverters:
         a = build_universe_memberships(PILOT_UNIVERSE_V1, valid_from=utc(2024, 1, 1))
         b = build_universe_memberships(PILOT_UNIVERSE_V1, valid_from=utc(2024, 1, 1))
         assert a == b
+
+    def test_build_security_masters_marks_avb_delisted_after_its_real_2026_removal(self) -> None:
+        """ADR-0122: the first symbol in this project's own universes
+        with a real, confirmed listed_to -- build_security_masters'
+        existing (unmodified) `DELISTED if listed_to is not None else
+        ACTIVE` rule must now actually produce a DELISTED record for
+        it, not silently keep reporting ACTIVE for a security that no
+        longer trades."""
+        records = build_security_masters(RESEARCH_UNIVERSE_STAGE4, valid_from=utc(2024, 1, 1))
+        by_id = {r.security_id: r for r in records}
+        assert by_id["AVB"].status == SecurityStatus.DELISTED
+        assert by_id["AVB"].valid_to == datetime(2026, 8, 18, tzinfo=timezone.utc)
+        # every other Stage 4 symbol is unaffected -- still ACTIVE.
+        assert all(r.status == SecurityStatus.ACTIVE for sid, r in by_id.items() if sid != "AVB")
+
+    def test_build_universe_memberships_closes_avb_at_its_real_removal_date(self) -> None:
+        memberships = build_universe_memberships(RESEARCH_UNIVERSE_STAGE4, valid_from=utc(2024, 1, 1))
+        by_id = {m.security_id: m for m in memberships}
+        assert by_id["AVB"].valid_to == datetime(2026, 8, 18, tzinfo=timezone.utc)
+        assert by_id["AVB"].is_member_at(datetime(2026, 9, 1, tzinfo=timezone.utc)) is False
 
 
 class TestPointInTimeIntegration:
