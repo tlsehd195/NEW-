@@ -193,9 +193,16 @@ satisfy"), never claiming a Purged K-Fold/Embargo splitter already
 exists. Building one is a real feature, not a code-quality fix: out of
 scope here.
 
-**`storage.schema.py`'s 2 unused sequences / `risk.engine.py:230`'s `current_price`** —
-re-verified already addressed by ADR-0116 (explanatory comments
-present in both places); no further action needed.
+**`risk.engine.py:230`'s `current_price`** — re-verified already
+addressed by ADR-0116 (explanatory comment present).
+
+**`storage.schema.py`'s 2 unused sequences** — **correction (ADR-0118):**
+this entry originally, incorrectly, claimed the same "already addressed
+by ADR-0116" status as the `risk.engine.py` item above, conflating the
+two. `git log` shows ADR-0116 never touched `storage/schema.py`; no
+explanatory comment existed there. A fourth verification pass caught
+this directly. See ADR-0118 for the actual fix (the two dead
+`CREATE SEQUENCE` statements removed) and the corrected record.
 
 **3 momentum/ensemble strategies' `bars[-1].close` used without an explicit `None` check** —
 re-verified NOT a bug: `PriceBar.close: float` is non-Optional by its
