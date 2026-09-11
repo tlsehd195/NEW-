@@ -1,5 +1,7 @@
 # ADR-0023: Production Safety Review Findings
 
+**Status:** Accepted
+
 ## Context
 
 `PROJECT_MASTER_PLAN.md`'s Go-Live discipline requires a Production

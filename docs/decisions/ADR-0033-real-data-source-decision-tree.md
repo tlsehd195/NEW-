@@ -1,5 +1,7 @@
 # ADR-0033: Real Historical US Equity Data Source Decision Tree (Phase 30)
 
+**Status:** Accepted
+
 ## Context
 
 Phase 30 asks for a systematic evaluation of practical sources for a

@@ -121,7 +121,7 @@ jobs:
       - name: Determine incremental ingestion start date
         id: ingest_start
         run: |
-          echo "start=$(python3 scripts/compute_incremental_ingestion_start.py --db-path "$MARKET_DATA_DIR" --fallback-start "$START_DATE")" >> "$GITHUB_OUTPUT"
+          echo "start=$(python3 scripts/compute_incremental_ingestion_start.py --db-path "$MARKET_DATA_DIR" --fallback-start "$START_DATE" --universe "$UNIVERSE")" >> "$GITHUB_OUTPUT"
 
       - name: Ingest latest market data
         env:

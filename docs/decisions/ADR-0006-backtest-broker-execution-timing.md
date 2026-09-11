@@ -154,5 +154,13 @@ refinement (see `DECISION REQUIRED` in the Phase 2 session report).
 Implemented in `src/backtest/broker.py` (`BrokerInterface`,
 `BacktestBroker`), `src/backtest/orders.py` (`OrderSimulator`), and
 `src/backtest/fills.py` (`FillSimulator`), exercised by
-`tests/backtest/test_execution_timing.py` and
-`tests/backtest/test_orders_fills.py`.
+`tests/backtest/test_execution_timing.py`. `tests/backtest/
+test_orders_fills.py` (cited here originally) no longer exists --
+`OrderSimulator`/`FillSimulator`/`BacktestBroker` coverage has since
+been distributed across several other test files instead of living in
+one dedicated file (e.g. `tests/backtest/test_integrity.py`, `tests/
+backtest/test_contribution.py`, `tests/backtest/test_portfolio.py`,
+`tests/backtest/test_corporate_actions.py` -- ADR-0115, found via a
+dangling-file-citation sweep; not individually re-verified as "the"
+successor file since coverage is genuinely distributed, not moved to
+one place).

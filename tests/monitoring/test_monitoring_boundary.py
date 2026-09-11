@@ -111,12 +111,25 @@ class TestDriftIsObservationOnly:
         assert values == {"NO_DRIFT", "DRIFT_DETECTED", "UNKNOWN"}
 
     def test_no_drift_function_returns_anything_but_a_driftresult(self) -> None:
+        # ADR-0115: the previous version compared
+        # `return_annotation.__name__` after checking `hasattr(...,
+        # "__name__")` -- but monitoring/drift.py has `from __future__
+        # import annotations`, so `inspect.signature(...).
+        # return_annotation` is the plain string "DriftResult", not the
+        # class, and a str has no `__name__` attribute. `hasattr` was
+        # therefore always False, the assert always took its `else
+        # True` branch, and the check never actually ran regardless of
+        # what any function returned. `typing.get_type_hints` resolves
+        # the string annotation back to the real class.
+        import typing
+
         import monitoring.drift as drift_module
+        from monitoring.models import DriftResult
 
         for name in ("detect_mean_shift", "detect_variance_shift", "detect_distribution_shift"):
             func = getattr(drift_module, name)
-            return_annotation = inspect.signature(func).return_annotation
-            assert return_annotation.__name__ == "DriftResult" if hasattr(return_annotation, "__name__") else True
+            return_annotation = typing.get_type_hints(func)["return"]
+            assert return_annotation is DriftResult
 
 
 class TestAlertsAreNeverMutatedAfterCreation:

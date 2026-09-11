@@ -1,5 +1,7 @@
 # ADR-0044: Research universe Stage 3 -- 24 more hand-curated symbols to fill sector gaps
 
+**Status:** Accepted
+
 ## Context
 
 By ADR-0043 Decision 6, every hypothesis this project has tested against

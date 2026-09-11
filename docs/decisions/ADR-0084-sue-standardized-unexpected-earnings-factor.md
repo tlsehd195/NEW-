@@ -26,6 +26,14 @@ signals (SEC Form 4), needing a NEW data source not yet verified
 accessible. The account owner chose to do both, SUE first. This ADR
 covers SUE only.
 
+**Cross-reference (ADR-0115)**: ADR-0053 had already searched and
+explicitly rejected PEAD/SUE ("Not built" -- current research finding
+it essentially zero for large-cap stocks by 2006, directly against this
+project's own mega-cap-only universe). This ADR proceeds anyway on the
+account owner's own later, explicit instruction -- not a re-evaluation
+that overturned ADR-0053's finding. Both ADRs now cross-reference each
+other so this is not a silent contradiction for a future reader.
+
 ## Decision
 
 Added `strategy_research.factor_scores.sue_score` -- Foster, Olsen &

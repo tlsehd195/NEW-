@@ -1,5 +1,7 @@
 # ADR-0040: Add a NaN/Infinity data-quality check
 
+**Status:** Accepted
+
 ## Context
 
 The second of two gs-quant-comparison findings deferred earlier this

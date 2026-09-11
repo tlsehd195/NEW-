@@ -1,5 +1,7 @@
 # ADR-0037: Point-in-Time S&P 500 Membership from a Verified Third-Party Source
 
+**Status:** Accepted
+
 ## Context
 
 ADR-0034 Decision 4 (`EXTERNAL_DATASET_REQUIRED`) named this project's

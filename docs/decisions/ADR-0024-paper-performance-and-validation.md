@@ -1,5 +1,7 @@
 # ADR-0024: Paper Trading Performance Report and Validation
 
+**Status:** Accepted
+
 ## Context
 
 `docs/operations/PRODUCTION-READINESS-MATRIX.md` (Phase 17) flagged

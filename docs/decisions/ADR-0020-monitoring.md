@@ -1,5 +1,7 @@
 # ADR-0020: Monitoring
 
+**Status:** Accepted
+
 (Renumbered from the handoff's suggested `ADR-0019` — that number was
 already taken by Phase 13's `ADR-0019-toss-securities-adapter.md`; this
 is the next free number in sequence.)

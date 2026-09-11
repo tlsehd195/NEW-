@@ -1,5 +1,7 @@
 # ADR-0035: PBO / Deflated Sharpe Ratio Implementation
 
+**Status:** Accepted
+
 ## Context
 
 `docs/research/walk-forward-pbo-deflated-sharpe.md` (Phase 18-20) left

@@ -8,12 +8,18 @@
 Earlier this session (before `claude/phase-11-model-evolution-7hpibr`
 was discovered and merged into `main`, see ADR-0112), this session's own
 separate branch (`claude/autonomous-ai-investment-system-plan-4-ha7y35`,
-based on old `main`) independently built ADR-0086: a `trade_journal.
-paper_adapter` module wiring `orchestration.paper_runner.run_cycle` to
-the Trade Journal, plus `scripts/run_learning_cycle.py` as the Learning
-Engine's missing read side -- prompted by the account owner asking
-whether this project has a feature that retrains from Paper/Live
-Trading results.
+based on old `main`) independently built its own ADR-0086: a
+`trade_journal.paper_adapter` module wiring `orchestration.
+paper_runner.run_cycle` to the Trade Journal, plus `scripts/
+run_learning_cycle.py` as the Learning Engine's missing read side --
+prompted by the account owner asking whether this project has a
+feature that retrains from Paper/Live Trading results. **This branch's
+own ADR-0086 no longer exists** (deleted below, Decision 1, once found
+to number-collide with a different, unrelated, still-live ADR-0086 for
+insider trading already on `main` -- `docs/decisions/ADR-0086-
+insider-trading-sec-form-4-data-pipeline...md` is what that number
+resolves to today; do not follow "ADR-0086" mentions in this document
+expecting to find this branch's deleted trade-journal-wiring doc).
 
 After ADR-0112's merge, comparing the two branches found that
 `claude/phase-11-model-evolution-7hpibr` had ALREADY independently built
@@ -153,8 +159,9 @@ wrote before this fix (e.g. the daily GitHub Actions scheduler's own
 accumulated history) -- those rows keep their original, honest `None`
 values; only new runs benefit. Does not make `scripts/run_learning_
 cycle.py` run automatically from the scheduler -- retraining remains a
-distinct, manually-invoked step (ADR-0086's original reasoning,
-unaffected by which branch's write-side wiring it now reads from).
+distinct, manually-invoked step (this branch's now-deleted ADR-0086's
+original reasoning -- see the Context section's note above; unaffected
+by which branch's write-side wiring it now reads from).
 
 ## Tests
 

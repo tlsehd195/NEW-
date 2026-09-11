@@ -1,6 +1,6 @@
 # PHASE 2 SPECIFICATION — Backtesting
 
-**Status:** ACTIVE (design confirmed, reference implementation in progress)
+**Status:** ACTIVE (design confirmed, reference implementation complete -- corrected from a stale "in progress" status, ADR-0115)
 **Phase:** Phase 2 — Backtesting
 **Depends on:** `PROJECT_MASTER_PLAN.md`, `docs/decisions/ADR-0001-master-architecture.md`,
 Phase 1 (`docs/specifications/PHASE-1-data-infrastructure.md`,

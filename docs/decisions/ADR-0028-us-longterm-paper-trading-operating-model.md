@@ -1,5 +1,7 @@
 # ADR-0028: US Long-Term Paper Trading Operating Model (Phase 22)
 
+**Status:** Accepted
+
 ## Context
 
 Phase 21 closed out the Toss broker adapter's implementable surface

@@ -1,5 +1,7 @@
 # ADR-0029: Strategy Research Framework (Phase 23)
 
+**Status:** Accepted
+
 ## Context
 
 Phase 22 delivered one reference baseline (Buy & Hold) and a hardened

@@ -36,13 +36,30 @@ class TestRegimeAwarePredictor:
         assert set(prediction.regime_context.keys()) == {axis.value for axis in RegimeAxis}
 
     def test_extreme_volatility_dampens_expected_return_relative_to_plain_drift(self) -> None:
+        # ADR-0115: the previous version of this test gated its whole
+        # assertion body behind `if volatility_state == "EXTREME"`, but
+        # under its fixed seed (13) the fixture's volatility_state came
+        # out NORMAL, not EXTREME -- the guarded assertions never
+        # actually ran, and the test passed regardless of whether
+        # damping worked at all. compute_volatility ranks the CURRENT
+        # 20-day realized vol against its own trailing 100-reading
+        # percentile history (regime/features.py), so a uniformly noisy
+        # series (the old fixture) never ranks itself as extreme
+        # relative to its own past -- EXTREME needs an actual volatility
+        # REGIME SHIFT: calm, then a sharp recent spike. This fixture
+        # does that deterministically (verified EXTREME, not merely
+        # hoped for) instead of gating on a condition that may not occur.
         import random
 
         days = trading_days(date(2024, 1, 2), date(2024, 8, 30))
         rng = random.Random(13)
         closes = [100.0]
-        for _ in range(1, len(days)):
-            closes.append(max(0.01, closes[-1] * (1 + rng.gauss(0.003, 0.08))))  # noisy but drifting up
+        for i in range(1, len(days)):
+            if i >= len(days) - 20:
+                move = 0.12 if i % 2 == 0 else -0.12  # sharp recent spike
+            else:
+                move = rng.gauss(0.0003, 0.005)  # calm history
+            closes.append(max(0.01, closes[-1] * (1 + move)))
         bars = make_bars("AAA", days, closes)
         repo = build_repository(bars=bars)
         view = view_at(repo, days, len(days) - 1)
@@ -51,9 +68,10 @@ class TestRegimeAwarePredictor:
         aware = RegimeAwarePredictor().predict(view, "AAA")
 
         volatility_state = aware.regime_context["VOLATILITY"]
-        if volatility_state == "EXTREME" and plain.expected_return is not None:
-            assert abs(aware.expected_return) <= abs(plain.expected_return)
-            assert aware.confidence <= plain.confidence
+        assert volatility_state == "EXTREME", "fixture must actually reach EXTREME, or this test proves nothing"
+        assert plain.expected_return is not None
+        assert abs(aware.expected_return) <= abs(plain.expected_return)
+        assert aware.confidence <= plain.confidence
 
     def test_no_damping_when_volatility_is_not_extreme(self) -> None:
         days = trading_days(date(2024, 1, 2), date(2024, 8, 30))

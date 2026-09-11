@@ -1,5 +1,7 @@
 # ADR-0041: TEST-1 permanent lock + ML Research Track governance
 
+**Status:** Accepted
+
 ## Context
 
 Phase 32 ("40종목 결과 심층분석 + ML RESEARCH TRACK 설계"), executed

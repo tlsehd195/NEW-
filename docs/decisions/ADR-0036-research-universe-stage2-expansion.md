@@ -1,5 +1,7 @@
 # ADR-0036: RESEARCH_UNIVERSE Stage 2 (concentration-risk expansion)
 
+**Status:** Accepted
+
 ## Context
 
 `RESEARCH_UNIVERSE_STAGE1` (`src/data_infra/universe.py`, Phase 24) was

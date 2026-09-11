@@ -56,11 +56,21 @@ Does not change `ingest_real_market_data.py`'s own behavior --
 `append_bars`'s dedup already existed and already made re-requesting
 overlapping days safe; this ADR only shrinks how much gets
 re-requested. Does not retroactively backfill the 10 symbols that
-missed bars in the run that surfaced this -- the very next scheduled
-run's incremental window naturally catches them, since their real
-"last known bar" is whatever they had before that partial run (older
-than most other symbols), which correctly widens their individual
-catch-up window past the 7-day overlap. Does not change
+missed bars in the run that surfaced this on its own -- **the claim
+originally made here, that the very next scheduled run's incremental
+window "naturally" catches them via each symbol's own older last-known
+bar, was wrong as originally implemented and is corrected by
+ADR-0115**: `compute_incremental_ingestion_start.py` originally
+computed one catalog-WIDE `MAX(timestamp)` across every symbol, so a
+symbol with ZERO bars (exactly the 10 that triggered this ADR)
+contributed no row and never widened anything -- the computed start
+date stayed recent, dominated by the other ~78 symbols, and the 10
+missing symbols' true multi-year gap would never actually have been
+re-requested by any later run. ADR-0115 fixed this by computing the
+per-symbol max among the symbols the run actually requests and taking
+the MINIMUM (an entirely missing symbol counts as needing the fallback
+start), so the least-caught-up requested symbol now genuinely drives
+the window, not just the median one. Does not change
 `run_paper_trading_cycle.py` or its `--resume` logic, which already
 had its own, unrelated incremental-catchup mechanism (ADR-0073) for
 the paper trading ledger side, not the market-data catalog side this

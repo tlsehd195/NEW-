@@ -1,5 +1,7 @@
 # ADR-0030: Expandable Universe Architecture (Phase 24)
 
+**Status:** Accepted
+
 ## Context
 
 Phase 22 adopted a fixed 16-symbol US long-term Paper Trading universe

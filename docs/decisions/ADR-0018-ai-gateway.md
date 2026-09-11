@@ -1,5 +1,7 @@
 # ADR-0018: AI Gateway
 
+**Status:** Accepted
+
 ## Context
 
 `PROJECT_MASTER_PLAN.md` §18.1 lists Phase 12 as "AI Gateway." §5

@@ -180,13 +180,24 @@ UNKNOWN where Phase 20 also found nothing.
 | Delayed/real-time | **UNKNOWN** (irrelevant to this project's EOD/long-term use case either way) | **UNKNOWN** |
 | Licensing / redistribution restrictions | **UNKNOWN** -- not found in Tier 2 sources | **UNKNOWN** -- ADR-0025 already flags Stooq as having "weakest documentation of licensing/redistribution terms" among the candidates considered |
 
-**Consequence for universe expansion (instruction section 31)**: because
-request/symbol/rate limits are UNKNOWN for both providers, this phase
-does not add any ticker beyond the existing 15-symbol
+**Consequence for universe expansion (instruction section 31), as of
+the phase this section was originally written**: because request/
+symbol/rate limits were UNKNOWN for both providers at the time, that
+phase did not add any ticker beyond the existing 15-symbol
 `PILOT_UNIVERSE`/16 including `SPY` (`src/data_infra/universe.py`).
-`RESEARCH_UNIVERSE` Stage 2 (~30-50 symbols) remains a documented,
-ready extension point, not populated -- populating it would mean
+`RESEARCH_UNIVERSE` Stage 2 (~30-50 symbols) remained a documented,
+ready extension point, not populated -- populating it would have meant
 guessing a limit this project's own discipline forbids guessing.
+
+**UPDATE (ADR-0115, correcting stale "not populated" framing above)**:
+Stage 2 was populated in Session 36, once the account owner's actual
+Tiingo dashboard confirmed real free-tier limits (50 requests/hour,
+1,000/day, 2.00 GB/month) -- no longer UNKNOWN, no longer guessed.
+`RESEARCH_UNIVERSE` now resolves to Stage 4 (87 symbols,
+`RESEARCH_UNIVERSE_STAGE4`), Stage 2 (39 symbols) and Stage 3 (63
+symbols) both real, ingested, and used in real walk-forward runs --
+see `docs/decisions/ADR-0036`/`ADR-0044` and
+`docs/research/STRATEGY-VALIDATION-REPORT.md`.
 
 ## Phase 25 reachability re-verification
 

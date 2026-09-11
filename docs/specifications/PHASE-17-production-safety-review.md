@@ -46,7 +46,7 @@ each backed by a file/test/line, never by narrative alone.
 | 6 | Live activation safety | **PASS** | `broker.live.approval.LiveActivationApproval` re-confirmed to reject `approved_by` in `{AI, SYSTEM, CLAUDE}` (case-insensitive) and require the exact confirmation phrase; `evaluate_safety_gate`'s 11 independent conditions re-confirmed unchanged |
 | 7 | Broker reconciliation | **PASS** | `tests/broker/live/test_production_safety_cross_cutting.py::TestReconciliationNeverBecomesMatchedOnceUnknownOrMismatched` -- UNKNOWN never becomes MATCHED, and a session that hits `RECONCILIATION_REQUIRED` blocks every further submission, re-verified end to end (not just per-function) |
 | 8 | Monitoring / alerting / drift readiness | **PASS for wired components; one gap closed, one remains open** | See section 6 below. Phase 15's `paper_account_equity`/`paper_pnl`/`paper_drawdown` gap: **CLOSED this phase** (`monitoring.collectors.collect_account`, ADR-0023 decision 4). Paper-side Sharpe/Sortino/Calmar/volatility/turnover/benchmark-comparison: **NOT IMPLEMENTED**, documented as a gap, not built this phase |
-| 9 | Kill switch / rollback readiness | **PASS (kill switch); DECISION REQUIRED (rollback/cancel-on-shutdown)** | Kill switch: `data_health` gap closed (ADR-0023 decision 3), AI-cannot-release re-confirmed. Rollback: no automatic order cancellation on shutdown remains a deliberate, documented (not accidental) Phase 16 choice (`docs/decisions/ADR-0022` decision 8) -- still requires a human decision before Live use, not re-litigated this phase |
+| 9 | Kill switch / rollback readiness | **PASS** | Kill switch: `data_health` gap closed (ADR-0023 decision 3), AI-cannot-release re-confirmed. Rollback/cancel-on-shutdown: this row's original "DECISION REQUIRED" framing cited `docs/decisions/ADR-0022` decision 8 as the design rationale -- that decision is actually about a submission exception mapping to `UNKNOWN`, not cancel-on-shutdown at all, a stale citation ADR-0045 already found copied forward without verification and corrected (ADR-0115: fixing it here too). ADR-0045 resolved the underlying question: an automatic kill-switch engagement now DOES cancel working orders (`broker.live.session`); a general, operator-initiated shutdown remains manual, since it is not itself evidence anything is wrong |
 | 10 | Operational Runbook | **PASS** | `docs/operations/LIVE-TRADING-RUNBOOK.md` re-read against actual code; `tests/broker/live/test_production_safety_cross_cutting.py::TestRunbookReferencesStillResolveInCode` mechanically verifies every `broker.*` symbol the runbook names still resolves |
 
 ## 4. Toss API Verification
@@ -155,8 +155,11 @@ from and in addition to Toss's own capability gaps.
 - `evaluate_account_health`'s `max_drawdown` is not wired to any
   specific caller by default -- an operator must explicitly pass one
   (e.g. `RiskConfig.max_drawdown`) for drawdown alerting to fire.
-- Cancel-on-shutdown remains a deliberate, unresolved policy question
-  (`docs/decisions/ADR-0022` decision 8) -- unchanged this phase.
+- Cancel-on-shutdown: resolved by ADR-0045 (automatic on kill-switch
+  engagement, manual on a general operator-initiated shutdown) --
+  the `ADR-0022` decision 8 citation this line originally carried was
+  a stale misattribution, corrected above and in ADR-0045 itself
+  (ADR-0115).
 
 ## 10. Phase Boundary
 

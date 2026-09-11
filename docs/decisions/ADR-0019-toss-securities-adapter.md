@@ -1,5 +1,7 @@
 # ADR-0019: Toss Securities Adapter
 
+**Status:** Accepted
+
 ## Context
 
 `PROJECT_MASTER_PLAN.md` §18.1 lists Phase 13 as "Toss Securities

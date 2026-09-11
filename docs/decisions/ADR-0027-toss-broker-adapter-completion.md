@@ -1,5 +1,7 @@
 # ADR-0027: Toss Broker Adapter Capability Completion
 
+**Status:** Accepted
+
 ## Context
 
 Phase 13 shipped `TossBrokerAdapter` with only `submit_order` implemented

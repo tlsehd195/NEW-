@@ -1,6 +1,6 @@
 # PHASE 1 SPECIFICATION — Data Infrastructure
 
-**Status:** ACTIVE (design confirmed, reference implementation in progress)
+**Status:** ACTIVE (design confirmed, reference implementation complete -- corrected from a stale "in progress" status, ADR-0115)
 **Phase:** Phase 1 — Data Infrastructure
 **Depends on:** `PROJECT_MASTER_PLAN.md`, `docs/decisions/ADR-0001-master-architecture.md`
 **Produces ADRs:** ADR-0002 (storage), ADR-0003 (data model), ADR-0004

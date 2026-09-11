@@ -1,5 +1,7 @@
 # ADR-0016: Counterfactual Analysis / Performance Attribution
 
+**Status:** Accepted
+
 ## Context
 
 `PROJECT_MASTER_PLAN_SOURCE.md` sections 33-34 call for Counterfactual

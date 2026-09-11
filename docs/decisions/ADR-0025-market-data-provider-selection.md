@@ -1,5 +1,7 @@
 # ADR-0025: Market Data Provider Selection (US Equities, Free Tier)
 
+**Status:** Accepted
+
 ## Context
 
 `ADR-0005-data-provider-strategy.md` (Phase 1) deliberately shipped no
