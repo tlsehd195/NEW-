@@ -1,5 +1,7 @@
 # ADR-0039: Defer adopting a portfolio-optimization library (PyPortfolioOpt / Riskfolio-Lib)
 
+**Status:** Accepted
+
 ## Context
 
 Earlier this session, GitHub research (at the user's request) surfaced

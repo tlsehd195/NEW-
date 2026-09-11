@@ -31,7 +31,15 @@ candidate below was excluded for a reason discovered by testing it):**
   finds it "began disappearing from non-microcap stocks around 2001 and
   was essentially zero for large-cap stocks by 2006" -- directly
   contradicts the one property (works in mega-cap universes) this
-  project's own universe needs. Not built.
+  project's own universe needs. Not built. **Superseded (ADR-0084,
+  ADR-0115 cross-reference added)**: the account owner later asked for
+  SUE to be built anyway, and it was (ADR-0084) -- an explicit,
+  after-the-fact account-owner decision to proceed despite this
+  rejection, not a re-evaluation that found this section's own
+  large-cap-ineffectiveness finding wrong. ADR-0084 itself does not
+  reference this rejection or the reasoning above; this note exists so
+  a reader of either ADR sees both sides rather than one contradicting
+  the other silently.
 - **Momentum, large-cap growth (2023-2024 factor performance
   coverage)**: recent (2023-2024) strong mega-cap momentum performance
   found in searches is exactly the kind of "chase recent performance"

@@ -99,9 +99,15 @@ named as its reason for not attempting an unvalidated implementation
 in Phase 11. PBO requires comparing **multiple** candidate
 configurations against each other over the **same** data, which
 presumes `evolution.comparison.compare_candidates`-style multi-candidate
-evaluation already exists (it does, Phase 11) -- but PBO itself, the
-CSCV resampling procedure, is not implemented anywhere in this
-codebase today.
+evaluation already exists (it does, Phase 11). **Since implemented
+(ADR-0035, ADR-0115 correction of this section's earlier "not
+implemented anywhere in this codebase today" claim)**: the CSCV
+resampling procedure and PBO/Deflated Sharpe Ratio computation now
+live in `src/strategy_research/pbo_dsr.py`, used by
+`scripts/compute_pbo_dsr_from_report.py` and cross-checked against
+external statistical libraries (ADR-0046) -- see
+`docs/research/STRATEGY-VALIDATION-REPORT.md` for real PBO/DSR results
+computed against real walk-forward reports.
 
 ### 2.4 Deflated Sharpe Ratio (DSR)
 

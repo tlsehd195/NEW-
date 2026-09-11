@@ -1,5 +1,7 @@
 # ADR-0043: ML Research Track's first model -- plain OLS, no new dependency
 
+**Status:** Accepted
+
 ## Context
 
 `docs/research/ML-RESEARCH-PROTOCOL.md` (Phase 32, Track B) specified

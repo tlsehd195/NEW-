@@ -1,5 +1,7 @@
 # ADR-0034: Real Data Acquisition Strategy (Phase 31)
 
+**Status:** Accepted
+
 ## Context
 
 Phase 30's ADR-0033 already classified 7 candidate providers against 6

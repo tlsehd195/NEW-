@@ -1,5 +1,7 @@
 # ADR-0026: S&P 500 Benchmark — SPY Proxy and TOTAL_RETURN Decision
 
+**Status:** Accepted
+
 ## Context
 
 `PROJECT_MASTER_PLAN_SOURCE.md`'s own stated objective is long-term

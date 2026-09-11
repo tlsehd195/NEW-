@@ -1,5 +1,7 @@
 # ADR-0031: Long-Horizon Walk-Forward Validation (Phase 25)
 
+**Status:** Accepted
+
 ## Context
 
 Phase 24's real-data run (`scripts/run_first_real_strategy_evaluation.py`)

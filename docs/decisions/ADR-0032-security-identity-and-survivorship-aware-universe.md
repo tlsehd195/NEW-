@@ -1,5 +1,7 @@
 # ADR-0032: Security Identity and Survivorship-Aware Universe (Phase 29)
 
+**Status:** Accepted
+
 ## Context
 
 Phase 29's instruction asks for a broad, long-horizon (2010 -> latest),

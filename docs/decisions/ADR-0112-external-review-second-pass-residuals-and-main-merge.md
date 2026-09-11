@@ -81,9 +81,9 @@ present.
 
 ### 4. Session-record convention
 
-Per the review: work since ADR-0053 through ADR-0085 has no `###
+Per the review: work since ADR-0053 through ADR-0096 has no `###
 Completed (Session N — ...)` structural record, only line 8's
-continuously-appended mega-line; work since ADR-0087 exists as a series
+continuously-appended mega-line; work since ADR-0097 exists as a series
 of separate paragraphs (each citing its own ADR number) but still
 without structural `###` headers. Per the review's own second option
 ("문서 상단에 명시 + 향후 규칙 문서화"), rather than retroactively
@@ -92,8 +92,12 @@ risk of transcription error for no material benefit -- the content
 already exists and is already ADR-numbered), `docs/PROJECT_STATUS.md`'s
 `Last Updated` line and this session's own new `### Completed (Session
 37 — ...)` section now state explicitly: line 8 is the closed,
-historical record through ADR-0085; the unstructured paragraphs after
-it cover ADR-0087 through ADR-0111; and every session from this one
+historical record through ADR-0096 (corrected in ADR-0115 -- the
+original "through ADR-0085" claim here undercounted by measuring only
+this ADR's own citation range rather than the mega-line's actual
+content, which a direct scan shows cites ADR numbers up to 0096); the
+unstructured paragraphs after it cover ADR-0097 through ADR-0111; and
+every session from this one
 forward uses a structural `### Completed (Session N — topic, ADR-NNNN)`
 header, no further appending to line 8.
 

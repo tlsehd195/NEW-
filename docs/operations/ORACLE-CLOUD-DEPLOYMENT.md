@@ -1,5 +1,17 @@
 # Oracle Cloud Always Free VM: scheduler deployment guide
 
+**SUPERSEDED (ADR-0082, ADR-0115 addendum)**: ADR-0082 replaced this
+VM-based approach with GitHub Actions (`.github/workflows/
+paper_trading_cycle.yml`, ADR-0083/ADR-0085) as the actual, active
+scheduler host, because the account owner found the manual VM setup
+too much operational friction in practice -- see ADR-0082's own
+Context for the full reasoning (it does not dispute this guide's
+technical correctness, only that GitHub Actions is the better fit for
+what the account owner is actually willing to operate). This guide is
+kept for reference only; it is not the currently-active deployment
+path, and `scripts/deploy/oracle_vm_bootstrap.sh` is not run by
+anything in this repository's own automation.
+
 **Decision record:** ADR-0081. **Status:** guide for the account owner
 to execute manually; no cloud resources have been created by any
 Claude session.
@@ -70,7 +82,12 @@ The script will:
    (classic or fine-grained, `repo`/read-only scope is enough) --
    generate one at https://github.com/settings/tokens, and treat it
    like a password: the script never writes it to disk or to shell
-   history, only into the one-time `git clone` URL for that command.
+   history, passing it to `git clone` only as a one-off `-c
+   http.extraheader=...` value (process-scoped, never persisted into
+   the clone's own `.git/config` -- ADR-0115; an earlier version of
+   this script embedded the token directly in the clone URL instead,
+   which DOES get written to `.git/config` permanently by `git clone`
+   itself, contradicting this same claim at the time).
 3. Create a Python virtual environment inside the clone and install
    the project (`pip install -e .`).
 4. Create the `data/` directories the paper trading store and market

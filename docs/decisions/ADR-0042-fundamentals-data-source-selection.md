@@ -1,5 +1,7 @@
 # ADR-0042: Fundamentals Data Source Selection (SEC EDGAR)
 
+**Status:** Accepted
+
 ## Context
 
 Phase 32's real diagnostics closed out three independently-motivated,

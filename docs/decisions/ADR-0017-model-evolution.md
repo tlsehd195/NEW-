@@ -1,5 +1,7 @@
 # ADR-0017: Model Evolution
 
+**Status:** Accepted
+
 ## Context
 
 `PROJECT_MASTER_PLAN.md` §18.1 lists Phase 11 as "Model Evolution."

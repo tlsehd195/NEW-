@@ -37,10 +37,23 @@ class ExperimentRecord:
 
 class ExperimentTracker:
     """Allocates monotonic "BT-000001" style ids, mirroring Phase 1's
-    "DQ-000001" pattern (data_infra.quality.DataQualityFramework)."""
+    "DQ-000001" pattern (data_infra.quality.DataQualityFramework). This
+    class itself is in-process/ephemeral by design (see module
+    docstring) -- but a caller that persists its output across
+    multiple separate `ExperimentTracker` instances into a shared
+    store (e.g. `storage.experiment_repository.DuckDBExperimentRepository`,
+    which dedups on `experiment_id`) needs every instance's ids to stay
+    distinct, or a later, genuinely different experiment silently
+    collides with -- and is dropped by -- an earlier one that happened
+    to get the same auto-incremented id (ADR-0115). `starting_id` lets
+    such a caller seed each fresh tracker past whatever the shared
+    store already holds, the same restart-safety pattern this project
+    already uses for `ai_gateway.QuotaManager`/`broker.paper`
+    observation ids/etc. -- optional and additive, no existing caller's
+    behavior changes by not passing it."""
 
-    def __init__(self) -> None:
-        self._next_id = 1
+    def __init__(self, *, starting_id: int = 1) -> None:
+        self._next_id = starting_id
         self.records: list[ExperimentRecord] = []
 
     def _allocate_id(self) -> str:

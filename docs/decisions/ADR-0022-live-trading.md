@@ -1,5 +1,7 @@
 # ADR-0022: Live Trading
 
+**Status:** Accepted
+
 ## Context
 
 `PROJECT_MASTER_PLAN.md` §9.4 already specifies the target shape

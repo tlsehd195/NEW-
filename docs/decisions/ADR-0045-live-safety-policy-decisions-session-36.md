@@ -1,5 +1,7 @@
 # ADR-0045: Three Live-safety policy decisions -- max_turnover blocking, cancel-on-kill-switch automation, CANDIDATE-evidence gate
 
+**Status:** Accepted
+
 ## Context
 
 Asked how far the project's infrastructure/system-building axis was

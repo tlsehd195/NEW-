@@ -1,5 +1,7 @@
 # ADR-0038: Fix lookback-window dilution in momentum/moving-average/volatility signal calculations
 
+**Status:** Accepted
+
 ## Context
 
 Earlier this session, at the user's explicit request, this codebase was

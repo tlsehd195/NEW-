@@ -93,10 +93,11 @@
 고정되어 있다. Phase 31 이후에도 작업은 계속되었다 — 사용자가 확보한
 두 건의 독립적인 외부 코드 리뷰(HIGH/MEDIUM/LOW 심각도 분류) 결과를
 검증·반영하는 Session 32~37 원격 검토 사이클(`docs/decisions/
-ADR-0111`~`ADR-0114`: kill switch/Toss 인코딩/AI Gateway 쿼터 복구/
+ADR-0111`~`ADR-0116`: kill switch/Toss 인코딩/AI Gateway 쿼터 복구/
 포지션 가중치/point-in-time 가용성/모델 id 충돌 등 HIGH 다수 수정,
 유니버스 수치 오기 정정, `main` 병합, Paper Trading/Learning Engine
-중복 배선 정리, 제3자 2차 전수 재리뷰 HIGH 3건 수정)이 그 이후에
+중복 배선 정리, 제3자 2차 전수 재리뷰 HIGH 3건 수정, 같은 리뷰의
+MEDIUM 전건(ADR-0115) + LOW 전건(ADR-0116) 수정)이 그 이후에
 진행되었으며, 이 Phase 번호 체계와는 별개로 `docs/PROJECT_STATUS.md`의
 "Current Phase"/세션별 로그가 항상 가장 최신 상태를 기록하는 원본이다
 (이 섹션은 그 요약을 복제하지 않는다 — 상세는 `PROJECT_STATUS.md` 참조).
