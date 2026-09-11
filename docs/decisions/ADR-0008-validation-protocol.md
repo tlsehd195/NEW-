@@ -47,7 +47,7 @@ Phase 2 does **not** implement Purged K-Fold or Embargo logic itself.
   incapable of producing a random split by construction (there is no
   shuffle step anywhere in either implementation).
 - Purged K-Fold and Embargo (López de Prado's contribution, cited in
-  `PROJECT_MASTER_PLAN.md` §71) exist specifically to prevent leakage
+  `PROJECT_MASTER_PLAN.md` §17.1) exist specifically to prevent leakage
   *around the boundary* between train and test folds when samples have
   overlapping label horizons (e.g., a label computed from a forward
   return window that extends past the fold boundary). Phase 2 has no

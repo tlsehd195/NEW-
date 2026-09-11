@@ -10,9 +10,10 @@
 
 ## Context
 
-`PROJECT_MASTER_PLAN.md` §15/§19/§28 require: data metadata, a Feature
-Registry separate from raw data, and a Security Master rather than a bare
-ticker. The Phase 1 initialization instruction additionally requires:
+`PROJECT_MASTER_PLAN.md` §7.1/§7.5 require: data metadata and a Feature
+Registry separate from raw data (a Security Master rather than a bare
+ticker is not itself in the master plan -- it comes from the Phase 1
+initialization instruction, which additionally requires):
 explicit `adjusted_close` semantics, a Security Master separating
 `security_id/ticker/exchange/currency/company_id/instrument_type/
 valid_from/valid_to/status`, and Corporate Action modeling with
@@ -77,22 +78,22 @@ validating Python `dataclasses` in `src/data_infra/models.py`):
   a ticker over time (a documented real-world occurrence). `security_id`
   with a `SecurityMaster` validity interval is required to satisfy
   `PROJECT_MASTER_PLAN.md`'s Corporate Action / Security Master
-  requirements (master plan §18, §7 of this spec).
+  requirements (master plan §7.4, §7 of this spec).
 - **Single `close` field, provider-adjusted only**: Rejected — would
   make historical backtests silently non-reproducible whenever the
   provider recomputes its adjustment factors, and would hide corporate
   action handling inside an opaque vendor number instead of the
   first-class, auditable `CorporateAction` model the master plan
-  requires (`PROJECT_MASTER_PLAN.md` §18; this ADR's context).
+  requires (`PROJECT_MASTER_PLAN.md` §7.4; this ADR's context).
 - **Ad hoc per-type provenance fields** (duplicating `source`,
   `data_version`, etc. on every dataclass by hand): Rejected in favor of
   a shared `Provenance` composed value object, to avoid drift between
   types and to keep `DatasetVersion`/content-hash logic in one place
-  (`PROJECT_MASTER_PLAN.md` §84 — avoid unnecessary duplication/
+  (`PROJECT_MASTER_PLAN.md` §1.3 — avoid unnecessary duplication/
   complexity).
 - **Defining Fundamental/Macro/News/Alternative data types now, even as
   empty stubs**: Rejected — no current design decision requires them
-  (`PROJECT_MASTER_PLAN.md` §17.3 / §73), and stubbing unused types
+  (`PROJECT_MASTER_PLAN.md` §17.3), and stubbing unused types
   would add speculative complexity without validating anything.
 
 ## Consequences
@@ -106,12 +107,12 @@ validating Python `dataclasses` in `src/data_infra/models.py`):
   provider-adjusted field.
 - Every later phase (Feature, Backtest, Trade Journal, Learning) inherits
   a data model that already satisfies point-in-time and provenance
-  requirements, avoiding a rewrite (`PROJECT_MASTER_PLAN.md` §49).
+  requirements, avoiding a rewrite (`PROJECT_MASTER_PLAN.md` §1.2).
 
 ### Negative / Trade-offs
 
 - Slightly more upfront modeling work than a flat "ticker + OHLCV" table
-  would require. Accepted per `PROJECT_MASTER_PLAN.md` §84 — this
+  would require. Accepted per `PROJECT_MASTER_PLAN.md` §1.3 — this
   complexity directly serves reproducibility/auditability, not
   speculative future features.
 - `instrument_type` currently only supports `EQUITY`; extending to

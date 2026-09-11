@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-24
 **Deciders:** Claude Code (Phase 2 session), pending project owner review
-**Related documents:** `PROJECT_MASTER_PLAN.md` §9.3-9.4, §45,
+**Related documents:** `PROJECT_MASTER_PLAN.md` §9.1-9.4,
 `docs/specifications/PHASE-2-backtesting.md` §3, §6, `src/data_infra/repository.py`
 
 ---
@@ -12,7 +12,7 @@
 
 `PROJECT_MASTER_PLAN.md` requires that Backtest, Paper, and (eventually)
 Toss brokers all implement the same `Broker Interface` so core trading
-logic is never duplicated per environment (master plan §9.3-9.4, §45;
+logic is never duplicated per environment (master plan §9.3-9.4;
 Phase 2 initialization instruction §5). Phase 2 is the first phase that
 actually simulates order execution, so this ADR fixes both (a) the
 broker abstraction shape and (b) a harder, easy-to-get-wrong question:
@@ -110,7 +110,7 @@ refinement (see `DECISION REQUIRED` in the Phase 2 session report).
 - **Resting/working orders that persist across multiple future
   checkpoints until filled**: Rejected for Phase 2 — no baseline strategy
   needs it, and it adds meaningful state-machine complexity
-  (`PROJECT_MASTER_PLAN.md` §84). An unfilled remainder is simply not
+  (`PROJECT_MASTER_PLAN.md` §1.3). An unfilled remainder is simply not
   executed; the strategy re-evaluates at its next step. Revisit if a
   future strategy genuinely needs persistent limit orders.
 - **Assuming `T+1`'s open is available at `T+1`'s `available_time` minus
@@ -118,7 +118,7 @@ refinement (see `DECISION REQUIRED` in the Phase 2 session report).
   before the bar's recorded `available_time`")**: Rejected — inventing an
   offset not grounded in Phase 1's actual data semantics would be
   guessing, which the master plan explicitly warns against for adjacent
-  cases (e.g., §28 on Toss endpoints: "추측해서 만들지 않는다"). The same
+  cases (e.g., §9.3 on Toss endpoints: "추측해서 만들지 않는다"). The same
   discipline applies here.
 
 ## Consequences

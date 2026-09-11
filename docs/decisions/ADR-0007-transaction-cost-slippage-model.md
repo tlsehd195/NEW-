@@ -3,19 +3,20 @@
 **Status:** Accepted
 **Date:** 2026-08-24
 **Deciders:** Claude Code (Phase 2 session), pending project owner review
-**Related documents:** `PROJECT_MASTER_PLAN.md` §46, §71 (Almgren &
+**Related documents:** `PROJECT_MASTER_PLAN.md` §13.2, §17.1 (Almgren &
 Chriss), `docs/specifications/PHASE-2-backtesting.md` §7
 
 ---
 
 ## Context
 
-`PROJECT_MASTER_PLAN.md` §46 requires backtests to account for
+`PROJECT_MASTER_PLAN.md` §13.2 requires backtests to account for
 commission, spread, slippage, and (structurally) market impact, and
-explicitly forbids treating a zero-cost backtest as representative
-performance. Phase 2 needs a concrete, minimal cost model now — but
-`PROJECT_MASTER_PLAN.md` §71's research foundation includes Almgren &
-Chriss's optimal execution work specifically for this purpose, and §17
+warns against arbitrarily assuming optimistic cost values as
+representative performance. Phase 2 needs a concrete, minimal cost model
+now — but `PROJECT_MASTER_PLAN.md` §17.1's research foundation includes
+Almgren & Chriss's optimal execution work specifically for this
+purpose, and §17
 of the Phase 2 initialization instruction requires applying only what is
 "직접 필요한" (directly needed) from that foundation, not a full
 implementation of it.
@@ -71,8 +72,9 @@ implementation of it.
   반영한다").
 - **Zero-cost backtesting as the default, with cost as an opt-in
   feature**: Rejected — directly contradicts `PROJECT_MASTER_PLAN.md`
-  §46 ("비용을 0으로 가정한 결과를 실제 성능으로 취급하지 않는다"); making
-  it the default would make that the easy, likely-to-be-used path.
+  §13.2's warning against arbitrarily assuming optimistic cost values
+  ("임의로 낙관적인 값을 가정하지 않는다"); making it the default would
+  make that the easy, likely-to-be-used path.
 - **A single flat "all-in" cost percentage instead of separate
   commission/spread/slippage components**: Rejected — collapsing the
   components would make `PerformanceReport.total_transaction_cost`
