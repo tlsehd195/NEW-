@@ -152,6 +152,24 @@ class TestSplitConsistency:
         assert len(hits) == 1
         assert hits[0].severity == DataQualitySeverity.WARNING
 
+    def test_a_zero_close_immediately_after_the_split_does_not_crash_the_run(self) -> None:
+        """Session 37 (ADR-0115, external review, previously-remaining
+        MEDIUM): `observed_ratio = before[-1].close / after[0].close`
+        only guarded the numerator (`before[-1].close <= 0`) against a
+        non-positive value -- a zero (or bad-data negative) close on the
+        FIRST bar after the split raised ZeroDivisionError uncaught,
+        crashing the entire DQ run for every other check and every other
+        security in the same batch, not just this one split check."""
+        before = _bar(day=7, timestamp=utc(2024, 6, 7), close=400.0)
+        after = _bar(day=10, timestamp=utc(2024, 6, 10), close=0.0)  # bad data: zero close
+        action = _split(ratio=4.0, effective=utc(2024, 6, 10))
+        run = DataQualityFramework().run(
+            [before, after], dataset="test", data_version="v1", corporate_actions=[action],
+        )
+        # No crash, and no split_consistency verdict can be drawn from a
+        # zero close -- the check is simply skipped, not fabricated.
+        assert not any(i.check == "split_consistency" for i in run.issues)
+
 
 class TestDividendConsistency:
     def test_ordinary_dividend_is_not_flagged(self) -> None:

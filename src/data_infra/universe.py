@@ -424,7 +424,7 @@ RESEARCH_UNIVERSE_STAGE1 = UniverseDefinition(
 # Request-budget arithmetic (decided from the confirmed limits above,
 # not guessed): ingestion costs 2 Tiingo requests per symbol (one price
 # history fetch, one corporate-actions fetch --
-# `scripts/ingest_real_market_data.py`, unmodified). The 16
+# `scripts/ingest_real_market_data.py`, unmodified). The 15
 # PILOT_UNIVERSE_V1 symbols are already ingested in the user's existing
 # `--db-path`; only these 24 NEW symbols need fetching. 24 x 2 = 48
 # requests, which fits inside the confirmed 50-requests/hour cap in a

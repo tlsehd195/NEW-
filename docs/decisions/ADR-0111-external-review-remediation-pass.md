@@ -45,6 +45,20 @@ own regression test, in the priority order they were actually fixed.
    `OperationalState.RECONCILIATION_REQUIRED` instead of `READY` when
    any exist.
 
+   **Addendum (ADR-0115)**: this entry, on its own, only covers the
+   moment the kill switch is *released* -- it does not by itself
+   guarantee that `RECONCILIATION_REQUIRED` actually stays engaged
+   until every `UNKNOWN` order clears. A second, independent review
+   found that `reconcile_order()` (same file) transitioned
+   `RECONCILIATION_REQUIRED -> ACTIVE` on the first single order it
+   matched, even while other tracked orders were still `UNKNOWN` --
+   silently re-opening trading with unreconciled orders still
+   outstanding. ADR-0115 fixed `reconcile_order()` to only clear
+   `RECONCILIATION_REQUIRED` once no other tracked `client_order_id`
+   remains `UNKNOWN`; only with both fixes together does "orders must
+   be reconciled before new trading resumes" hold as an enforced
+   invariant rather than a partial one.
+
 3. **Toss OAuth wire-format mismatch** (`broker/toss/transport.py`) --
    every request body was serialized as JSON regardless of the
    declared `Content-Type`, but Toss's OAuth token endpoint requires

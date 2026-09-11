@@ -67,6 +67,25 @@ jobs:
               "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ART_ID/zip" -o catalog.zip
             unzip -o -q catalog.zip -d "$MARKET_DATA_DIR"
             rm -f catalog.zip
+            # ADR-0115, external review N-14: actions/upload-artifact@v4
+            # may wrap a single-directory upload in a subfolder named
+            # after that directory instead of flattening its contents to
+            # the zip root -- if the expected catalog file isn't where
+            # it should be after extraction, but exactly one subfolder
+            # containing it is, promote that subfolder's contents up one
+            # level. Left unhandled, a wrapped zip would silently look
+            # like "no prior catalog" to every downstream step, forcing
+            # a full re-request every run and risking a repeat of
+            # ADR-0085's rate-limit incident.
+            if [ ! -f "$MARKET_DATA_DIR/catalog.duckdb" ]; then
+              SUBDIRS=$(find "$MARKET_DATA_DIR" -mindepth 1 -maxdepth 1 -type d)
+              SUBDIR_COUNT=$(printf '%s\n' "$SUBDIRS" | grep -c . || true)
+              if [ "$SUBDIR_COUNT" = "1" ] && [ -f "$SUBDIRS/catalog.duckdb" ]; then
+                echo "Artifact was wrapped in a subfolder ($SUBDIRS) -- flattening"
+                cp -r "$SUBDIRS"/. "$MARKET_DATA_DIR"/
+                rm -rf "$SUBDIRS"
+              fi
+            fi
           else
             echo "No prior market-data-catalog artifact found -- starting fresh"
           fi
@@ -84,6 +103,17 @@ jobs:
               "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ART_ID/zip" -o store.zip
             unzip -o -q store.zip -d "$PAPER_STORE_DIR"
             rm -f store.zip
+            # ADR-0115, external review N-14: see the identical
+            # market-data-catalog restore step's own comment above.
+            if [ ! -f "$PAPER_STORE_DIR/catalog.duckdb" ]; then
+              SUBDIRS=$(find "$PAPER_STORE_DIR" -mindepth 1 -maxdepth 1 -type d)
+              SUBDIR_COUNT=$(printf '%s\n' "$SUBDIRS" | grep -c . || true)
+              if [ "$SUBDIR_COUNT" = "1" ] && [ -f "$SUBDIRS/catalog.duckdb" ]; then
+                echo "Artifact was wrapped in a subfolder ($SUBDIRS) -- flattening"
+                cp -r "$SUBDIRS"/. "$PAPER_STORE_DIR"/
+                rm -rf "$SUBDIRS"
+              fi
+            fi
           else
             echo "No prior paper-trading-store artifact found -- starting fresh"
           fi

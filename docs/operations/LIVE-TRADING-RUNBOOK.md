@@ -42,16 +42,31 @@ log, or record the value itself here or anywhere else.
       implemented and tested is not the same as operationally verified.
 - [ ] `TOSS_API_KEY`/`TOSS_API_SECRET`/`TOSS_ACCOUNT_ID` are set in the
       deployment environment, never in a file tracked by git.
-- [ ] A specific `max_daily_loss`, `max_turnover`, and, if desired, a
-      `max_order_frequency_per_hour` have been decided by whoever is
-      financially responsible for this account and set on
-      `LiveTradingConfig`/`RiskConfig` — this repository ships none of
-      these values by default (`PROJECT_MASTER_PLAN.md` §13.12 defers
-      the capital-policy decision explicitly). Phase 20 added *proposed*
-      starting values with rationale (2% of initial capital / 3.0 /
-      30 — `docs/operations/LIVE-RISK-POLICY.md` "Phase 20 -- Proposed
-      initial values") for review, but they are not ratified and take
-      no effect until explicitly set here.
+- [ ] `max_daily_loss`, `max_turnover`, and `max_order_frequency_per_hour`
+      are set on `LiveTradingConfig`/`RiskConfig` — this repository
+      ships none of these values by default (`PROJECT_MASTER_PLAN.md`
+      §13.12 defers the capital-policy decision explicitly), and as of
+      Session 36 `evaluate_safety_gate` structurally REJECTs Live
+      activation with `risk_limit_not_configured_*` whenever any of the
+      three is `None` (`src/broker/live/safety_gate.py`, "Option B" of
+      the long-open None-semantics decision, superseding the earlier
+      "no effect until explicitly set" framing — an unset limit now
+      blocks, it does not silently pass through unenforced). The
+      account owner has already RATIFIED concrete values for all three
+      (`docs/operations/LIVE-RISK-POLICY.md` "Session 36 — Risk limit
+      values RATIFIED by the user (#1/#6/#7)"): `max_daily_loss` = 5%
+      of initial capital (still needs a concrete initial-capital
+      number before this becomes an absolute `float` — see the next
+      checklist item), `max_turnover` = `2.0`, `max_order_frequency_per_hour`
+      = `6`. Ratified is not the same as code-applied: these values
+      are NOT baked into any default config (by design, since the
+      defaults are shared with Paper/Backtest) — a human must still
+      pass them explicitly whenever the real Live `LiveTradingConfig`/
+      `RiskConfig` is constructed for this account. `reentry_cooldown_days`
+      (#16, RATIFIED at 5 trading days, same LIVE-RISK-POLICY.md) is
+      optional/opt-in rather than gate-enforced (`RiskConfig.
+      reentry_cooldown_days`) — set it too if desired, but its absence
+      does not block activation the way the three above do.
 - [ ] The capital amount to be exposed has been decided separately, per
       §13.12's "Paper → Small Capital → Controlled Expansion" principle
       — never the full account balance on a first activation.

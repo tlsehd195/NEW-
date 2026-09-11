@@ -45,6 +45,25 @@ class TestDatasetMetadata:
         assert result.dataset.sample_count == 0
         assert result.dataset.quality_status == "INSUFFICIENT_SAMPLES"
 
+    def test_a_single_sample_produces_insufficient_samples_not_ok(self) -> None:
+        """Session 37 (ADR-0115, external review N-10): before this fix,
+        `quality_status` was "OK" whenever `sample_count > 0`, even
+        though `n_train = int(n * train_fraction)` rounds down to 0 for
+        n=1 under the default 0.7/0.15/0.15 split -- the entire single
+        sample lands in TEST, and TRAIN/VALIDATION are both empty.
+        `learning.pipeline.run_learning_pipeline` gates its experiment's
+        `status` directly on this field ("COMPLETED" iff "OK"), so a run
+        that could not actually train or validate anything was reported
+        as having completed successfully."""
+        journal, records = build_journal_with_closed_trades(1)
+        result = build_training_dataset(
+            journal, records, provenance=TradeProvenance.HISTORICAL_SIMULATION, created_at=utc(2024, 3, 1),
+        )
+        assert result.dataset.sample_count == 1
+        assert result.dataset.splits[SplitName.TRAIN] == ()
+        assert result.dataset.splits[SplitName.VALIDATION] == ()
+        assert result.dataset.quality_status == "INSUFFICIENT_SAMPLES"
+
 
 class TestTemporalSplit:
     def test_split_sizes_match_configured_fractions(self) -> None:
@@ -76,7 +95,14 @@ class TestTemporalSplit:
 
 
 class TestSamplingCap:
-    def test_max_samples_caps_the_dataset_to_the_earliest_n(self) -> None:
+    def test_max_samples_caps_the_dataset_to_the_most_recent_n(self) -> None:
+        """Session 37 (ADR-0115, external review, previously-remaining
+        MEDIUM): before this fix, `max_samples` kept the EARLIEST N
+        samples, discarding newer experience every time the journal grew
+        past the cap -- the opposite of what a re-training loop needs
+        (ADR-0113's whole purpose is learning from the freshest real
+        experience, not staying pinned to whichever samples happened to
+        be earliest the first time the cap was hit)."""
         journal, records = build_journal_with_closed_trades(10)
         config = TrainingDatasetConfig(sampling=SamplingConfig(max_samples=4))
         result = build_training_dataset(
@@ -85,7 +111,7 @@ class TestSamplingCap:
         assert result.dataset.sample_count == 4
         assert result.dataset.excluded_count == 6
         kept_times = sorted(s.sample_as_of_time for s in result.labeled_samples)
-        assert kept_times[-1] < utc(2024, 1, 2 + 4)  # the earliest 4 trades, not a random subset
+        assert kept_times[0] >= utc(2024, 1, 2 + 6)  # the most recent 4 trades, not the earliest
 
 
 class TestExcludedCount:

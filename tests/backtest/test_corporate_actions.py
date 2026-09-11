@@ -154,3 +154,119 @@ class TestCorporateActionIntegration:
         # No corporate-action-correctness CRITICAL issues.
         assert not any(i.check == "corporate_action_correctness" and i.severity.value == "CRITICAL"
                         for i in result.integrity.issues)
+
+
+class _BuyThenLaterSellEverythingStrategy:
+    """Buys a fixed quantity once (`buy_on_step`), then sells whatever
+    the portfolio reports it currently holds (`sell_on_step`) -- the
+    SELL quantity directly reveals whatever the engine actually believes
+    the current position is, corrupted or not."""
+
+    version = "buy_then_sell_all_test_v1"
+
+    def __init__(self, security_id: str, *, buy_on_step: int, sell_on_step: int, buy_quantity: float) -> None:
+        self._security_id = security_id
+        self._buy_on_step = buy_on_step
+        self._sell_on_step = sell_on_step
+        self._buy_quantity = buy_quantity
+        self._step = 0
+
+    def generate_orders(self, as_of_time, data, portfolio):
+        from backtest.strategy import OrderIntent
+
+        self._step += 1
+        if self._step == self._buy_on_step:
+            return [OrderIntent(self._security_id, OrderSide.BUY, self._buy_quantity)]
+        if self._step == self._sell_on_step:
+            held = portfolio.quantity_of(self._security_id)
+            if held > 0:
+                return [OrderIntent(self._security_id, OrderSide.SELL, held)]
+        return []
+
+
+class TestSplitAtTheExactCheckpointAFillExecutesOn:
+    """Session 37 (ADR-0115, external review N-7): before this fix, a
+    fill executing at `next_checkpoint`'s close was applied to the
+    portfolio synchronously within the SAME iteration the order was
+    generated in -- well before iteration `next_checkpoint`'s own
+    top-of-loop corporate-action block would apply anything effective by
+    `next_checkpoint`. A BUY whose fill lands exactly on a split's
+    effective date was therefore bought at the real, already-adjusted
+    market price (correct) but then had `apply_split`'s blind multiply
+    applied to it a SECOND time once that next iteration ran --
+    corrupting quantity/average_cost for a purchase that should never
+    have been touched by the split at all."""
+
+    def test_a_buy_that_fills_exactly_on_the_split_date_is_not_double_adjusted(self) -> None:
+        days = trading_days(date(2024, 1, 2), date(2024, 1, 22))
+        buy_step = 3  # order generated at days[buy_step - 1]; fills at days[buy_step]
+        split_day = days[buy_step]  # the split becomes effective exactly when the fill executes
+        sell_step = 8  # well after the split -- reveals the true held quantity
+
+        # Raw close: 100.0 before the split, 50.0 from split_day onward --
+        # a real 2:1 split's raw price effect, exactly what the fill at
+        # split_day's close is actually paid.
+        raw_closes = [100.0 if d < split_day else 50.0 for d in days]
+        bars = make_bars("AAA", days, raw_closes)
+
+        sec = make_security("AAA", "AAA")
+        split = make_split("AAA", split_day, ratio="2:1")
+        repo = build_repository(bars=bars, securities=[sec], corporate_actions=[split])
+
+        config = BacktestConfig(
+            market="US_EQUITY", start_date=days[0], end_date=days[-1],
+            initial_capital=10_000.0, security_ids=("AAA",),
+        )
+        strategy = _BuyThenLaterSellEverythingStrategy(
+            "AAA", buy_on_step=buy_step, sell_on_step=sell_step, buy_quantity=10.0,
+        )
+        result = BacktestEngine(repo, config, strategy).run()
+
+        buy_fills = [f for f in result.fills if f.side == OrderSide.BUY]
+        sell_fills = [f for f in result.fills if f.side == OrderSide.SELL]
+        assert len(buy_fills) == 1
+        # The real, already-post-split execution price (within a few
+        # percent -- the fill simulator applies spread/slippage on top
+        # of the raw close, so this is not an exact match).
+        assert buy_fills[0].price == pytest.approx(50.0, rel=0.05)
+        assert len(sell_fills) == 1
+        # The bug: without the fix, this comes back as 20.0 (doubled by
+        # apply_split running a second time on the already-correct buy).
+        assert sell_fills[0].quantity == pytest.approx(10.0)
+
+
+class TestCorporateActionSequencingUnit:
+    """Direct unit-level proof of the ordering `BacktestEngine.run()` now
+    performs for `next_checkpoint`-effective actions: apply them to
+    `portfolio` BEFORE the fill that lands the same checkpoint, not
+    after. `BacktestEngine` itself has no accessor for its internal
+    portfolio, so the split case above (verified end to end through a
+    real run, via the revealed SELL quantity) is paired here with a
+    focused unit test of the dividend-timing half of the same fix,
+    exercising `CorporateActionApplier`/`PortfolioAccounting` the same
+    way `engine.py`'s new block does."""
+
+    def test_dividend_applied_before_a_same_day_buy_is_not_paid_to_it(self) -> None:
+        portfolio = PortfolioAccounting(10_000.0)
+        applier = CorporateActionApplier()
+        dividend = make_dividend("AAA", date(2024, 1, 5), amount=1.0)
+
+        # The fixed order: next_checkpoint's corporate actions first...
+        applier.apply([dividend], portfolio, checkpoint(date(2024, 1, 5)))
+        # ...then the same-checkpoint buy lands.
+        portfolio.apply_fill(_fill("AAA", 10, 100.0, 5))
+
+        # No pre-existing position, so the dividend (paid per currently-
+        # held share) had nothing to credit -- cash only reflects the buy.
+        assert portfolio.cash == pytest.approx(10_000.0 - 1_000.0)
+
+    def test_dividend_applied_before_the_fill_still_pays_a_pre_existing_holder(self) -> None:
+        portfolio = PortfolioAccounting(10_000.0)
+        applier = CorporateActionApplier()
+        # Held through the prior close -- entitled to the dividend.
+        portfolio.apply_fill(_fill("AAA", 10, 100.0, 4))
+        dividend = make_dividend("AAA", date(2024, 1, 5), amount=1.0)
+        cash_before = portfolio.cash
+
+        applier.apply([dividend], portfolio, checkpoint(date(2024, 1, 5)))
+        assert portfolio.cash == pytest.approx(cash_before + 10.0)

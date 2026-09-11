@@ -100,6 +100,25 @@ class TestNormalize:
         # batch-level ingestion timestamp, is used for bars specifically.
         assert bar.available_time == utc(2024, 1, 2, 20)
 
+    def test_a_current_day_bar_never_has_ingestion_time_before_available_time(self, monkeypatch) -> None:
+        """Session 37 (ADR-0115, external review N-3): `_fetched_as_of`
+        being the SAME calendar day as the bar's own `date` (the common
+        "as of today" query) previously left `ingestion_time` (midnight)
+        BEFORE `available_time` (20:00 the same day) -- an inversion
+        `quality.py::_check_ingestion_precedes_availability` flags as an
+        ERROR. `clamp_ingestion_time` fixes this without touching
+        `available_time` or `provenance.retrieved_at`."""
+        provider, _ = _provider([], monkeypatch)
+        raw = [{
+            "date": "2024-01-02T00:00:00.000Z", "security_id": "AAPL", "_fetched_as_of": utc(2024, 1, 2),
+            "open": "185.0", "high": "186.0", "low": "184.0", "close": "185.5", "volume": "1000000",
+        }]
+        [bar] = provider.normalize("AAPL", raw)
+        assert bar.ingestion_time >= bar.available_time
+        assert bar.available_time == utc(2024, 1, 2, 20)
+        assert bar.ingestion_time == utc(2024, 1, 2, 20)  # clamped up from midnight
+        assert bar.provenance.retrieved_at == utc(2024, 1, 2)  # unclamped -- the real fetch time
+
     def test_normalize_parses_adjusted_high_and_low_from_the_same_response(self, monkeypatch) -> None:
         # Session 36 continued -- Tiingo's EOD response already carries
         # adjHigh/adjLow alongside adjClose in the same response already

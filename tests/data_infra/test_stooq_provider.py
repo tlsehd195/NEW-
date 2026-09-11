@@ -84,6 +84,26 @@ class TestNormalize:
         # data_infra.provider.bar_available_time's own docstring.
         assert bars[0].available_time == utc(2024, 1, 2, 20)
 
+    def test_a_current_day_bar_never_has_ingestion_time_before_available_time(self) -> None:
+        """Session 37 (ADR-0115, external review N-3): querying up
+        through the last bar's own event date (`end == that bar's
+        date`, the common "as of today" case) left `ingestion_time`
+        (midnight) BEFORE `available_time` (20:00 the same day) for
+        that bar -- an inversion `quality.py::
+        _check_ingestion_precedes_availability` flags as an ERROR.
+        `clamp_ingestion_time` fixes this without touching
+        `available_time` or `provenance.retrieved_at`."""
+        transport = _StubTransport(_VALID_CSV)
+        provider = StooqDataProvider(StooqConfig(), transport)
+        raw = provider.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))  # end == last bar's own date
+        bars = provider.normalize("AAPL", raw)
+        last = bars[-1]
+        assert last.timestamp == utc(2024, 1, 3)
+        assert last.ingestion_time >= last.available_time
+        assert last.available_time == utc(2024, 1, 3, 20)
+        assert last.ingestion_time == utc(2024, 1, 3, 20)  # clamped up from midnight
+        assert last.provenance.retrieved_at == utc(2024, 1, 3)  # unclamped -- the real fetch time
+
     def test_data_version_is_stable_across_different_fetched_as_of_values(self) -> None:
         transport = _StubTransport(_VALID_CSV)
         provider = StooqDataProvider(StooqConfig(), transport)

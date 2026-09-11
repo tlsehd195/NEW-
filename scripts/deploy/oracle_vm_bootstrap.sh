@@ -22,9 +22,15 @@ else
     if [[ "$IS_PRIVATE" =~ ^[Yy]$ ]]; then
         read -rsp "GitHub Personal Access Token (input hidden, not stored): " GH_TOKEN
         echo
-        AUTH_URL="$(echo "$REPO_URL" | sed -E "s#https://#https://${GH_TOKEN}@#")"
-        git clone "$AUTH_URL" "$REPO_DIR"
-        unset GH_TOKEN AUTH_URL
+        # Pass the token as a one-off `-c` config value, never embedded
+        # in the clone URL itself: `git clone <url-with-token@>` makes
+        # git persist that URL (token included) into
+        # $REPO_DIR/.git/config permanently, contradicting this
+        # script's own promise (and ORACLE-CLOUD-DEPLOYMENT.md's) that
+        # the token is never written to disk (ADR-0115). A `-c` value
+        # is process-scoped only -- it never lands in any config file.
+        git -c http.extraheader="AUTHORIZATION: bearer ${GH_TOKEN}" clone "$REPO_URL" "$REPO_DIR"
+        unset GH_TOKEN
     else
         git clone "$REPO_URL" "$REPO_DIR"
     fi

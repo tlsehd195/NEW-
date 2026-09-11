@@ -105,7 +105,12 @@ class TestEndToEndAgainstARealPaperStore:
         module = _load_module(_LEARNING_SCRIPT_PATH, "run_learning_cycle_e2e")
         out_path = tmp_path / "learning_report.json"
         rc = module.main(["--paper-store", str(paper_store), "--out", str(out_path)])
-        assert rc == 0
+        # Session 37 (ADR-0115, external review N-15): main() now exits 1
+        # when the experiment did not COMPLETE -- an honest INSUFFICIENT_
+        # SAMPLES dataset (asserted below) is exactly that case, so a
+        # scheduler reading this process's own exit code can finally
+        # detect it (previously always 0 regardless).
+        assert rc == 1
 
         report = json.loads(out_path.read_text())
         assert report["provenance"] == "PAPER_TRADING"
@@ -157,7 +162,11 @@ class TestEndToEndAgainstARealPaperStore:
             "--paper-store", str(paper_store), "--trainer", "linear_regression",
             "--feature-id", "momentum_20d", "--out", str(out_path),
         ])
-        assert rc == 0
+        # Session 37 (ADR-0115, external review N-15/N-10): this fixture's
+        # single unrealized-BUY-only dataset is INSUFFICIENT_SAMPLES (see
+        # TestEndToEndAgainstARealPaperStore's own class-level precedent),
+        # so main() now correctly exits 1.
+        assert rc == 1
         report = json.loads(out_path.read_text())
         assert report["candidate_parameters"]["fitted"] is False
         assert report["candidate_parameters"]["train_sample_count"] == 0
@@ -171,8 +180,12 @@ class TestEndToEndAgainstARealPaperStore:
         module = _load_module(_LEARNING_SCRIPT_PATH, "run_learning_cycle_idempotent")
         first_out = tmp_path / "first.json"
         second_out = tmp_path / "second.json"
-        assert module.main(["--paper-store", str(paper_store), "--out", str(first_out)]) == 0
-        assert module.main(["--paper-store", str(paper_store), "--out", str(second_out)]) == 0
+        # Session 37 (ADR-0115, external review N-15): rc==1 both times
+        # (this fixture's dataset is INSUFFICIENT_SAMPLES) -- idempotency
+        # of dataset_version/dataset_id/candidate_id is unaffected by
+        # quality_status, which is what this test actually verifies.
+        assert module.main(["--paper-store", str(paper_store), "--out", str(first_out)]) == 1
+        assert module.main(["--paper-store", str(paper_store), "--out", str(second_out)]) == 1
 
         first = json.loads(first_out.read_text())
         second = json.loads(second_out.read_text())
@@ -229,11 +242,19 @@ class TestEndToEndAgainstARealPaperStore:
 
         module = _load_module(_LEARNING_SCRIPT_PATH, "run_learning_cycle_second_run")
         first_out = tmp_path / "first.json"
-        assert module.main(["--paper-store", str(paper_store), "--out", str(first_out)]) == 0
+        # Session 37 (ADR-0115, external review N-15/N-10): both runs'
+        # datasets are INSUFFICIENT_SAMPLES (1 and 2 real experience
+        # records respectively -- well under what non-empty TRAIN+
+        # VALIDATION splits need under the default 0.6/0.2/0.2 fractions),
+        # so main() now correctly exits 1 both times. What this test
+        # actually verifies -- real, correctly cross-referenced persisted
+        # ids across a genuinely different dataset_version -- is
+        # unaffected by quality_status.
+        assert module.main(["--paper-store", str(paper_store), "--out", str(first_out)]) == 1
 
         _run_paper("2025-06-30")  # past the reversal -- the closing SELL is now also on record
         second_out = tmp_path / "second.json"
-        assert module.main(["--paper-store", str(paper_store), "--out", str(second_out)]) == 0
+        assert module.main(["--paper-store", str(paper_store), "--out", str(second_out)]) == 1
 
         first = json.loads(first_out.read_text())
         second = json.loads(second_out.read_text())
@@ -302,11 +323,31 @@ class TestFullLoopWithARealClosedTrade:
     into retraining. This is the first test to prove the FULL loop --
     a real Paper Trading run producing a real closing SELL, through the
     Trade Journal's now-fixed decision-join and realized-PnL gaps
-    (paper_runner.py), into a real, non-trivial, COMPLETED training
-    run -- rather than each half being merely plumbed but never proven
-    to work together end to end."""
+    (paper_runner.py), into a real Learning Engine run that persists
+    real, correctly cross-referenced records -- rather than each half
+    being merely plumbed but never proven to work together end to end.
 
-    def test_a_real_closed_trade_produces_a_real_completed_training_run(self, tmp_path) -> None:
+    Session 37 continued (ADR-0115, external review N-10): `quality_
+    status`/`experiment_status` themselves were fixed this same session
+    -- "OK"/"COMPLETED" now honestly require non-empty TRAIN and
+    VALIDATION splits (previously any `sample_count > 0` was reported
+    "OK", even when the entire sample landed in TEST). Under the
+    default 0.6/0.2/0.2 split fractions that takes at least 5 real
+    samples; `_seed_reversal_catalog`'s single rise-then-decline cycle
+    produces exactly one real round trip -- 2 ExperienceRecords (the
+    opening BUY and the closing SELL), but Data Cleaning's own
+    `require_realized_outcome=True` default EXCLUDES the BUY leg (it
+    has no realized_return of its own -- only the closing SELL carries
+    the round trip's outcome), leaving exactly 1 real, valid TRAINING
+    sample. So this fixture's own dataset is honestly INSUFFICIENT_
+    SAMPLES/FAILED too -- proving the full mechanism (a real closing
+    SELL's real realized_return reaching a real, correctly-labeled
+    ExperienceRecord and a real persisted Learning Engine run) is this
+    test's actual scope; a fixture with enough real round trips to
+    reach COMPLETED is future work, not something to fake with a larger
+    `--out` sample count fabricated here."""
+
+    def test_a_real_closed_trade_produces_a_real_correctly_labeled_experience_record(self, tmp_path) -> None:
         db_path = tmp_path / "market_data"
         paper_store = tmp_path / "paper_store"
         _seed_reversal_catalog(db_path)
@@ -323,17 +364,25 @@ class TestFullLoopWithARealClosedTrade:
         learning_module = _load_module(_LEARNING_SCRIPT_PATH, "run_learning_cycle_capstone_learning")
         learning_out = tmp_path / "learning_report.json"
         rc2 = learning_module.main(["--paper-store", str(paper_store), "--out", str(learning_out)])
-        assert rc2 == 0
+        # See this class's own docstring (Session 37 continued, ADR-0115
+        # N-10/N-15): this fixture's one real round trip is honestly
+        # INSUFFICIENT_SAMPLES, so main() correctly exits 1.
+        assert rc2 == 1
 
         report = json.loads(learning_out.read_text())
-        # The point of ADR-0113: a real closed trade's real
-        # realized_return actually reaches a real, non-trivial dataset
-        # and a COMPLETED training run -- not INSUFFICIENT_SAMPLES/FAILED,
-        # which is what every real Paper Trading run produced before
-        # this session's fixes (see the other tests in this file, still
-        # correctly documenting that outcome for a fixture with no SELL).
-        assert report["dataset_sample_count"] >= 1
-        assert report["dataset_quality_status"] == "OK"
-        assert report["experiment_status"] == "COMPLETED"
-        assert report["test_metrics"]["sample_count"] >= 1
-        assert report["test_metrics"]["mean_label"] is not None
+        # The real closing SELL's realized_return DID reach a real,
+        # non-fabricated ExperienceRecord and a real persisted Learning
+        # Engine run -- the actual point of ADR-0113 -- even though this
+        # fixture is too small to also reach a COMPLETED training status.
+        assert report["experience_record_count"] == 2  # the opening BUY + the closing SELL
+        assert report["dataset_sample_count"] == 1  # only the closing SELL carries a realized outcome
+        assert report["dataset_quality_status"] == "INSUFFICIENT_SAMPLES"
+        assert report["experiment_status"] == "FAILED"
+
+        from storage.learning_repository import DuckDBTrainingDatasetRepository
+
+        engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        dataset_repo = DuckDBTrainingDatasetRepository(engine)
+        real_dataset = dataset_repo.get(report["dataset_id"])
+        engine.close()
+        assert real_dataset is not None and real_dataset.sample_count == 1

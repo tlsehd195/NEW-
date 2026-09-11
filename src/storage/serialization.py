@@ -11,12 +11,28 @@ silently defaulting — consistent with this project's fail-closed
 philosophy (PROJECT_MASTER_PLAN.md section 1.4) applied to storage
 round-tripping, not just trading state.
 
-Every timestamp is normalized to UTC and stored as a naive
-(tzinfo-stripped) value; every read path re-attaches ``timezone.utc``.
-This sidesteps DuckDB/PyArrow/Parquet timezone-metadata round-trip
-ambiguity entirely rather than depending on it being handled correctly by
-the storage engine (this project treats "the library probably handles
-it" as an unverified assumption, not a guarantee).
+Every timestamp stored as its OWN DuckDB COLUMN (every ``row_to_X``/
+``X_to_row`` pair, via ``to_utc_naive``/``from_utc_naive``) is normalized
+to UTC and stored as a naive (tzinfo-stripped) value; every read path
+re-attaches ``timezone.utc``. This sidesteps DuckDB/PyArrow/Parquet
+timezone-metadata round-trip ambiguity entirely rather than depending on
+it being handled correctly by the storage engine (this project treats
+"the library probably handles it" as an unverified assumption, not a
+guarantee).
+
+Session 37 (ADR-0115, external review, previously-remaining MEDIUM):
+this does NOT describe every timestamp this module serializes. A
+timestamp embedded inside a ``payload_json`` blob (every ``X_to_payload``/
+``payload_to_X`` pair, via ``_dt_iso``/``_dt_from_iso``) takes the
+OPPOSITE approach instead: it keeps the value's real, full ISO-8601
+string (offset included, via plain ``datetime.isoformat()``) rather than
+normalizing to UTC and stripping it -- JSON has no native datetime type
+either way, so there is no DuckDB/PyArrow/Parquet column-metadata
+ambiguity to sidestep there, and preserving the original offset costs
+nothing. Both approaches round-trip correctly (every real caller
+constructs these objects with timezone-aware datetimes already, enforced
+by each model's own ``__post_init__``); the module docstring above
+previously described only the column-based path as if it were universal.
 """
 
 from __future__ import annotations
@@ -529,7 +545,20 @@ def portfolio_view_to_dict(view: Optional[PortfolioView]) -> Optional[dict]:
         "as_of_time": view.as_of_time.isoformat(),
         "cash": view.cash,
         "positions": {
-            sid: {"security_id": p.security_id, "quantity": p.quantity, "average_cost": p.average_cost}
+            sid: {
+                "security_id": p.security_id, "quantity": p.quantity, "average_cost": p.average_cost,
+                # Session 37 (ADR-0115, external review N-4): `market_value`
+                # (Session 36's own fix for `risk.engine.
+                # DeterministicPortfolioRiskEngine`'s real-market-weight
+                # gap) was never round-tripped here -- every
+                # `DecisionSnapshot.portfolio_state` persisted through
+                # `storage.trade_journal_repository` and reloaded came
+                # back with `market_value=None` on every position
+                # regardless of what was actually recorded, silently
+                # reverting any downstream re-assessment to the
+                # cost-basis fallback that fix exists to avoid.
+                "market_value": p.market_value,
+            }
             for sid, p in view.positions.items()
         },
         "portfolio_value": view.portfolio_value,
@@ -543,7 +572,10 @@ def dict_to_portfolio_view(data: Optional[dict]) -> Optional[PortfolioView]:
         as_of_time=datetime.fromisoformat(data["as_of_time"]),
         cash=data["cash"],
         positions={
-            sid: PositionView(security_id=p["security_id"], quantity=p["quantity"], average_cost=p["average_cost"])
+            sid: PositionView(
+                security_id=p["security_id"], quantity=p["quantity"], average_cost=p["average_cost"],
+                market_value=p.get("market_value"),
+            )
             for sid, p in data["positions"].items()
         },
         portfolio_value=data["portfolio_value"],

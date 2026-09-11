@@ -29,17 +29,29 @@ def attach_prediction_context(
     journal: TradeJournalRepository,
     prediction_repo: PredictionRepository,
     *,
-    security_id: str,
+    security_id: Optional[str] = None,
     method: Optional[str] = None,
     provenance: Optional[TradeProvenance] = None,
 ) -> list[ExperienceRecord]:
-    """For each record, looks up its decision's `decision_time`, then
-    finds the most recent `PredictionOutput` for `security_id` at or
-    before that time (point-in-time -- never a prediction made after the
-    decision). A record whose `expected_outcome` is already populated is
-    left untouched (never overwritten with a possibly different, later
-    re-run's prediction); a record with no matching decision or no
-    prediction available at that time is returned unchanged."""
+    """For each record, looks up its decision's `decision_time` AND
+    `security_id`, then finds the most recent `PredictionOutput` for
+    THAT security at or before that time (point-in-time -- never a
+    prediction made after the decision). A record whose
+    `expected_outcome` is already populated is left untouched (never
+    overwritten with a possibly different, later re-run's prediction);
+    a record with no matching decision or no prediction available at
+    that time is returned unchanged.
+
+    `security_id`, if given, restricts enrichment to records whose own
+    decision is for that security -- every other record is returned
+    unchanged. It is NEVER substituted for a record's own
+    `decision.security_id` when looking up a prediction (Session 37,
+    ADR-0115, external review N-8): doing so silently attached another
+    security's prediction to a record whenever `records` spanned more
+    than one security (undetected by this module's own tests, which
+    only ever exercised a single security). Omit it (the default) to
+    enrich every eligible record regardless of which security it is
+    for."""
     enriched: list[ExperienceRecord] = []
     for record in records:
         if record.expected_outcome is not None:
@@ -47,9 +59,9 @@ def attach_prediction_context(
             continue
         decision = journal.get_decision(record.decision_id)
         expected_outcome = None
-        if decision is not None:
+        if decision is not None and (security_id is None or decision.security_id == security_id):
             prediction = prediction_repo.get_as_of(
-                security_id, decision.decision_time, method=method, provenance=provenance
+                decision.security_id, decision.decision_time, method=method, provenance=provenance
             )
             if prediction is not None:
                 expected_outcome = {

@@ -109,6 +109,23 @@ class PaperBrokerAdapter:
     def restore_cancellation(self, client_order_id: str) -> None:
         self._cancelled.add(client_order_id)
 
+    def restore_observation_id_watermark(self, observation_id: str) -> None:
+        """Session 37 (ADR-0115, external review N-6): advances
+        `_observation_ids` past an already-persisted `observation_id`
+        from a prior process run -- call once per row already in
+        `status_repository` before `rebuild_status_history()`, the same
+        `advance_past` seeding `restore_fill` already does for
+        `_fill_ids`. Without this, a fresh process's first freshly
+        generated observation_id always starts back at
+        "PAPEROSTAT-000001"; if that collides with one already
+        persisted, `storage.broker_repository.
+        DuckDBOrderStatusEventRepository.record()`'s natural-key dedup
+        on `observation_id` silently returns the STALE prior-run row
+        instead of persisting the newly rebuilt one -- so every status
+        query after a restart could keep reading pre-restart history
+        indefinitely, not the correctly-rebuilt current state."""
+        self._observation_ids.advance_past(observation_id)
+
     def rebuild_status_history(self, as_of: datetime) -> None:
         """Call once after every `restore_order`/`restore_fill`/
         `restore_cancellation` -- rebuilds `get_order_status`'s history

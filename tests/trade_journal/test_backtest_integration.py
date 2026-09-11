@@ -192,6 +192,73 @@ class _FeatureCarryingStrategy:
         )]
 
 
+class _BuyTwoSecuritiesAtOnceStrategy:
+    """Generates BUY orders for two different securities in the same
+    `generate_orders()` call (same checkpoint, same decision_time) --
+    exactly the scenario that reveals the same-checkpoint lookahead."""
+
+    version = "buy_two_at_once_test_v1"
+
+    def __init__(self, first_security_id: str, second_security_id: str) -> None:
+        self._first = first_security_id
+        self._second = second_security_id
+        self._step = 0
+
+    def generate_orders(self, as_of_time, data, portfolio):
+        self._step += 1
+        if self._step == 1:
+            return [
+                OrderIntent(self._first, OrderSide.BUY, 10.0),
+                OrderIntent(self._second, OrderSide.BUY, 10.0),
+            ]
+        return []
+
+
+class TestSameCheckpointOrderNeverSeesAFutureFillInItsPortfolioState:
+    """Session 37 (ADR-0115, external review, previously-remaining
+    MEDIUM): `ingest_backtest_result` replayed fills into `portfolio`
+    immediately after recording each order's own DecisionSnapshot --
+    so a SECOND order sharing the same checkpoint as an earlier one saw
+    the earlier order's fill already applied, even though that fill
+    does not actually execute until the NEXT checkpoint. This proves the
+    second order's portfolio_state still reflects the FULL pre-fill
+    cash, matching what the original BacktestEngine run actually knew
+    at that shared decision_time."""
+
+    def test_the_second_same_checkpoint_orders_portfolio_state_excludes_the_firsts_future_fill(self) -> None:
+        days = _trading_days(date(2024, 1, 2), date(2024, 1, 12))
+        closes = [100.0 + i for i in range(len(days))]
+        bars_a = _bars("AAA", days, closes)
+        bars_b = _bars("BBB", days, closes)
+        sec_a = SecurityMaster(security_id="AAA", ticker="AAA", exchange="NASDAQ", currency="USD",
+                                company_id="C1", instrument_type=InstrumentType.EQUITY,
+                                valid_from=utc(2020, 1, 1), status=SecurityStatus.ACTIVE)
+        sec_b = SecurityMaster(security_id="BBB", ticker="BBB", exchange="NASDAQ", currency="USD",
+                                company_id="C2", instrument_type=InstrumentType.EQUITY,
+                                valid_from=utc(2020, 1, 1), status=SecurityStatus.ACTIVE)
+        repo = InMemoryDataRepository(bars=bars_a + bars_b, securities=[sec_a, sec_b], calendars={"US_EQUITY": US_EQUITY})
+        config = BacktestConfig(market="US_EQUITY", start_date=days[0], end_date=days[-1],
+                                  initial_capital=10_000.0, security_ids=("AAA", "BBB"))
+        result = BacktestEngine(repo, config, _BuyTwoSecuritiesAtOnceStrategy("AAA", "BBB")).run()
+
+        journal = InMemoryTradeJournalRepository()
+        ingest_backtest_result(journal, result, config)
+
+        decisions = sorted(journal.list_decisions(), key=lambda d: d.decision_time)
+        same_checkpoint = [d for d in decisions if d.decision_time == decisions[0].decision_time]
+        assert len(same_checkpoint) == 2
+        first, second = same_checkpoint[0], same_checkpoint[1]
+        assert first.security_id != second.security_id
+
+        # Neither order has executed yet as of their shared decision_time
+        # -- both must see the full, untouched starting cash. The bug:
+        # without the fix, `second` would already reflect `first`'s
+        # (future) fill, showing reduced cash.
+        assert first.portfolio_state.cash == pytest.approx(10_000.0)
+        assert second.portfolio_state.cash == pytest.approx(10_000.0)
+        assert second.portfolio_state.positions == {}  # first's fill not applied here either
+
+
 class TestOrderFeaturesReachTheExperienceDataset:
     """Session 36 (ADR-0048) -- a Strategy's OrderIntent.features must
     survive the full Order -> DecisionSnapshot -> ExperienceRecord.state

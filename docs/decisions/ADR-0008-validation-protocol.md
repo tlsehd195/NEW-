@@ -3,14 +3,16 @@
 **Status:** Accepted
 **Date:** 2026-08-24
 **Deciders:** Claude Code (Phase 2 session), pending project owner review
-**Related documents:** `PROJECT_MASTER_PLAN.md` §48-49, §71 (López de
-Prado-style validation), `docs/specifications/PHASE-2-backtesting.md` §14
+**Related documents:** `PROJECT_MASTER_PLAN.md` §13.4-13.5 (renumbered
+from the original §48-49/§71 this ADR was written against -- see
+ADR-0115) (López de Prado-style PBO/Deflated Sharpe validation is
+§13.5), `docs/specifications/PHASE-2-backtesting.md` §14
 
 ---
 
 ## Context
 
-`PROJECT_MASTER_PLAN.md` §48 defines the project's overall validation
+`PROJECT_MASTER_PLAN.md` §13.4 defines the project's overall validation
 protocol: `Training → Validation → Walk Forward → Purged Validation →
 Embargo → Out of Sample → Paper Trading`. Phase 2 is the first phase
 capable of running any of these mechanically (it has a working

@@ -54,8 +54,13 @@ class MonitoringConfig:
             raise ValueError("stale_data_max_age_seconds must be positive")
         if self.degraded_min_expected_count < 0:
             raise ValueError("degraded_min_expected_count must not be negative")
-        if self.min_drift_sample_count <= 0:
-            raise ValueError("min_drift_sample_count must be positive")
+        if self.min_drift_sample_count < 2:
+            # detect_mean_shift/detect_variance_shift compute sample
+            # variance with an (n - 1) denominator; a threshold of 1
+            # would let a single-sample window pass the sample-size
+            # gate and then crash with ZeroDivisionError instead of
+            # producing DriftStatus.UNKNOWN (ADR-0115).
+            raise ValueError("min_drift_sample_count must be at least 2")
         if self.mean_shift_z_threshold <= 0:
             raise ValueError("mean_shift_z_threshold must be positive")
         if self.variance_shift_ratio_threshold <= 1.0:

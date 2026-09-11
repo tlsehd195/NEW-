@@ -148,10 +148,11 @@ path ends in an explicit action).
 | 2 | `prediction.confidence < DecisionConfig.min_confidence` | `NO_TRADE` — `confidence_below_threshold` |
 | 3 | `abs(expected_return) <= uncertainty * min_signal_to_uncertainty_ratio` (only checked when `uncertainty` is present) | `NO_TRADE` — `uncertainty_exceeds_signal` |
 | 4 | Regime present and Trend axis is `UNKNOWN` | `NO_TRADE` — `regime_trend_unknown` |
-| 5 | Regime present and Stress axis is `HIGH` | `NO_TRADE` — `regime_stress_high` |
-| 6 | `portfolio_state` is `None` | `NO_TRADE` — `portfolio_state_unavailable` (`PROJECT_MASTER_PLAN.md` §1.4: "Position Unknown → 신규 주문 차단") |
+| 5 | Regime present and Stress axis is `UNKNOWN` | `NO_TRADE` — `regime_stress_unknown` (ADR-0115: same fail-closed treatment as gate 4 -- an unknown stress reading must not fall through as if it were low/normal stress) |
+| 6 | Regime present and Stress axis is `HIGH` | `NO_TRADE` — `regime_stress_high` |
+| 7 | `portfolio_state` is `None` | `NO_TRADE` — `portfolio_state_unavailable` (`PROJECT_MASTER_PLAN.md` §1.4: "Position Unknown → 신규 주문 차단") |
 
-Only after all six gates pass does a directional rule run:
+Only after all seven gates pass does a directional rule run:
 `expected_return >= min_expected_return` → `BUY` (no existing position)
 or `HOLD` (already positioned); `expected_return <= exit_return_threshold`
 → `SELL` (existing position) or `NO_TRADE` (`negative_signal_no_position_to_exit`

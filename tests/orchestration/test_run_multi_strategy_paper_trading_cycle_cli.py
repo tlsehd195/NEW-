@@ -170,6 +170,38 @@ class TestMultiStrategyIsolation:
         order_repo = DuckDBPaperOrderRepository(StorageEngine(StorageConfig(root_dir=store_root / "buy_and_hold")))
         assert len(order_repo.list_all()) == 1  # exactly one BUY, never a second
 
+    def test_buy_and_hold_defaults_to_paper_capital_usd_not_the_generic_default(self, tmp_path) -> None:
+        # ADR-0115: without an explicit --initial-capital, buy_and_hold
+        # must be funded from ADR-0028's own PAPER_CAPITAL_USD (10,000)
+        # reference figure, never PaperTradingConfig's generic
+        # 1,000,000 default -- a single equal-weight buy across this
+        # one-symbol universe spends nearly the whole starting cash, so
+        # a leftover final_cash anywhere near six figures would mean
+        # the wrong (100x too large) capital was actually used.
+        from broker.paper.us_longterm_config import PAPER_CAPITAL_USD
+
+        db_path = tmp_path / "market_data"
+        store_root = tmp_path / "store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        module = _load_module(_SCRIPT_PATH)
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store-root", str(store_root),
+            "--strategies", "buy_and_hold",
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())
+        final_cash = report["strategies"]["buy_and_hold"]["final_cash"]
+        assert final_cash < PAPER_CAPITAL_USD
+        assert final_cash < 100_000.0  # far below what a 1,000,000 default would leave behind
+
     def test_run_cycle_strategy_isolated_by_this_script_matches_the_single_strategy_script(self, tmp_path) -> None:
         """Regression-safety proof: `orchestration.paper_strategies.
         build_run_cycle_components("baseline_rule", ...)` moving the

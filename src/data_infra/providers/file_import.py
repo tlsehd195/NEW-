@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Sequence
 
 from data_infra.models import PriceBar, Provenance
-from data_infra.provider import PermanentProviderError, bar_available_time
+from data_infra.provider import PermanentProviderError, bar_available_time, clamp_ingestion_time
 from data_infra.versioning import compute_data_version
 
 # The one CSV schema this module understands. A file not matching this
@@ -167,7 +167,14 @@ class LocalFileDataProvider:
                     # see `data_infra.provider.bar_available_time`'s own
                     # docstring -- matches the identical fix in tiingo.py.
                     available_time=bar_available_time(timestamp),
-                    ingestion_time=as_of,
+                    # Session 37 (ADR-0115, external review N-3): clamped
+                    # -- see `data_infra.provider.clamp_ingestion_time`'s
+                    # own docstring for why the batch-level `as_of` can
+                    # otherwise fall before this bar's own available_time
+                    # for a month-end/current-day bar (100% reproducible
+                    # for a local CSV import, whose `_fetched_as_of` is
+                    # the caller's own `end` date, unmodified).
+                    ingestion_time=clamp_ingestion_time(as_of, bar_available_time(timestamp)),
                     provenance=provenance,
                     adjusted_close=float(adj_close_raw) if adj_close_raw not in (None, "") else None,
                     adjusted_high=float(adj_high_raw) if adj_high_raw not in (None, "") else None,

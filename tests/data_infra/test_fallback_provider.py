@@ -82,14 +82,76 @@ class TestFallsBackOnPrimaryFailure:
 
 
 class TestBothFail:
-    def test_both_failing_raises_permanent_error_naming_both(self, monkeypatch) -> None:
+    def test_both_transient_raises_transient_so_the_runner_still_retries(self, monkeypatch) -> None:
+        """Session 37 (ADR-0115, external review N-12): before this fix,
+        ANY dual failure -- even two TransientProviderError, the exact
+        case a retry could plausibly recover from -- was always
+        repackaged as PermanentProviderError, so `IngestionRunner`'s
+        retry/backoff (which only retries on TransientProviderError) was
+        structurally unreachable through this provider. This module's
+        own docstring promises "each retry attempt gets a fresh primary-
+        then-secondary chance"; that is only true if this call actually
+        raises TransientProviderError here."""
         tiingo, stooq = _providers(
             monkeypatch, tiingo_raise=TransientProviderError("tiingo down"), stooq_raise=TransientProviderError("stooq down"),
+        )
+        fallback = FallbackDataProvider(tiingo, stooq)
+        with pytest.raises(TransientProviderError) as exc_info:
+            fallback.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        assert "tiingo" in str(exc_info.value) and "stooq" in str(exc_info.value)
+
+    def test_a_mix_of_transient_and_permanent_still_raises_transient(self, monkeypatch) -> None:
+        """Either side being transient is reason enough to give the
+        Runner a fresh retry chance -- only a dual PERMANENT failure is
+        truly non-retryable."""
+        tiingo, stooq = _providers(
+            monkeypatch, tiingo_raise=PermanentProviderError("tiingo unknown symbol"),
+            stooq_raise=TransientProviderError("stooq timeout"),
+        )
+        fallback = FallbackDataProvider(tiingo, stooq)
+        with pytest.raises(TransientProviderError):
+            fallback.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+
+    def test_both_permanent_raises_permanent_error_naming_both(self, monkeypatch) -> None:
+        tiingo, stooq = _providers(
+            monkeypatch, tiingo_raise=PermanentProviderError("tiingo unknown symbol"),
+            stooq_raise=PermanentProviderError("stooq unknown symbol"),
         )
         fallback = FallbackDataProvider(tiingo, stooq)
         with pytest.raises(PermanentProviderError) as exc_info:
             fallback.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
         assert "tiingo" in str(exc_info.value) and "stooq" in str(exc_info.value)
+
+    def test_both_transient_gets_retried_and_can_still_succeed_end_to_end(self, monkeypatch) -> None:
+        """The concrete payoff of raising TransientProviderError here:
+        `IngestionRunner` actually calls `fetch()` again (its own retry
+        policy triggers at all, which the pre-fix PermanentProviderError
+        made impossible) -- and if the underlying condition has cleared
+        by the second attempt, the symbol succeeds instead of failing
+        outright on the very first pass."""
+        monkeypatch.setenv("MARKET_DATA_API_KEY", "test-key")
+        stooq_stub = _StooqStub(raw_text=_STOOQ_CSV, raise_error=TransientProviderError("stooq down"))
+        tiingo = TiingoDataProvider(TiingoConfig(), _TiingoStub(raise_error=TransientProviderError("tiingo down")))
+        stooq = StooqDataProvider(StooqConfig(), stooq_stub)
+        fallback = FallbackDataProvider(tiingo, stooq)
+
+        original_get = stooq_stub.get
+        calls = {"n": 0}
+
+        def _flaky_stooq_get(path, *, params, timeout):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise stooq_stub._raise_error  # first attempt: still down
+            stooq_stub._raise_error = None  # retry: recovered
+            return original_get(path, params=params, timeout=timeout)
+
+        stooq_stub.get = _flaky_stooq_get
+        repo = InMemoryDataRepository()
+        runner = IngestionRunner(fallback, repo, max_retries=1, sleep_fn=lambda _seconds: None)
+        result = runner.run(["AAPL"], utc(2024, 1, 1), utc(2024, 1, 3))
+        assert result.status.value == "SUCCESS"
+        assert calls["n"] == 2  # proves the retry actually happened
+        assert repo.all_bars()[0].provenance.source == "stooq"
 
 
 class TestIngestionRunnerEndToEnd:

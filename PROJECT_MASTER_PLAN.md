@@ -4,7 +4,11 @@
 
 **Version:** 1.0
 **Status:** ACTIVE — Source of Truth
-**Last Updated:** 2026-08-24 (Phase 0)
+**Last Updated:** 2026-09-11 (dangling §references corrected across the
+document, ADR-0115; the constitution/architecture content itself is
+unchanged since Phase 0 — for the project's actual current progress,
+which has moved far past Phase 0, see `docs/PROJECT_STATUS.md`'s own
+"Current Phase" section and session log, never this stamp)
 
 ---
 
@@ -57,7 +61,7 @@
 ## 1. 프로젝트 헌법 (Constitution)
 
 이 섹션은 프로젝트의 **바뀌지 않는 최상위 규칙**이다. 이 헌법과 충돌하는
-어떤 코드/제안/실험도 헌법이 우선한다. 헌법을 바꾸려면 §80(변경관리
+어떤 코드/제안/실험도 헌법이 우선한다. 헌법을 바꾸려면 §19(변경관리
 프로세스)을 반드시 거쳐야 하며, 사용자의 명시적 승인 없이 Claude Code가
 임의로 개정할 수 없다.
 
@@ -336,7 +340,7 @@ Raw Market/External Data
 ```
 
 **불변식:** 이 단계에서 만들어지는 어떤 output도 `availability_time`
-이후 시점에 존재하지 않았던 정보를 참조해서는 안 된다. (§16 Point-in-Time
+이후 시점에 존재하지 않았던 정보를 참조해서는 안 된다. (§7.2 Point-in-Time
 Principle)
 
 ### 4.2 단계 B — 의사결정 → 포지션 → 리스크 → 주문
@@ -371,7 +375,7 @@ Broker Adapter (fill event)
        (execution_price, slippage, transaction_cost 계산)
    → Trade Journal
        (Decision Snapshot 전체를 함께 저장: 그 순간의 features, prediction,
-        regime, risk_state, model_version 등 — §31)
+        regime, risk_state, model_version 등 — §10.3)
    → Post Trade Analysis
        (Expected vs Actual, prediction_error, timing_error, ...)
 ```
@@ -387,20 +391,20 @@ Trade Journal (+ Post Trade Analysis + Counterfactual Analysis)
        Data Cleaning → Labeling → Training Dataset → Candidate Training → Evaluation
    → Candidate Model (상태: CANDIDATE → BACKTESTED → VALIDATED → OOS TESTED
        → PAPER TESTED → APPROVED → DEPLOYED)
-   → Validation/Evaluation (§48 Validation Protocol 전체 통과 필요)
+   → Validation/Evaluation (§13.4 Validation Protocol 전체 통과 필요)
    → Model Registry (버전 등록, lineage 기록)
-   → Deployment (사람 승인 이후에만 ACTIVE로 전환 — §37, §69)
+   → Deployment (사람 승인 이후에만 ACTIVE로 전환 — §11.2, §11.5)
    → Monitoring/Drift Detection
    → (문제 발견 시) Rollback to STABLE, 또는 새로운 Experience로 피드백
 ```
 
 **불변식:** 학습 결과(새 모델)는 **자동으로 Live에 적용되지 않는다.**
-CANDIDATE는 반드시 전체 검증 단계를 통과하고 승인(§38, §87)받아야
+CANDIDATE는 반드시 전체 검증 단계를 통과하고 승인(§11.2, §11.5)받아야
 DEPLOYED 상태가 될 수 있다.
 
 ### 4.5 Lineage 추적
 
-모든 결과는 다음 관계를 추적할 수 있어야 한다 (§76):
+모든 결과는 다음 관계를 추적할 수 있어야 한다 (§11.3):
 
 ```
 Data Version → Feature Version → Training Dataset → Model Version
@@ -945,7 +949,7 @@ reward, 새로운 strategy, 새로운 risk parameter, 새로운 regime model.
 AI Proposal → Experiment → Validation → Approval → Deployment
 ```
 
-- `Approval` 단계는 사람의 개입을 기본으로 한다 (§37, §69의 정신).
+- `Approval` 단계는 사람의 개입을 기본으로 한다 (§11.2, §11.5의 정신).
 - 자동화된 배포 파이프라인을 만들더라도, `APPROVED` 상태로의 전이만은
   사람이 명시적으로 승인해야 한다. Claude Code나 AI가 스스로
   `APPROVED`를 부여하지 않는다.
@@ -1005,7 +1009,7 @@ Data Unknown / Broker Unknown / Position Unknown / Model Unknown
   재개한다.
 - UNKNOWN 상태의 주문은 별도로 추적하며, 해당 주문의 실제 상태가
   확인되기 전까지 관련 종목/현금에 대한 신규 주문을 제한할 수 있다.
-- 장애/kill switch 발동/rollback 이벤트는 반드시 audit log로 남긴다 (§56).
+- 장애/kill switch 발동/rollback 이벤트는 반드시 audit log로 남긴다 (§15.1).
 
 ### 12.4 Monitoring
 
@@ -1090,7 +1094,7 @@ Experiment Count + OOS Result + PBO(Probability of Backtest Overfitting)
 Parameter tuning → backtest → best result selection → repeat (무제한 반복 금지)
 ```
 
-모든 실험 횟수를 기록하고 selection bias를 고려한다 (§75).
+모든 실험 횟수를 기록하고 selection bias를 고려한다 (§13.8).
 
 ### 13.6 Benchmark & Baseline
 
@@ -1100,7 +1104,7 @@ Parameter tuning → backtest → best result selection → repeat (무제한 �
 **최소 baseline:** S&P 500 Buy & Hold, Simple Momentum, Simple ML.
 복잡한 AI가 정말 가치가 있는지 확인하기 위한 것이다. AI 시스템이
 baseline을 지속적으로 능가하지 못한다면, 복잡한 모델을 추가하는 대신
-**원인을 분석**한다 (§86 Baseline 우선 원칙).
+**원인을 분석**한다 (§13.6 Baseline 우선 원칙).
 
 ### 13.7 S&P 500 초과수익 판단 기준
 

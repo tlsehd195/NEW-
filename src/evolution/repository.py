@@ -43,7 +43,18 @@ class InMemoryModelStatusTransitionRepository:
 
     @staticmethod
     def _key(t: ModelStatusTransition) -> tuple:
-        return (t.candidate_id, t.from_status, t.to_status, t.criteria_version)
+        # Session 37 (ADR-0115, external review N-9): `passed` included
+        # -- without it, a candidate that FAILS evaluation against
+        # `criteria_version` once and later PASSES the identical
+        # (candidate_id, from_status, to_status, criteria_version)
+        # transition on a retry (e.g. after a fix, still against the
+        # same criteria version) collided with the earlier failed
+        # attempt's key and was silently discarded, permanently
+        # preventing that candidate from ever being promoted -- directly
+        # contradicting this Protocol's own docstring ("a transition
+        # with a different outcome ... is still recorded as a new,
+        # distinct attempt").
+        return (t.candidate_id, t.from_status, t.to_status, t.criteria_version, t.passed)
 
     def record(self, transition: ModelStatusTransition) -> ModelStatusTransition:
         key = self._key(transition)

@@ -23,6 +23,7 @@ from backtest.asof import AsOfDataView
 from backtest.clock import BacktestClock
 from backtest.metrics import annualized_volatility, compute_returns
 
+from data_infra.enums import CorporateActionType
 from data_infra.universe import BENCHMARK_SYMBOL, get_sector
 
 from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months, trim_to_lookback
@@ -2841,7 +2842,42 @@ def short_interest_score(security_id: str, as_of_time: datetime, repository: obj
     return -latest.days_to_cover
 
 
-def net_stock_issuance_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+def _split_adjustment_factor(actions, start: datetime, end: datetime) -> float:
+    """Compounded ratio ("shares after / shares before") of every
+    SPLIT/REVERSE_SPLIT effective strictly after `start` and at or
+    before `end` -- 1.0 (no adjustment) if there are none. Mirrors
+    `backtest.corporate_actions._parse_ratio`'s own numeric-or-"N:1"-
+    string parsing; kept as a small local copy rather than importing
+    that private helper across a module boundary this module does not
+    otherwise depend on."""
+    factor = 1.0
+    for action in actions:
+        if action.action_type not in (CorporateActionType.SPLIT, CorporateActionType.REVERSE_SPLIT):
+            continue
+        effective = action.effective_time or action.event_time
+        if effective is None or not (start < effective <= end):
+            continue
+        raw_ratio = action.details.get("ratio")
+        ratio: Optional[float] = None
+        if isinstance(raw_ratio, (int, float)):
+            ratio = float(raw_ratio)
+        elif isinstance(raw_ratio, str) and ":" in raw_ratio:
+            try:
+                num_str, den_str = raw_ratio.split(":", 1)
+                numerator, denominator = float(num_str), float(den_str)
+                if denominator != 0:
+                    ratio = numerator / denominator
+            except ValueError:
+                ratio = None
+        if ratio is not None and ratio > 0:
+            factor *= ratio
+    return factor
+
+
+def net_stock_issuance_score(
+    security_id: str, as_of_time: datetime, repository: object,
+    *, price_repository: Optional[object] = None,
+) -> Optional[float]:
     """HYPOTHESIS -- the Net Stock Issuance anomaly (Pontiff & Woodgate
     2008, "Share Issuance and Cross-Sectional Returns," The Journal of
     Finance 63(2): 921-945; Fama & French 2008, "Dissecting Anomalies,"
@@ -2879,14 +2915,35 @@ def net_stock_issuance_score(security_id: str, as_of_time: datetime, repository:
     module's convention. `None` (never a fabricated value) unless at
     least two distinct fiscal years' `CommonStockSharesOutstanding` are
     both already known as of `as_of_time`, or either value is
-    non-positive."""
+    non-positive.
+
+    Session 37 (ADR-0115, external review N-11): `CommonStockSharesOutstanding`
+    as originally filed is NOT reliably split-adjusted across fiscal
+    years the way this docstring's own definition (Fama & French's
+    "split-adjusted") requires -- a PURE stock split between the two
+    fiscal year-ends (no real issuance/buyback at all) mechanically
+    changes the raw share count (e.g. 2:1 -> raw shares double),
+    producing a large fake issuance signal (`-ln(2) ≈ -0.69`) with no
+    real dilution behind it. `price_repository`, if given (an
+    `AsOfDataView`-compatible object exposing `get_corporate_actions`),
+    is used to detect any SPLIT/REVERSE_SPLIT between the two fiscal
+    year-ends and adjust the PRIOR year's share count onto the CURRENT
+    year's split basis before computing the ratio, canceling the
+    mechanical effect out. Omitted (the default, `None`), this factor
+    keeps its pre-existing behavior -- unadjusted -- exactly as before,
+    since no caller currently supplies fundamentals and price data
+    through the same repository object."""
     records = _fy_records(repository, security_id, "CommonStockSharesOutstanding", as_of_time)
     if len(records) < 2:
         return None
     current, prior = records[-1], records[-2]
     if prior.value <= 0 or current.value <= 0:
         return None
-    net_issuance = math.log(current.value / prior.value)
+    prior_value = prior.value
+    if price_repository is not None:
+        actions = price_repository.get_corporate_actions(security_id, prior.period_end, current.period_end)
+        prior_value *= _split_adjustment_factor(actions, prior.period_end, current.period_end)
+    net_issuance = math.log(current.value / prior_value)
     return -net_issuance
 
 

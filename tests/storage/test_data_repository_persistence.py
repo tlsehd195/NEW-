@@ -250,3 +250,48 @@ class TestPriceBarSchemaEvolution:
         all_bars = repo.all_bars()
         assert len(all_bars) == 2
         engine.close()
+
+
+class TestRawBatchIdRestartSafety:
+    """Session 37 (ADR-0115, external review, previously-remaining
+    MEDIUM): `raw_ingestion_batches.batch_id` is a PRIMARY KEY with no
+    `ON CONFLICT` handling -- before this fix, `_next_raw_batch_id`
+    always restarted at 1 for a fresh `DuckDBDataRepository` instance,
+    so the first `append_raw_payloads()` call after a restart collided
+    with an already-persisted "RAW-000001" and crashed outright (a real
+    PK violation), rather than merely losing data silently. Mirrors the
+    `advance_past`/`starting_id` restart-safe pattern (ADR-0073) already
+    established for every other id allocator in this codebase."""
+
+    def test_append_raw_payloads_after_restart_does_not_crash_on_a_pk_collision(self, tmp_path) -> None:
+        engine1 = new_engine(tmp_path)
+        repo1 = DuckDBDataRepository(engine1)
+        path1 = repo1.append_raw_payloads("AAA", "s1", [{"a": 1}], ingestion_time=utc(2024, 1, 2, 20))
+        assert path1 is not None
+        engine1.close()
+
+        engine2 = new_engine(tmp_path)
+        repo2 = DuckDBDataRepository(engine2)
+        # The bug: without the fix, this raises a PRIMARY KEY violation
+        # (both processes' first batch_id is "RAW-000001").
+        path2 = repo2.append_raw_payloads("BBB", "s1", [{"b": 2}], ingestion_time=utc(2024, 1, 3, 20))
+        assert path2 is not None
+
+        aaa_payloads = repo2.get_raw_payloads("AAA")
+        bbb_payloads = repo2.get_raw_payloads("BBB")
+        assert len(aaa_payloads) == 1
+        assert len(bbb_payloads) == 1
+        assert aaa_payloads[0]["batch_id"] != bbb_payloads[0]["batch_id"]
+        engine2.close()
+
+    def test_next_batch_id_is_seeded_past_the_highest_persisted_one(self, tmp_path) -> None:
+        engine1 = new_engine(tmp_path)
+        repo1 = DuckDBDataRepository(engine1)
+        for i in range(3):
+            repo1.append_raw_payloads(f"SEC{i}", "s1", [{"i": i}], ingestion_time=utc(2024, 1, 2, 20))
+        engine1.close()
+
+        engine2 = new_engine(tmp_path)
+        repo2 = DuckDBDataRepository(engine2)
+        assert repo2._next_raw_batch_id == 4
+        engine2.close()

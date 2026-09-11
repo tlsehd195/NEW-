@@ -257,8 +257,24 @@ class LiveTradingSession:
         self._reconciliation_repository.record(result)
         if result.status == ReconciliationStatus.MATCHED:
             self._internal_status[client_order_id] = broker_status.status
+            # Session 37 (ADR-0115, external review N-1): re-derives the
+            # resulting state from *every* tracked order's status, the
+            # same `has_unreconciled_orders` check `release_kill_switch`
+            # already uses -- never unconditionally ACTIVE just because
+            # THIS ONE call returned MATCHED. Before this fix, reconciling
+            # any single already-healthy order (one that was never
+            # actually UNKNOWN, or already resolved) flipped the whole
+            # session back to ACTIVE even while a *different*
+            # client_order_id was still genuinely UNKNOWN -- silently
+            # resuming new submissions before "정산(reconciliation) 전
+            # 재개 금지" (`release_kill_switch`'s own docstring) was
+            # actually satisfied for every open order.
             if self._operational_state == OperationalState.RECONCILIATION_REQUIRED:
-                self._operational_state = OperationalState.ACTIVE
+                still_unresolved = any(
+                    status == BrokerOrderStatus.UNKNOWN for status in self._internal_status.values()
+                )
+                if not still_unresolved:
+                    self._operational_state = OperationalState.ACTIVE
         return result
 
     def engage_kill_switch(self, reason: str, *, occurred_at: datetime) -> KillSwitchEngagementResult:

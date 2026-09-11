@@ -160,6 +160,19 @@ def _parse_date(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
 
+def failed_symbols_from(per_symbol_results) -> list[str]:
+    """Session 37 (ADR-0115, external review N-13): every symbol whose
+    `per_symbol_results` entry carries a non-None `error` -- CIK not
+    found (`unresolved_symbols`' own case) or a fetch/parse exception
+    caught mid-run alike. `main()`'s exit code must reflect this, not
+    just `unresolved_symbols`: before this fix, a per-symbol fetch/parse
+    failure was recorded only in `per_symbol_results`/the manifest, so
+    as long as at least one OTHER symbol succeeded, the process still
+    exited 0. Pure and side-effect-free so it is directly testable
+    without invoking `main()` (which makes real network calls)."""
+    return [r["security_id"] for r in per_symbol_results if r["error"] is not None]
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE", help="Named universe from src/data_infra/universe.py (default: RESEARCH_UNIVERSE)")
@@ -310,12 +323,14 @@ def main(argv=None) -> int:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(manifest, indent=2))
 
+        failed_symbols = failed_symbols_from(per_symbol_results)
         print(f"Symbols requested: {len(symbols)}")
         print(f"Unresolved symbols (no CIK found): {unresolved_symbols}")
+        print(f"Failed symbols (fetch/parse error): {failed_symbols}")
         print(f"Total fundamental records persisted: {total_records_persisted}")
         print(f"Content checksum: {checksum}")
         print(f"Manifest written to: {manifest_path}")
-        return 0 if not unresolved_symbols and total_records_persisted > 0 else 1
+        return 0 if not failed_symbols and total_records_persisted > 0 else 1
     finally:
         engine.close()
 

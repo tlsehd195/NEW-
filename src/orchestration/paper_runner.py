@@ -508,8 +508,26 @@ def run_cycle(
                 # this cycle's own fills are recorded) -- correct for
                 # every fill in a single order's own fill sequence, since
                 # a SELL sequence never reopens the position it is closing.
+                # Session 37 (ADR-0115, external review N-16): read
+                # DIRECTLY from `account.positions` (the raw
+                # `BrokerPosition`, whose `average_cost` is genuinely
+                # `Optional[float]`), never from `portfolio.positions`
+                # (`_portfolio_view`'s own `PositionView.average_cost`,
+                # which is a non-Optional `float` field and therefore
+                # MUST fabricate `0.0` whenever the broker's own
+                # average_cost is unknown -- that fallback is correct
+                # for `_portfolio_view`'s other consumers, e.g. a
+                # cost-basis-only market_value estimate, but reading it
+                # back HERE silently turned "cost basis unknown" into
+                # "cost basis is exactly zero," making every SELL's
+                # realized_pnl the entire sale proceeds instead of the
+                # honest `None` this project's fail-closed discipline
+                # (and this module's own docstring) requires.
+                account_position = account.positions.get(security_id)
                 position_average_cost = (
-                    portfolio.positions[security_id].average_cost if security_id in portfolio.positions else None
+                    account_position.average_cost
+                    if account_position is not None and account_position.available
+                    else None
                 )
                 opened_at = _position_opened_at(security_id, as_of_time, trade_journal_repository, provenance)
                 for fill_record in fills:

@@ -37,7 +37,7 @@ from typing import Optional, Sequence
 
 from data_infra.enums import CorporateActionType
 from data_infra.models import CorporateAction, PriceBar, Provenance
-from data_infra.provider import PermanentProviderError, bar_available_time
+from data_infra.provider import PermanentProviderError, bar_available_time, clamp_ingestion_time
 from data_infra.providers.tiingo_auth import resolve_api_key
 from data_infra.providers.tiingo_config import TiingoConfig
 from data_infra.providers.tiingo_transport import TiingoHttpTransport, TiingoTransportResponse
@@ -147,7 +147,12 @@ class TiingoDataProvider:
                     # event date, to avoid seeing the day's own not-yet-
                     # final close early.
                     available_time=bar_available_time(timestamp),
-                    ingestion_time=as_of,
+                    # Session 37 (ADR-0115, external review N-3): clamped
+                    # -- see `data_infra.provider.clamp_ingestion_time`'s
+                    # own docstring for why the batch-level `as_of` can
+                    # otherwise fall before this bar's own available_time
+                    # for a month-end/current-day bar.
+                    ingestion_time=clamp_ingestion_time(as_of, bar_available_time(timestamp)),
                     provenance=provenance,
                     # adjClose is a Tiingo-computed, split/dividend-adjusted
                     # value -- kept as the *optional*, separate

@@ -152,5 +152,13 @@ class PaperTradingSession:
         for client_order_id in cancelled_ids:
             session.adapter.restore_cancellation(client_order_id)
 
+        # Session 37 (ADR-0115, external review N-6): seeds the
+        # adapter's observation_id allocator past every id this prior
+        # process already persisted, so `rebuild_status_history` below
+        # cannot generate a colliding id -- see
+        # `restore_observation_id_watermark`'s own docstring.
+        for observation in status_repository.list_all():
+            session.adapter.restore_observation_id_watermark(observation.observation_id)
+
         session.adapter.rebuild_status_history(as_of)
         return session

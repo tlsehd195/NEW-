@@ -52,6 +52,38 @@ class TestModelStatusTransitionPersistence:
         assert len(repo.get_history(candidate.candidate_id)) == 1
         engine.close()
 
+    def test_a_later_passing_retry_is_not_discarded_by_an_earlier_failed_attempt(self, tmp_path) -> None:
+        """Session 37 (ADR-0115, external review N-9): before this fix,
+        the DuckDB dedup query omitted `passed` -- a FAILED transition
+        recorded first silently absorbed a later PASSING retry sharing
+        the same (candidate_id, from_status, to_status,
+        criteria_version), since `record()` treated it as an already-
+        seen duplicate and returned the stale, still-failed row."""
+        import dataclasses
+
+        candidate, evaluation = _candidate_and_evaluation()
+        engine = new_engine(tmp_path)
+        repo = DuckDBModelStatusTransitionRepository(engine)
+
+        failing = evaluate_transition(
+            candidate, evaluation, CandidateModelStatus.CANDIDATE, PromotionConfig(),
+            transition_id="TRANS-000001", evaluated_at=utc(2024, 3, 1),
+        )
+        failing = dataclasses.replace(failing, passed=False, reason="forced_failure_for_test")
+        repo.record(failing)
+        assert repo.get_current_status(candidate.candidate_id) == CandidateModelStatus.CANDIDATE
+
+        passing = evaluate_transition(
+            candidate, evaluation, CandidateModelStatus.CANDIDATE, PromotionConfig(),
+            transition_id="TRANS-000002", evaluated_at=utc(2024, 3, 2),
+        )
+        assert passing.passed is True
+        repo.record(passing)
+
+        assert repo.get_current_status(candidate.candidate_id) == CandidateModelStatus.BACKTESTED
+        assert len(repo.get_history(candidate.candidate_id)) == 2
+        engine.close()
+
     def test_get_current_status_reflects_only_passed_transitions(self, tmp_path) -> None:
         candidate, evaluation = _candidate_and_evaluation()
         engine = new_engine(tmp_path)

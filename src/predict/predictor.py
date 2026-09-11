@@ -209,10 +209,25 @@ class RegimeAwarePredictor:
         self,
         prediction_config: PredictionConfig = PredictionConfig(),
         regime_config: RegimeConfig = RegimeConfig(),
+        *,
+        starting_id: int = 1,
     ) -> None:
         self._prediction_config = prediction_config
         self._drift = DriftPredictor(prediction_config)
         self._regime_detector = RegimeDetector(regime_config)
+        # Session 37 (ADR-0115, external review, previously-remaining
+        # MEDIUM): this predictor's own id allocator, restart-safe via
+        # `starting_id` like every other `_IdAllocator` user in this
+        # codebase (ADR-0073). Before this fix, `predict()` below reused
+        # `base.prediction_id` (DriftPredictor's own id) verbatim as ITS
+        # OWN result's `prediction_id` -- since `PredictionRepository.
+        # record()` keys its underlying store by `prediction_id` (not by
+        # natural key, which DOES differ here by `method`), persisting
+        # both this predictor's result and DriftPredictor's own separate
+        # result for the same security/as_of_time silently overwrote
+        # one with the other (an in-memory dict collision, or an
+        # outright primary-key conflict against DuckDB).
+        self._ids = _IdAllocator(starting_id)
 
     def predict(
         self,
@@ -246,7 +261,7 @@ class RegimeAwarePredictor:
         )
 
         return PredictionOutput(
-            prediction_id=base.prediction_id,
+            prediction_id=self._ids.allocate(),
             security_id=security_id,
             as_of_time=base.as_of_time,
             horizon_days=base.horizon_days,

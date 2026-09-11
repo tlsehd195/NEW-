@@ -54,11 +54,31 @@ class FallbackDataProvider:
                 records = self._secondary.fetch(security_id, start, end)
                 return [dict(r, _answered_by=secondary_id) for r in records]
             except (TransientProviderError, PermanentProviderError) as secondary_exc:
-                raise PermanentProviderError(
+                message = (
                     f"both providers failed for {security_id}: "
                     f"{primary_id}={type(primary_exc).__name__}({primary_exc}); "
                     f"{secondary_id}={type(secondary_exc).__name__}({secondary_exc})"
-                ) from secondary_exc
+                )
+                # Session 37 (ADR-0115, external review N-12): before this
+                # fix, a dual failure was ALWAYS repackaged as
+                # PermanentProviderError, regardless of what actually
+                # failed underneath -- structurally preventing
+                # IngestionRunner's retry/backoff from ever firing even
+                # when both underlying failures were themselves
+                # TransientProviderError (a rate limit, a timeout) that a
+                # retry could plausibly recover from. This module's own
+                # docstring already promises "each retry attempt gets a
+                # fresh primary-then-secondary chance" -- that promise was
+                # unreachable in practice, since the Runner's
+                # TransientProviderError branch (the only one that
+                # retries) was never taken. Only truly non-retryable dual
+                # failures (both PermanentProviderError) still raise
+                # PermanentProviderError; either side being transient
+                # raises TransientProviderError so the Runner gives this
+                # call the fresh chance the docstring already describes.
+                if isinstance(primary_exc, TransientProviderError) or isinstance(secondary_exc, TransientProviderError):
+                    raise TransientProviderError(message) from secondary_exc
+                raise PermanentProviderError(message) from secondary_exc
 
     def _group_by_provider(self, raw_records: Sequence[dict]) -> dict[str, list[dict]]:
         groups: dict[str, list[dict]] = {}

@@ -59,7 +59,23 @@ class DataCleaner:
             seen_trade_ids.add(record.trade_id)
 
             decision = journal.get_decision(record.decision_id)
-            if decision is None or (config.require_sample_as_of_time and decision.decision_time is None):
+            # Session 37 (ADR-0115, external review, previously-remaining
+            # MEDIUM): the `decision.decision_time is None` check is now
+            # unconditional -- `config.require_sample_as_of_time` used to
+            # gate it, but `DecisionSnapshot.decision_time` is a required,
+            # non-Optional field everywhere a real DecisionSnapshot is
+            # constructed, so that condition could never actually fire in
+            # practice regardless of the flag. Guarding it only when the
+            # (effectively always-True-in-practice) flag was set left a
+            # dead, unreachable-in-normal-use path that -- were it ever
+            # reached (e.g. a malformed/legacy row bypassing dataclass
+            # construction) -- would let `sample_as_of_time=None` through
+            # into `learning.dataset.build_training_dataset`'s own
+            # `sort(key=lambda r: r.sample_as_of_time)`, crashing on a
+            # None-vs-datetime comparison. Always excluding it here is
+            # strictly safer and changes nothing for any real,
+            # dataclass-constructed DecisionSnapshot.
+            if decision is None or decision.decision_time is None:
                 results.append(CleaningResult(
                     trade_id=record.trade_id, experience_id=record.experience_id,
                     status=SampleStatus.UNKNOWN, reason="missing_decision",
