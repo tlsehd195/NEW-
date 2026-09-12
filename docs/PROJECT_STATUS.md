@@ -43,6 +43,43 @@
 
 **멀티 전략 페이퍼 트레이딩 러너 구현 완료 (ADR-0110)**: 사용자가 "멀티 전략 ㄱㄱ"로 착수 지시. 구현 전 `scripts/run_paper_trading_cycle.py`를 다시 정독하다가 정정할 점을 발견·공개: 이 세션이 이전에 "지금 매일 도는 건 Buy & Hold"라고 설명했었는데, 실제 코드는 `DriftPredictor` + `BaselineRuleDecisionAgent` + `DeterministicPositionSizer` + `DeterministicPortfolioRiskEngine`로 구성된 실제(단, 단순한 규칙 기반) 매일 의사결정 파이프라인을 돌리고 있었음 — 진짜 순수 Buy & Hold 함수(`broker.paper.us_longterm_runner.run_buy_and_hold_paper_session`)는 이미 만들어져 있었지만 이번까지 실제 스케줄에는 한 번도 연결된 적이 없었음. 이 부정확했던 설명을 정정하고, 신규 `orchestration.paper_strategies` 레지스트리에 이미 존재/검증된 컴포넌트만으로 구성된 전략 3개를 등록: `baseline_rule`(기존 로직 그대로, 동작 불변), `random_walk_baseline`(`RandomWalkPredictor` — "예측 불가능" 귀무가설 기준선, 통계적 대조군), `buy_and_hold`(드디어 이름으로 실행 가능하게 배선). 신규 `scripts/run_multi_strategy_paper_trading_cycle.py`가 `--strategies` 플래그로 지정된 N개 전략을 각각 완전히 독립된 `--paper-store-root/<이름>/` 하위 계좌·주문·체결·기록으로 돌림 — 트랙레코드가 서로 섞이거나 소급 적용되지 않음(이전 질문에 답했던 원칙을 코드로 실제 구현). 시세 카탈로그는 한 번만 읽어 모든 전략이 공유(Tiingo 호출 횟수가 전략 개수와 무관하다는 이전 답변을 코드로 증명). RULE 0.8 준수: 45개 팩터 후보는 실측 검증 결과가 없으므로 이 레지스트리에 아직 하나도 등록하지 않음 — 순수 인프라만 구축. `run_paper_trading_cycle.py`는 내부적으로 이 레지스트리를 쓰도록 리팩터링됐을 뿐 동작은 완전히 동일(회귀 테스트로 증명: 동일 입력에 대해 신규 멀티 전략 스크립트로 `baseline_rule` 하나만 돌린 결과가 기존 단일 전략 스크립트 결과와 정확히 일치). 새 테스트 18개(`test_paper_strategies.py` 11개, `test_run_multi_strategy_paper_trading_cycle_cli.py` 7개) 추가, 기존 `test_run_paper_trading_cycle_cli.py` 10개 전부 무변경 통과. 여전히 실제 GitHub Actions 일일 스케줄(`paper_trading_cycle.yml`)은 손대지 않음 — 멀티 전략 스크립트를 실제 스케줄에 연결할지는 별도로 사용자가 결정할 사항.
 
+### Completed (Session 37 계속 — Financial Modeling Prep, 2018년 이후 구간용 두 번째 무료 소스 발견 + 코드 작성, ADR-0128)
+
+사용자가 "다른 방법을 더 찾아봐"로 재지시 → Macrotrends 시도(역시
+Cloudflare 봇 차단으로 기각, 지난번 원칙대로 우회 안 함) 이후
+**Financial Modeling Prep(FMP)** 발견 및 실증 테스트.
+
+레거시 `v3` API는 2025-08-31 폐지 확인, 새 `stable/` API로 재시도:
+- `stable/delisted-companies`: 실제 최신 상장폐지 목록 응답(2026년
+  날짜까지 있어 계속 업데이트되는 소스임을 확인) — 단, 무료 티어는
+  `page=0`만 허용(`page=1` 요청 시 실제 HTTP 402 확인), 최근 100개만
+  조회 가능.
+- `stable/historical-price-eod/full?symbol=ATVI`: **실제 가격 데이터
+  확인.** 실거래 마지막 날짜 2023-10-12(종가 $94.42, 거래량
+  7,323,451) — 마이크로소프트의 액티비전 블리자드 인수가 실제로
+  2023-10-13에 종료됐으니 정확히 하루 차이로 들어맞음(DELL 때보다도
+  더 정확한 일치). 그 이후는 WIKI Prices와 똑같은 패턴(`$94.42,
+  거래량 0` 반복)의 더미 채움 — 서로 무관한 두 번째 소스에서 독립적으로
+  같은 아티팩트 확인. `from`/`to` 명시 시 5,000행(2003~2023년, 약
+  20년치) 확보. 무료 티어: 하루 250회, 30일 누적 500MB.
+
+**설계**: FMP 자체 상장폐지 목록은 무료 티어에서 최근 100개로 막혀
+있지만 문제 안 됨 — 이미 이 프로젝트에 있는 S&P 500 실제 제외 티커
+목록(`data/sp500_ticker_start_end.csv`, 195개 2018년 이후 후보)을
+그대로 재사용해서 각각 FMP에 직접 조회하는 방식으로 우회. 신규
+`src/data_infra/providers/fmp_delisted_price_import.py`(순수 함수,
+네트워크 없음, ADR-0126 Decision 5와 동일한 90일 임계값으로 진짜
+상장폐지 판별 — 두 소스 기준 일관성 유지) + 신규
+`scripts/fetch_fmp_delisted_prices.py`(실제 API 호출, API 키는
+`--api-key`/`FMP_API_KEY` 환경변수로만 받고 절대 하드코딩 안 함,
+요청 간 딜레이로 무료 한도 존중). FMP 응답엔 조정가(adjusted price)
+필드가 아예 없어서 `adj_close`/`adj_high`/`adj_low`는 항상 빈칸으로
+유지(vwap 등 다른 지표로 잘못 채우지 않음).
+
+신규 테스트 13개(실제 ATVI 응답값 그대로 픽스처 사용), 전체 스위트
+통과 확인 후 커밋. 실제 195개 후보 대상 대량 실행 결과는 사용자가
+스크립트를 직접 실행해야 나옴 — 아직 실측 전.
+
 ### Completed (Session 37 계속 — 2018년 이후 상장폐지 구간, Yahoo Finance/Stooq 실증 테스트 후 여전히 막힘, ADR-0127)
 
 사용자가 "부분 해결에서 완전 해결로" 요청 → WIKI Prices가 2018-03-27
