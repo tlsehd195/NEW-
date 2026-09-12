@@ -149,7 +149,17 @@ pure, no network) added to the existing module. `scripts/report_
 survivorship_price_coverage.py` (new, no network call, test-suite-
 exercised). No changes to `data_infra/universe.py`'s existing
 `audit_survivorship`, `storage/data_repository.py`, or any backtest
-script -- this is purely additive. Running this against the real
-`wiki_prices_delisted_db` catalog `ADR-0126`/`ADR-0128` populated, to
-get the real, current coverage percentage for this project's own data,
-is the natural next step, not yet done as of this ADR.
+script -- this is purely additive.
+
+**Real result** (account owner's own environment, run against the
+actual `wiki_prices_delisted_db` catalog `ADR-0126`/`ADR-0128`
+populated, `--since 2000-01-01 --as-of 2026-09-12`): of **623** real
+S&P 500 tickers removed from the index on or after 2000-01-01, this
+project currently holds verified real price data for **59 (9.5%)**;
+**564 remain a real, named, and now precisely measured survivorship-
+bias exposure** for any backtest spanning that window. This is this
+session's final, honest answer to "how complete is this" -- not 100%,
+not vague, but a specific number with a specific ticker list
+(`not_covered_tickers` in the report JSON) that can be re-measured
+after any future acquisition of more real delisted-price data, from
+this project's two free sources or any other.
