@@ -43,6 +43,45 @@
 
 **멀티 전략 페이퍼 트레이딩 러너 구현 완료 (ADR-0110)**: 사용자가 "멀티 전략 ㄱㄱ"로 착수 지시. 구현 전 `scripts/run_paper_trading_cycle.py`를 다시 정독하다가 정정할 점을 발견·공개: 이 세션이 이전에 "지금 매일 도는 건 Buy & Hold"라고 설명했었는데, 실제 코드는 `DriftPredictor` + `BaselineRuleDecisionAgent` + `DeterministicPositionSizer` + `DeterministicPortfolioRiskEngine`로 구성된 실제(단, 단순한 규칙 기반) 매일 의사결정 파이프라인을 돌리고 있었음 — 진짜 순수 Buy & Hold 함수(`broker.paper.us_longterm_runner.run_buy_and_hold_paper_session`)는 이미 만들어져 있었지만 이번까지 실제 스케줄에는 한 번도 연결된 적이 없었음. 이 부정확했던 설명을 정정하고, 신규 `orchestration.paper_strategies` 레지스트리에 이미 존재/검증된 컴포넌트만으로 구성된 전략 3개를 등록: `baseline_rule`(기존 로직 그대로, 동작 불변), `random_walk_baseline`(`RandomWalkPredictor` — "예측 불가능" 귀무가설 기준선, 통계적 대조군), `buy_and_hold`(드디어 이름으로 실행 가능하게 배선). 신규 `scripts/run_multi_strategy_paper_trading_cycle.py`가 `--strategies` 플래그로 지정된 N개 전략을 각각 완전히 독립된 `--paper-store-root/<이름>/` 하위 계좌·주문·체결·기록으로 돌림 — 트랙레코드가 서로 섞이거나 소급 적용되지 않음(이전 질문에 답했던 원칙을 코드로 실제 구현). 시세 카탈로그는 한 번만 읽어 모든 전략이 공유(Tiingo 호출 횟수가 전략 개수와 무관하다는 이전 답변을 코드로 증명). RULE 0.8 준수: 45개 팩터 후보는 실측 검증 결과가 없으므로 이 레지스트리에 아직 하나도 등록하지 않음 — 순수 인프라만 구축. `run_paper_trading_cycle.py`는 내부적으로 이 레지스트리를 쓰도록 리팩터링됐을 뿐 동작은 완전히 동일(회귀 테스트로 증명: 동일 입력에 대해 신규 멀티 전략 스크립트로 `baseline_rule` 하나만 돌린 결과가 기존 단일 전략 스크립트 결과와 정확히 일치). 새 테스트 18개(`test_paper_strategies.py` 11개, `test_run_multi_strategy_paper_trading_cycle_cli.py` 7개) 추가, 기존 `test_run_paper_trading_cycle_cli.py` 10개 전부 무변경 통과. 여전히 실제 GitHub Actions 일일 스케줄(`paper_trading_cycle.yml`)은 손대지 않음 — 멀티 전략 스크립트를 실제 스케줄에 연결할지는 별도로 사용자가 결정할 사항.
 
+### Completed (Session 37 계속 — SEC 13F 실제 포맷 첫 확보 + 무료 CUSIP→티커 변환 성공, ADR-0131)
+
+사용자가 "진행"으로 SEC 13F 재개 지시. 이전에 "너무 복잡하다"고
+스킵했던 두 가지 문제(① sec.gov 실접근 불가로 실제 포맷 한 번도 못
+본 것, ② CUSIP→security_id 매핑 자체가 없던 것)를 FINRA 때와 동일한
+방식(사용자 본인 환경에서 실제로 받아오기)으로 둘 다 실제로 해결.
+
+**① 실제 13F 포맷 확보**: 버크셔 해서웨이(CIK 0001067983) 최신 13F-HR
+제출(2026-08-14) 실제로 받음. `submissions.json`의 `primaryDocument`는
+표지일 뿐, 진짜 보유종목 데이터는 같은 폴더의 별도 숫자 파일명
+XML(`56757.xml`)에 있다는 걸 실제로 확인. 실제 스키마:
+`nameOfIssuer/cusip/value/shrsOrPrnAmt/sshPrnamt/...`. **같은 CUSIP이
+한 제출건 안에서 여러 번(공동 매니저별로) 반복될 수 있다는 것도 실제로
+확인**(Ally Financial CUSIP이 6번 나뉘어 나왔고, 합치면 정확히
+2,700만주라는 딱 떨어지는 실제 숫자) — 하나만 골라 쓰면 절반 가까이
+누락되는 실수를 방지하는 합산 로직 필요성 실증.
+
+**② CUSIP→티커 무료 매핑**: **OpenFIGI(블룸버그 운영, 완전 무료, API
+키 불필요, 하루 5,000회)**로 실제 테스트 — CUSIP만 주면 전세계 100개
+넘는 상장/파생 항목이 다 나오지만, 요청에 `exchCode:"US"`를 추가하면
+정확히 미국 상장 티커 1개만 나온다는 것까지 실제로 검증(같은 CUSIP,
+필터 있음/없음 둘 다 실제 비교). 이 프로젝트가 지금까지 "CUSIP 매핑
+자체가 없어서 못 한다"고 했던 전제가 무료로 해결됨.
+
+신규 `data_infra/providers/sec_13f_infotable_parser.py`(순수, XML 파싱
++ CUSIP별 합산) + `data_infra/providers/openfigi_cusip_resolution.py`
+(순수, 요청/응답 처리) + `scripts/convert_sec_13f_filings_to_
+combined_csv.py`(실제 OpenFIGI 네트워크 호출 1종류만, 기존
+`--combined-csv` 파이프라인 그대로 재사용). `value` 필드는 단위가
+2023년 SEC 규정 변경으로 애매해서(천 달러 vs 실제 달러) 아예 안 씀 —
+이 프로젝트 스키마엔 필요도 없음. `quarter_end`는 XML에 없어서 항상
+명시적 입력 필수, 추측 안 함.
+
+신규 테스트 19개(전부 실제 관측값 기반 픽스처: 버크셔 실제 6개 라인
+아이템, 실제 27,000,000주 합계, 실제 OpenFIGI ALLY 응답). 전체 스위트
+통과 확인 후 커밋. 아직 실제 파이프라인 전체(XML → 변환 →
+ingest_institutional_holdings.py)를 처음부터 끝까지 실행해보진 않음 —
+다음 단계.
+
 ### Completed (Session 37 계속 — 59/59 백필 실측 성공, ADR-0130 마무리 + 세션 전체 잔여 작업 상태 정리)
 
 사용자가 실제 `wiki_prices_delisted_db`에 새 백필 스크립트 실행 →

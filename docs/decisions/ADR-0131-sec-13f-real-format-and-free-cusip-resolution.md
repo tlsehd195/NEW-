@@ -1,0 +1,186 @@
+# ADR-0131: Real SEC Form 13F Information Table Format + Free CUSIP-to-Ticker Resolution (OpenFIGI)
+
+**Status:** Accepted
+**Date:** 2026-09-12
+**Deciders:** Claude Code (session continued), pending project owner review
+**Related documents:** `docs/decisions/ADR-0104-institutional-ownership-change-factor.md`,
+`docs/decisions/ADR-0099-return-seasonality-and-short-interest-factors.md`,
+`docs/decisions/ADR-0125-finra-equity-short-interest-real-response-converter.md`
+
+---
+
+## Context
+
+`data_infra.institutional_holding_models`'s own module docstring has,
+since it was written, declined to parse SEC's real Form 13F data for
+two compounding reasons: this sandboxed session cannot reach
+`sec.gov` to observe a real filing, and even with access, SEC's own
+13F data is keyed by CUSIP -- an identifier this project's
+`SecurityMaster` has never carried, with no known free resolution
+path. The user, having proceeded through the delisted-price-data
+thread (`ADR-0122`-`ADR-0130`), asked to proceed on the remaining
+backlog including SEC 13F, previously skipped as "too complex" earlier
+this session. This ADR records both gaps closing for real, in the
+account owner's own environment (this sandbox still cannot reach
+`sec.gov`/`api.openfigi.com` directly).
+
+## Decision 1 -- The real Form 13F Information Table XML format, observed for the first time
+
+The account owner fetched a real 13F-HR filing (Berkshire Hathaway,
+CIK 0001067983, accession 0001193125-26-352200, filed 2026-08-14) via
+SEC EDGAR's public, no-API-key `data.sec.gov`/`www.sec.gov` endpoints
+(a descriptive `User-Agent` header is SEC's only real requirement, not
+authentication). The filing's own `index.json` revealed the actual
+holdings live in a separately-named XML file (`56757.xml` here, not
+the `primary_doc.xml` named in the submissions feed -- that document
+is the cover page/summary, not the holdings). The real, verified
+`informationTable` XML shape:
+
+```xml
+<informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable">
+  <infoTable>
+    <nameOfIssuer>ALLY FINL INC</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>02005N100</cusip>
+    <value>577211815</value>
+    <shrsOrPrnAmt><sshPrnamt>12561737</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+    <investmentDiscretion>DFND</investmentDiscretion>
+    <otherManager>4</otherManager>
+    <votingAuthority>...</votingAuthority>
+  </infoTable>
+  ...
+```
+
+**A single CUSIP can legitimately repeat multiple times within one
+filer's own filing** -- confirmed directly: CUSIP `02005N100` (Ally
+Financial) appeared 6 times in this one real filing, each with a
+different `otherManager` value, real share counts summing to an exact,
+round **27,000,000 shares**. `data_infra.providers.sec_13f_infotable_
+parser.aggregate_shares_by_cusip` (new) sums every line item sharing a
+CUSIP -- picking only the first would have silently reported roughly
+half of Berkshire's real position.
+
+`value`'s real unit is deliberately never extracted -- SEC's own Form
+13F instructions changed the reporting convention from thousands of
+dollars to whole dollars for filings after January 2023, and this
+project has not verified which convention any specific historical
+filing used. This project's own schema does not need `value`
+(`institutional_shares`/`num_institutions` only), so it is left
+unparsed rather than risk asserting a wrong unit.
+
+## Decision 2 -- OpenFIGI resolves CUSIP -> ticker for free, with the exact right filter confirmed by direct testing
+
+Real-tested (account owner's own environment): `POST https://api.
+openfigi.com/v3/mapping` with `[{"idType":"ID_CUSIP","idValue":
+"02005N100"}]` returns the real ticker `ALLY` -- but bundled with
+100+ other real listings for the same company across every foreign
+exchange, ADR, and currency-hedged share class (`ALLYEUR`, `ALLYGBP`,
+`ALLYCHF`, `GMZ`, ...). Adding `"exchCode":"US"` to the SAME request
+(confirmed with the identical real CUSIP, both with and without the
+filter, in the same session) collapses the response to exactly the
+one real US-primary listing. This is free with no API key (5,000
+requests/day; 100 CUSIPs per request), closing
+`institutional_holding_models`'s second named gap ("this project's
+`SecurityMaster` has never carried a CUSIP field... guessing... a
+CUSIP-to-`security_id` mapping this project cannot independently
+verify would violate this project's discipline").
+
+`data_infra.providers.openfigi_cusip_resolution` (new) separates the
+pure request-building/response-parsing logic (tested against this real
+response shape) from the actual network call
+(`scripts/convert_sec_13f_filings_to_combined_csv.py`), the identical
+split this project already uses for every other real external format
+(`sec_13f_infotable_parser`, `fmp_delisted_price_import`, `check_wiki_
+prices_delisted_coverage`).
+
+## Decision 3 -- `quarter_end` must be supplied explicitly; never parsed or guessed
+
+The Information Table XML itself carries no period-of-report field --
+that lives in the filing's separate cover-page document
+(`primary_doc.xml`), which `scripts/convert_sec_13f_filings_to_
+combined_csv.py` does not parse. `--quarter-end` is a required CLI
+argument; the script never defaults it to today's date or infers it
+from a filename.
+
+## Decision 4 -- Two-stage aggregation, matching `institutional_holding_models`'s own documented design
+
+Stage one (within one filer's own filing): `aggregate_shares_by_cusip`
+sums every line item sharing a CUSIP (Decision 1). Stage two (across
+every filer this run is given): `scripts/convert_sec_13f_filings_to_
+combined_csv.py` sums each resolved ticker's shares across every input
+filing and counts how many distinct filer files reported a position in
+it, populating `num_institutions` honestly (a real filer count, never
+a placeholder). A CUSIP OpenFIGI cannot resolve to a US ticker is
+excluded from the output with a `WARNING`, never silently dropped
+without a trace or fabricated with a guessed ticker.
+
+## Consequences
+
+### Positive
+
+- Both gaps `institutional_holding_models`'s own module docstring
+  named as reasons this project had never attempted real SEC 13F
+  parsing are now closed with real, verified evidence -- not guessed,
+  the same "convert only from an observed real sample" discipline
+  `ADR-0125`'s FINRA converter established.
+- Free, no signup cost, no API key required for OpenFIGI at this
+  project's likely volume (a research universe's worth of CUSIPs
+  easily fits in 100/request, 5,000/day).
+- Reuses the EXISTING `--combined-csv` mode (`ADR-0124`) and
+  `institutional_holding_file_import.py`/`ingest_institutional_
+  holdings.py` pipeline unmodified -- this ADR's new code only produces
+  that already-supported CSV shape.
+
+### Negative / Trade-offs
+
+- This session verified the real format against exactly ONE real
+  filing (Berkshire Hathaway) and ONE real CUSIP (Ally Financial,
+  `02005N100`) -- a second filer's filing could reveal a genuinely
+  different real-world variation (e.g. a filer using `PRN` instead of
+  `SH` for `sshPrnamtType`, meaning principal amount rather than share
+  count, which this parser does not currently distinguish or convert)
+  this session has not encountered and therefore cannot claim to
+  handle.
+- OpenFIGI's ticker resolution reflects TODAY's real mapping, not the
+  ticker that was current AS OF the 13F's own historical quarter -- a
+  security that changed ticker or was acquired between the filing's
+  quarter and today would resolve to a name/ticker that did not exist
+  at that historical point, a real point-in-time caveat this project's
+  own `short_interest_file_import.py`/FINRA work has not had to
+  contend with (FINRA's own response already used current tickers).
+  Not yet mitigated; disclosed here for a future session or the
+  account owner to weigh.
+- `--quarter-end` accuracy is entirely on the account owner -- this
+  script cannot verify it against the actual filing's own period of
+  report, since it never parses `primary_doc.xml`.
+- Real bulk coverage (how well this pipeline performs across many
+  filers and many CUSIPs, not just the one real case tested) is
+  untested as of this ADR.
+
+## Tests
+
+19 new tests: 9 in `tests/data_infra/test_sec_13f_infotable_parser.py`
+(using the real Berkshire/Ally Financial six-line-item fixture,
+including the real 27,000,000-share aggregate total), 10 in
+`tests/data_infra/test_openfigi_cusip_resolution.py` (using the real
+OpenFIGI response fixture, both the `exchCode` filter's presence in
+the request and the real resolved ticker in the response).
+`scripts/convert_sec_13f_filings_to_combined_csv.py` itself makes a
+real network call (OpenFIGI) and is therefore not exercised by the
+automated test suite, matching `fetch_fmp_delisted_prices.py`'s own
+precedent -- its argument parsing and fail-closed paths (missing file,
+no CUSIPs found) were manually verified this session.
+
+## Status of Implementation at Time of This ADR
+
+`data_infra/providers/sec_13f_infotable_parser.py` and `data_infra/
+providers/openfigi_cusip_resolution.py` (both new, pure, no network),
+`scripts/convert_sec_13f_filings_to_combined_csv.py` (new, one real
+network call type, never test-suite-executed). No changes to
+`institutional_holding_file_import.py`, `ingest_institutional_
+holdings.py`, or `institutional_holding_models.py` -- all three
+already supported this exact combined-CSV workflow. A full real
+end-to-end run (real 13F filing -> this converter -> `ingest_
+institutional_holdings.py --combined-csv` -> persisted
+`InstitutionalHoldingRecord`s) is the natural next step, not yet done
+as of this ADR.
