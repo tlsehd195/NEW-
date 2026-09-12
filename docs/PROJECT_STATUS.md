@@ -43,6 +43,32 @@
 
 **멀티 전략 페이퍼 트레이딩 러너 구현 완료 (ADR-0110)**: 사용자가 "멀티 전략 ㄱㄱ"로 착수 지시. 구현 전 `scripts/run_paper_trading_cycle.py`를 다시 정독하다가 정정할 점을 발견·공개: 이 세션이 이전에 "지금 매일 도는 건 Buy & Hold"라고 설명했었는데, 실제 코드는 `DriftPredictor` + `BaselineRuleDecisionAgent` + `DeterministicPositionSizer` + `DeterministicPortfolioRiskEngine`로 구성된 실제(단, 단순한 규칙 기반) 매일 의사결정 파이프라인을 돌리고 있었음 — 진짜 순수 Buy & Hold 함수(`broker.paper.us_longterm_runner.run_buy_and_hold_paper_session`)는 이미 만들어져 있었지만 이번까지 실제 스케줄에는 한 번도 연결된 적이 없었음. 이 부정확했던 설명을 정정하고, 신규 `orchestration.paper_strategies` 레지스트리에 이미 존재/검증된 컴포넌트만으로 구성된 전략 3개를 등록: `baseline_rule`(기존 로직 그대로, 동작 불변), `random_walk_baseline`(`RandomWalkPredictor` — "예측 불가능" 귀무가설 기준선, 통계적 대조군), `buy_and_hold`(드디어 이름으로 실행 가능하게 배선). 신규 `scripts/run_multi_strategy_paper_trading_cycle.py`가 `--strategies` 플래그로 지정된 N개 전략을 각각 완전히 독립된 `--paper-store-root/<이름>/` 하위 계좌·주문·체결·기록으로 돌림 — 트랙레코드가 서로 섞이거나 소급 적용되지 않음(이전 질문에 답했던 원칙을 코드로 실제 구현). 시세 카탈로그는 한 번만 읽어 모든 전략이 공유(Tiingo 호출 횟수가 전략 개수와 무관하다는 이전 답변을 코드로 증명). RULE 0.8 준수: 45개 팩터 후보는 실측 검증 결과가 없으므로 이 레지스트리에 아직 하나도 등록하지 않음 — 순수 인프라만 구축. `run_paper_trading_cycle.py`는 내부적으로 이 레지스트리를 쓰도록 리팩터링됐을 뿐 동작은 완전히 동일(회귀 테스트로 증명: 동일 입력에 대해 신규 멀티 전략 스크립트로 `baseline_rule` 하나만 돌린 결과가 기존 단일 전략 스크립트 결과와 정확히 일치). 새 테스트 18개(`test_paper_strategies.py` 11개, `test_run_multi_strategy_paper_trading_cycle_cli.py` 7개) 추가, 기존 `test_run_paper_trading_cycle_cli.py` 10개 전부 무변경 통과. 여전히 실제 GitHub Actions 일일 스케줄(`paper_trading_cycle.yml`)은 손대지 않음 — 멀티 전략 스크립트를 실제 스케줄에 연결할지는 별도로 사용자가 결정할 사항.
 
+### Completed (Session 37 계속 — FMP 실측 결과: 5개 추가 확보 + 무료 티어 진짜 제약 발견, ADR-0128 Decision 5-6)
+
+사용자가 191개 후보 실제 실행 → **184개가 HTTP 402**로 실패. 원인을
+직접 파봄(AGN 하나로 단독 재현) → 진짜 에러 메시지 확인: `"This value
+set for 'symbol' is not available under your current subscription"`.
+즉 하루 요청 한도 초과가 아니라 **FMP 무료 티어가 가격 히스토리 조회를
+특정 화이트리스트 종목으로만 제한**하는 구조였음 — 상장폐지 여부와
+무관. 이전 ADR-0128 Decision 1의 암묵적 가정(무료 티어에서 아무
+티커나 조회 가능하다는 전제)을 이 실측으로 정정.
+
+191개 중 화이트리스트에 있던 건 7개(AAL, ATVI, ETSY, MRO, TWTR, VIAC,
+WBA)뿐, 그중 5개(ATVI, MRO, TWTR, VIAC, WBA)만 진짜 상장폐지로 분류됨
+(AAL/ETSY는 "지수에서만 빠지고 계속 거래 중"으로 정확히 구분 — 분류
+로직이 실데이터에서도 올바르게 음성 판정한다는 추가 검증). 나머지
+184개는 "커버리지 없음"이 아니라 "확인 자체가 막혀서 모름"으로 정직하게
+구분 기록.
+
+확보된 5개를 실제로 변환 + `import_external_market_data.py`로 ADR-0126
+때 만든 것과 **같은 DuckDB에 합쳐서** 반영: `Ingestion status: SUCCESS`,
+17,807바 저장, 실데이터 2025-08-27(WBA)까지 — 이 프로젝트 역사상 가장
+최근 시점의 상장폐지 데이터. `DataQualityFramework`는
+`PASSED_WITH_WARNINGS`(11건, ERROR 0건) — 전부 지난번과 똑같은 패턴
+(실제 증시 휴장일 6건, 상장폐지 종목 구조적 staleness 5건)으로 확인,
+진짜 문제 0건. **WIKI Prices 54개 + FMP 5개 = 이 프로젝트가 확보한
+실제 상장폐지 종목 총 59개**, 코드 변경 없이 문서만 갱신 후 커밋.
+
 ### Completed (Session 37 계속 — Financial Modeling Prep, 2018년 이후 구간용 두 번째 무료 소스 발견 + 코드 작성, ADR-0128)
 
 사용자가 "다른 방법을 더 찾아봐"로 재지시 → Macrotrends 시도(역시

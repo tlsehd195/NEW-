@@ -96,6 +96,64 @@ were needed to `data_infra/providers/file_import.py` or `scripts/
 import_external_market_data.py` -- both already support this exact
 per-symbol CSV shape.
 
+## Decision 5 -- Real bulk result: FMP's free tier gates historical price by a PER-SYMBOL whitelist, not by request count
+
+The account owner ran `scripts/fetch_fmp_delisted_prices.py` for real
+against all 191 checkable post-2018 candidates (191, not 195 -- a
+handful of the originally-counted 195 tickers turned out to be
+duplicate intervals for tickers that re-entered and re-left the
+index). Real result: **184 of 191 requests failed with `HTTP 402`.**
+
+Investigated rather than assumed: fetching one of the failing tickers
+(`AGN`) directly returned the real error body **`"Premium Query
+Parameter: 'Special Endpoint': This value set for 'symbol' is not
+available under your current subscription"`** -- this is NOT a
+request-count/rate-limit rejection (the 250/day budget was nowhere
+close to exhausted; successes and failures are interleaved throughout
+the run, not clustered at the end). **FMP's free tier restricts
+`historical-price-eod/full` to a specific, undocumented whitelist of
+symbols** -- most likely a small set of well-known large-cap tickers
+kept free for onboarding/demo purposes -- unrelated to whether a
+symbol is delisted. This materially corrects Decision 1's implicit
+assumption (that any symbol could be queried, subject only to the
+daily request budget) with real evidence.
+
+Of the 191 candidates, only **7 happened to be on that free
+whitelist**: `AAL`, `ATVI`, `ETSY`, `MRO`, `TWTR`, `VIAC`, `WBA`. Of
+those 7, **5 classify `likely_genuine_delisting`** (`ATVI`, `MRO`,
+`TWTR`, `VIAC`, `WBA`); `AAL` and `ETSY` correctly classify as
+still-trading-after-index-removal (both are real, currently-listed
+companies that simply left the S&P 500 -- a correct negative,
+confirming the classifier works as designed on real data, not only on
+the positive `DELL`/`ATVI` cases). The remaining 184 candidates'
+TRUE FMP coverage is **unknown, not confirmed absent** -- the paywall
+blocked the check itself, unlike `ADR-0126`'s WIKI Prices check where
+absence was directly observed.
+
+## Decision 6 -- Real ingestion of the 5 confirmed genuine tickers, merged into the same DuckDB catalog as `ADR-0126`
+
+The account owner converted and ingested all 5 (`ATVI`, `MRO`, `TWTR`,
+`VIAC`, `WBA`) into the SAME DuckDB catalog `ADR-0126` Decision 6
+already populated (`--db-path ./data/wiki_prices_delisted_db`,
+`--source-name fmp_free_tier` to keep `Provenance.source` honestly
+distinct from `quandl_wiki_prices_kaggle_mirror`). Real result:
+**`Ingestion status: SUCCESS`, 17,807 bars persisted, 0 missing
+symbols, real data spanning 2003-12-10 to 2025-08-27** (`WBA`'s real
+last trade, only weeks before this ADR's date -- the most recent real
+delisted-ticker data this project has ever persisted).
+`DataQualityFramework` reported `PASSED_WITH_WARNINGS` (11 issues, 0
+`ERROR`) -- triaged the same way as `ADR-0126` Decision 6: all 6
+`missing_timestamp_gaps` land on the identical real market-holiday
+dates already explained there (2006-12-29/2007-01-03 New Year's +
+President Ford's state funeral, 2012-10-26/10-31 Hurricane Sandy), and
+all 5 `stale_data` warnings are the same structurally-expected
+"delisted ticker's real last observation predates the `--end`
+checkpoint" pattern. **Zero real problems, identical to `ADR-0126`.**
+
+Combined running total across both free sources: **59 genuinely
+delisted tickers with real, verified price data** (54 from WIKI Prices,
+1962-2018; 5 from FMP, spanning into 2025), all in one DuckDB catalog.
+
 ## Consequences
 
 ### Positive
@@ -118,26 +176,35 @@ per-symbol CSV shape.
 
 ### Negative / Trade-offs
 
+- **The dominant limitation, discovered only by running for real
+  (Decision 5): FMP's free tier gates `historical-price-eod/full` by
+  an undocumented PER-SYMBOL whitelist, not merely a request-count
+  budget.** Only 7 of 191 checked candidates (3.7%) were even queryable
+  at all; the other 184 returned `HTTP 402` with an explicit "this
+  symbol is not available under your current subscription" message.
+  This is a far more restrictive real-world ceiling than Decision 1's
+  evidence (a single successful `ATVI` call) suggested -- recorded
+  here precisely so a future session does not assume FMP's free tier
+  can be pointed at an arbitrary ticker list.
+- **Net yield: 5 genuinely new delisted tickers** (`ATVI`, `MRO`,
+  `TWTR`, `VIAC`, `WBA`) out of 191 real candidates checked -- a small
+  but real, free, and continuously-fresh (`WBA`'s data reaches
+  2025-08-27) addition on top of `ADR-0126`'s 54, not a general
+  solution to the post-2018 gap `ADR-0127` identified. The other 184
+  candidates' true FMP coverage remains genuinely **unknown** (blocked,
+  not confirmed absent) -- a materially different, more honest status
+  than "not covered."
 - **Coverage is still bounded to S&P 500 constituents that later left
   the index**, exactly like `ADR-0126`'s own candidate set -- a
   delisted ticker that was never an S&P 500 member is not checked by
   this script either. A more exhaustive search would need a broader
   candidate list this project does not currently have.
-- **250 requests/day free-tier limit.** Checking all 195 post-2018
-  candidates fits in one day, but re-checking regularly (e.g. to catch
-  newly-delisted tickers) consumes budget against the same daily cap
-  other future FMP usage would need.
 - **History per ticker is capped (observed 5,000 rows without an
   explicit narrower `from`/`to`), not necessarily a company's true full
   history** -- acceptable for this project's purposes (which need
   prices up to and through the delisting event, not necessarily the
   company's entire multi-decade history), but disclosed here rather
   than assumed unlimited.
-- Real coverage counts (how many of the 195 post-2018 candidates FMP
-  actually has real data for, and how many of those classify as
-  genuine delistings) are pending the account owner running `scripts/
-  fetch_fmp_delisted_prices.py` for real -- not yet measured as of this
-  ADR.
 - The account owner's real FMP API key was pasted into this
   conversation multiple times while testing. It is a free-tier,
   read-only-scoped key (no write/billing capability), so the practical
@@ -163,6 +230,16 @@ key given` with a nonzero exit when no key is supplied).
 `src/data_infra/providers/fmp_delisted_price_import.py` (new, pure, no
 network) and `scripts/fetch_fmp_delisted_prices.py` (new, real network
 calls, never test-suite-executed). No changes to `data_infra/providers/
-file_import.py` or `scripts/import_external_market_data.py`. Real bulk
-coverage results and actual ingestion (mirroring `ADR-0126` Decision 6)
-are the next step, pending the account owner running this script.
+file_import.py` or `scripts/import_external_market_data.py`.
+
+Real bulk result (account owner's own environment, this session): 191
+post-2018 S&P 500 removal candidates checked against FMP; 7 covered
+(free-tier symbol whitelist, not a coverage measurement -- see Decision
+5), 5 classified `likely_genuine_delisting` (`ATVI`, `MRO`, `TWTR`,
+`VIAC`, `WBA`). Those 5 were converted and ingested for real into the
+same DuckDB catalog `ADR-0126` populated: `Ingestion status: SUCCESS`,
+17,807 bars persisted, real data through 2025-08-27,
+`DataQualityFramework` status `PASSED_WITH_WARNINGS` (11 issues, 0
+`ERROR`, all triaged as expected/benign per Decision 6). Combined with
+`ADR-0126`, this project now holds real, verified price data for **59
+genuinely delisted securities** across both free sources.
