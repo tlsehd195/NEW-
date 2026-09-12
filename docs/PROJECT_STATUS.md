@@ -43,6 +43,36 @@
 
 **멀티 전략 페이퍼 트레이딩 러너 구현 완료 (ADR-0110)**: 사용자가 "멀티 전략 ㄱㄱ"로 착수 지시. 구현 전 `scripts/run_paper_trading_cycle.py`를 다시 정독하다가 정정할 점을 발견·공개: 이 세션이 이전에 "지금 매일 도는 건 Buy & Hold"라고 설명했었는데, 실제 코드는 `DriftPredictor` + `BaselineRuleDecisionAgent` + `DeterministicPositionSizer` + `DeterministicPortfolioRiskEngine`로 구성된 실제(단, 단순한 규칙 기반) 매일 의사결정 파이프라인을 돌리고 있었음 — 진짜 순수 Buy & Hold 함수(`broker.paper.us_longterm_runner.run_buy_and_hold_paper_session`)는 이미 만들어져 있었지만 이번까지 실제 스케줄에는 한 번도 연결된 적이 없었음. 이 부정확했던 설명을 정정하고, 신규 `orchestration.paper_strategies` 레지스트리에 이미 존재/검증된 컴포넌트만으로 구성된 전략 3개를 등록: `baseline_rule`(기존 로직 그대로, 동작 불변), `random_walk_baseline`(`RandomWalkPredictor` — "예측 불가능" 귀무가설 기준선, 통계적 대조군), `buy_and_hold`(드디어 이름으로 실행 가능하게 배선). 신규 `scripts/run_multi_strategy_paper_trading_cycle.py`가 `--strategies` 플래그로 지정된 N개 전략을 각각 완전히 독립된 `--paper-store-root/<이름>/` 하위 계좌·주문·체결·기록으로 돌림 — 트랙레코드가 서로 섞이거나 소급 적용되지 않음(이전 질문에 답했던 원칙을 코드로 실제 구현). 시세 카탈로그는 한 번만 읽어 모든 전략이 공유(Tiingo 호출 횟수가 전략 개수와 무관하다는 이전 답변을 코드로 증명). RULE 0.8 준수: 45개 팩터 후보는 실측 검증 결과가 없으므로 이 레지스트리에 아직 하나도 등록하지 않음 — 순수 인프라만 구축. `run_paper_trading_cycle.py`는 내부적으로 이 레지스트리를 쓰도록 리팩터링됐을 뿐 동작은 완전히 동일(회귀 테스트로 증명: 동일 입력에 대해 신규 멀티 전략 스크립트로 `baseline_rule` 하나만 돌린 결과가 기존 단일 전략 스크립트 결과와 정확히 일치). 새 테스트 18개(`test_paper_strategies.py` 11개, `test_run_multi_strategy_paper_trading_cycle_cli.py` 7개) 추가, 기존 `test_run_paper_trading_cycle_cli.py` 10개 전부 무변경 통과. 여전히 실제 GitHub Actions 일일 스케줄(`paper_trading_cycle.yml`)은 손대지 않음 — 멀티 전략 스크립트를 실제 스케줄에 연결할지는 별도로 사용자가 결정할 사항.
 
+### Completed (Session 37 계속 — 59개 상장폐지 종목 SecurityMaster 백필, ADR-0130)
+
+사용자가 "전부 진행" 지시 → 5개 남은 작업 중 위험한 것(Live Trading
+활성화, 실제 자본 걸림)과 이 세션이 혼자 못 하는 것(SEC 13F/FINRA
+광범위 수집, 사용자 본인 네트워크 필요)은 보류하고, 코드로 바로
+가능한 것부터 진행: `ADR-0129`가 스스로 밝힌 한계("59개 종목을 실제
+`RESEARCH_UNIVERSE_STAGE4`나 백테스트에 배선하지 않음")를 조사.
+
+`import_external_market_data.py --symbols` 모드(59개 종목 수집에
+썼던 방식)는 `--universe` 모드일 때만 `SecurityMaster`를 만든다는 걸
+확인 — 즉 59개 종목은 가격 바(bar)는 있지만 `get_security()`로
+조회하면 전부 `None`이 나오는 상태였음.
+
+신규 `data_infra/security_master_backfill.py`(순수 함수) +
+`scripts/backfill_delisted_security_masters.py`(네트워크 호출 없음,
+자동 테스트 가능): 각 종목의 `valid_from`/`valid_to`를 **S&P 500
+제외일이 아니라 실제로 저장된 가격 바 자체의 첫/마지막 날짜**로 도출
+— 지수 멤버십과 실제 상장 여부는 다른 개념이라는 원칙(ADR-0128
+Decision 5에서 AAL/ETSY로 이미 확인한 바로 그 구분) 그대로 적용.
+`valid_to`는 마지막 실거래일 다음 날로 설정(이 프로젝트의 배타적
+상한 관례 준수, 안 그러면 상장폐지 마지막 날 자체가 무효 처리되는
+버그 발생). `exchange`는 실데이터에 없어서 기존
+`build_security_masters`와 똑같이 정직한 `"UNKNOWN"` 센티널 사용
+(추측 금지).
+
+신규 테스트 16개(순수 함수 6개 + 기존 ingestion 파이프라인으로 진짜
+DuckDB 만들어서 실제로 `get_security()` 조회까지 검증하는 end-to-end
+5개), 전체 스위트 통과 확인 후 커밋. 아직 실제 59개 전체에 대해
+사용자 환경에서 실행은 안 함 — 다음 단계.
+
 ### Completed (Session 37 계속 — 실제 커버리지 최종 수치 확보: 9.5%, ADR-0129 마무리)
 
 사용자가 실제 `wiki_prices_delisted_db`에 대해 새 감사 스크립트 실행
