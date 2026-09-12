@@ -179,6 +179,83 @@ def removed_since(
     )
 
 
+@dataclass(frozen=True)
+class PriceDataCoverageReport:
+    """The concrete, actionable measurement `audit_survivorship`
+    (`data_infra.universe`) cannot answer on its own: that function
+    audits whether a `UniverseDefinition`'s membership METADATA carries
+    confirmed historical dates, never whether the underlying PRICE DATA
+    needed to actually backtest through a real delisting exists at
+    all. `not_covered_tickers` here is the concrete residual
+    survivorship-bias exposure for `[since, as_of_time]` -- every name
+    in it is a real historical S&P 500 constituent this project cannot
+    show real prices for; any backtest run over that window implicitly
+    and silently excludes it today."""
+
+    since: date
+    as_of_time: datetime
+    covered_tickers: tuple[str, ...]
+    not_covered_tickers: tuple[str, ...]
+
+    @property
+    def checked_ticker_count(self) -> int:
+        return len(self.covered_tickers) + len(self.not_covered_tickers)
+
+    @property
+    def covered_ticker_count(self) -> int:
+        return len(self.covered_tickers)
+
+    @property
+    def not_covered_ticker_count(self) -> int:
+        return len(self.not_covered_tickers)
+
+    @property
+    def coverage_percentage(self) -> float:
+        total = self.checked_ticker_count
+        return 100.0 * self.covered_ticker_count / total if total else 0.0
+
+
+def price_data_coverage_for_removed_securities(
+    intervals: Sequence[TickerMembershipInterval],
+    repository,
+    *,
+    since: date,
+    price_history_start: datetime,
+    as_of_time: datetime,
+) -> PriceDataCoverageReport:
+    """For every ticker removed from the S&P 500 on/after `since`
+    (`removed_since`), checks whether `repository` (any object exposing
+    `get_bars(security_id, start, end, as_of_time) -> list[PriceBar]`,
+    e.g. `storage.data_repository.DuckDBDataRepository`) actually holds
+    at least one real price bar for it. Deliberately requires the
+    caller to pass an explicit `as_of_time`/`price_history_start`
+    (never `datetime.now()`/`utcnow()`) -- this project's project-wide
+    discipline everywhere else a repository is queried by as-of time.
+
+    A ticker with zero bars is reported `not_covered` regardless of
+    WHY -- never fetched, wrong `security_id` casing, or a genuinely
+    unavailable source (`ADR-0126`/`ADR-0128`'s own "not covered"/
+    "unknown" distinction is a property of THOSE specific acquisition
+    attempts, not of this generic query, which only ever answers "does
+    this repository, right now, have real bars for this ticker")."""
+    removed = removed_since(intervals, since)
+    tickers = sorted({iv.ticker for iv in removed})
+    covered: list[str] = []
+    not_covered: list[str] = []
+    for ticker in tickers:
+        bars = repository.get_bars(ticker, price_history_start, as_of_time, as_of_time)
+        if bars:
+            covered.append(ticker)
+        else:
+            not_covered.append(ticker)
+    return PriceDataCoverageReport(
+        since=since,
+        as_of_time=as_of_time,
+        covered_tickers=tuple(covered),
+        not_covered_tickers=tuple(not_covered),
+    )
+
+
 def _to_utc_datetime(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
 

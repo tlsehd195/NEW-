@@ -22,6 +22,7 @@ from data_infra.providers.sp500_index_constituent_history import (
     history_for_ticker,
     left_censored_tickers,
     parse_ticker_intervals,
+    price_data_coverage_for_removed_securities,
     removed_since,
 )
 
@@ -280,3 +281,98 @@ class TestLeftCensoredTickers:
 
     def test_empty_intervals_returns_empty_set(self) -> None:
         assert left_censored_tickers(()) == frozenset()
+
+
+class _FakeRepository:
+    """Minimal stand-in for `storage.data_repository.DuckDBDataRepository`
+    exposing only the one method `price_data_coverage_for_removed_
+    securities` actually calls -- real bars are never needed for these
+    pure-logic tests, only "does this ticker have any bars at all"."""
+
+    def __init__(self, tickers_with_bars: set) -> None:
+        self._tickers_with_bars = tickers_with_bars
+
+    def get_bars(self, security_id, start, end, as_of_time):
+        return ["a fake bar"] if security_id in self._tickers_with_bars else []
+
+
+class TestPriceDataCoverageForRemovedSecurities:
+    def test_a_removed_ticker_with_bars_is_covered(self) -> None:
+        intervals = (TickerMembershipInterval(ticker="DELL", start_date=date(1988, 8, 17), end_date=date(2013, 10, 29)),)
+        repo = _FakeRepository({"DELL"})
+        report = price_data_coverage_for_removed_securities(
+            intervals, repo,
+            since=date(2010, 1, 1),
+            price_history_start=datetime(1900, 1, 1, tzinfo=timezone.utc),
+            as_of_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        assert report.covered_tickers == ("DELL",)
+        assert report.not_covered_tickers == ()
+        assert report.checked_ticker_count == 1
+        assert report.coverage_percentage == 100.0
+
+    def test_a_removed_ticker_without_bars_is_not_covered(self) -> None:
+        intervals = (TickerMembershipInterval(ticker="LEH", start_date=date(1996, 1, 2), end_date=date(2008, 9, 15)),)
+        repo = _FakeRepository(set())
+        report = price_data_coverage_for_removed_securities(
+            intervals, repo,
+            since=date(2000, 1, 1),
+            price_history_start=datetime(1900, 1, 1, tzinfo=timezone.utc),
+            as_of_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        assert report.not_covered_tickers == ("LEH",)
+        assert report.covered_tickers == ()
+        assert report.coverage_percentage == 0.0
+
+    def test_a_ticker_removed_before_since_is_not_checked_at_all(self) -> None:
+        intervals = (TickerMembershipInterval(ticker="OLD", start_date=date(1990, 1, 1), end_date=date(1999, 1, 1)),)
+        repo = _FakeRepository(set())
+        report = price_data_coverage_for_removed_securities(
+            intervals, repo,
+            since=date(2010, 1, 1),
+            price_history_start=datetime(1900, 1, 1, tzinfo=timezone.utc),
+            as_of_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        assert report.checked_ticker_count == 0
+
+    def test_a_ticker_still_a_current_member_end_date_none_is_not_checked(self) -> None:
+        intervals = (TickerMembershipInterval(ticker="AAPL", start_date=date(1996, 1, 2), end_date=None),)
+        repo = _FakeRepository({"AAPL"})
+        report = price_data_coverage_for_removed_securities(
+            intervals, repo,
+            since=date(2000, 1, 1),
+            price_history_start=datetime(1900, 1, 1, tzinfo=timezone.utc),
+            as_of_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        assert report.checked_ticker_count == 0
+
+    def test_coverage_percentage_with_a_mix_of_covered_and_not(self) -> None:
+        intervals = (
+            TickerMembershipInterval(ticker="DELL", start_date=date(1988, 8, 17), end_date=date(2013, 10, 29)),
+            TickerMembershipInterval(ticker="LEH", start_date=date(1996, 1, 2), end_date=date(2008, 9, 15)),
+            TickerMembershipInterval(ticker="ATVI", start_date=date(2008, 7, 9), end_date=date(2023, 10, 18)),
+            TickerMembershipInterval(ticker="BSC", start_date=date(1996, 1, 2), end_date=date(2008, 5, 30)),
+        )
+        repo = _FakeRepository({"DELL", "ATVI"})
+        report = price_data_coverage_for_removed_securities(
+            intervals, repo,
+            since=date(2000, 1, 1),
+            price_history_start=datetime(1900, 1, 1, tzinfo=timezone.utc),
+            as_of_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        assert report.checked_ticker_count == 4
+        assert report.covered_ticker_count == 2
+        assert report.not_covered_ticker_count == 2
+        assert report.coverage_percentage == 50.0
+        assert set(report.covered_tickers) == {"DELL", "ATVI"}
+        assert set(report.not_covered_tickers) == {"LEH", "BSC"}
+
+    def test_no_removed_tickers_gives_zero_percent_not_a_crash(self) -> None:
+        report = price_data_coverage_for_removed_securities(
+            (), _FakeRepository(set()),
+            since=date(2000, 1, 1),
+            price_history_start=datetime(1900, 1, 1, tzinfo=timezone.utc),
+            as_of_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        assert report.checked_ticker_count == 0
+        assert report.coverage_percentage == 0.0
