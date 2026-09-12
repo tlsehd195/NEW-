@@ -215,9 +215,16 @@ correctness, not coincidence:
   `OXY`, ...) are all independently, publicly known real long-term
   Berkshire Hathaway holdings -- no unexpected or implausible entries.
 
-This closes the loop this ADR opened: real format observed, real
-CUSIP resolution confirmed, and now a real, complete, independently
-cross-checked end-to-end conversion. Actual ingestion via `scripts/
-ingest_institutional_holdings.py --combined-csv` (persisting these as
-real `InstitutionalHoldingRecord`s) remains the next step, not yet
-done as of this ADR.
+Immediately following, the account owner ran `scripts/ingest_
+institutional_holdings.py --combined-csv combined_13f.csv --symbols
+<all 28> --as-of 2026-09-12 --db-path 13f_db` against this exact real
+output (after installing this project's only two real dependencies,
+`duckdb`/`pyarrow`, on the fresh Windows machine): **`Total
+institutional holding records persisted: 28`, `Missing symbols: []`**
+-- all 28 real securities, zero failures. This is the first time this
+project has ever persisted a real `InstitutionalHoldingRecord` sourced
+from an actual SEC Form 13F filing, closing the loop this ADR opened
+completely: real filing -> real parsing -> real CUSIP resolution ->
+real combined CSV -> real persisted records, verified end to end on
+two independent environments (a GitHub Codespace and a personal
+Windows machine).
