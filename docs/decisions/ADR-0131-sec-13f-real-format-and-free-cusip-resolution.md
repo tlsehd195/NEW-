@@ -228,3 +228,55 @@ completely: real filing -> real parsing -> real CUSIP resolution ->
 real combined CSV -> real persisted records, verified end to end on
 two independent environments (a GitHub Codespace and a personal
 Windows machine).
+
+## Follow-up -- a second real quarter, and the first-ever real, non-`None` `institutional_ownership_change_score`
+
+`institutional_ownership_change_score` (`strategy_research.factor_
+scores`) requires at least two distinct quarters of real institutional
+holdings for one security before it returns anything but `None`
+(RULE 0.8 -- never a fabricated change). The account owner fetched
+Berkshire's PRIOR real 13F-HR filing (same CIK, accession
+0001193125-26-226661, filed 2026-05-15, real `periodOfReport`
+`03-31-2026`, real information table file `53405.xml`) through the
+identical real pipeline this ADR already established, producing a
+second real `combined_13f_prior.csv` (28 securities, `quarter_end`
+2026-03-31). Both quarters were ingested into the SAME `13f_db`
+DuckDB catalog.
+
+**A real environment gotcha, found and fixed this session**: on the
+account owner's Windows machine, `python3` resolves to Windows' own
+Microsoft Store "App Execution Alias" stub (`AppData\Local\Microsoft\
+WindowsApps\python3`), not the real interpreter -- it silently prints
+`Python` and exits (a real, confirmed, non-standard exit code, 49) doing
+nothing at all, rather than erroring loudly. The real interpreter
+(installed from python.org) only answered to `python`, confirmed via
+`python --version` -> `Python 3.12.10`. Every command on this machine
+must use `python`, never `python3` -- worth remembering for any future
+Windows-based session in this project, since the failure mode here
+(silent no-op, not a clear error) cost real diagnostic time.
+
+With both real quarters ingested, the account owner called
+`institutional_ownership_change_score` directly against the real,
+now-two-quarter-populated `DuckDBInstitutionalHoldingRepository` for
+four real securities. Real, verified results (2026-09-12):
+
+| security_id | Q1 2026 shares | Q2 2026 shares | score (`ln(current/prior)`) |
+|---|---|---|---|
+| `ALLY` | 29,000,000 | 27,000,000 | `-0.07145896398214498` |
+| `BAC`  | 513,624,165 | 483,394,015 | `-0.06065971436072147` |
+| `KO`   | 400,000,000 | 400,000,000 | `0.0` |
+| `AAPL` | 227,917,808 | 227,917,808 | `0.0` |
+
+Every value matches hand-calculation exactly (e.g.
+`ln(27000000/29000000) == -0.07145896398214498`), and every sign
+matches independently known real facts: Berkshire's real, publicly
+reported Q2 2026 trimming of both Ally Financial and Bank of America
+produces the two negative scores; Coca-Cola and Apple, both unchanged
+between the two real quarters, correctly score exactly `0.0` rather
+than `None` (the function only returns `None` for genuinely missing
+data, not for a real, confirmed-zero change). This is the first time
+in this project's history that `institutional_ownership_change_score`
+has produced a real, non-`None` value from genuine SEC data end to
+end -- closing the last gap `ADR-0104` (the factor's own original
+design decision) left open pending real 13F data ever existing in this
+project's storage.
