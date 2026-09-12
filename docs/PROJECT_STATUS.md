@@ -68,8 +68,13 @@ LEH/BSC 등을 "가짜가 아니라 커버리지 밖"이라고 구분했던 것�
 휴리스틱이지 확정은 아님) 필드 추가. 요약에 `likely_genuine_delisting_
 count`/`likely_still_trading_after_index_removal_count` 분리 집계
 추가. 신규 테스트 2개(총 12개), 전체 스위트 2995개 통과 확인 후 커밋.
-382개의 실제 진짜/가짜 분류 결과는 사용자가 업데이트된 스크립트로
-재실행해야 나옴 — 재실행 명령어 안내 완료, 결과 대기 중.
+사용자가 재실행 완료, **최종 실제 결과: 382개 커버 중 54개(전체
+737개의 7.3%)만 진짜 상장폐지, 328개는 지수에서만 빠진 것, 355개는
+아예 커버리지 밖.** 54는 382보다 훨씬 작지만, 이 프로젝트가 완전히
+`ENVIRONMENT_BLOCKED`라고 기록했던 문제(ADR-0123)에 대한 실제,
+구체적, 무료 기여. 다음 단계는 이 54개를 실제로 변환+DB 반영하는 것
+(코드는 이미 다 있음 — `convert_quandl_wiki_prices_to_file_import_csv.py`
++ `import_external_market_data.py`).
 
 ### Completed (Session 37 계속 — WIKI Prices 대량 커버리지 체크 스크립트 추가, ADR-0126 Decision 4)
 

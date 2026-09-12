@@ -148,9 +148,18 @@ data's own last trading date and that `end_date`) and
 disclosed heuristic threshold, not a certainty, matching the exact
 `DELL` pattern of a 0-day gap). The summary now separately counts
 `likely_genuine_delisting_count` vs.
-`likely_still_trading_after_index_removal_count`. The account owner's
-real 382-ticker breakdown by this classification is pending a re-run
-with this update.
+`likely_still_trading_after_index_removal_count`.
+
+**Real final result, re-run by the account owner against their own
+`WIKI_PRICES.csv`: of the 382 covered tickers, 54 (7.3% of the original
+737 candidates) are classified `likely_genuine_delisting`; the
+remaining 328 are classified as tickers that simply left the S&P 500
+and kept trading.** 54, not 382, is this ADR's real, honest answer to
+"how many genuinely delisted securities does this free source recover
+real prices for" -- meaningfully smaller than the raw coverage number,
+but a real, concrete, free contribution to a problem this project had
+previously called fully `ENVIRONMENT_BLOCKED` (`ADR-0123`). 355
+candidates remain uncovered by this source entirely.
 
 ## Consequences
 
@@ -226,7 +235,11 @@ file_import.py` or `scripts/import_external_market_data.py` -- both
 already supported this exact workflow.
 
 Real bulk result (account owner's own environment, this session): of
-737 ever-removed S&P 500 tickers, **382 (52%) have real price rows** in
-the downloaded `WIKI_PRICES.csv`. The finer genuine-delisting-vs-
-still-trading breakdown (Decision 5) is pending a re-run with that
-classification added.
+737 ever-removed S&P 500 tickers, 382 (52%) have real price rows in
+the downloaded `WIKI_PRICES.csv`; of those, **54 (7.3% of all 737
+candidates) are classified `likely_genuine_delisting`**, 328 are
+tickers that simply left the index and kept trading, and 355 are not
+covered at all. Actually converting and ingesting those 54 tickers
+into this project's storage (via `convert_quandl_wiki_prices_to_file_
+import_csv.py` + `import_external_market_data.py`, both already built)
+is the next step, not yet done as of this ADR.
