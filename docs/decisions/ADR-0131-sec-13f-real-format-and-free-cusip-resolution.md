@@ -193,8 +193,31 @@ providers/openfigi_cusip_resolution.py` (both new, pure, no network),
 network call type, never test-suite-executed). No changes to
 `institutional_holding_file_import.py`, `ingest_institutional_
 holdings.py`, or `institutional_holding_models.py` -- all three
-already supported this exact combined-CSV workflow. A full real
-end-to-end run (real 13F filing -> this converter -> `ingest_
-institutional_holdings.py --combined-csv` -> persisted
-`InstitutionalHoldingRecord`s) is the natural next step, not yet done
-as of this ADR.
+already supported this exact combined-CSV workflow.
+
+**Real end-to-end result** (account owner's own environment -- run
+from a local Windows machine + Git Bash after the account owner's
+Codespaces free quota was exhausted mid-session, a real, independent
+re-verification that this pipeline does not depend on any one specific
+environment): converting the real Berkshire Hathaway 13F filing
+produced **28 real securities from 1 filer**, 1 CUSIP (`H1467J104`)
+correctly excluded with a warning (unresolved, not fabricated). Spot
+checks against independently, publicly known facts confirm real
+correctness, not coincidence:
+
+- `ALLY,27000000` -- matches this ADR's own Decision 1 hand-calculation
+  exactly.
+- `KO,400000000` -- Berkshire's Coca-Cola stake has been publicly
+  reported as exactly 400,000,000 shares for years; an exact match to
+  a widely-known real fact is strong, independent confirmation this
+  pipeline's real output is correct, not merely plausible-looking.
+- The remaining 26 tickers (`AAPL`, `AXP`, `BAC`, `CVX`, `KHC`, `MCO`,
+  `OXY`, ...) are all independently, publicly known real long-term
+  Berkshire Hathaway holdings -- no unexpected or implausible entries.
+
+This closes the loop this ADR opened: real format observed, real
+CUSIP resolution confirmed, and now a real, complete, independently
+cross-checked end-to-end conversion. Actual ingestion via `scripts/
+ingest_institutional_holdings.py --combined-csv` (persisting these as
+real `InstitutionalHoldingRecord`s) remains the next step, not yet
+done as of this ADR.
