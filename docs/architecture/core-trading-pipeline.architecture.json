@@ -2,15 +2,15 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "aiinvest \u2014 Core Trading Decision Pipeline",
-    "subtitle": "Phases 1-14 module map, from data ingestion to trade execution and the offline learning loop",
+    "title": "aiinvest — 핵심 트레이딩 결정 파이프라인",
+    "subtitle": "Phase 1-14 모듈 지도: 데이터 수집부터 거래 실행, 오프라인 학습 루프까지",
     "output": "docs/architecture/core-trading-pipeline.html",
     "visual_preset": "blueprint",
     "quality_profile": "showcase",
     "views": [
       {
         "id": "decision-path",
-        "label": "Live decision path",
+        "label": "실시간 결정 경로",
         "focus": [
           "data_infra",
           "regime",
@@ -20,29 +20,29 @@
           "broker_paper",
           "broker_live"
         ],
-        "note": "Every bar flows through Regime and Prediction independently, merges at Decision, then Risk sizes the position before either broker path."
+        "note": "모든 봉은 Regime과 Prediction을 각각 독립적으로 거친 뒤 Decision에서 합쳐지고, Risk가 포지션 크기를 정한 뒤에야 브로커로 갑니다."
       },
       {
         "id": "safety-gate",
-        "label": "Live trading gate",
+        "label": "실거래 게이트",
         "focus": [
           "risk",
           "broker_live",
           "storage",
           "trade_journal"
         ],
-        "note": "broker_live places real orders only past the kill switch + human approval gate \u2014 never on its own initiative."
+        "note": "broker_live는 kill switch + human approval 게이트를 통과해야만 실제 주문을 냅니다 — 스스로 판단해 진입하지 않습니다."
       },
       {
         "id": "learning-loop",
-        "label": "Offline learning loop",
+        "label": "오프라인 학습 루프",
         "focus": [
           "storage",
           "trade_journal",
           "learning",
           "evolution"
         ],
-        "note": "Learning and Evolution read recorded history only; nothing here writes back into the live decision path without passing validation again."
+        "note": "Learning과 Evolution은 기록된 이력만 읽습니다. 검증을 다시 통과하지 않고는 실시간 결정 경로에 반영되지 않습니다."
       }
     ]
   },
@@ -51,7 +51,7 @@
       "id": "data_infra",
       "type": "external",
       "label": "data_infra",
-      "sublabel": "ingestion + providers",
+      "sublabel": "수집 + 공급자",
       "tag": "Phase 1",
       "pos": [
         40,
@@ -66,7 +66,7 @@
       "id": "regime",
       "type": "backend",
       "label": "regime",
-      "sublabel": "point-in-time-safe",
+      "sublabel": "시점 안전 분류",
       "tag": "Phase 5",
       "pos": [
         220,
@@ -81,7 +81,7 @@
       "id": "predict",
       "type": "backend",
       "label": "predict",
-      "sublabel": "return / vol / conf",
+      "sublabel": "수익률/변동성/신뢰도",
       "tag": "Phase 6",
       "pos": [
         220,
@@ -96,7 +96,7 @@
       "id": "decision",
       "type": "backend",
       "label": "decision",
-      "sublabel": "trade signal decision",
+      "sublabel": "거래 신호 결정",
       "tag": "Phase 7",
       "pos": [
         400,
@@ -111,7 +111,7 @@
       "id": "risk",
       "type": "backend",
       "label": "risk",
-      "sublabel": "position sizing + risk",
+      "sublabel": "포지션 사이징 + 리스크",
       "tag": "Phase 8",
       "pos": [
         580,
@@ -126,7 +126,7 @@
       "id": "broker_paper",
       "type": "backend",
       "label": "broker / paper",
-      "sublabel": "simulated execution",
+      "sublabel": "모의 체결",
       "tag": "Phase 13",
       "pos": [
         760,
@@ -141,7 +141,7 @@
       "id": "broker_live",
       "type": "security",
       "label": "broker / live",
-      "sublabel": "kill switch + approval",
+      "sublabel": "kill switch + 승인",
       "tag": "Phase 13",
       "pos": [
         760,
@@ -171,7 +171,7 @@
       "id": "trade_journal",
       "type": "database",
       "label": "trade_journal",
-      "sublabel": "trades + outcomes",
+      "sublabel": "거래 + 결과 기록",
       "tag": "Phase 3",
       "pos": [
         940,
@@ -186,7 +186,7 @@
       "id": "learning",
       "type": "backend",
       "label": "learning",
-      "sublabel": "offline model training",
+      "sublabel": "오프라인 모델 학습",
       "tag": "Phase 9",
       "pos": [
         940,
@@ -201,7 +201,7 @@
       "id": "evolution",
       "type": "backend",
       "label": "evolution",
-      "sublabel": "new model candidates",
+      "sublabel": "신규 모델 후보",
       "tag": "Phase 11",
       "pos": [
         1140,
@@ -216,7 +216,7 @@
   "boundaries": [
     {
       "kind": "security-group",
-      "label": "requires kill switch clear + explicit human approval",
+      "label": "kill switch 해제 + 명시적 사람 승인 필요",
       "wraps": [
         "broker_live"
       ],
@@ -224,7 +224,7 @@
     },
     {
       "kind": "region",
-      "label": "offline learning loop (reads recorded history only)",
+      "label": "오프라인 학습 루프 (기록된 이력만 읽음)",
       "wraps": [
         "learning",
         "evolution"
@@ -254,7 +254,7 @@
     {
       "from": "decision",
       "to": "risk",
-      "label": "signal",
+      "label": "신호",
       "labelAt": [
         565,
         338
@@ -263,24 +263,24 @@
     {
       "from": "risk",
       "to": "broker_paper",
-      "label": "sized order"
+      "label": "사이즈 결정된 주문"
     },
     {
       "from": "risk",
       "to": "broker_live",
-      "label": "sized order",
+      "label": "사이즈 결정된 주문",
       "variant": "security"
     },
     {
       "from": "broker_paper",
       "to": "trade_journal",
-      "label": "records fills"
+      "label": "체결 기록"
     },
     {
       "from": "broker_live",
       "to": "trade_journal",
       "variant": "security",
-      "label": "records fills",
+      "label": "체결 기록",
       "labelAt": [
         915,
         458
@@ -290,14 +290,14 @@
       "from": "trade_journal",
       "to": "storage",
       "variant": "dashed",
-      "label": "impl. by storage",
+      "label": "storage가 구현",
       "labelDx": 46
     },
     {
       "from": "trade_journal",
       "to": "learning",
       "variant": "dashed",
-      "label": "recorded history",
+      "label": "기록된 이력",
       "labelAt": [
         1010,
         458
@@ -311,26 +311,26 @@
   "cards": [
     {
       "dot": "cyan",
-      "title": "Two independent read paths",
+      "title": "독립적인 두 읽기 경로",
       "items": [
-        "Regime and Prediction both read from data_infra directly",
-        "Neither depends on the other; Decision is where they first meet"
+        "Regime과 Prediction은 둘 다 data_infra에서 직접 읽습니다",
+        "서로 의존하지 않으며, Decision에서 처음 합쳐집니다"
       ]
     },
     {
       "dot": "rose",
-      "title": "Never skips the gate",
+      "title": "게이트를 절대 건너뛰지 않음",
       "items": [
-        "broker_live only fires past kill switch + safety_gate + explicit approval",
-        "risk never calls a broker directly \u2014 sizing and execution are separate modules"
+        "broker_live는 kill switch + safety_gate + 명시적 승인을 통과해야만 실행됩니다",
+        "risk는 브로커를 직접 호출하지 않습니다 — 사이징과 실행은 별개 모듈입니다"
       ]
     },
     {
       "dot": "emerald",
-      "title": "storage is one shared persistence layer",
+      "title": "storage는 하나의 공유 영속성 계층",
       "items": [
-        "storage implements the repository protocols trade_journal and data_infra each define (DataRepository, TradeJournalRepository) \u2014 not a separate store per module",
-        "learning/evolution read storage only, and only offline; a new model must pass validation again before it can reach decision/predict"
+        "storage는 trade_journal과 data_infra가 각각 정의한 리포지토리 프로토콜을 구현합니다 — 모듈별 별도 저장소가 아닙니다",
+        "learning/evolution은 storage만, 그것도 오프라인으로만 읽습니다 — 새 모델은 검증을 다시 통과해야 합니다"
       ]
     }
   ]
