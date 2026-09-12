@@ -43,6 +43,34 @@
 
 **멀티 전략 페이퍼 트레이딩 러너 구현 완료 (ADR-0110)**: 사용자가 "멀티 전략 ㄱㄱ"로 착수 지시. 구현 전 `scripts/run_paper_trading_cycle.py`를 다시 정독하다가 정정할 점을 발견·공개: 이 세션이 이전에 "지금 매일 도는 건 Buy & Hold"라고 설명했었는데, 실제 코드는 `DriftPredictor` + `BaselineRuleDecisionAgent` + `DeterministicPositionSizer` + `DeterministicPortfolioRiskEngine`로 구성된 실제(단, 단순한 규칙 기반) 매일 의사결정 파이프라인을 돌리고 있었음 — 진짜 순수 Buy & Hold 함수(`broker.paper.us_longterm_runner.run_buy_and_hold_paper_session`)는 이미 만들어져 있었지만 이번까지 실제 스케줄에는 한 번도 연결된 적이 없었음. 이 부정확했던 설명을 정정하고, 신규 `orchestration.paper_strategies` 레지스트리에 이미 존재/검증된 컴포넌트만으로 구성된 전략 3개를 등록: `baseline_rule`(기존 로직 그대로, 동작 불변), `random_walk_baseline`(`RandomWalkPredictor` — "예측 불가능" 귀무가설 기준선, 통계적 대조군), `buy_and_hold`(드디어 이름으로 실행 가능하게 배선). 신규 `scripts/run_multi_strategy_paper_trading_cycle.py`가 `--strategies` 플래그로 지정된 N개 전략을 각각 완전히 독립된 `--paper-store-root/<이름>/` 하위 계좌·주문·체결·기록으로 돌림 — 트랙레코드가 서로 섞이거나 소급 적용되지 않음(이전 질문에 답했던 원칙을 코드로 실제 구현). 시세 카탈로그는 한 번만 읽어 모든 전략이 공유(Tiingo 호출 횟수가 전략 개수와 무관하다는 이전 답변을 코드로 증명). RULE 0.8 준수: 45개 팩터 후보는 실측 검증 결과가 없으므로 이 레지스트리에 아직 하나도 등록하지 않음 — 순수 인프라만 구축. `run_paper_trading_cycle.py`는 내부적으로 이 레지스트리를 쓰도록 리팩터링됐을 뿐 동작은 완전히 동일(회귀 테스트로 증명: 동일 입력에 대해 신규 멀티 전략 스크립트로 `baseline_rule` 하나만 돌린 결과가 기존 단일 전략 스크립트 결과와 정확히 일치). 새 테스트 18개(`test_paper_strategies.py` 11개, `test_run_multi_strategy_paper_trading_cycle_cli.py` 7개) 추가, 기존 `test_run_paper_trading_cycle_cli.py` 10개 전부 무변경 통과. 여전히 실제 GitHub Actions 일일 스케줄(`paper_trading_cycle.yml`)은 손대지 않음 — 멀티 전략 스크립트를 실제 스케줄에 연결할지는 별도로 사용자가 결정할 사항.
 
+### Completed (Session 37 계속 — 실제 커버리지 382/737 확인 + 진짜 상장폐지 판별 로직 추가, ADR-0126 Decision 5)
+
+사용자가 본인 Codespace에서 `check_wiki_prices_delisted_coverage.py`
+실제 실행 → **737개 후보 중 382개(52%)가 WIKI_PRICES.csv에 실거래
+데이터 존재**라는 실제 결과 받음(작업 브랜치에 `fetch_sp500_index_
+history.py`가 없어서, 이 브랜치를 `/tmp/wiki-check`에 별도 클론해서
+실행하는 방식으로 우회).
+
+이 세션이 즉시 정직성 문제 제기: "S&P 500에서 빠졌다"와 "상장폐지됐다"는
+다른 개념 — 지수 제외 사유 중 상당수는 시가총액 하락으로 지수에서만
+빠지고 회사는 지금도 거래소에서 멀쩡히 거래 중인 경우라, 그런 종목은
+이미 Tiingo/Stooq 같은 일반 API로 커버 가능해서 이 문제 해결에 새로
+기여하지 않음. 382라는 원시 숫자를 그대로 보고하면 과장이 됨(ADR-0123의
+"아직 막혀있다"는 정직한 결론, 그리고 이 ADR 자체의 Decision 1이
+LEH/BSC 등을 "가짜가 아니라 커버리지 밖"이라고 구분했던 것과 같은
+정직성 원칙).
+
+`check_wiki_prices_delisted_coverage.py`에 판별 로직 추가:
+`days_from_nearest_sp500_end_date`(실거래 마지막 날짜와 그 티커의
+가장 가까운 S&P 500 제외일 사이 간격, 재진입 이력이 있으면 여러 구간
+중 가장 가까운 것과 비교)와 `likely_genuine_delisting`(간격이 90일
+이내면 true — DELL 사례의 정확히 0일 간격 패턴과 같은 논리, 공개된
+휴리스틱이지 확정은 아님) 필드 추가. 요약에 `likely_genuine_delisting_
+count`/`likely_still_trading_after_index_removal_count` 분리 집계
+추가. 신규 테스트 2개(총 12개), 전체 스위트 2995개 통과 확인 후 커밋.
+382개의 실제 진짜/가짜 분류 결과는 사용자가 업데이트된 스크립트로
+재실행해야 나옴 — 재실행 명령어 안내 완료, 결과 대기 중.
+
 ### Completed (Session 37 계속 — WIKI Prices 대량 커버리지 체크 스크립트 추가, ADR-0126 Decision 4)
 
 사용자가 "1번 2번 진행"(유니버스 대조 + 실제 DB 반영)으로 지시. 이

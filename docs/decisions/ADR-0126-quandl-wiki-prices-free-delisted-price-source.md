@@ -115,12 +115,42 @@ reports which candidate tickers have any real rows at all, each one's
 real first/last date, and its recorded S&P 500 `end_date`(s) for
 comparison -- the same DELL-style "does the real data's last date line
 up with the real corporate event" check, done for every candidate at
-once instead of one grep at a time. This session ran it against the
-real, already-present `sp500_ticker_start_end.csv` to confirm it parses
-correctly (735/737-ish candidates load without error); running it
-against the actual `WIKI_PRICES.csv` still requires the account owner's
-own environment (this sandbox never had that file) -- the real
-coverage-count results are pending that run.
+once instead of one grep at a time.
+
+**Real result, run by the account owner against their own downloaded
+`WIKI_PRICES.csv`: 382 of the 737 candidate tickers (52%) have real
+(volume > 0) rows.** Run via a fresh clone of this branch
+(`git clone --branch ... /tmp/wiki-check`) since the account owner's own
+working branch predates this project's `fetch_sp500_index_history.py`/
+`sp500_index_constituent_history.py` modules.
+
+## Decision 5 -- "Removed from the S&P 500" is not the same claim as "delisted"; classify before trusting the raw count
+
+382/737 overstates the population this project actually needed solved.
+A large share of index removals are a company's market cap simply
+falling below the index threshold -- the company keeps trading on its
+exchange for years afterward, and is therefore already fully coverable
+by any ordinary current-data provider (Tiingo/Stooq). Only a removal
+that coincides with the company actually disappearing (acquired,
+bankrupt, taken private -- the `DELL` pattern) is the genuine
+survivorship-bias case this project cannot otherwise get real prices
+for. Reporting the raw 382 figure without this distinction would
+overstate what was actually found, the same overclaiming discipline
+`ADR-0123`'s honest "still blocked" conclusion and this ADR's own
+Decision 1 (explicitly separating "confirmed present" from "coverage
+gap, not fabrication" for `LEH`/`BSC`/etc.) already established.
+
+`check_wiki_prices_delisted_coverage.py` now also reports, per covered
+ticker, `days_from_nearest_sp500_end_date` (the minimum gap, across
+every recorded `end_date` interval for that ticker, between the real
+data's own last trading date and that `end_date`) and
+`likely_genuine_delisting` (`true` when that gap is <= 90 days -- a
+disclosed heuristic threshold, not a certainty, matching the exact
+`DELL` pattern of a 0-day gap). The summary now separately counts
+`likely_genuine_delisting_count` vs.
+`likely_still_trading_after_index_removal_count`. The account owner's
+real 382-ticker breakdown by this classification is pending a re-run
+with this update.
 
 ## Consequences
 
@@ -177,14 +207,15 @@ coverage-count results are pending that run.
 
 ## Tests
 
-21 new tests total: 11 in `tests/data_infra/test_convert_quandl_wiki_
+23 new tests total: 11 in `tests/data_infra/test_convert_quandl_wiki_
 prices_to_file_import_csv.py`, using fixture rows shaped exactly like
 the real `DELL`/`AAPL` rows the account owner reported this session --
 including one true end-to-end test that pipes this script's output
 directly into `scripts/import_external_market_data.py`, proving the
-two scripts' schemas actually agree in practice; 10 in
+two scripts' schemas actually agree in practice; 12 in
 `tests/data_infra/test_check_wiki_prices_delisted_coverage.py` for the
-bulk coverage-check script (Decision 4).
+bulk coverage-check script and its genuine-delisting classification
+(Decisions 4-5).
 
 ## Status of Implementation at Time of This ADR
 
@@ -192,8 +223,10 @@ bulk coverage-check script (Decision 4).
 `scripts/check_wiki_prices_delisted_coverage.py` (both new, no network
 call, pure CSV transforms). No changes to `data_infra/providers/
 file_import.py` or `scripts/import_external_market_data.py` -- both
-already supported this exact workflow. The real bulk coverage numbers
-(how many of the 737 ever-removed S&P 500 tickers this dataset
-actually covers) are pending the account owner running `check_wiki_
-prices_delisted_coverage.py` against their own downloaded
-`WIKI_PRICES.csv`.
+already supported this exact workflow.
+
+Real bulk result (account owner's own environment, this session): of
+737 ever-removed S&P 500 tickers, **382 (52%) have real price rows** in
+the downloaded `WIKI_PRICES.csv`. The finer genuine-delisting-vs-
+still-trading breakdown (Decision 5) is pending a re-run with that
+classification added.

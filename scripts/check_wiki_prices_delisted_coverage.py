@@ -21,6 +21,27 @@ and the ticker's own recorded S&P 500 `end_date`(s) for comparison
 its real LBO close, is itself corroborating evidence -- a caller
 should look at this, not just trust a nonzero row count blindly).
 
+**"Removed from the S&P 500" is NOT the same thing as "delisted from
+its exchange."** A large fraction of index removals are simply a
+company's market cap falling below the index's threshold -- the
+company keeps trading on its exchange for years afterward, and is
+already fully coverable by any ordinary current-data provider (Tiingo,
+Stooq, ...). Only a removal that coincides with the company actually
+disappearing (acquired, bankrupt, taken private) is the genuine
+survivorship-bias case this project cannot otherwise get real prices
+for. This script distinguishes the two with a disclosed heuristic:
+`days_from_nearest_sp500_end_date` is the minimum, across every
+`end_date` interval recorded for that ticker (a ticker can leave and
+re-enter), of the gap in days between the real WIKI data's own last
+trading date and that `end_date`. `likely_genuine_delisting` is `true`
+when that gap is <= 90 days -- close enough that the real price data
+stopping and the index removal plausibly reflect the same underlying
+event (the exact pattern confirmed by hand for `DELL`: real data ends
+2013-10-29, S&P `end_date` 2013-10-29, gap 0). This is a heuristic
+threshold, not a certainty -- a caller who needs to know for sure
+should still look at the specific ticker's own dates, exactly as this
+session did for `DELL` before trusting it.
+
 Usage:
     python3 scripts/check_wiki_prices_delisted_coverage.py \\
         --sp500-intervals-csv ./data/sp500_ticker_start_end.csv \\
@@ -34,6 +55,7 @@ import argparse
 import csv
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -41,6 +63,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from data_infra.providers.sp500_index_constituent_history import parse_ticker_intervals  # noqa: E402
 
 _SOURCE_REQUIRED_COLUMNS = ("ticker", "date", "volume")
+_GENUINE_DELISTING_GAP_DAYS = 90
 
 
 def _removed_tickers_with_end_dates(intervals) -> dict[str, list[str]]:
@@ -102,17 +125,27 @@ def main(argv: list[str] | None = None) -> int:
     per_ticker_report = {}
     for ticker in covered:
         dates = sorted(real_dates_by_ticker[ticker])
+        last_real_date = date.fromisoformat(dates[-1])
+        end_dates = sorted(end_dates_by_ticker[ticker])
+        gap_days = min(abs((last_real_date - date.fromisoformat(d)).days) for d in end_dates)
         per_ticker_report[ticker] = {
             "real_row_count": len(dates),
             "first_real_date": dates[0],
             "last_real_date": dates[-1],
-            "sp500_end_dates": sorted(end_dates_by_ticker[ticker]),
+            "sp500_end_dates": end_dates,
+            "days_from_nearest_sp500_end_date": gap_days,
+            "likely_genuine_delisting": gap_days <= _GENUINE_DELISTING_GAP_DAYS,
         }
+
+    genuine_delisting_count = sum(1 for r in per_ticker_report.values() if r["likely_genuine_delisting"])
 
     report = {
         "candidate_ticker_count": len(candidates),
         "covered_ticker_count": len(covered),
         "not_covered_ticker_count": len(not_covered),
+        "likely_genuine_delisting_count": genuine_delisting_count,
+        "likely_still_trading_after_index_removal_count": len(covered) - genuine_delisting_count,
+        "genuine_delisting_gap_days_threshold": _GENUINE_DELISTING_GAP_DAYS,
         "covered_tickers": per_ticker_report,
         "not_covered_tickers": not_covered,
     }
@@ -121,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Candidate (ever-removed-from-S&P-500) tickers checked: {len(candidates)}")
     print(f"Covered (real volume > 0 rows found) in WIKI Prices: {len(covered)}")
+    print(f"  Of those, likely GENUINE delistings (real data ends within {_GENUINE_DELISTING_GAP_DAYS} days of the S&P removal): {genuine_delisting_count}")
+    print(f"  Of those, likely just index removal (company kept trading afterward): {len(covered) - genuine_delisting_count}")
     print(f"Not covered: {len(not_covered)}")
     print(f"Full report written to: {args.out}")
     return 0

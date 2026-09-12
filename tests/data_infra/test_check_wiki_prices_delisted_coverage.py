@@ -77,6 +77,58 @@ class TestCheckWikiPricesDelistedCoverage:
         assert "DELL" in report["covered_tickers"]
         assert report["covered_tickers"]["DELL"]["last_real_date"] == "2013-10-29"
         assert report["covered_tickers"]["DELL"]["sp500_end_dates"] == ["2013-10-29"]
+        assert report["covered_tickers"]["DELL"]["days_from_nearest_sp500_end_date"] == 0
+        assert report["covered_tickers"]["DELL"]["likely_genuine_delisting"] is True
+        assert report["likely_genuine_delisting_count"] == 1
+        assert report["likely_still_trading_after_index_removal_count"] == 0
+
+    def test_data_continuing_long_after_index_removal_is_not_classified_genuine(self, tmp_path) -> None:
+        """A ticker removed from the S&P 500 for falling below the
+        market-cap threshold, but that kept trading for years afterward,
+        must not be counted as a genuine delisting -- it's already
+        coverable by any ordinary current-data provider."""
+        module = _load_script()
+        intervals_csv = tmp_path / "sp500_ticker_start_end.csv"
+        _write_intervals_csv(intervals_csv, [{"ticker": "SMALLCAP", "start_date": "2000-01-01", "end_date": "2010-01-01"}])
+        wiki_csv = tmp_path / "WIKI_PRICES.csv"
+        _write_wiki_csv(
+            wiki_csv,
+            [
+                _wiki_row("SMALLCAP", "2009-12-31", "1000.0"),
+                _wiki_row("SMALLCAP", "2017-06-15", "2000.0"),  # still trading, years after index removal
+            ],
+        )
+        out = tmp_path / "report.json"
+
+        module.main(["--sp500-intervals-csv", str(intervals_csv), "--wiki-prices-csv", str(wiki_csv), "--out", str(out)])
+
+        report = json.loads(out.read_text())
+        assert report["covered_tickers"]["SMALLCAP"]["likely_genuine_delisting"] is False
+        assert report["likely_genuine_delisting_count"] == 0
+        assert report["likely_still_trading_after_index_removal_count"] == 1
+
+    def test_genuine_delisting_gap_uses_the_nearest_of_multiple_end_dates(self, tmp_path) -> None:
+        """A ticker that left and re-entered the index (e.g. real AAL)
+        must be matched against whichever end_date its real data's own
+        end is actually close to, not just the earliest or latest one."""
+        module = _load_script()
+        intervals_csv = tmp_path / "sp500_ticker_start_end.csv"
+        _write_intervals_csv(
+            intervals_csv,
+            [
+                {"ticker": "AAL", "start_date": "1996-01-02", "end_date": "1997-01-15"},
+                {"ticker": "AAL", "start_date": "2015-03-23", "end_date": "2024-09-23"},
+            ],
+        )
+        wiki_csv = tmp_path / "WIKI_PRICES.csv"
+        _write_wiki_csv(wiki_csv, [_wiki_row("AAL", "1997-01-20", "1000.0")])  # close to the FIRST end_date only
+        out = tmp_path / "report.json"
+
+        module.main(["--sp500-intervals-csv", str(intervals_csv), "--wiki-prices-csv", str(wiki_csv), "--out", str(out)])
+
+        report = json.loads(out.read_text())
+        assert report["covered_tickers"]["AAL"]["days_from_nearest_sp500_end_date"] == 5
+        assert report["covered_tickers"]["AAL"]["likely_genuine_delisting"] is True
 
     def test_a_removed_ticker_with_no_real_rows_is_reported_not_covered(self, tmp_path) -> None:
         module = _load_script()
