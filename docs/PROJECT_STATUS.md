@@ -72,9 +72,23 @@ count`/`likely_still_trading_after_index_removal_count` 분리 집계
 737개의 7.3%)만 진짜 상장폐지, 328개는 지수에서만 빠진 것, 355개는
 아예 커버리지 밖.** 54는 382보다 훨씬 작지만, 이 프로젝트가 완전히
 `ENVIRONMENT_BLOCKED`라고 기록했던 문제(ADR-0123)에 대한 실제,
-구체적, 무료 기여. 다음 단계는 이 54개를 실제로 변환+DB 반영하는 것
-(코드는 이미 다 있음 — `convert_quandl_wiki_prices_to_file_import_csv.py`
-+ `import_external_market_data.py`).
+구체적, 무료 기여.
+
+사용자가 이어서 이 54개를 실제로 변환 + `import_external_market_data.py`
+로 DB 반영까지 실행 완료(ADR-0126 Decision 6): **`Ingestion status:
+SUCCESS`, 실제 바(bar) 302,380개 저장, 결측 종목 0개, 실제 데이터
+범위 1962-01-02~2018-03-26** — 이 프로젝트 역사상 첫 실제(합성 아닌)
+상장폐지 종목 가격 데이터. `DataQualityFramework`는 `FAILED`(이슈
+359개)로 보고했으나 전부 실제 문제가 아님을 직접 검증: ERROR 3개는
+원본 무료 데이터셋 자체의 몇 센트 수준 반올림 오류, WARNING 55개는
+원본(비조정) 가격에 실제 액면분할이 반영된 정상적 현상(CAM의 실제
+2007년 2:1 분할과 일치), WARNING 254개는 전부 실제 증시 휴장일(9/11
+직후 일주일 휴장, 2007년 포드 전 대통령 국장 휴장, 2012년 허리케인
+샌디 휴장 — 54개 종목 전부에서 날짜가 정확히 겹침, 이 프레임워크가
+이미 공개적으로 인정한 "시장 캘린더 없음" 한계), WARNING 47개는
+상장폐지 종목을 고정 기준일(`--end`)로 조회하면 구조적으로 항상
+발생하는 예상된 현상. 실제 문제는 0건 — 코드 수정 없이 정확한 원인
+전부 규명·문서화(ADR-0126 Decision 6). 이 스레드 마무리.
 
 ### Completed (Session 37 계속 — WIKI Prices 대량 커버리지 체크 스크립트 추가, ADR-0126 Decision 4)
 

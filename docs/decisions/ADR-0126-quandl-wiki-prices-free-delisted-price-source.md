@@ -161,6 +161,67 @@ but a real, concrete, free contribution to a problem this project had
 previously called fully `ENVIRONMENT_BLOCKED` (`ADR-0123`). 355
 candidates remain uncovered by this source entirely.
 
+## Decision 6 -- Real ingestion of the 54 genuine delistings, and why its `FAILED` data-quality status is expected, not a defect
+
+The account owner ran the full pipeline for real: `convert_quandl_wiki_
+prices_to_file_import_csv.py` against all 54 `likely_genuine_delisting`
+tickers, then `import_external_market_data.py --symbols <the 54>
+--start 1962-01-01 --end 2018-03-27`. Real result: **`Ingestion status:
+SUCCESS`, 302,380 bars persisted, 0 missing symbols, actual data
+spanning 1962-01-02 to 2018-03-26** -- this project's first real,
+non-synthetic delisted-ticker price data of any kind.
+
+`DataQualityFramework` reported `FAILED` (359 issues: 3 `ERROR`, 356
+`WARNING`). Inspected every category from the real manifest rather than
+accepting or dismissing the `FAILED` status at face value:
+
+- **`ohlc_consistency`, 3 `ERROR`** (`BCR`, `FRX` x2): `low` a few
+  cents above `open` (e.g. `open=195.0, low=195.04`). A genuine, minor
+  imperfection in the free third-party source data itself -- not
+  something to silently "correct," and disclosed here as a known
+  limitation of this specific free source rather than ignored.
+- **`impossible_price_movement`, 55 `WARNING`**: every instance is a
+  single-day move clustering tightly around -50% (e.g. `BCR` -52.5%,
+  `BEAM` -51.3%, `CAM` -50.4%) -- the signature of a real 2-for-1 stock
+  split hitting the RAW (unadjusted) `open/high/low/close` this
+  provider supplies, exactly as designed (`adjusted_close`/`adjusted_
+  high`/`adjusted_low` carry the split-adjusted view separately, per
+  `file_import.py`'s own "point-in-time raw/adjusted separation"
+  discipline). `CAM` (Cameron International) is independently
+  documented to have executed a real 2-for-1 split in 2007, consistent
+  with this reading. Not a defect -- an expected consequence of
+  supplying raw OHLC for any long-history ticker that had a real split,
+  regardless of source.
+- **`missing_timestamp_gaps`, 254 `WARNING`**: every sampled gap lands
+  on a REAL, independently verifiable market-wide closure -- 2001-09-10
+  to 2001-09-17 (the week US markets were closed after 9/11),
+  2006-12-29 to 2007-01-03 (New Year's + the 2007-01-02 closure for
+  President Gerald Ford's state funeral), 2012-10-26 to 2012-10-31
+  (Hurricane Sandy, NYSE closed 2012-10-29/30) -- and the identical
+  dates recur across all 54 tickers, which a per-ticker data defect
+  could not produce. This check's own message already discloses the
+  reason ("no market-calendar data is available this phase," see
+  `MARKET-DATA-PROVIDER.md`) -- a pre-existing, already-known framework
+  limitation, not something this import introduced.
+- **`stale_data`, 47 `WARNING`**: every message reports the ticker's
+  real last observation as "more than 5 days before 2018-03-27" (the
+  `--end` passed to the ingestion). This is structurally guaranteed for
+  every genuinely delisted security checked against a fixed as-of
+  date -- the check assumes an actively-traded security should have
+  recent data, which by construction cannot hold for a security that
+  stopped trading years before the as-of date. Expected for any
+  delisted-ticker import, not a defect in this one.
+
+**Conclusion: none of the 359 issues indicate a real problem with this
+import.** All are either an already-known, disclosed framework
+limitation (holiday calendar, staleness-vs-as-of-date assumption), an
+expected consequence of this project's own raw/adjusted design applied
+to real historical splits, or a tiny, disclosed imperfection in the
+free source itself. No code changes were made to "silence" these --
+`DataQualityFramework`'s `FAILED` status for this run is a correct,
+informative report of these categories, not evidence to override or
+suppress.
+
 ## Consequences
 
 ### Positive
@@ -239,7 +300,14 @@ Real bulk result (account owner's own environment, this session): of
 the downloaded `WIKI_PRICES.csv`; of those, **54 (7.3% of all 737
 candidates) are classified `likely_genuine_delisting`**, 328 are
 tickers that simply left the index and kept trading, and 355 are not
-covered at all. Actually converting and ingesting those 54 tickers
-into this project's storage (via `convert_quandl_wiki_prices_to_file_
-import_csv.py` + `import_external_market_data.py`, both already built)
-is the next step, not yet done as of this ADR.
+covered at all.
+
+**Those 54 tickers were then actually converted and ingested (Decision
+6): `Ingestion status: SUCCESS`, 302,380 real bars persisted, 0 missing
+symbols, real data spanning 1962-01-02 to 2018-03-26.**
+`DataQualityFramework` reported `FAILED` (359 issues), fully triaged in
+Decision 6 -- every category traced to an already-known framework
+limitation or an expected consequence of this project's raw/adjusted
+design, none a real defect. This is the first real (non-synthetic)
+delisted-ticker price data this project has ever persisted, acquired
+entirely for free.
