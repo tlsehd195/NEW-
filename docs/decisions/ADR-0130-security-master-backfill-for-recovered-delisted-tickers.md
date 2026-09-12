@@ -137,7 +137,16 @@ that the record is real and correctly `DELISTED`.
 `scripts/backfill_delisted_security_masters.py` (new, no network call,
 test-suite-exercised). No changes to `data_infra/universe.py`'s
 existing `build_security_masters`, `storage/data_repository.py`, or
-any backtest script. Running this against the real `wiki_prices_
-delisted_db` catalog for all 59 recovered tickers, to actually close
-the gap in the account owner's own environment, is the natural next
-step, not yet done as of this ADR.
+any backtest script.
+
+**Real result** (account owner's own environment, run against the
+actual `wiki_prices_delisted_db` catalog): all **59/59** recovered
+tickers backfilled successfully, zero skipped. Spot-checked dates
+confirm the derivation is correct: `DELL` `valid_to=2013-10-30` (its
+real last trade was 2013-10-29, `+1` day per Decision 2), `ATVI`
+`valid_to=2023-10-13` (real last trade 2023-10-12, matching Microsoft's
+real acquisition close date exactly), `WBA` `valid_to=2025-08-28` (real
+last trade 2025-08-27 -- the most recent date any `SecurityMaster` in
+this project has ever carried). `repository.get_security(...)` now
+returns a real, correctly-dated `DELISTED` record for all 59 tickers in
+that catalog.

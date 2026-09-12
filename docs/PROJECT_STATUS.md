@@ -43,6 +43,24 @@
 
 **멀티 전략 페이퍼 트레이딩 러너 구현 완료 (ADR-0110)**: 사용자가 "멀티 전략 ㄱㄱ"로 착수 지시. 구현 전 `scripts/run_paper_trading_cycle.py`를 다시 정독하다가 정정할 점을 발견·공개: 이 세션이 이전에 "지금 매일 도는 건 Buy & Hold"라고 설명했었는데, 실제 코드는 `DriftPredictor` + `BaselineRuleDecisionAgent` + `DeterministicPositionSizer` + `DeterministicPortfolioRiskEngine`로 구성된 실제(단, 단순한 규칙 기반) 매일 의사결정 파이프라인을 돌리고 있었음 — 진짜 순수 Buy & Hold 함수(`broker.paper.us_longterm_runner.run_buy_and_hold_paper_session`)는 이미 만들어져 있었지만 이번까지 실제 스케줄에는 한 번도 연결된 적이 없었음. 이 부정확했던 설명을 정정하고, 신규 `orchestration.paper_strategies` 레지스트리에 이미 존재/검증된 컴포넌트만으로 구성된 전략 3개를 등록: `baseline_rule`(기존 로직 그대로, 동작 불변), `random_walk_baseline`(`RandomWalkPredictor` — "예측 불가능" 귀무가설 기준선, 통계적 대조군), `buy_and_hold`(드디어 이름으로 실행 가능하게 배선). 신규 `scripts/run_multi_strategy_paper_trading_cycle.py`가 `--strategies` 플래그로 지정된 N개 전략을 각각 완전히 독립된 `--paper-store-root/<이름>/` 하위 계좌·주문·체결·기록으로 돌림 — 트랙레코드가 서로 섞이거나 소급 적용되지 않음(이전 질문에 답했던 원칙을 코드로 실제 구현). 시세 카탈로그는 한 번만 읽어 모든 전략이 공유(Tiingo 호출 횟수가 전략 개수와 무관하다는 이전 답변을 코드로 증명). RULE 0.8 준수: 45개 팩터 후보는 실측 검증 결과가 없으므로 이 레지스트리에 아직 하나도 등록하지 않음 — 순수 인프라만 구축. `run_paper_trading_cycle.py`는 내부적으로 이 레지스트리를 쓰도록 리팩터링됐을 뿐 동작은 완전히 동일(회귀 테스트로 증명: 동일 입력에 대해 신규 멀티 전략 스크립트로 `baseline_rule` 하나만 돌린 결과가 기존 단일 전략 스크립트 결과와 정확히 일치). 새 테스트 18개(`test_paper_strategies.py` 11개, `test_run_multi_strategy_paper_trading_cycle_cli.py` 7개) 추가, 기존 `test_run_paper_trading_cycle_cli.py` 10개 전부 무변경 통과. 여전히 실제 GitHub Actions 일일 스케줄(`paper_trading_cycle.yml`)은 손대지 않음 — 멀티 전략 스크립트를 실제 스케줄에 연결할지는 별도로 사용자가 결정할 사항.
 
+### Completed (Session 37 계속 — 59/59 백필 실측 성공, ADR-0130 마무리 + 세션 전체 잔여 작업 상태 정리)
+
+사용자가 실제 `wiki_prices_delisted_db`에 새 백필 스크립트 실행 →
+**59개 전부 성공, 스킵 0건.** 날짜 검증: DELL valid_to=2013-10-30(실제
+마지막 거래일 2013-10-29+1일), ATVI valid_to=2023-10-13(마이크로소프트
+실제 인수 종료일과 정확히 일치), WBA valid_to=2025-08-28(이 프로젝트가
+가진 `SecurityMaster` 중 가장 최근 날짜). `get_security()`로 59개
+전부 실제 DELISTED 레코드 조회 가능해짐. ADR-0130에 실측 결과 기록
+후 커밋(문서만).
+
+**"전부 진행" 요청에 대한 세션 최종 상태**: (1) 59개 종목 SecurityMaster
+백필 완료(ADR-0130), (2) Stooq 검증은 이전 시도에서 이미 안티봇+헤드리스
+탐지로 막힌 상태 그대로 변화 없음, (3) SEC 13F/FINRA 광범위 수집은
+사용자 본인 네트워크 환경이 필요해 보류(스킵 아님, 필요시 단계별 안내
+가능), (4) Live Trading 활성화는 실자본 리스크 때문에 사용자에게
+직접 확인 후 "지금은 보류"로 결정. 이 세션의 델리스팅 가격 데이터
+스레드(ADR-0122~0130) 전체 완결.
+
 ### Completed (Session 37 계속 — 59개 상장폐지 종목 SecurityMaster 백필, ADR-0130)
 
 사용자가 "전부 진행" 지시 → 5개 남은 작업 중 위험한 것(Live Trading
