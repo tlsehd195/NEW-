@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "aiinvest \u2014 Core Trading Decision Pipeline",
+    "subtitle": "Phases 1-14 module map, from data ingestion to trade execution and the offline learning loop",
+    "output": "docs/architecture/core-trading-pipeline.html",
+    "visual_preset": "blueprint",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "decision-path",
+        "label": "Live decision path",
+        "focus": [
+          "data_infra",
+          "regime",
+          "predict",
+          "decision",
+          "risk",
+          "broker_paper",
+          "broker_live"
+        ],
+        "note": "Every bar flows through Regime and Prediction independently, merges at Decision, then Risk sizes the position before either broker path."
+      },
+      {
+        "id": "safety-gate",
+        "label": "Live trading gate",
+        "focus": [
+          "risk",
+          "broker_live",
+          "storage",
+          "trade_journal"
+        ],
+        "note": "broker_live places real orders only past the kill switch + human approval gate \u2014 never on its own initiative."
+      },
+      {
+        "id": "learning-loop",
+        "label": "Offline learning loop",
+        "focus": [
+          "storage",
+          "trade_journal",
+          "learning",
+          "evolution"
+        ],
+        "note": "Learning and Evolution read recorded history only; nothing here writes back into the live decision path without passing validation again."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "data_infra",
+      "type": "external",
+      "label": "data_infra",
+      "sublabel": "ingestion + providers",
+      "tag": "Phase 1",
+      "pos": [
+        40,
+        260
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "regime",
+      "type": "backend",
+      "label": "regime",
+      "sublabel": "point-in-time-safe",
+      "tag": "Phase 5",
+      "pos": [
+        220,
+        140
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "predict",
+      "type": "backend",
+      "label": "predict",
+      "sublabel": "return / vol / conf",
+      "tag": "Phase 6",
+      "pos": [
+        220,
+        380
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "decision",
+      "type": "backend",
+      "label": "decision",
+      "sublabel": "trade signal decision",
+      "tag": "Phase 7",
+      "pos": [
+        400,
+        260
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "risk",
+      "type": "backend",
+      "label": "risk",
+      "sublabel": "position sizing + risk",
+      "tag": "Phase 8",
+      "pos": [
+        580,
+        260
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "broker_paper",
+      "type": "backend",
+      "label": "broker / paper",
+      "sublabel": "simulated execution",
+      "tag": "Phase 13",
+      "pos": [
+        760,
+        140
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "broker_live",
+      "type": "security",
+      "label": "broker / live",
+      "sublabel": "kill switch + approval",
+      "tag": "Phase 13",
+      "pos": [
+        760,
+        380
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "storage",
+      "sublabel": "DuckDB + Parquet",
+      "tag": "Phase 4",
+      "pos": [
+        940,
+        140
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "trade_journal",
+      "type": "database",
+      "label": "trade_journal",
+      "sublabel": "trades + outcomes",
+      "tag": "Phase 3",
+      "pos": [
+        940,
+        380
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "learning",
+      "type": "backend",
+      "label": "learning",
+      "sublabel": "offline model training",
+      "tag": "Phase 9",
+      "pos": [
+        940,
+        560
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "evolution",
+      "type": "backend",
+      "label": "evolution",
+      "sublabel": "new model candidates",
+      "tag": "Phase 11",
+      "pos": [
+        1140,
+        560
+      ],
+      "size": [
+        140,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "requires kill switch clear + explicit human approval",
+      "wraps": [
+        "broker_live"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "region",
+      "label": "offline learning loop (reads recorded history only)",
+      "wraps": [
+        "learning",
+        "evolution"
+      ],
+      "pad": 18
+    }
+  ],
+  "connections": [
+    {
+      "from": "data_infra",
+      "to": "regime",
+      "variant": "emphasis"
+    },
+    {
+      "from": "data_infra",
+      "to": "predict",
+      "variant": "emphasis"
+    },
+    {
+      "from": "regime",
+      "to": "decision"
+    },
+    {
+      "from": "predict",
+      "to": "decision"
+    },
+    {
+      "from": "decision",
+      "to": "risk",
+      "label": "signal",
+      "labelAt": [
+        565,
+        338
+      ]
+    },
+    {
+      "from": "risk",
+      "to": "broker_paper",
+      "label": "sized order"
+    },
+    {
+      "from": "risk",
+      "to": "broker_live",
+      "label": "sized order",
+      "variant": "security"
+    },
+    {
+      "from": "broker_paper",
+      "to": "trade_journal",
+      "label": "records fills"
+    },
+    {
+      "from": "broker_live",
+      "to": "trade_journal",
+      "variant": "security",
+      "label": "records fills",
+      "labelAt": [
+        915,
+        458
+      ]
+    },
+    {
+      "from": "trade_journal",
+      "to": "storage",
+      "variant": "dashed",
+      "label": "impl. by storage",
+      "labelDx": 46
+    },
+    {
+      "from": "trade_journal",
+      "to": "learning",
+      "variant": "dashed",
+      "label": "recorded history",
+      "labelAt": [
+        1010,
+        458
+      ]
+    },
+    {
+      "from": "learning",
+      "to": "evolution"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Two independent read paths",
+      "items": [
+        "Regime and Prediction both read from data_infra directly",
+        "Neither depends on the other; Decision is where they first meet"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Never skips the gate",
+      "items": [
+        "broker_live only fires past kill switch + safety_gate + explicit approval",
+        "risk never calls a broker directly \u2014 sizing and execution are separate modules"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "storage is one shared persistence layer",
+      "items": [
+        "storage implements the repository protocols trade_journal and data_infra each define (DataRepository, TradeJournalRepository) \u2014 not a separate store per module",
+        "learning/evolution read storage only, and only offline; a new model must pass validation again before it can reach decision/predict"
+      ]
+    }
+  ]
+}
