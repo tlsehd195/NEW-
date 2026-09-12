@@ -38,20 +38,26 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 _MAPPING_URL = "https://api.openfigi.com/v3/mapping"
-_BATCH_LIMIT_WITHOUT_API_KEY = 100
+
+# Session 37 (ADR-0131): the real, confirmed no-API-key batch limit is
+# 10 mapping jobs per request -- confirmed directly via OpenFIGI's own
+# real error body ("Request may only contain 10 mapping jobs.") after
+# a 29-CUSIP request returned HTTP 413. This module does NOT enforce
+# that limit itself (a hardcoded number here would be exactly the kind
+# of unverified-secondary-source guess this project's discipline
+# exists to avoid repeating) -- batching policy belongs to the caller
+# (`scripts/convert_sec_13f_filings_to_combined_csv.py`'s own
+# `--batch-size`, default 10), which can be re-tuned in one place if
+# OpenFIGI's real limit ever changes again.
 
 
 def build_mapping_request(cusips: Sequence[str]) -> list[dict]:
     """One request-body entry per CUSIP, in the SAME order they must be
     passed back to `parse_mapping_response` (OpenFIGI's response array
-    is positional, not keyed by the input value). Raises `ValueError`
-    if more than `_BATCH_LIMIT_WITHOUT_API_KEY` CUSIPs are given --
-    never silently truncates a caller's real list."""
-    if len(cusips) > _BATCH_LIMIT_WITHOUT_API_KEY:
-        raise ValueError(
-            f"{len(cusips)} CUSIPs given, but OpenFIGI's no-API-key tier accepts at most "
-            f"{_BATCH_LIMIT_WITHOUT_API_KEY} per request -- split into batches"
-        )
+    is positional, not keyed by the input value). Builds a request body
+    of whatever size `cusips` is -- batching into requests small enough
+    for OpenFIGI's real per-request limit is the caller's job, not
+    this pure function's."""
     return [{"idType": "ID_CUSIP", "idValue": cusip, "exchCode": "US"} for cusip in cusips]
 
 

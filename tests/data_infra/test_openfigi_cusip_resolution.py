@@ -42,13 +42,14 @@ class TestBuildMappingRequest:
         request = build_mapping_request(["AAA", "BBB", "CCC"])
         assert [r["idValue"] for r in request] == ["AAA", "BBB", "CCC"]
 
-    def test_rejects_a_batch_over_the_no_key_limit(self) -> None:
-        with pytest.raises(ValueError, match="100"):
-            build_mapping_request([f"CUSIP{i}" for i in range(101)])
-
-    def test_exactly_100_is_allowed(self) -> None:
-        request = build_mapping_request([f"CUSIP{i}" for i in range(100)])
-        assert len(request) == 100
+    def test_builds_a_request_of_any_size_batching_is_the_callers_job(self) -> None:
+        """This pure function never enforces OpenFIGI's real per-request
+        limit (confirmed 10, not the 100 secondary sources suggested,
+        ADR-0131) -- that policy lives in the CLI script's own
+        --batch-size, so a real limit change only needs updating in
+        one place."""
+        request = build_mapping_request([f"CUSIP{i}" for i in range(37)])
+        assert len(request) == 37
 
 
 class TestParseMappingResponse:

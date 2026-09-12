@@ -78,12 +78,26 @@ exchange, ADR, and currency-hedged share class (`ALLYEUR`, `ALLYGBP`,
 `ALLYCHF`, `GMZ`, ...). Adding `"exchCode":"US"` to the SAME request
 (confirmed with the identical real CUSIP, both with and without the
 filter, in the same session) collapses the response to exactly the
-one real US-primary listing. This is free with no API key (5,000
-requests/day; 100 CUSIPs per request), closing
+one real US-primary listing. This is free with no API key, closing
 `institutional_holding_models`'s second named gap ("this project's
 `SecurityMaster` has never carried a CUSIP field... guessing... a
 CUSIP-to-`security_id` mapping this project cannot independently
 verify would violate this project's discipline").
+
+**Real batch-size correction (found only by actually running this for
+real, not from documentation)**: secondary sources this session
+initially relied on claimed a 100-CUSIPs-per-request limit without an
+API key. A real request with the account owner's own 29 distinct
+CUSIPs (from the real Berkshire filing) returned `HTTP 413`, with a
+real, exact response body: `"Request may only contain 10 mapping
+jobs."` -- the true anonymous-tier limit is **10**, not 100 (the
+response also carried a separate `ratelimit-limit: 25` header, a
+per-60-second REQUEST-RATE cap, a different constraint from the
+per-request ITEM-COUNT cap). `build_mapping_request` was corrected to
+never hardcode either number itself -- batching is `scripts/convert_
+sec_13f_filings_to_combined_csv.py`'s own `--batch-size` (default now
+10, tunable), so a future real limit change needs updating in exactly
+one place, not two.
 
 `data_infra.providers.openfigi_cusip_resolution` (new) separates the
 pure request-building/response-parsing logic (tested against this real

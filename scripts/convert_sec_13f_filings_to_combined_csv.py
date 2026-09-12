@@ -58,13 +58,23 @@ from data_infra.providers.sec_13f_infotable_parser import (  # noqa: E402
 )
 
 _OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
-_BATCH_SIZE = 100
+
+# Session 37 (ADR-0131 follow-up): the no-API-key tier's real batch
+# limit is NOT the 100-per-request figure secondary documentation
+# suggested. Confirmed directly: a real 29-CUSIP request returned
+# HTTP 413 with the real, exact response body "Request may only
+# contain 10 mapping jobs." -- the true anonymous-tier limit is 10,
+# not 100. The response also carried `ratelimit-limit: 25` (per
+# 60-second window) -- a separate request-RATE cap, not a per-request
+# item-count cap. Exposed as --batch-size (not just hardcoded) so it
+# can still be tuned if OpenFIGI's real limit changes again.
+_DEFAULT_BATCH_SIZE = 10
 
 
-def _resolve_cusips(cusips: list[str], *, timeout: float) -> dict[str, str | None]:
+def _resolve_cusips(cusips: list[str], *, batch_size: int, timeout: float) -> dict[str, str | None]:
     resolved: dict[str, str | None] = {}
-    for start in range(0, len(cusips), _BATCH_SIZE):
-        batch = cusips[start : start + _BATCH_SIZE]
+    for start in range(0, len(cusips), batch_size):
+        batch = cusips[start : start + batch_size]
         body = json.dumps(build_mapping_request(batch)).encode("utf-8")
         req = urllib.request.Request(
             _OPENFIGI_URL, data=body, method="POST", headers={"Content-Type": "application/json"}
@@ -73,7 +83,8 @@ def _resolve_cusips(cusips: list[str], *, timeout: float) -> dict[str, str | Non
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 response_json = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            print(f"FATAL: OpenFIGI request failed with HTTP {exc.code}", file=sys.stderr)
+            error_body = exc.read().decode("utf-8", errors="replace")
+            print(f"FATAL: OpenFIGI request failed with HTTP {exc.code} for batch {batch}: {error_body}", file=sys.stderr)
             return {}
         except urllib.error.URLError as exc:
             print(f"FATAL: OpenFIGI request failed: {exc.reason}", file=sys.stderr)
@@ -88,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quarter-end", required=True, type=str, help="YYYY-MM-DD, the filing period this quarter's 13F reports cover (not parsed from the XML itself)")
     parser.add_argument("--out", required=True, type=Path, help="Where to write the combined CSV")
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds for the OpenFIGI request")
+    parser.add_argument("--batch-size", type=int, default=_DEFAULT_BATCH_SIZE, help=f"CUSIPs per OpenFIGI request (default: {_DEFAULT_BATCH_SIZE}; lower if you see HTTP 413)")
     args = parser.parse_args(argv)
 
     per_filer_totals: list[dict[str, int]] = []
@@ -107,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         print("FATAL: no CUSIPs found across the given input file(s)", file=sys.stderr)
         return 1
 
-    ticker_by_cusip = _resolve_cusips(all_cusips, timeout=args.timeout)
+    ticker_by_cusip = _resolve_cusips(all_cusips, batch_size=args.batch_size, timeout=args.timeout)
     if not ticker_by_cusip:
         return 1
 
