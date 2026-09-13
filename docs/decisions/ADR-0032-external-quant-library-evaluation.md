@@ -59,6 +59,40 @@ overlapping-window result as contaminated and non-evidentiary per
 own ADR once (1) and (2) are actually done, not assumed. Not installed;
 no code added.
 
+### Decision 2 addendum -- deeper check confirms the blocker, and adds a second one
+
+Read `shiyu-coder/Kronos`'s README (the maintained upstream, MIT-licensed)
+and its open issue tracker directly, rather than relying on secondary
+summaries:
+
+- **Requirement (1) above currently cannot be satisfied.** The README
+  states training used "over 45 global exchanges" but publishes no
+  cutoff date or exchange/symbol list anywhere in the repo or model
+  cards. The pre-training-leakage risk is not merely unverified, it is
+  presently unverifiable from public information. This is a stronger
+  blocker than originally recorded, not a weaker one.
+- **A second, independent reliability concern**: open issue
+  `shiyu-coder/Kronos#168` (filed 2025-10-25, no maintainer response as
+  of this check) reports that Kronos's temporal embeddings do not
+  distinguish exchange/session context -- "hour = 9" is encoded the same
+  way whether it means Tokyo's open or New York's pre-market -- which
+  the reporter argues introduces "structured noise" and degrades
+  transfer to markets outside the dominant training distribution. This
+  project's live-path exposure is Korean equities via `src/broker/toss`
+  (ADR-0027) and US equities (ADR-0028) -- exactly the kind of
+  non-dominant-market usage this issue flags as weakest.
+- License is MIT (no commercial-use obstacle). Input is OHLCV bars
+  (max context 512) plus separate timestamp series; `predict()` returns
+  a **point forecast** DataFrame, not a distribution -- `PredictionOutput`
+  needs `expected_volatility`/`uncertainty`/`confidence`, so a
+  `KronosPredictor` would need repeated stochastic sampling to derive
+  those, adding inference cost this evaluation did not size.
+- The upstream README itself states the reference pipeline is "a
+  simplified example and not a production-ready quantitative trading
+  system" -- the authors' own framing agrees with this ADR's caution.
+
+Conclusion unchanged (not adopted), on firmer evidence.
+
 ## Decision 3 -- Reject NautilusTrader
 
 NautilusTrader is a complete, independent algorithmic trading platform
