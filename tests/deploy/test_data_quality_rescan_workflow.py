@@ -34,16 +34,19 @@ def _run_text(steps: list[dict]) -> str:
     return "\n".join(step.get("run", "") for step in steps)
 
 
-def test_workflow_is_valid_yaml_with_manual_dispatch_only_no_schedule():
+def test_workflow_is_valid_yaml_with_a_weekly_schedule_and_manual_dispatch():
+    """ADR-0129 revised ADR-0128's original manual-only decision: at this
+    project's actual data scale, a full rescan is cheap enough to run
+    weekly (defense-in-depth), timed before the Saturday Learning Cycle
+    reads the same catalog. workflow_dispatch stays too, for an
+    immediate on-demand run."""
     doc = _load()
     # PyYAML parses the bare `on:` key as the boolean True.
     triggers = doc.get(True, doc.get("on"))
     assert triggers is not None
     assert "workflow_dispatch" in triggers
-    assert "schedule" not in triggers, (
-        "this is deliberately a manual catch-up operation, not a recurring job -- "
-        "see the workflow file's own header comment"
-    )
+    assert "schedule" in triggers
+    assert triggers["schedule"][0]["cron"] == "0 5 * * 6"
 
 
 def test_workflow_grants_only_read_permissions():
