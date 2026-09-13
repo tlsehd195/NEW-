@@ -16,6 +16,9 @@ dev = [
 portfolio-optimization = [
     "skfolio>=1.2.1",
 ]
+backtest-integrity-stats = [
+    "purgedcv>=0.1.6",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
