@@ -42,6 +42,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -70,26 +71,69 @@ _OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 # can still be tuned if OpenFIGI's real limit changes again.
 _DEFAULT_BATCH_SIZE = 10
 
+# Session 37 continued (14-filer real run, ADR-0131 follow-up): a real
+# 14-filer/multi-hundred-CUSIP run hit a real HTTP 429 ("Too many
+# requests, please try again later.") partway through -- the 25-
+# requests-per-60-seconds rate cap ADR-0131 already confirmed, not
+# previously exercised because the original single-filer (Berkshire,
+# 29 CUSIPs, 3 batches) run never came close to it. `--request-delay`
+# paces requests at roughly one every 2.5s (60s / 25 = 2.4s, rounded up
+# for a real safety margin) so a large multi-filer run never reaches
+# the cap in the first place; `--max-429-retries` retries (honoring a
+# real `Retry-After` response header when OpenFIGI sends one, else a
+# fixed 60s backoff) rather than treating a transient rate-limit
+# response as fatal, which would otherwise force discarding every
+# already-succeeded batch on a large run.
+_DEFAULT_REQUEST_DELAY_SECONDS = 2.5
+_DEFAULT_MAX_429_RETRIES = 3
+_DEFAULT_429_BACKOFF_SECONDS = 60.0
 
-def _resolve_cusips(cusips: list[str], *, batch_size: int, timeout: float) -> dict[str, str | None]:
+
+def _resolve_cusips(
+    cusips: list[str],
+    *,
+    batch_size: int,
+    timeout: float,
+    request_delay: float = _DEFAULT_REQUEST_DELAY_SECONDS,
+    max_429_retries: int = _DEFAULT_MAX_429_RETRIES,
+) -> dict[str, str | None]:
     resolved: dict[str, str | None] = {}
+    total_batches = (len(cusips) + batch_size - 1) // batch_size
     for start in range(0, len(cusips), batch_size):
+        if start > 0:
+            time.sleep(request_delay)
+        batch_num = start // batch_size + 1
         batch = cusips[start : start + batch_size]
         body = json.dumps(build_mapping_request(batch)).encode("utf-8")
-        req = urllib.request.Request(
-            _OPENFIGI_URL, data=body, method="POST", headers={"Content-Type": "application/json"}
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                response_json = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="replace")
-            print(f"FATAL: OpenFIGI request failed with HTTP {exc.code} for batch {batch}: {error_body}", file=sys.stderr)
-            return {}
-        except urllib.error.URLError as exc:
-            print(f"FATAL: OpenFIGI request failed: {exc.reason}", file=sys.stderr)
-            return {}
+        attempt = 0
+        while True:
+            req = urllib.request.Request(
+                _OPENFIGI_URL, data=body, method="POST", headers={"Content-Type": "application/json"}
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as response:
+                    response_json = json.loads(response.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as exc:
+                error_body = exc.read().decode("utf-8", errors="replace")
+                if exc.code == 429 and attempt < max_429_retries:
+                    attempt += 1
+                    retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                    wait_seconds = float(retry_after) if retry_after else _DEFAULT_429_BACKOFF_SECONDS
+                    print(
+                        f"WARNING: OpenFIGI rate limit hit for batch {batch} "
+                        f"(attempt {attempt}/{max_429_retries}), waiting {wait_seconds:.0f}s before retrying: {error_body}",
+                        file=sys.stderr, flush=True,
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+                print(f"FATAL: OpenFIGI request failed with HTTP {exc.code} for batch {batch}: {error_body}", file=sys.stderr, flush=True)
+                return {}
+            except urllib.error.URLError as exc:
+                print(f"FATAL: OpenFIGI request failed: {exc.reason}", file=sys.stderr, flush=True)
+                return {}
         resolved.update(parse_mapping_response(batch, response_json))
+        print(f"Resolved batch {batch_num}/{total_batches} ({len(batch)} CUSIPs)", file=sys.stderr, flush=True)
     return resolved
 
 
@@ -100,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True, type=Path, help="Where to write the combined CSV")
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds for the OpenFIGI request")
     parser.add_argument("--batch-size", type=int, default=_DEFAULT_BATCH_SIZE, help=f"CUSIPs per OpenFIGI request (default: {_DEFAULT_BATCH_SIZE}; lower if you see HTTP 413)")
+    parser.add_argument("--request-delay", type=float, default=_DEFAULT_REQUEST_DELAY_SECONDS, help=f"Seconds to wait between OpenFIGI requests (default: {_DEFAULT_REQUEST_DELAY_SECONDS}, paced under the real confirmed 25-requests-per-60s anonymous-tier rate limit; raise if you see HTTP 429)")
+    parser.add_argument("--max-429-retries", type=int, default=_DEFAULT_MAX_429_RETRIES, help=f"How many times to retry a single batch after HTTP 429 before giving up (default: {_DEFAULT_MAX_429_RETRIES})")
     args = parser.parse_args(argv)
 
     per_filer_totals: list[dict[str, int]] = []
@@ -119,7 +165,13 @@ def main(argv: list[str] | None = None) -> int:
         print("FATAL: no CUSIPs found across the given input file(s)", file=sys.stderr)
         return 1
 
-    ticker_by_cusip = _resolve_cusips(all_cusips, batch_size=args.batch_size, timeout=args.timeout)
+    ticker_by_cusip = _resolve_cusips(
+        all_cusips,
+        batch_size=args.batch_size,
+        timeout=args.timeout,
+        request_delay=args.request_delay,
+        max_429_retries=args.max_429_retries,
+    )
     if not ticker_by_cusip:
         return 1
 
