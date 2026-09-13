@@ -98,9 +98,11 @@ def _resolve_cusips(
     max_429_retries: int = _DEFAULT_MAX_429_RETRIES,
 ) -> dict[str, str | None]:
     resolved: dict[str, str | None] = {}
+    total_batches = (len(cusips) + batch_size - 1) // batch_size
     for start in range(0, len(cusips), batch_size):
         if start > 0:
             time.sleep(request_delay)
+        batch_num = start // batch_size + 1
         batch = cusips[start : start + batch_size]
         body = json.dumps(build_mapping_request(batch)).encode("utf-8")
         attempt = 0
@@ -121,16 +123,17 @@ def _resolve_cusips(
                     print(
                         f"WARNING: OpenFIGI rate limit hit for batch {batch} "
                         f"(attempt {attempt}/{max_429_retries}), waiting {wait_seconds:.0f}s before retrying: {error_body}",
-                        file=sys.stderr,
+                        file=sys.stderr, flush=True,
                     )
                     time.sleep(wait_seconds)
                     continue
-                print(f"FATAL: OpenFIGI request failed with HTTP {exc.code} for batch {batch}: {error_body}", file=sys.stderr)
+                print(f"FATAL: OpenFIGI request failed with HTTP {exc.code} for batch {batch}: {error_body}", file=sys.stderr, flush=True)
                 return {}
             except urllib.error.URLError as exc:
-                print(f"FATAL: OpenFIGI request failed: {exc.reason}", file=sys.stderr)
+                print(f"FATAL: OpenFIGI request failed: {exc.reason}", file=sys.stderr, flush=True)
                 return {}
         resolved.update(parse_mapping_response(batch, response_json))
+        print(f"Resolved batch {batch_num}/{total_batches} ({len(batch)} CUSIPs)", file=sys.stderr, flush=True)
     return resolved
 
 
