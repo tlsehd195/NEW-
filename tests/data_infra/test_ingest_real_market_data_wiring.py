@@ -173,6 +173,48 @@ class TestManifestReportsProvidersUsedAndMissingSymbols:
         assert "== 0" in assign_line
 
 
+class TestCriticalDataQualityFindingsGateExitCode:
+    """Session 37 (real-data DQ gap): previously this script's exit code
+    ignored `quality_run.status` entirely -- a CRITICAL-severity finding
+    (data corruption) could coexist with a `SUCCESS` ingestion status and
+    still exit 0, silently letting the corrupted bar reach Paper Trading
+    the same day. Must now also fail on CRITICAL_FAILURE."""
+
+    def test_manifest_reports_a_severity_breakdown(self) -> None:
+        keys = _manifest_keys(_tree())
+        assert {"data_quality_severity_counts", "data_quality_flags_persisted"} <= keys
+
+    def test_severity_breakdown_is_printed_to_stdout_not_only_the_manifest(self) -> None:
+        # The full per-issue detail only round-trips inside a GitHub
+        # Actions artifact behind Azure Blob Storage, which this
+        # environment's own egress proxy cannot reach -- the aggregate
+        # breakdown must be readable straight from CI logs instead.
+        assert "Data quality severity breakdown" in _source()
+
+    def test_return_statement_also_checks_quality_run_status(self) -> None:
+        source = _source()
+        return_line = next(
+            line for line in source.splitlines() if line.strip().startswith("return 0 if result.status.value")
+        )
+        assert "quality_run.status" in return_line
+        assert "CRITICAL_FAILURE" in return_line
+
+    def test_a_fatal_message_is_printed_on_critical_failure(self) -> None:
+        source = _source()
+        assert "CRITICAL_FAILURE" in source
+        assert "FATAL" in source
+
+    def test_quality_issues_are_persisted_to_the_repository_before_the_exit_code_check(self) -> None:
+        """`record_quality_issues` must run before the final `return` so
+        DuckDBDataRepository.get_bars() actually excludes the CRITICAL bar
+        for every consumer reading from this catalog after this script
+        exits -- not just get recorded in the JSON manifest."""
+        source = _source()
+        record_call_index = source.index("repository.record_quality_issues(")
+        return_index = source.index('return 0 if result.status.value == "SUCCESS"')
+        assert record_call_index < return_index
+
+
 class TestManifestReportsActiveCountAndSurvivorshipMitigationStatus:
     """Phase 31 (instruction section 18, questions 11/16/17): the
     manifest must distinguish "delisted_count is 0 because nothing was

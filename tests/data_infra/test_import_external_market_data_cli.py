@@ -116,6 +116,61 @@ class TestImportExternalMarketDataCli:
         assert failed[0]["status"] == "FAILED"
         assert failed[0]["error"] is not None
 
+    def test_a_critical_data_quality_finding_fails_the_run_and_excludes_the_bar(self, tmp_path) -> None:
+        """Session 37 (real-data DQ gap, ADR-0127): a non-finite close
+        (e.g. a malformed export) is a CRITICAL-severity `non_finite_value`
+        finding -- the run must now fail loudly (previously this script's
+        exit code ignored quality_run.status entirely), and the affected
+        bar must be excluded from get_bars() for every later reader of
+        this same catalog by default."""
+        module = _load_script()
+
+        data_dir = tmp_path / "external_csvs"
+        data_dir.mkdir()
+        _write_csv(
+            data_dir / "AAPL.csv",
+            [
+                {"date": "2010-01-04", "open": "10", "high": "11", "low": "9.5", "close": "10.5", "volume": "1000", "adj_close": "10.5"},
+                {"date": "2010-01-05", "open": "10.5", "high": "11.5", "low": "10", "close": "nan", "volume": "1100", "adj_close": "11"},
+            ],
+        )
+        db_path = tmp_path / "db"
+        exit_code = module.main(
+            [
+                "--source-name", "test_external_source",
+                "--data-dir", str(data_dir),
+                "--symbols", "AAPL",
+                "--start", "2010-01-01",
+                "--end", "2010-01-31",
+                "--db-path", str(db_path),
+            ]
+        )
+        assert exit_code == 1
+
+        manifest = json.loads((db_path / "import_manifest.json").read_text())
+        assert manifest["data_quality_status"] == "CRITICAL_FAILURE"
+        assert manifest["data_quality_severity_counts"]["CRITICAL"] >= 1
+        # The manifest itself still reports everything actually persisted
+        # (include_quality_rejected=True at the fetch site) -- it must
+        # never silently under-count because of the very rejection this
+        # run just recorded.
+        assert manifest["total_bars_persisted"] == 2
+
+        from storage.config import StorageConfig
+        from storage.data_repository import DuckDBDataRepository
+        from storage.engine import StorageEngine
+
+        engine = StorageEngine(StorageConfig(db_path))
+        repository = DuckDBDataRepository(engine)
+        from datetime import datetime, timezone
+
+        visible = repository.get_bars(
+            "AAPL", datetime(2010, 1, 1, tzinfo=timezone.utc), datetime(2010, 1, 31, tzinfo=timezone.utc),
+            as_of_time=datetime(2010, 1, 31, tzinfo=timezone.utc),
+        )
+        assert [b.timestamp.day for b in visible] == [4]
+        engine.close()
+
     def test_no_network_module_is_imported_by_this_script(self) -> None:
         source = _SCRIPT_PATH.read_text()
         for forbidden in ("import requests", "urllib.request", "http.client", "TiingoHttpTransport", "StooqHttpTransport"):

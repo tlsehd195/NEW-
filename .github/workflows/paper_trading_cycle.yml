@@ -19,6 +19,18 @@
 # found that always re-requesting the full ~2.5-year range exhausted
 # the provider's rate limit partway through, leaving 10 symbols
 # (including SPY) with zero bars that day.
+#
+# Session 37 (real-data DQ gap): "Ingest latest market data" below now
+# also fails this job (non-zero exit) when today's real ingestion finds
+# a CRITICAL-severity data quality issue (e.g. a non-finite price) --
+# previously the exit code only reflected ingestion status, so a
+# CRITICAL finding was recorded in the manifest and then silently never
+# acted on, letting the corrupted bar reach "Run paper trading cycle"
+# the same day. On that failure, "Run paper trading cycle" below is
+# correctly skipped (it is not `if: always()`) -- the flagged bar is
+# excluded from every future read of this catalog by default
+# (DuckDBDataRepository.get_bars(), Phase 1 spec section 3.1
+# QUALITY_REJECTED) but never deleted (Raw Immutability, section 17).
 name: Paper Trading Daily Cycle
 
 on:

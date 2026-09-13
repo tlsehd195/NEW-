@@ -119,7 +119,7 @@ from data_infra.providers.tiingo import TiingoDataProvider  # noqa: E402
 from data_infra.providers.tiingo_config import DEFAULT_TIINGO_CONFIG  # noqa: E402
 from data_infra.providers.tiingo_transport import TiingoHttpTransport  # noqa: E402
 from data_infra.quality import DataQualityFramework  # noqa: E402
-from data_infra.enums import SecurityStatus  # noqa: E402
+from data_infra.enums import DataQualityRunStatus, DataQualitySeverity, SecurityStatus  # noqa: E402
 from data_infra.universe import (  # noqa: E402
     BENCHMARK_SYMBOL,
     PILOT_UNIVERSE_V1,
@@ -201,11 +201,37 @@ def main() -> int:
         quality = DataQualityFramework()
         all_bars = []
         for symbol in symbols:
-            all_bars.extend(repository.get_bars(symbol, args.start, args.end, as_of_time=args.end))
+            # include_quality_rejected=True: this manifest's own bar
+            # counts/checksum/actual_data_start-end must reflect
+            # literally everything this run persisted, never silently
+            # under-reporting because an EARLIER run's CRITICAL flag
+            # happens to fall inside this run's own [--start, --end]
+            # window (get_bars() would otherwise exclude it by default --
+            # see DuckDBDataRepository.get_bars's own docstring).
+            all_bars.extend(
+                repository.get_bars(
+                    symbol, args.start, args.end, as_of_time=args.end, include_quality_rejected=True
+                )
+            )
         quality_run = quality.run(
             all_bars, dataset="phase24_real_ingestion", data_version="real-run",
             known_security_ids=set(symbols), as_of_now=args.end, corporate_actions=all_actions,
         )
+        # Session 37 (real-data DQ gap): previously this run's own DQ
+        # findings were written to the manifest and then never consulted
+        # again by anything -- a CRITICAL-severity finding (data
+        # corruption, e.g. a non-finite price) did not stop that bar from
+        # being served to Paper Trading the same day, and this script's
+        # own exit code ignored quality_run.status entirely. Persisting
+        # here implements Phase 1 spec section 3.1's QUALITY_REJECTED/
+        # QUALITY_FLAGGED states: DuckDBDataRepository.get_bars() now
+        # excludes a CRITICAL-flagged bar by default (see that method's
+        # own docstring) for every consumer reading from this same
+        # catalog, starting immediately after this call.
+        quality_rows_written = repository.record_quality_issues(quality_run)
+        severity_counts = {sev.value: 0 for sev in DataQualitySeverity}
+        for issue in quality_run.issues:
+            severity_counts[issue.severity.value] += 1
 
         checksum = compute_data_version(
             {
@@ -289,6 +315,8 @@ def main() -> int:
             "total_bars_persisted": len(all_bars),
             "data_quality_status": quality_run.status.value,
             "data_quality_issue_count": len(quality_run.issues),
+            "data_quality_severity_counts": severity_counts,
+            "data_quality_flags_persisted": quality_rows_written,
             "data_quality_issues": [
                 {"check": i.check, "severity": i.severity.value, "security_id": i.security_id, "message": i.message}
                 for i in quality_run.issues
@@ -311,9 +339,26 @@ def main() -> int:
         print(f"Historical universe membership available: {historical_universe_membership_available}")
         print(f"Corporate actions persisted: {len(all_actions)}")
         print(f"Data quality status: {quality_run.status.value} ({len(quality_run.issues)} issue(s))")
+        # Session 37: print the severity breakdown directly to the job's
+        # own stdout log -- the full per-issue manifest only round-trips
+        # as a GitHub Actions artifact behind Azure Blob Storage, which
+        # this environment's own egress proxy cannot reach (see
+        # docs/operations/MARKET-DATA-PROVIDER.md); this line is what
+        # makes "how bad was this run" answerable straight from CI logs.
+        print(f"Data quality severity breakdown: {severity_counts}")
+        print(f"Data quality flags newly persisted to catalog: {quality_rows_written}")
         print(f"Content checksum: {checksum}")
         print(f"Manifest written to: {manifest_path}")
-        return 0 if result.status.value == "SUCCESS" else 1
+        if quality_run.status == DataQualityRunStatus.CRITICAL_FAILURE:
+            print(
+                f"FATAL: data quality CRITICAL_FAILURE -- {severity_counts['CRITICAL']} CRITICAL "
+                "issue(s) found (e.g. non-finite price/volume). The affected bar(s) are now excluded "
+                "from DuckDBDataRepository.get_bars()'s default result (Phase 1 spec section 3.1, "
+                "QUALITY_REJECTED) -- Raw copies are retained, not deleted -- but this run itself must "
+                "still be treated as failed so it is never silently mistaken for a clean ingestion.",
+                file=sys.stderr,
+            )
+        return 0 if result.status.value == "SUCCESS" and quality_run.status != DataQualityRunStatus.CRITICAL_FAILURE else 1
     finally:
         engine.close()
 
