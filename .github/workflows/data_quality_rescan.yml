@@ -1,0 +1,119 @@
+# Retroactive + ongoing data quality rescan (Session 37, ADR-0128,
+# revised by ADR-0129 to add a weekly schedule alongside the original
+# workflow_dispatch).
+#
+# ADR-0127 made DuckDBDataRepository.get_bars() exclude a CRITICAL-
+# flagged bar by default, but only for bars a run actually quality-
+# checks -- the daily Paper Trading Cycle only ever checks the
+# INCREMENTAL window it just fetched (ADR-0085), so a bar already
+# sitting in the catalog from before ADR-0127 (or from any run whose
+# findings simply were never persisted) is never re-examined by any
+# later, ordinary run. This workflow runs scripts/rescan_data_quality.py
+# against the WHOLE existing market-data-catalog, closing that gap.
+#
+# ADR-0128 originally made this workflow_dispatch-only, reasoning a full
+# rescan every run would be wasteful/noisy. ADR-0129 revisited that: at
+# this project's actual data scale (a pilot/research universe, a few
+# years of daily bars -- tens of thousands of rows, not millions),
+# DataQualityFramework.run() over the ENTIRE catalog is computationally
+# trivial, and record_quality_issues() is idempotent (ON CONFLICT DO
+# NOTHING), so a recurring rescan costs almost nothing and gives ongoing
+# defense-in-depth beyond a one-time catch-up -- it also catches
+# anything a future edge case in the incremental checker might miss,
+# not just pre-ADR-0127 history. Scheduled weekly (Saturday 05:00 UTC --
+# after the week's last weekday Paper Trading run at Friday 22:00 UTC,
+# before the Learning Cycle's own Saturday 06:00 UTC run, so a bad bar
+# found here is already excluded before that week's retraining reads
+# the same catalog). `workflow_dispatch` is kept too, for an immediate,
+# on-demand run right after noticing an unusually bad cycle (e.g. an
+# unexpectedly high issue count) rather than waiting for Saturday.
+#
+# **What this does NOT do**: it does not touch the paper-trading-store
+# artifact (Trade Journal/decisions/candidate models) at all -- only the
+# market-data-catalog. It does not re-check corporate-action consistency
+# (split_consistency/dividend_consistency) or symbol_mismatch -- see
+# scripts/rescan_data_quality.py's own module docstring for why. It does
+# not retry or resolve a CRITICAL finding automatically -- a CRITICAL
+# result here means real corruption was found in already-persisted
+# history; the affected bar(s) are excluded from get_bars() by default
+# from this point on (Raw copy retained, not deleted), and this
+# workflow failing loudly is the expected, honest signal, not a bug to
+# suppress.
+name: Retroactive Data Quality Rescan
+
+on:
+  schedule:
+    - cron: "0 5 * * 6"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  MARKET_DATA_DIR: data/real_market_data
+
+jobs:
+  rescan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Restore market-data-catalog artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$MARKET_DATA_DIR"
+          ART_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.name=="market-data-catalog" and .expired==false)] | sort_by(.created_at) | last | .id // empty')
+          if [ -n "$ART_ID" ]; then
+            echo "Restoring market-data-catalog artifact $ART_ID"
+            curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ART_ID/zip" -o catalog.zip
+            unzip -o -q catalog.zip -d "$MARKET_DATA_DIR"
+            rm -f catalog.zip
+            # Same wrapped-zip defense as paper_trading_cycle.yml's
+            # identical restore step (ADR-0115, external review N-14).
+            if [ ! -f "$MARKET_DATA_DIR/catalog.duckdb" ]; then
+              SUBDIRS=$(find "$MARKET_DATA_DIR" -mindepth 1 -maxdepth 1 -type d)
+              SUBDIR_COUNT=$(printf '%s\n' "$SUBDIRS" | grep -c . || true)
+              if [ "$SUBDIR_COUNT" = "1" ] && [ -f "$SUBDIRS/catalog.duckdb" ]; then
+                echo "Artifact was wrapped in a subfolder ($SUBDIRS) -- flattening"
+                cp -r "$SUBDIRS"/. "$MARKET_DATA_DIR"/
+                rm -rf "$SUBDIRS"
+              fi
+            fi
+          else
+            echo "FATAL: no market-data-catalog artifact found -- the daily Paper Trading Cycle must run at least once first" >&2
+            exit 1
+          fi
+
+      - name: Rescan entire catalog for data quality
+        run: |
+          python3 scripts/rescan_data_quality.py \
+            --db-path "$MARKET_DATA_DIR" \
+            --out data_quality_rescan_report.json
+
+      - name: Upload updated market-data catalog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-data-catalog
+          path: ${{ env.MARKET_DATA_DIR }}
+          retention-days: 90
+
+      - name: Upload this run's rescan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-quality-rescan-report-${{ github.run_id }}
+          path: data_quality_rescan_report.json
+          retention-days: 90

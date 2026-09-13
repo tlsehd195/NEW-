@@ -92,6 +92,34 @@ DDL_STATEMENTS: tuple[str, ...] = (
         parquet_path TEXT NOT NULL
     )
     """,
+    # Session 37 (real-data DQ gap): DataQualityFramework.run() (Phase 1
+    # spec section 13) previously produced a DataQualityRun that nothing
+    # ever read back -- CRITICAL-severity findings did not stop a
+    # corrupted bar from being served to Paper Trading/backtest/Learning
+    # Cycle code. This table implements the Raw/Clean promotion states
+    # Phase 1 spec section 3.1 already documented (QUALITY_REJECTED /
+    # QUALITY_FLAGGED) but never wired up: DuckDBDataRepository.get_bars()
+    # consults it to exclude a CRITICAL-flagged (security_id, timestamp)
+    # from its default result (QUALITY_REJECTED -- not promoted to
+    # Clean), while the underlying Parquet bar itself is never deleted
+    # (Raw Immutability, section 17) and remains reachable via
+    # get_bars(..., include_quality_rejected=True) for audit. A
+    # WARNING/ERROR-severity finding is recorded here too (so a consumer
+    # can inspect/filter on it -- QUALITY_FLAGGED) but is NOT excluded by
+    # default, matching section 3.1's own documented distinction.
+    """
+    CREATE TABLE IF NOT EXISTS data_quality_flags (
+        security_id TEXT NOT NULL,
+        timestamp TIMESTAMP NOT NULL,
+        check_name TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        message TEXT NOT NULL,
+        validation_id TEXT NOT NULL,
+        dataset TEXT NOT NULL,
+        flagged_at TIMESTAMP NOT NULL,
+        PRIMARY KEY (security_id, timestamp, check_name)
+    )
+    """,
     # -- Phase 3: Trade Journal --
     """
     CREATE SEQUENCE IF NOT EXISTS decision_id_seq START 1

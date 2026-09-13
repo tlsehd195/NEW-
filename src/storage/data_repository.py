@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from data_infra.calendar import TradingCalendar
+from data_infra.enums import DataQualitySeverity
 from data_infra.models import (
     BenchmarkPoint,
     CorporateAction,
@@ -95,6 +96,12 @@ class DuckDBDataRepository:
         # add_corporate_action so a write is never served stale.
         self._bars_cache: dict[str, list[PriceBar]] = {}
         self._corporate_actions_cache: dict[str, list[CorporateAction]] = {}
+        # Which (per-security) timestamps carry a CRITICAL-severity
+        # data_quality_flags row -- see record_quality_issues/get_bars
+        # below. Cached the same way _bars_cache is (per-security, keyed
+        # off this instance's own reads), invalidated in
+        # record_quality_issues for exactly the securities it just wrote.
+        self._quality_rejections_cache: dict[str, set[datetime]] = {}
         # Session 36 continued addition: every `read_parquet(...)` call
         # over `self._price_bars_dir` below passes `union_by_name=true`.
         # `PriceBar`'s own columns have grown before (e.g. `vwap`/
@@ -161,15 +168,49 @@ class DuckDBDataRepository:
         self._bars_cache[security_id] = bars
         return bars
 
+    def _critical_rejected_timestamps(self, security_id: str) -> set[datetime]:
+        """Timestamps for which `security_id` has at least one
+        CRITICAL-severity `data_quality_flags` row -- Phase 1 spec
+        section 3.1's QUALITY_REJECTED state (a record that fails a
+        CRITICAL check is not promoted from Raw to Clean). Cached per
+        security like `_bars_for_security`; see `record_quality_issues`
+        for how this table is populated and invalidated."""
+        cached = self._quality_rejections_cache.get(security_id)
+        if cached is not None:
+            return cached
+        cur = self._engine.connection.execute(
+            "SELECT DISTINCT timestamp FROM data_quality_flags WHERE security_id = ? AND severity = ?",
+            [security_id, DataQualitySeverity.CRITICAL.value],
+        )
+        rejected = {from_utc_naive(row[0]) for row in cur.fetchall()}
+        self._quality_rejections_cache[security_id] = rejected
+        return rejected
+
     def get_bars(
-        self, security_id: str, start: datetime, end: datetime, as_of_time: datetime
+        self,
+        security_id: str,
+        start: datetime,
+        end: datetime,
+        as_of_time: datetime,
+        *,
+        include_quality_rejected: bool = False,
     ) -> list[PriceBar]:
+        """`include_quality_rejected=True` bypasses the QUALITY_REJECTED
+        filter below for audit/debugging -- the underlying Parquet bar is
+        never deleted (Raw Immutability, Phase 1 spec section 17), only
+        excluded from the default query view every real consumer
+        (Paper Trading, backtest, strategy_research, Learning Cycle) uses."""
         for name, value in (("start", start), ("end", end), ("as_of_time", as_of_time)):
             _require_aware(name, value)
         bars = self._bars_for_security(security_id)
         lo = bisect.bisect_left(bars, start, key=lambda b: b.timestamp)
         hi = bisect.bisect_right(bars, end, key=lambda b: b.timestamp)
-        return [b for b in bars[lo:hi] if b.available_time <= as_of_time]
+        result = [b for b in bars[lo:hi] if b.available_time <= as_of_time]
+        if not include_quality_rejected:
+            rejected = self._critical_rejected_timestamps(security_id)
+            if rejected:
+                result = [b for b in result if b.timestamp not in rejected]
+        return result
 
     def get_security(self, security_id: str, as_of_time: datetime) -> Optional[SecurityMaster]:
         _require_aware("as_of_time", as_of_time)
@@ -407,6 +448,53 @@ class DuckDBDataRepository:
             "ON CONFLICT (provenance_source_record_id) DO NOTHING",
             [row[c] for c in cols],
         )
+
+    def record_quality_issues(self, quality_run) -> int:
+        """Persists every issue from a `DataQualityFramework.run()` result
+        that is tied to a specific bar (`security_id` + `timestamp` both
+        set) into `data_quality_flags`, implementing Phase 1 spec section
+        3.1's QUALITY_REJECTED/QUALITY_FLAGGED states for the first time:
+        CRITICAL-severity rows make `get_bars()` exclude that bar by
+        default going forward (this call and every later run against the
+        same catalog, since this table round-trips with it); WARNING/ERROR
+        rows are recorded too, so a consumer can inspect/filter on them,
+        but are never excluded (QUALITY_FLAGGED stays promoted to Clean).
+        Dataset/security-level issues with no timestamp (e.g.
+        insufficient_coverage) are not stored here -- there is no single
+        bar to attach them to -- they remain visible in the caller's own
+        manifest/report instead. Returns how many rows were written (an
+        idempotent re-run of the same quality_run over an already-recorded
+        (security_id, timestamp, check_name) writes nothing new)."""
+        rows = [
+            (
+                issue.security_id,
+                to_utc_naive(issue.timestamp),
+                issue.check,
+                issue.severity.value,
+                issue.message,
+                quality_run.validation_id,
+                quality_run.dataset,
+                to_utc_naive(quality_run.timestamp),
+            )
+            for issue in quality_run.issues
+            if issue.security_id is not None and issue.timestamp is not None
+        ]
+        for row in rows:
+            self._engine.connection.execute(
+                "INSERT INTO data_quality_flags (security_id, timestamp, check_name, severity, "
+                "message, validation_id, dataset, flagged_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (security_id, timestamp, check_name) DO NOTHING",
+                list(row),
+            )
+        # DuckDB's INSERT ... ON CONFLICT DO NOTHING does not portably
+        # report how many rows it actually wrote per statement, so this
+        # counts attempted (deduplicated-by-key) rows instead -- good
+        # enough for a caller that only wants "did this add anything," not
+        # an exact idempotency-aware count.
+        written = len({(r[0], r[1], r[2]) for r in rows})
+        for security_id in {r[0] for r in rows if r[3] == DataQualitySeverity.CRITICAL.value}:
+            self._quality_rejections_cache.pop(security_id, None)
+        return written
 
     def add_universe_membership(self, membership: UniverseMembership) -> None:
         row = universe_membership_to_row(membership)

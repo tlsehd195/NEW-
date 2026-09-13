@@ -1,0 +1,116 @@
+# Scheduled Learning Engine retraining cycle (Session 37 continued).
+# Runs scripts/run_learning_cycle.py weekly against whatever real
+# closed/realized trades the daily Paper Trading Cycle
+# (paper_trading_cycle.yml) has accumulated in the shared
+# --paper-store catalog.
+#
+# This is deliberately separate from the daily cycle, not folded into
+# it: retraining is a distinct concern from executing that day's
+# trades, and a slower cadence matches how slowly real realized
+# experience actually accumulates (one trading day rarely closes many
+# positions). Weekly, the Saturday after the week's last weekday run,
+# gives every real trade from that week a chance to be picked up.
+#
+# **What this does NOT do**: it never touches Live Trading, order
+# submission, or the Trade Journal itself (scripts/run_learning_cycle.py
+# is read-only with respect to the Trade Journal -- see that script's
+# own module docstring). It only reads real Experience built from
+# already-recorded trades and writes new rows into the SAME
+# --paper-store catalog's own Learning Engine tables (candidate
+# models/evaluations/training datasets/experiments) -- the identical
+# "round-trip a DuckDB-backed directory as a GitHub Actions artifact"
+# pattern paper_trading_cycle.yml (ADR-0082) already established, just
+# for a second script that reads and extends the same catalog file. No
+# candidate model this produces is ever automatically approved or
+# deployed -- that still requires a human to review a run's own
+# evaluation metrics (see docs/PRODUCTION-READINESS-MATRIX.md).
+#
+# **Honest, expected failure mode**: scripts/run_learning_cycle.py
+# exits non-zero when the paper store has zero real closed/realized
+# trades to build Experience from yet (a totally empty journal) or
+# when the resulting dataset cannot actually be trained/validated
+# (INSUFFICIENT_SAMPLES) -- by design (RULE 0.8: never silently report
+# success when nothing was actually learned). Until enough real trades
+# have closed, seeing this run fail is that honest signal working as
+# intended, not a bug to silence.
+name: Learning Cycle (Weekly)
+
+on:
+  schedule:
+    # Saturday 06:00 UTC -- well after the week's last weekday Paper
+    # Trading run (Friday 22:00 UTC) has finished and uploaded its own
+    # updated paper-trading-store artifact.
+    - cron: "0 6 * * 6"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PAPER_STORE_DIR: data/paper_trading_store
+
+jobs:
+  run-cycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Restore previous paper-trading-store artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PAPER_STORE_DIR"
+          ART_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.name=="paper-trading-store" and .expired==false)] | sort_by(.created_at) | last | .id // empty')
+          if [ -n "$ART_ID" ]; then
+            echo "Restoring paper-trading-store artifact $ART_ID"
+            curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ART_ID/zip" -o store.zip
+            unzip -o -q store.zip -d "$PAPER_STORE_DIR"
+            rm -f store.zip
+            # Same wrapped-zip defense as paper_trading_cycle.yml's
+            # identical restore step (ADR-0115, external review N-14).
+            if [ ! -f "$PAPER_STORE_DIR/catalog.duckdb" ]; then
+              SUBDIRS=$(find "$PAPER_STORE_DIR" -mindepth 1 -maxdepth 1 -type d)
+              SUBDIR_COUNT=$(printf '%s\n' "$SUBDIRS" | grep -c . || true)
+              if [ "$SUBDIR_COUNT" = "1" ] && [ -f "$SUBDIRS/catalog.duckdb" ]; then
+                echo "Artifact was wrapped in a subfolder ($SUBDIRS) -- flattening"
+                cp -r "$SUBDIRS"/. "$PAPER_STORE_DIR"/
+                rm -rf "$SUBDIRS"
+              fi
+            fi
+          else
+            echo "FATAL: no paper-trading-store artifact found -- the daily Paper Trading Cycle must run at least once first" >&2
+            exit 1
+          fi
+
+      - name: Run learning cycle (retrain from real Experience)
+        run: |
+          python3 scripts/run_learning_cycle.py \
+            --paper-store "$PAPER_STORE_DIR" \
+            --out learning_cycle_report.json
+
+      - name: Upload updated paper-trading store
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-trading-store
+          path: ${{ env.PAPER_STORE_DIR }}
+          retention-days: 90
+
+      - name: Upload this run's report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: learning-cycle-report-${{ github.run_id }}
+          path: learning_cycle_report.json
+          retention-days: 90

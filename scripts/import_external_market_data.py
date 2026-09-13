@@ -53,7 +53,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from data_infra.enums import SecurityStatus  # noqa: E402
+from data_infra.enums import DataQualityRunStatus, DataQualitySeverity, SecurityStatus  # noqa: E402
 from data_infra.provider import IngestionRunner  # noqa: E402
 from data_infra.providers.file_import import FileImportConfig, LocalFileDataProvider  # noqa: E402
 from data_infra.quality import DataQualityFramework  # noqa: E402
@@ -121,11 +121,29 @@ def main(argv: list[str] | None = None) -> int:
         quality = DataQualityFramework()
         all_bars = []
         for symbol in symbols:
-            all_bars.extend(repository.get_bars(symbol, args.start, args.end, as_of_time=args.end))
+            # include_quality_rejected=True: see the identical comment in
+            # scripts/ingest_real_market_data.py -- this manifest's own
+            # bar counts/checksum must reflect literally everything this
+            # run persisted, never silently under-reporting because an
+            # earlier run's CRITICAL flag falls inside this run's window.
+            all_bars.extend(
+                repository.get_bars(
+                    symbol, args.start, args.end, as_of_time=args.end, include_quality_rejected=True
+                )
+            )
         quality_run = quality.run(
             all_bars, dataset="phase31_external_import", data_version="external-import-run",
             known_security_ids=set(symbols), as_of_now=args.end,
         )
+        # Session 37 (real-data DQ gap, ADR-0127): see the identical
+        # comment in scripts/ingest_real_market_data.py -- implements
+        # Phase 1 spec section 3.1's QUALITY_REJECTED/QUALITY_FLAGGED
+        # states so a CRITICAL finding actually stops the affected bar
+        # from reaching any real consumer of this same catalog.
+        quality_rows_written = repository.record_quality_issues(quality_run)
+        severity_counts = {sev.value: 0 for sev in DataQualitySeverity}
+        for issue in quality_run.issues:
+            severity_counts[issue.severity.value] += 1
 
         checksum = compute_data_version(
             {
@@ -190,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
             "total_bars_persisted": len(all_bars),
             "data_quality_status": quality_run.status.value,
             "data_quality_issue_count": len(quality_run.issues),
+            "data_quality_severity_counts": severity_counts,
+            "data_quality_flags_persisted": quality_rows_written,
             "data_quality_issues": [
                 {"check": i.check, "severity": i.severity.value, "security_id": i.security_id, "message": i.message}
                 for i in quality_run.issues
@@ -205,9 +225,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ACTUAL_DATA_END: {manifest['actual_data_end']}")
         print(f"Missing symbols (zero bars): {missing_symbols}")
         print(f"Data quality status: {quality_run.status.value} ({len(quality_run.issues)} issue(s))")
+        print(f"Data quality severity breakdown: {severity_counts}")
+        print(f"Data quality flags newly persisted to catalog: {quality_rows_written}")
         print(f"Content checksum: {checksum}")
         print(f"Manifest written to: {manifest_path}")
-        return 0 if result.status.value == "SUCCESS" else 1
+        if quality_run.status == DataQualityRunStatus.CRITICAL_FAILURE:
+            print(
+                f"FATAL: data quality CRITICAL_FAILURE -- {severity_counts['CRITICAL']} CRITICAL "
+                "issue(s) found. The affected bar(s) are now excluded from "
+                "DuckDBDataRepository.get_bars()'s default result (Phase 1 spec section 3.1, "
+                "QUALITY_REJECTED); Raw copies are retained, not deleted.",
+                file=sys.stderr,
+            )
+        return 0 if result.status.value == "SUCCESS" and quality_run.status != DataQualityRunStatus.CRITICAL_FAILURE else 1
     finally:
         engine.close()
 
