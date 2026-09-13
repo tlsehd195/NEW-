@@ -67,10 +67,23 @@ trusted (`start=100` returned exactly the next 100 filings, zero
 overlap with `start=0`). `--min-filing-date` (default `2009-06-01`,
 giving the trailing-6-month `insider_buying_score` window margin
 before the project's standard 2010-01-01 raw-IC start) drives
-`_fetch_paginated_filing_list`, which now walks `start` forward by
-`--page-size` each call until either that target date is reached or
-`--max-filings-per-symbol` (a safety cap against an extremely active
-filer's history) is hit.
+`_fetch_paginated_filing_list`.
+
+**Session 37 continued -- filing-list source switched to `data.sec.gov`**:
+a real overnight run failed on 84/87 symbols, every failure a timeout
+or 503 on the `/cgi-bin/browse-edgar` list endpoint above -- never on
+the per-filing detail fetches. `_fetch_paginated_filing_list` now
+fetches the filing LIST from `data.sec.gov/submissions/CIK....json`
+instead (`form4_filings_from_submissions`, `sec_edgar.py`), the same
+host/endpoint class `ingest_fundamentals_data.py` already used with
+zero failures across the same 87 symbols; per-filing detail fetches
+(`fetch_form4_index`/`fetch_form4_document`, never implicated in the
+real failures) are unchanged. This is Tier 2 (SEC's documented but
+here-unverified submissions shape) -- verify against one real symbol
+before trusting it for a full run, same discipline as everywhere else
+in this project. `--page-size`/`--start` no longer apply (that
+endpoint's own pagination, `filings.files` for older history via
+`submissions_older_filing_files`, replaces `start`-offset paging).
 """
 
 from __future__ import annotations
@@ -85,7 +98,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data_infra.provider import PermanentProviderError, TransientProviderError  # noqa: E402
-from data_infra.providers.sec_edgar import SecEdgarFundamentalsProvider, resolve_cik  # noqa: E402
+from data_infra.providers.sec_edgar import (  # noqa: E402
+    SecEdgarFundamentalsProvider,
+    form4_filings_from_submissions,
+    resolve_cik,
+    submissions_older_filing_files,
+)
 from data_infra.providers.sec_edgar_config import SecEdgarConfig  # noqa: E402
 from data_infra.providers.sec_edgar_transport import SecEdgarHttpTransport  # noqa: E402
 from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
@@ -103,7 +121,6 @@ _KNOWN_CIK_OVERRIDES = {"XOM": "0000034088"}
 
 _WWW_HOST = "https://www.sec.gov"
 _REQUEST_DELAY_SECONDS = 0.3
-_DEFAULT_PAGE_SIZE = 100
 # Margin before this project's standard 2010-01-01 raw-IC-screening
 # start date -- insider_buying_score looks back a trailing 6 months
 # from its own as_of_time, so history must reach a bit earlier than
@@ -122,46 +139,48 @@ def _parse_date(value: str) -> datetime:
 
 
 def _fetch_paginated_filing_list(
-    provider, cik: str, transport, *, page_size: int, min_filing_date: datetime, max_filings: int,
+    data_provider, cik: str, *, min_filing_date: datetime, max_filings: int,
 ) -> list[dict]:
-    """Walks EDGAR's Form 4 filing list backward in time using the
-    `start` offset (ADR-0089) -- see module docstring for why a single
-    un-paginated call is not enough, and for the real diagnostic that
-    corrected the original ADR-0088 design (`dateb` does not filter
-    this endpoint's `output=atom` response at all -- a real re-
-    ingestion run's raw IC screen came back with zero observations,
-    traced to every page coming back byte-for-byte identical to the
-    first; `start`, EDGAR's plain 0-based offset into the same newest-
-    first ordering, was then verified for real: `start=100` returned
-    exactly the next 100 filings with zero overlap against `start=0`).
-    Stops once the oldest filing seen so far is at or before
-    `min_filing_date`, once a page comes back with nothing new (either
-    genuinely exhausted history, or -- defensively, in case `start`'s
-    real behavior has some other boundary quirk not yet observed -- a
-    page that repeats prior filings), a partial page (fewer than
-    `page_size`, meaning EDGAR has no more history left), or once
-    `max_filings` accumulated filings is reached, whichever comes
-    first. Deduplicates by `accession_number` across pages regardless,
-    as a defensive measure that costs nothing when pages are already
-    disjoint (the normal, now-verified case)."""
+    """Session 37 continued -- rewritten to fetch the filing LIST from
+    `data.sec.gov/submissions/CIK##########.json` (`data_provider`'s
+    own default transport) instead of the old `/cgi-bin/browse-edgar`
+    atom feed, the real fix for the real overnight failure (every
+    observed timeout was on that old endpoint specifically -- see
+    `form4_filings_from_submissions`'s own docstring for the full
+    incident). One request gets `filings.recent` (typically the most
+    recent ~1000 filings of ANY type); if the oldest Form 4 seen there
+    is still newer than `min_filing_date` and SEC's response names
+    additional older-history files (`submissions_older_filing_files`,
+    a real, documented feature for prolific filers), those are fetched
+    one at a time, oldest-relevant-first, until `min_filing_date` is
+    reached, the files are exhausted, or `max_filings` is hit --
+    mirroring the old function's exact same three stopping conditions.
+    Deduplicates by `accession_number` regardless, the same defensive
+    measure the old function applied to CGI-bin pages."""
     all_filings: list[dict] = []
     seen_accessions: set[str] = set()
-    start = 0
-    while len(all_filings) < max_filings:
-        page = provider.fetch_form4_filing_list(cik, transport, count=page_size, start=start)
-        new_filings = [f for f in page if f["accession_number"] not in seen_accessions]
-        if not new_filings:
-            break
-        for f in new_filings:
-            seen_accessions.add(f["accession_number"])
-        all_filings.extend(new_filings)
-        oldest = min(f["filing_date"] for f in new_filings)
-        if oldest <= min_filing_date:
-            break
-        if len(page) < page_size:
-            break  # EDGAR returned a partial page -- history is exhausted
-        start += page_size
-    return all_filings
+
+    def _add(filings: list[dict]) -> None:
+        for f in filings:
+            if f["accession_number"] not in seen_accessions:
+                seen_accessions.add(f["accession_number"])
+                all_filings.append(f)
+
+    raw = data_provider.fetch_submissions(cik)
+    _add(form4_filings_from_submissions(raw))
+    oldest = min((f["filing_date"] for f in all_filings), default=None)
+
+    if (oldest is None or oldest > min_filing_date) and len(all_filings) < max_filings:
+        for file_name in submissions_older_filing_files(raw):
+            older_raw = data_provider.fetch_submissions_file(file_name)
+            _add(form4_filings_from_submissions(older_raw))
+            oldest = min((f["filing_date"] for f in all_filings), default=None)
+            if len(all_filings) >= max_filings:
+                break
+            if oldest is not None and oldest <= min_filing_date:
+                break
+
+    return all_filings[:max_filings]
 
 
 def failed_symbols_from(per_symbol_results) -> list[str]:
@@ -186,7 +205,6 @@ def main(argv=None) -> int:
         "--min-filing-date", type=_parse_date, default=_parse_date(_DEFAULT_MIN_FILING_DATE),
         help=f"YYYY-MM-DD. Paginate backward through each symbol's Form 4 history until a filing at or before this date is reached (default: {_DEFAULT_MIN_FILING_DATE}, ADR-0088 -- see module docstring for why a single un-paginated page is not enough).",
     )
-    parser.add_argument("--page-size", type=int, default=_DEFAULT_PAGE_SIZE, help=f"Filings requested per EDGAR page (default: {_DEFAULT_PAGE_SIZE})")
     parser.add_argument("--max-filings-per-symbol", type=int, default=_DEFAULT_MAX_FILINGS_PER_SYMBOL, help=f"Safety cap on total filings fetched per symbol regardless of --min-filing-date (default: {_DEFAULT_MAX_FILINGS_PER_SYMBOL})")
     parser.add_argument("--user-agent", required=True, help="Descriptive contact string SEC's fair-access policy requires, e.g. 'YourProjectName you@example.com' -- no default")
     parser.add_argument("--as-of", required=True, type=_parse_date, help="YYYY-MM-DD, stands in for this run's real-world timestamp (retrieved_at/ingestion_time) -- never derived from wall-clock time")
@@ -216,10 +234,19 @@ def main(argv=None) -> int:
     config = SecEdgarConfig(user_agent=args.user_agent)
     www_transport = SecEdgarHttpTransport(_WWW_HOST, user_agent=config.user_agent)
     # `config`'s own base_url (data.sec.gov) is never actually contacted
-    # by this script -- every Form 4 method takes its transport
+    # via `provider` -- every Form 4 detail method takes its transport
     # explicitly (module docstring) -- so `www_transport` also
     # satisfies the constructor's otherwise-unused `transport` argument.
     provider = SecEdgarFundamentalsProvider(config, www_transport)
+    # Session 37 continued: a SEPARATE provider instance whose default
+    # transport IS data.sec.gov, used only to call `fetch_submissions`
+    # for the filing-LIST step (`form4_filings_from_submissions`,
+    # `sec_edgar.py`) -- the real fix for the real overnight failure
+    # (every timeout was on the old `/cgi-bin/browse-edgar` list
+    # endpoint, never on the per-filing detail fetches below, which
+    # stay on `provider`/`www_transport` unchanged).
+    data_transport = SecEdgarHttpTransport(config.base_url, user_agent=config.user_agent)
+    data_provider = SecEdgarFundamentalsProvider(config, data_transport)
 
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
     repository = DuckDBInsiderRepository(engine)
@@ -259,7 +286,7 @@ def main(argv=None) -> int:
             filing_errors = []
             try:
                 filings = _fetch_paginated_filing_list(
-                    provider, cik, www_transport, page_size=args.page_size,
+                    data_provider, cik,
                     min_filing_date=args.min_filing_date, max_filings=args.max_filings_per_symbol,
                 )
             except (TransientProviderError, PermanentProviderError) as exc:
@@ -307,7 +334,6 @@ def main(argv=None) -> int:
             {
                 "symbols": sorted(symbols),
                 "min_filing_date": args.min_filing_date.date().isoformat(),
-                "page_size": args.page_size,
                 "max_filings_per_symbol": args.max_filings_per_symbol,
                 "per_symbol_transaction_counts": {r["security_id"]: r["transactions_persisted"] for r in per_symbol_results},
             }
@@ -327,7 +353,6 @@ def main(argv=None) -> int:
             "symbols": list(symbols),
             "symbol_count": len(symbols),
             "min_filing_date": args.min_filing_date.date().isoformat(),
-            "page_size": args.page_size,
             "max_filings_per_symbol": args.max_filings_per_symbol,
             "as_of": args.as_of.isoformat(),
             "cik_overrides": dict(cik_overrides),

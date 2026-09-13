@@ -130,6 +130,20 @@ class SecEdgarFundamentalsProvider:
             raise PermanentProviderError(f"unexpected SEC EDGAR response shape for CIK {cik} submissions: expected a JSON object")
         return response.body
 
+    def fetch_submissions_file(self, file_name: str) -> dict:
+        """`GET /submissions/{file_name}` -- fetches one of the OLDER-
+        history files `submissions_older_filing_files` names for a
+        prolific filer whose full history does not fit in the main
+        `fetch_submissions` response's `filings.recent`. `file_name`
+        must be exactly one of the names that call returned (e.g.
+        `CIK0000320193-submissions-001.json`) -- same host
+        (`data.sec.gov`) as `fetch_submissions`, Tier 2, unverified,
+        same caveat."""
+        response = self._transport.get(f"/submissions/{file_name}", timeout=self._config.timeout_seconds)
+        if not isinstance(response.body, dict):
+            raise PermanentProviderError(f"unexpected SEC EDGAR response shape for submissions file {file_name}: expected a JSON object")
+        return response.body
+
     def normalize_submissions(self, security_id: str, raw: dict) -> "SymbolMetadata":
         """Maps EDGAR's submissions response onto `SymbolMetadata` --
         the honest counterpart to `TiingoDataProvider.normalize_symbol_
@@ -501,6 +515,84 @@ class SecEdgarFundamentalsProvider:
             "requires_api_key": False,
             "configuration_version": self._config.configuration_version(),
         }
+
+
+def form4_filings_from_submissions(raw: dict) -> list[dict]:
+    """Extracts Form 4 filings from a real `data.sec.gov/submissions/
+    CIK##########.json` response's `filings.recent` parallel arrays
+    (`form`/`accessionNumber`/`filingDate`, SEC's documented shape).
+
+    **Session 37 continued -- added as a real fix for a real, observed
+    problem**: the account owner's own overnight run of `scripts/
+    ingest_insider_transactions.py` failed on 84/87 symbols, every
+    single failure a `timed out after 10.0s` (or one `HTTP 503`) on
+    `fetch_form4_filing_list`'s own `/cgi-bin/browse-edgar?...
+    output=atom` endpoint specifically -- never on the per-filing
+    `/Archives/edgar/data/.../index.json`/XML document fetches, which
+    had zero failures across the same run. The SAME account owner's
+    `ingest_fundamentals_data.py` run, calling the modern `data.sec.gov`
+    REST API for the exact same 87 symbols, had zero failures at all.
+    This function switches the filing-LIST step (only) to that same
+    proven-reliable host, while `fetch_form4_index`/`fetch_form4_
+    document` (the per-filing detail fetches, never implicated in the
+    real failures) are deliberately left unchanged.
+
+    **Honesty about evidence tier**: unlike `fetch_form4_filing_list`
+    (Tier 1 -- verified against a real atom response this session),
+    this function is Tier 2 -- built from `data.sec.gov`'s long-stable,
+    publicly documented submissions shape, never yet exercised against
+    a real response in this environment (blocked here, same as every
+    other `data.sec.gov` call). The account owner must verify it
+    against one real symbol's real response before trusting it for a
+    full run -- exactly the same discipline this project applied to
+    every other real external format.
+
+    Returns `{"accession_number", "filing_date"}` per Form 4 filing,
+    matching `fetch_form4_filing_list`'s own return shape exactly so
+    `_fetch_paginated_filing_list`'s caller needs no other change.
+    Skips any entry missing a required field rather than fabricating
+    one, the same discipline `normalize_form4_document` already
+    applies to incomplete filings.
+
+    Also accepts the shape of an OLDER-history file named in
+    `submissions_older_filing_files` -- SEC's real, documented format
+    puts the identical `form`/`accessionNumber`/`filingDate` parallel
+    arrays at the JSON TOP LEVEL for those files, rather than nested
+    under `filings.recent` as the main per-CIK response does; this
+    function auto-detects which shape it was given rather than
+    requiring the caller to know."""
+    recent = raw.get("filings", {}).get("recent") if "filings" in raw else raw
+    recent = recent or {}
+    forms = recent.get("form", [])
+    accessions = recent.get("accessionNumber", [])
+    dates = recent.get("filingDate", [])
+    result: list[dict] = []
+    for form, accession, date_str in zip(forms, accessions, dates):
+        if form != "4" or not accession or not date_str:
+            continue
+        try:
+            filing_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        result.append({"accession_number": accession, "filing_date": filing_date})
+    return result
+
+
+def submissions_older_filing_files(raw: dict) -> list[str]:
+    """Extracts the list of additional JSON file names
+    (`data.sec.gov/submissions/{name}`) SEC's submissions response
+    points to for a filer's OLDER history beyond what `filings.recent`
+    holds (real, documented behavior for prolific filers whose full
+    history does not fit in one response). Each returned file is
+    expected to carry the identical `form`/`accessionNumber`/
+    `filingDate` parallel-array shape `form4_filings_from_submissions`
+    parses, but at the JSON top level rather than nested under
+    `filings.recent` -- **also Tier 2, unverified**, same caveat as
+    `form4_filings_from_submissions`. Returns an empty list (never
+    raises) when a filer's full history already fits in `recent`, the
+    common case for this project's own universe."""
+    files = raw.get("filings", {}).get("files", [])
+    return [f["name"] for f in files if f.get("name")]
 
 
 def resolve_cik(ticker: str, ticker_map: dict) -> Optional[str]:
