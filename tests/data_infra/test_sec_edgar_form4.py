@@ -20,7 +20,11 @@ from __future__ import annotations
 
 from helpers import utc
 
-from data_infra.providers.sec_edgar import SecEdgarFundamentalsProvider
+from data_infra.providers.sec_edgar import (
+    SecEdgarFundamentalsProvider,
+    form4_filings_from_submissions,
+    submissions_older_filing_files,
+)
 from data_infra.providers.sec_edgar_config import SecEdgarConfig
 from data_infra.providers.sec_edgar_transport import SecEdgarTransportResponse
 
@@ -450,3 +454,76 @@ class TestNormalizeForm4Document:
         assert len(txns) == 2
         ids = {t.provenance.source_record_id for t in txns}
         assert len(ids) == 2
+
+
+class TestForm4FilingsFromSubmissions:
+    """Session 37 continued -- the real fix for the real overnight
+    failure (every timeout was on the old CGI-bin list endpoint, never
+    on per-filing detail fetches): `form4_filings_from_submissions`
+    parses `data.sec.gov/submissions/CIK....json`'s documented
+    `filings.recent` parallel-array shape instead. Fixture shape
+    matches SEC's own documented format (Tier 2 -- unverified in this
+    environment, same caveat the function's own docstring states)."""
+
+    @staticmethod
+    def _submissions(forms, accessions, dates) -> dict:
+        return {"filings": {"recent": {"form": forms, "accessionNumber": accessions, "filingDate": dates}}}
+
+    def test_filters_to_form_4_only(self) -> None:
+        raw = self._submissions(
+            forms=["10-K", "4", "8-K", "4"],
+            accessions=["0001-26-000001", "0001-26-000002", "0001-26-000003", "0001-26-000004"],
+            dates=["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"],
+        )
+        result = form4_filings_from_submissions(raw)
+        assert [f["accession_number"] for f in result] == ["0001-26-000002", "0001-26-000004"]
+
+    def test_parses_filing_date_as_utc(self) -> None:
+        raw = self._submissions(forms=["4"], accessions=["0001-26-000001"], dates=["2026-09-01"])
+        result = form4_filings_from_submissions(raw)
+        assert result[0]["filing_date"] == utc(2026, 9, 1)
+
+    def test_matches_fetch_form4_filing_list_return_shape(self) -> None:
+        raw = self._submissions(forms=["4"], accessions=["0001-26-000001"], dates=["2026-09-01"])
+        result = form4_filings_from_submissions(raw)
+        assert set(result[0].keys()) == {"accession_number", "filing_date"}
+
+    def test_entry_missing_accession_number_is_skipped_not_fabricated(self) -> None:
+        raw = self._submissions(forms=["4", "4"], accessions=["", "0001-26-000002"], dates=["2026-01-01", "2026-01-02"])
+        result = form4_filings_from_submissions(raw)
+        assert [f["accession_number"] for f in result] == ["0001-26-000002"]
+
+    def test_entry_with_unparseable_date_is_skipped_not_fabricated(self) -> None:
+        raw = self._submissions(forms=["4", "4"], accessions=["0001-26-000001", "0001-26-000002"], dates=["not-a-date", "2026-01-02"])
+        result = form4_filings_from_submissions(raw)
+        assert [f["accession_number"] for f in result] == ["0001-26-000002"]
+
+    def test_empty_recent_yields_no_filings_not_an_error(self) -> None:
+        assert form4_filings_from_submissions({"filings": {"recent": {}}}) == []
+
+    def test_missing_filings_key_yields_no_filings_not_an_error(self) -> None:
+        assert form4_filings_from_submissions({}) == []
+
+    def test_also_accepts_an_older_history_file_shape_top_level_arrays(self) -> None:
+        # SEC's real documented format: older-history files (named by
+        # submissions_older_filing_files) put the same arrays at the
+        # JSON top level, not nested under filings.recent.
+        raw = {"form": ["4"], "accessionNumber": ["0001-25-000001"], "filingDate": ["2025-01-01"]}
+        result = form4_filings_from_submissions(raw)
+        assert result == [{"accession_number": "0001-25-000001", "filing_date": utc(2025, 1, 1)}]
+
+
+class TestSubmissionsOlderFilingFiles:
+    def test_extracts_file_names(self) -> None:
+        raw = {"filings": {"files": [{"name": "CIK0000320193-submissions-001.json", "filingCount": 1000}]}}
+        assert submissions_older_filing_files(raw) == ["CIK0000320193-submissions-001.json"]
+
+    def test_no_older_files_yields_empty_list_not_an_error(self) -> None:
+        assert submissions_older_filing_files({"filings": {"recent": {}}}) == []
+
+    def test_missing_filings_key_yields_empty_list_not_an_error(self) -> None:
+        assert submissions_older_filing_files({}) == []
+
+    def test_entry_missing_name_is_skipped(self) -> None:
+        raw = {"filings": {"files": [{"filingCount": 1000}, {"name": "CIK0000320193-submissions-001.json"}]}}
+        assert submissions_older_filing_files(raw) == ["CIK0000320193-submissions-001.json"]

@@ -1,31 +1,30 @@
 """Real, executable tests for `_fetch_paginated_filing_list`
-(`scripts/ingest_insider_transactions.py`, ADR-0089) -- unlike
+(`scripts/ingest_insider_transactions.py`) -- unlike
 `test_ingest_insider_transactions_wiring.py`'s AST/source-text-only
 discipline (necessary for the rest of that script, which makes real
 network calls inside `main()`), this one function takes its
-`provider`/`transport` as plain arguments and makes no network call of
-its own, so it can be imported and exercised directly against a stub
+`data_provider` as a plain argument and makes no network call of its
+own, so it can be imported and exercised directly against a stub
 provider -- the same "import the module via spec_from_file_location,
 call one pure helper function, never call main()" pattern
 `test_run_long_horizon_validation_factor_wiring.py` already
 established for that script's own `_price_factor_factory` etc.
 
-**Why this needed a real behavioral test, not just AST checks**: this
-function's real bug surface (accumulation across pages, dedup by
-accession number, three different stopping conditions) cannot be
-verified by matching source text the way the rest of that script's
-simpler wiring can -- exactly the same reasoning
-`test_run_long_horizon_validation_factor_wiring.py`'s own docstring
-gives for testing the late-binding-closure behavior of its factory
-functions directly rather than trusting source-text matching alone.
-
-**ADR-0089 note**: this file originally keyed stub pages by a
-`before_date` string (ADR-0088's design). A real re-ingestion run
-proved EDGAR's `dateb` parameter does not filter this endpoint's atom
-response at all -- every "next page" request came back byte-for-byte
-identical to the first. `_fetch_paginated_filing_list` now walks a
-`start` integer offset instead (verified for real against AAPL's live
-filing history), so this file's stub keys by `start` instead."""
+**Session 37 continued -- rewritten for the real overnight-failure fix**:
+the account owner's own real overnight run of this script failed on
+84/87 symbols, every single failure a timeout or 503 on the OLD
+`/cgi-bin/browse-edgar?...output=atom` filing-list endpoint (ADR-0088/
+ADR-0089's own design) -- never on the per-filing detail fetches.
+`_fetch_paginated_filing_list` now fetches the filing list from
+`data.sec.gov/submissions/CIK....json` instead (the same host/endpoint
+class `ingest_fundamentals_data.py` already used with zero failures
+across the same 87 symbols), falling back to SEC's own documented
+older-history files (`submissions_older_filing_files`) only when the
+main response's `filings.recent` does not reach back far enough. This
+file's stub provider and fixtures were rewritten to match; the ADR-
+0088/ADR-0089 `start`-offset pagination behavior these tests used to
+cover no longer applies (that CGI-bin endpoint is no longer called by
+this function at all)."""
 
 from __future__ import annotations
 
@@ -44,140 +43,174 @@ def _load_script():
     return module
 
 
-def _filing(accession: str, filing_date) -> dict:
-    return {"accession_number": accession, "filing_date": filing_date, "filing_href": f"https://example.com/{accession}/"}
+def _submissions(entries: list[tuple], files: list[str] | None = None) -> dict:
+    """`entries` is a list of `(accession_number, filing_date_str, form)`
+    tuples, matching SEC's real `filings.recent` parallel-array shape."""
+    return {
+        "filings": {
+            "recent": {
+                "accessionNumber": [e[0] for e in entries],
+                "filingDate": [e[1] for e in entries],
+                "form": [e[2] for e in entries],
+            },
+            "files": [{"name": f} for f in (files or [])],
+        }
+    }
+
+
+def _older_file(entries: list[tuple]) -> dict:
+    """Older-history files put the same arrays at the JSON top level
+    (SEC's real documented shape), not nested under `filings.recent`."""
+    return {
+        "accessionNumber": [e[0] for e in entries],
+        "filingDate": [e[1] for e in entries],
+        "form": [e[2] for e in entries],
+    }
 
 
 class _StubProvider:
-    """Returns one pre-built page per call, keyed by the `start` offset
-    the caller passes -- `0` for the very first call, then whatever
-    the real function derives (`start += page_size` each time). Records
-    every call for assertions."""
+    """Records every call for assertions. `fetch_submissions` always
+    returns the one main response; `fetch_submissions_file` looks up
+    the requested older-history file by name."""
 
-    def __init__(self, pages_by_start: dict) -> None:
-        self._pages = pages_by_start
+    def __init__(self, main: dict, files: dict[str, dict] | None = None) -> None:
+        self._main = main
+        self._files = files or {}
         self.calls: list[tuple] = []
 
-    def fetch_form4_filing_list(self, cik, transport, *, count, start=0):
-        self.calls.append((cik, transport, count, start))
-        return self._pages.get(start, [])
+    def fetch_submissions(self, cik):
+        self.calls.append(("submissions", cik))
+        return self._main
+
+    def fetch_submissions_file(self, file_name):
+        self.calls.append(("file", file_name))
+        return self._files[file_name]
 
 
-class TestPaginationAccumulatesAcrossPages:
-    def test_two_pages_are_both_collected(self) -> None:
+class TestSingleResponseCoversTheWholeWindow:
+    def test_all_form_4_filings_from_recent_are_returned(self) -> None:
         module = _load_script()
-        page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
-        page2 = [_filing("A3", utc(2023, 4, 1)), _filing("A4", utc(2023, 3, 1))]
-        provider = _StubProvider({0: page1, 2: page2})
+        main = _submissions([
+            ("0001-26-000001", "2023-06-01", "4"),
+            ("0001-26-000002", "2023-05-01", "4"),
+            ("0001-26-000003", "2023-04-01", "10-K"),  # not a Form 4 -- must be excluded
+        ])
+        provider = _StubProvider(main)
 
         filings = module._fetch_paginated_filing_list(
-            provider, "CIK", "transport-token", page_size=2,
-            min_filing_date=utc(2023, 1, 1), max_filings=100,
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
         )
 
-        assert {f["accession_number"] for f in filings} == {"A1", "A2", "A3", "A4"}
+        assert {f["accession_number"] for f in filings} == {"0001-26-000001", "0001-26-000002"}
 
-    def test_second_page_request_advances_start_by_page_size(self) -> None:
+    def test_no_older_files_are_fetched_when_recent_already_reaches_min_filing_date(self) -> None:
         module = _load_script()
-        page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
-        provider = _StubProvider({0: page1, 2: []})
+        main = _submissions([("0001-26-000001", "2009-01-01", "4")], files=["CIK0000320193-submissions-001.json"])
+        provider = _StubProvider(main)
 
         module._fetch_paginated_filing_list(
-            provider, "CIK", "transport-token", page_size=2,
-            min_filing_date=utc(2020, 1, 1), max_filings=100,
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
         )
 
-        starts_requested = [call[3] for call in provider.calls]
-        assert starts_requested == [0, 2]
+        assert provider.calls == [("submissions", "0000320193")]  # never fetched the older file
 
 
-class TestStopsOnceMinFilingDateReached:
-    def test_stops_after_the_page_containing_min_filing_date(self) -> None:
+class TestFallsBackToOlderHistoryFiles:
+    def test_older_file_is_fetched_when_recent_does_not_reach_min_filing_date(self) -> None:
         module = _load_script()
-        page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
-        page2 = [_filing("A3", utc(2010, 1, 1)), _filing("A4", utc(2009, 1, 1))]
-        provider = _StubProvider({0: page1, 2: page2})
+        main = _submissions(
+            [("0001-26-000001", "2023-06-01", "4")],
+            files=["CIK0000320193-submissions-001.json"],
+        )
+        older = _older_file([("0001-25-000001", "2009-01-01", "4")])
+        provider = _StubProvider(main, files={"CIK0000320193-submissions-001.json": older})
 
         filings = module._fetch_paginated_filing_list(
-            provider, "CIK", "transport-token", page_size=2,
-            min_filing_date=utc(2010, 1, 1), max_filings=100,
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
         )
 
-        assert len(provider.calls) == 2  # never requested a third page
-        assert {f["accession_number"] for f in filings} == {"A1", "A2", "A3", "A4"}
+        assert {f["accession_number"] for f in filings} == {"0001-26-000001", "0001-25-000001"}
+        assert provider.calls == [
+            ("submissions", "0000320193"),
+            ("file", "CIK0000320193-submissions-001.json"),
+        ]
 
-    def test_oldest_filing_exactly_equal_to_min_filing_date_still_stops(self) -> None:
+    def test_stops_fetching_older_files_once_min_filing_date_reached(self) -> None:
         module = _load_script()
-        page1 = [_filing("A1", utc(2010, 1, 1))]
-        provider = _StubProvider({0: page1})
+        main = _submissions(
+            [("0001-26-000001", "2023-06-01", "4")],
+            files=["file-001.json", "file-002.json"],
+        )
+        file1 = _older_file([("0001-25-000001", "2009-01-01", "4")])  # already reaches min_filing_date
+        file2 = _older_file([("0001-24-000001", "2005-01-01", "4")])
+        provider = _StubProvider(main, files={"file-001.json": file1, "file-002.json": file2})
 
         module._fetch_paginated_filing_list(
-            provider, "CIK", "transport-token", page_size=10,
-            min_filing_date=utc(2010, 1, 1), max_filings=100,
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
         )
 
-        assert len(provider.calls) == 1
+        assert provider.calls == [("submissions", "0000320193"), ("file", "file-001.json")]
 
-
-class TestStopsOnPartialPage:
-    def test_a_page_smaller_than_page_size_means_history_is_exhausted(self) -> None:
+    def test_stops_once_older_files_are_exhausted(self) -> None:
         module = _load_script()
-        page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]  # only 2, page_size=5
-        provider = _StubProvider({0: page1})
+        main = _submissions(
+            [("0001-26-000001", "2023-06-01", "4")],
+            files=["file-001.json"],
+        )
+        file1 = _older_file([("0001-25-000001", "2015-01-01", "4")])  # still doesn't reach min_filing_date
+        provider = _StubProvider(main, files={"file-001.json": file1})
 
         filings = module._fetch_paginated_filing_list(
-            provider, "CIK", "transport-token", page_size=5,
-            min_filing_date=utc(2010, 1, 1), max_filings=100,
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
         )
 
-        assert len(provider.calls) == 1  # never asked for a second page
-        assert len(filings) == 2
+        assert len(provider.calls) == 2  # never asked for a nonexistent third file
+        assert {f["accession_number"] for f in filings} == {"0001-26-000001", "0001-25-000001"}
 
 
-class TestStopsWhenNoNewFilingsReturned:
-    def test_a_page_with_only_already_seen_accessions_stops_the_loop(self) -> None:
-        # Defensive guard, kept even after ADR-0089's real verification
-        # that `start` pages are genuinely disjoint: if some other
-        # boundary quirk ever causes a page to repeat prior filings,
-        # this dedup-then-stop-on-no-progress check prevents an
-        # infinite loop rather than trusting the offset alone.
+class TestDeduplicatesByAccessionNumber:
+    def test_an_accession_repeated_in_an_older_file_is_not_duplicated(self) -> None:
         module = _load_script()
-        page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
-        provider = _StubProvider({0: page1, 2: page1})  # same filings again
+        main = _submissions(
+            [("0001-26-000001", "2023-06-01", "4")],
+            files=["file-001.json"],
+        )
+        file1 = _older_file([("0001-26-000001", "2023-06-01", "4"), ("0001-25-000001", "2009-01-01", "4")])
+        provider = _StubProvider(main, files={"file-001.json": file1})
 
         filings = module._fetch_paginated_filing_list(
-            provider, "CIK", "transport-token", page_size=2,
-            min_filing_date=utc(2010, 1, 1), max_filings=100,
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
         )
 
-        assert len(provider.calls) == 2
-        assert {f["accession_number"] for f in filings} == {"A1", "A2"}  # not duplicated
+        assert [f["accession_number"] for f in filings].count("0001-26-000001") == 1
 
 
 class TestMaxFilingsSafetyCap:
     def test_stops_once_the_cap_is_reached_even_if_min_filing_date_not_yet_reached(self) -> None:
         module = _load_script()
-        page1 = [_filing("A1", utc(2023, 6, 1)), _filing("A2", utc(2023, 5, 1))]
-        page2 = [_filing("A3", utc(2023, 4, 1)), _filing("A4", utc(2023, 3, 1))]
-        provider = _StubProvider({0: page1, 2: page2, 4: [_filing("A5", utc(2023, 2, 1))]})
+        main = _submissions(
+            [("0001-26-000001", "2023-06-01", "4"), ("0001-26-000002", "2023-05-01", "4")],
+            files=["file-001.json"],
+        )
+        file1 = _older_file([("0001-25-000001", "2015-01-01", "4"), ("0001-25-000002", "2014-01-01", "4")])
+        provider = _StubProvider(main, files={"file-001.json": file1})
 
         filings = module._fetch_paginated_filing_list(
-            provider, "CIK", "transport-token", page_size=2,
-            min_filing_date=utc(2010, 1, 1), max_filings=4,
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=3,
         )
 
-        assert len(filings) == 4  # stopped at the cap, never fetched the 3rd page's worth beyond it
+        assert len(filings) == 3  # truncated at the cap, not 4
 
 
 class TestNoFilingsAtAll:
-    def test_empty_first_page_returns_an_empty_list_not_an_error(self) -> None:
+    def test_no_form_4_filings_and_no_older_files_returns_an_empty_list_not_an_error(self) -> None:
         module = _load_script()
-        provider = _StubProvider({0: []})
+        main = _submissions([("0001-26-000001", "2023-06-01", "10-K")])  # no Form 4 at all
+        provider = _StubProvider(main)
 
         filings = module._fetch_paginated_filing_list(
-            provider, "CIK", "transport-token", page_size=40,
-            min_filing_date=utc(2010, 1, 1), max_filings=100,
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
         )
 
         assert filings == []
-        assert len(provider.calls) == 1
+        assert provider.calls == [("submissions", "0000320193")]  # no older files listed -- never looped forever

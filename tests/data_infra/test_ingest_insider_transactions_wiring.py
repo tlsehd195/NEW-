@@ -77,38 +77,46 @@ class TestUserAgentHasNoSilentDefault:
         assert found, "expected a --user-agent argparse argument"
 
 
-class TestSingleHostTransportUsedThroughout:
-    """This script's own module docstring claims every Form 4 endpoint
-    lives on www.sec.gov, unlike ingest_fundamentals_data.py's two
-    hosts -- verify the same www_transport instance is actually the one
-    passed to every provider call, not a mix that would silently 404
-    against the wrong host."""
+class TestTwoHostTransportsUsedCorrectly:
+    """Session 37 continued: this script now deliberately uses TWO
+    hosts, unlike its own original single-host design -- the real
+    overnight-failure fix switched only the filing-LIST step to
+    data.sec.gov (the same host/endpoint class ingest_fundamentals_
+    data.py already used with zero failures), while every per-filing
+    detail fetch stays on www.sec.gov, unchanged (never implicated in
+    the real failures). Verify each call site uses the right one, not
+    a mix that would silently 404 against the wrong host."""
 
-    def test_ticker_map_and_form4_calls_all_use_www_transport(self) -> None:
+    def test_ticker_map_and_per_filing_detail_calls_use_www_transport(self) -> None:
         source = _source()
         assert "provider.fetch_ticker_map(www_transport)" in source
-        # Filing-list fetching goes through _fetch_paginated_filing_list
-        # (ADR-0088), which itself calls fetch_form4_filing_list with
-        # www_transport -- checked directly on that helper below rather
-        # than at this call site.
-        assert "_fetch_paginated_filing_list(\n                    provider, cik, www_transport" in source
         assert "provider.fetch_form4_index(cik, accession_number, www_transport)" in source
         assert "provider.fetch_form4_document(cik, accession_number, filename, www_transport)" in source
 
-    def test_paginated_filing_list_helper_itself_uses_the_passed_transport(self) -> None:
+    def test_paginated_filing_list_call_site_uses_data_provider(self) -> None:
         source = _source()
-        assert "provider.fetch_form4_filing_list(cik, transport, count=page_size, start=start)" in source
+        assert "_fetch_paginated_filing_list(\n                    data_provider, cik," in source
 
-    def test_provider_constructed_with_www_transport_not_a_data_sec_gov_one(self) -> None:
+    def test_paginated_filing_list_helper_itself_uses_data_provider_submissions(self) -> None:
+        source = _source()
+        assert "data_provider.fetch_submissions(cik)" in source
+        assert "data_provider.fetch_submissions_file(file_name)" in source
+
+    def test_provider_constructed_with_www_transport(self) -> None:
         source = _source()
         assert "SecEdgarFundamentalsProvider(config, www_transport)" in source
+
+    def test_data_provider_constructed_with_a_data_sec_gov_transport(self) -> None:
+        source = _source()
+        assert "SecEdgarHttpTransport(config.base_url, user_agent=config.user_agent)" in source
+        assert "SecEdgarFundamentalsProvider(config, data_transport)" in source
 
 
 class TestManifestReportsWhatEdgarActuallyReturned:
     def test_manifest_has_the_expected_keys(self) -> None:
         keys = _manifest_keys(_tree())
         assert {
-            "data_status", "provider", "symbols", "min_filing_date", "page_size",
+            "data_status", "provider", "symbols", "min_filing_date",
             "max_filings_per_symbol", "unresolved_symbols",
             "total_transactions_persisted", "per_symbol_results", "content_checksum",
         } <= keys
