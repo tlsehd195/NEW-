@@ -1,4 +1,4 @@
-# ADR-0032: External Quant Library Evaluation (Kronos, skfolio, NautilusTrader, Vibe-Trading, purgedcv)
+# ADR-0032: External Quant Library Evaluation (Kronos, skfolio, NautilusTrader, Vibe-Trading, purgedcv, exchange_calendars)
 
 ## Context
 
@@ -257,19 +257,87 @@ forecast):
 Not installed. No code added. This is a research pointer, not a
 dependency decision.
 
+## Decision 7 -- Adopt exchange_calendars as an optional dependency
+
+`src/data_infra/calendar.py`'s own docstring names this exact gap:
+"the concrete calendars shipped here (US_EQUITY, KR_EQUITY) use a small,
+hand-picked holiday sample ... explicitly NOT a production-accurate,
+multi-year holiday calendar -- sourcing one is deferred." Reading the
+actual data (not just the docstring) shows how small: `US_EQUITY` lists
+exactly 3 holiday dates and `KR_EQUITY` exactly 2, both for calendar year
+2024 only -- no Lunar New Year/Chuseok (Korea's multi-day lunar holidays,
+which shift dates every year), no MLK Day/Presidents Day/Memorial Day/
+Juneteenth/Labor Day/Thanksgiving (US). `src/data_infra/quality.py`'s
+gap-detection heuristic also runs without real calendar data for the same
+reason. This is a live-relevant gap, not a cosmetic one: this project's
+actual broker exposure is Korean equities (`src/broker/toss`, ADR-0027)
+and US equities (ADR-0028) -- the two markets `TradingCalendar` exists to
+model.
+
+`exchange_calendars` (PyPI `exchange_calendars`, Apache-2.0, maintained by
+the Zipline/`gerrymanoim` ecosystem) was checked directly, not assumed:
+installed, and `get_calendar("XKRX")`/`get_calendar("XNYS")` verified to
+return real, actively-maintained 2026 calendars. `XKRX`'s dependency on
+`korean_lunar_calendar` confirms it actually computes Korea's lunar
+holidays rather than hand-listing a few fixed dates -- checked
+empirically: `regular_holidays.holidays("2026-01-01", "2026-12-31")`
+correctly returns `2026-02-16/17/18` (Seollal, Lunar New Year, a 3-day
+holiday this project's own `KR_EQUITY.holidays` has no mechanism to ever
+produce). `XNYS`'s 2026 list correctly includes MLK Day, Presidents Day,
+Juneteenth, and Labor Day -- none of which `US_EQUITY.holidays` has today.
+
+A related candidate, **`almgren-chriss`** (PyPI, for the "future, more
+rigorous [market impact] model" ADR-0007 names as deferred from
+`VolumeScaledSlippageModel`), was checked and rejected: single-author
+personal project, last released 2023-05-30 (3+ years stale), PyPI license
+field "Other/Proprietary License (GNU General Public License)" -- an
+unclear, likely-copyleft license this evaluation could not confirm terms
+for, matching the same red flag that rejected `pypbo`/`quant-integrity`
+in Decision 5. No other established Almgren-Chriss package was found.
+This gap (ADR-0007's named "future, more rigorous model") stays
+unfilled, same conclusion as the corporate-actions-normalization search
+(Phase 27): a real gap exists, but no adoptable library was found for it
+in this pass.
+
+**Not adopted, checked but inconclusive**: `src/counterfactual/
+attribution.py`'s reserved `sector`/`factor`/`timing` fields (ADR-0016
+points 6-7) would need a factor-attribution library (e.g.
+`alphalens-reloaded`, or a `statsmodels`-based regression against
+Fama-French-style factor returns). Every option in this space needs
+externally-sourced factor return data as an input, which is a data-access
+problem (this project's environment is still `BLOCKED_BY_DATA` per
+`docs/PROJECT_STATUS.md`), not a library-selection problem -- the same
+shape of dead end as the Kronos-as-data-source question already answered
+in this ADR. Not evaluated further until real data access exists.
+
+Installed (`pip install exchange_calendars` verified; Apache-2.0 license
+confirmed via PyPI metadata) and added to `pyproject.toml` under a new
+`market-calendars` extra. **Not wired into `src/data_infra/calendar.py`.**
+`TradingCalendar` is already a `Protocol` specifically so a future
+`ExchangeCalendarsAdapter`-style implementation is a drop-in addition;
+building and swapping it in is separate, scheduled Phase 1 follow-up
+work, not part of this ADR.
+
 ## Consequences
 
-- `pyproject.toml` gains two new optional extras:
-  `portfolio-optimization` -> `skfolio>=1.2.1` (Decision 1) and
-  `backtest-integrity-stats` -> `purgedcv>=0.1.6` (Decision 5). The core
-  install is unchanged, so existing environments are unaffected until
-  someone explicitly opts in.
-- No change to `src/`. Using skfolio inside `src/risk/`, and using
-  purgedcv inside `src/backtest/validation.py` /
-  `src/strategy_research/evidence.py`, are both separate, scheduled Phase
-  work, not part of this ADR.
+- `pyproject.toml` gains three new optional extras:
+  `portfolio-optimization` -> `skfolio>=1.2.1` (Decision 1),
+  `backtest-integrity-stats` -> `purgedcv>=0.1.6` (Decision 5), and
+  `market-calendars` -> `exchange_calendars>=4.13.2` (Decision 7). The
+  core install is unchanged, so existing environments are unaffected
+  until someone explicitly opts in.
+- No change to `src/`. Using skfolio inside `src/risk/`, purgedcv inside
+  `src/backtest/validation.py` / `src/strategy_research/evidence.py`, and
+  exchange_calendars inside `src/data_infra/calendar.py`, are all
+  separate, scheduled Phase work, not part of this ADR.
 - Kronos stays out until the pre-training-leakage question in Decision 2
   is answered with evidence, not assumption.
+- `almgren-chriss` (Decision 7) stays out: stale, unclear-license, no
+  established alternative found yet for ADR-0007's deferred market-impact
+  model.
+- Factor/sector/timing attribution (`src/counterfactual/attribution.py`,
+  ADR-0016) remains unfilled -- blocked on real factor-return data
+  access, not on library choice.
 - statsmodels/darts/sktime are recorded (Decision 6) as the starting
   point for a future `MODEL_BASED` predictor Phase, not adopted now --
   no such Phase is currently open.

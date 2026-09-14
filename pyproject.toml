@@ -19,6 +19,9 @@ portfolio-optimization = [
 backtest-integrity-stats = [
     "purgedcv>=0.1.6",
 ]
+market-calendars = [
+    "exchange_calendars>=4.13.2",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
