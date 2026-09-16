@@ -142,6 +142,27 @@ class TestManifestFieldsPrintedToStdout:
         assert "ACTUAL_DATA_END" in source
 
 
+class TestNonSuccessPerSymbolResultsArePrintedToStdout:
+    """Session 37: a symbol with a non-SUCCESS IngestionResult can still
+    have bars_ingested > 0, so it never appears in `missing_symbols`
+    (computed from zero-bar counts) -- a PARTIAL_SUCCESS run could
+    previously go completely unexplained in CI logs, with the real
+    per-symbol status/error visible only inside the manifest artifact
+    (blocked by Azure Blob Storage in this dev environment)."""
+
+    def test_non_success_results_are_computed_from_result_dot_results_status(self) -> None:
+        source = _source()
+        assign_line = next(
+            line for line in source.splitlines() if line.strip().startswith("non_success_results = ")
+        )
+        assert "result.results" in assign_line
+        assert "SUCCESS" in assign_line
+
+    def test_non_success_results_are_printed(self) -> None:
+        source = _source()
+        assert "Non-SUCCESS per-symbol ingestion results" in source
+
+
 class TestManifestReportsProvidersUsedAndMissingSymbols:
     """Phase 31 (instruction section 18, questions 1/2/6): the manifest
     must say which provider(s) actually supplied data and which

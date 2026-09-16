@@ -335,6 +335,23 @@ def main() -> int:
         print(f"Active securities: {active_count}")
         print(f"Delisted securities in universe: {delisted_count}")
         print(f"Missing symbols (zero bars): {missing_symbols}")
+        # Session 37 (real-data ingestion gap): a symbol can have a
+        # non-SUCCESS per-symbol IngestionResult (e.g. a transient
+        # provider error partway through) while still ending up with
+        # bars_ingested > 0 -- such a symbol never appears in
+        # `missing_symbols` (that list is computed from FINAL zero-bar
+        # counts, not from status), so a run like this could go PARTIAL_
+        # SUCCESS with an empty missing_symbols list and no visible
+        # explanation anywhere in CI logs. The full per-symbol detail
+        # (status/error) only ever lived in this manifest, which is a
+        # GitHub Actions artifact behind Azure Blob Storage this
+        # environment's own egress proxy cannot reach -- this line makes
+        # "why was this PARTIAL_SUCCESS" answerable from CI logs alone.
+        non_success_results = [r for r in result.results if r.status.value != "SUCCESS"]
+        print(
+            f"Non-SUCCESS per-symbol ingestion results: "
+            f"{[{'security_id': r.security_id, 'status': r.status.value, 'bars_ingested': r.bars_ingested, 'error': r.error} for r in non_success_results]}"
+        )
         print(f"Providers used: {providers_used}")
         print(f"Historical universe membership available: {historical_universe_membership_available}")
         print(f"Corporate actions persisted: {len(all_actions)}")
