@@ -10,15 +10,25 @@
 # both DuckDB-backed directories -- would not survive between runs on
 # their own. This workflow round-trips both as GitHub Actions
 # artifacts (restored at the start of each run, re-uploaded at the
-# end) rather than committing them into git, preserving this repo's
-# existing policy of never tracking *.duckdb/*.parquet files (see
-# .gitignore). See ADR-0082 for the full design and its disclosed
-# limitations (artifact retention, cron timing), and ADR-0085 for why
-# ingestion requests only an incremental window (not the full range)
-# from the restored catalog's own last known bar forward -- a real run
-# found that always re-requesting the full ~2.5-year range exhausted
-# the provider's rate limit partway through, leaving 10 symbols
-# (including SPY) with zero bars that day.
+# end) rather than committing the DuckDB files themselves into git,
+# preserving this repo's existing policy of never tracking
+# *.duckdb/*.parquet files (see .gitignore). See ADR-0082 for the full
+# design and its disclosed limitations (artifact retention, cron
+# timing), and ADR-0085 for why ingestion requests only an incremental
+# window (not the full range) from the restored catalog's own last
+# known bar forward -- a real run found that always re-requesting the
+# full ~2.5-year range exhausted the provider's rate limit partway
+# through, leaving 10 symbols (including SPY) with zero bars that day.
+#
+# ADR-0149's own follow-up (external review, Session 38 continued):
+# the paper-trading-store artifact's 90-day retention is this ledger's
+# ONLY persistence -- 90+ consecutive days of scheduled-run failure
+# would lose the whole order/fill/trade history with nothing to
+# restore from. "Export and commit Paper Trading store backup" below
+# closes that gap by committing a plain-JSON table dump (never the raw
+# DuckDB file) to `backups/paper_trading_store/` on this same branch --
+# a durable, git-native backup with no expiry, distinct from (and not
+# a change to) the *.duckdb/*.parquet exclusion above.
 #
 # Session 37 (real-data DQ gap): "Ingest latest market data" below now
 # also fails this job (non-zero exit) when today's real ingestion finds
@@ -43,7 +53,11 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+  # write (not read): "Export and commit Paper Trading store backup"
+  # below pushes a JSON snapshot directly to this branch -- see that
+  # step's own comment for why (external review: the paper-trading-store
+  # artifact's 90-day retention is this ledger's ONLY persistence today).
+  contents: write
   actions: read
 
 env:
@@ -178,6 +192,36 @@ jobs:
           name: paper-trading-store
           path: ${{ env.PAPER_STORE_DIR }}
           retention-days: 90
+
+      # External review ("Paper Trading 100-point evaluation" report):
+      # the paper-trading-store artifact above is this ledger's ONLY
+      # persistence -- if scheduled runs fail for 90+ consecutive days,
+      # the artifact expires and the entire order/fill/trade history is
+      # gone with nothing to restore from. This step exports every table
+      # in that DuckDB catalog to plain JSON (scripts/export_paper_
+      # store_backup.py) and commits it directly to this branch, a
+      # durable, git-native backup with no expiry. Each run OVERWRITES
+      # the previous snapshot (never accumulates one folder per day) --
+      # the committed files are always a complete, standalone restore
+      # point, and a no-op run (nothing changed since last time) commits
+      # nothing. `if: always()`: even a failed cycle run leaves whatever
+      # state existed before it worth backing up.
+      - name: Export and commit Paper Trading store backup
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 scripts/export_paper_store_backup.py \
+            --paper-store "$PAPER_STORE_DIR" \
+            --out-dir backups/paper_trading_store
+          if [ -n "$(git status --porcelain backups/paper_trading_store)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add backups/paper_trading_store
+            git commit -m "Update Paper Trading store backup snapshot [skip ci]"
+            git push
+          else
+            echo "No change to the backup snapshot since last run -- nothing to commit"
+          fi
 
       - name: Upload this run's report
         if: always()

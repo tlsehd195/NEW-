@@ -44,11 +44,19 @@ def test_workflow_is_valid_yaml_with_a_schedule_trigger():
     assert "workflow_dispatch" in triggers
 
 
-def test_workflow_grants_only_read_permissions():
+def test_workflow_grants_contents_write_for_the_backup_commit_step():
+    """External review (ADR-0149's own follow-up): `contents` was
+    `read`-only until the backup-commit step below needed to push a
+    JSON snapshot to this branch -- confirmed here that the elevation
+    is real and that the step actually using it exists, not a
+    permission granted and then unused."""
     doc = _load()
     perms = doc["permissions"]
-    assert perms.get("contents") == "read"
+    assert perms.get("contents") == "write"
     assert perms.get("actions") == "read"
+    steps = _steps(doc)
+    backup_step = next(s for s in steps if "export_paper_store_backup.py" in s.get("run", ""))
+    assert "git push" in backup_step["run"]
 
 
 def test_no_secret_value_is_hardcoded():
