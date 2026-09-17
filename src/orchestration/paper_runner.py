@@ -37,6 +37,20 @@ resumed session should seed `PaperRunnerState.value_history` from
 whatever real, already-persisted portfolio-value log it has -- never
 fabricated or backfilled with guessed values for a gap.
 
+**Portfolio accounting mark-to-market (Session 38): now always
+populated.** `session.adapter.accounting` (the real `backtest.portfolio.
+PortfolioAccounting` every fill this cycle applies to) is now marked to
+market once per cycle, with the same per-security reference prices this
+function's own Prediction/Sizing/Risk stages already compute --
+unconditional, not opt-in, since it only appends internal valuation
+history (`value_series`/`turnover()`) and changes no existing return
+value. Before this, nothing called `mark_to_market` on this instance,
+so `broker.paper.performance.compute_paper_performance_report`'s own
+`equity_history`/`turnover` inputs stayed permanently unavailable to any
+caller driving Paper Trading through `run_cycle` -- see
+`scripts/run_paper_trading_cycle.py` for the first real caller that now
+reads them back out.
+
 **Persistence (Session 36 continued): now available, opt-in.**
 `run_cycle` accepts optional `prediction_repository`/
 `regime_repository`/`decision_repository`/`sizing_repository`/
@@ -434,8 +448,11 @@ def run_cycle(
         )
 
     outcomes = []
+    prices_by_security: dict[str, float] = {}
     for security_id in security_ids:
         current_price = _reference_price(view, security_id, as_of_time)
+        if current_price is not None:
+            prices_by_security[security_id] = current_price
         prediction = predictor.predict(view, security_id, provenance=provenance, experiment_id=experiment_id)
         if prediction_repository is not None:
             prediction_repository.record(prediction)
@@ -561,4 +578,18 @@ def run_cycle(
             security_id=security_id, prediction=prediction, regime=regime, decision=decision,
             sizing=sizing, risk_checked=risk_checked, validation=validation, submission=submission,
         ))
+
+    # Always populated (Session 38, same "on by default" treatment
+    # `trade_journal_repository` recording already got, ADR-0096) --
+    # `session.adapter.accounting` is the one `PortfolioAccounting`
+    # instance this cycle's fills were actually applied to, but nothing
+    # previously called its own `mark_to_market` on it, so its
+    # `value_series`/`turnover()` stayed permanently empty even after a
+    # real multi-checkpoint run. Marking with this cycle's own
+    # `prices_by_security` (the same per-security reference price every
+    # other stage above already used, reused rather than re-derived)
+    # makes both real for the first time, at zero extra network/DB cost
+    # and no change to any of this function's own return values.
+    session.adapter.accounting.mark_to_market(prices_by_security, as_of_time)
+
     return tuple(outcomes)

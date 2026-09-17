@@ -102,6 +102,7 @@ from backtest.clock import BacktestClock, build_daily_checkpoints  # noqa: E402
 
 from broker.paper.config import PaperTradingConfig  # noqa: E402
 from broker.paper.market_data import InMemoryPaperMarketDataSource  # noqa: E402
+from broker.paper.performance import compute_paper_performance_report  # noqa: E402
 from broker.paper.session import PaperTradingSession  # noqa: E402
 
 from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
@@ -117,12 +118,16 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.decision_repository import DuckDBDecisionRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
+from storage.paper_performance_repository import DuckDBPaperPerformanceReportRepository  # noqa: E402
 from storage.paper_repository import DuckDBPaperFillRepository, DuckDBPaperOrderRepository  # noqa: E402
 from storage.broker_repository import DuckDBOrderStatusEventRepository  # noqa: E402
 from storage.prediction_repository import DuckDBPredictionRepository  # noqa: E402
 from storage.regime_repository import DuckDBRegimeRepository  # noqa: E402
 from storage.risk_repository import DuckDBPositionSizingRepository, DuckDBRiskRepository  # noqa: E402
+from storage.serialization import paper_performance_report_to_payload  # noqa: E402
 from storage.trade_journal_repository import DuckDBTradeJournalRepository  # noqa: E402
+
+from trade_journal.enums import TradeProvenance  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
 
@@ -167,19 +172,34 @@ def _next_starting_id(record_ids) -> int:
     return max(int(rid.rsplit("-", 1)[1]) for rid in ids) + 1
 
 
-def _reconstruct_value_history(risk_repository, representative_security_id: str, up_to: datetime) -> list:
-    """Real, already-persisted portfolio values for every checkpoint up
-    to and including `up_to`, in chronological order -- reconstructed
-    from `RiskCheckedPosition.risk_state.portfolio_value` (one real
-    snapshot per checkpoint, shared across every security assessed that
-    cycle) rather than guessed or interpolated. Never fabricates a
-    value for a checkpoint whose `risk_state` is unexpectedly absent --
-    that checkpoint is simply skipped, matching this project's fail-
-    closed discipline (a caller resuming with a resulting short history
-    sees `max_drawdown`/`max_portfolio_volatility` correctly stay
-    "unknown" for longer, never a fabricated gap-filled series)."""
+def _equity_history(risk_repository, representative_security_id: str, up_to: datetime) -> list[tuple[datetime, float]]:
+    """Real, already-persisted `(as_of_time, portfolio_value)` pairs for
+    every checkpoint up to and including `up_to`, in chronological
+    order -- reconstructed from `RiskCheckedPosition.as_of_time`/`.
+    risk_state.portfolio_value` (one real snapshot per checkpoint,
+    shared across every security assessed that cycle) rather than
+    guessed or interpolated. Never fabricates a point for a checkpoint
+    whose `risk_state` is unexpectedly absent -- that checkpoint is
+    simply skipped, matching this project's fail-closed discipline.
+
+    Unlike `session.adapter.accounting.value_series` (real only within
+    ONE process -- `PaperTradingSession.restore()` replays fills, never
+    replays the `mark_to_market` calls that build that series), this
+    repository-backed history is durable across every past `--resume`
+    invocation against the same `--paper-store`, which is why it -- not
+    `accounting.value_series` -- is this script's real source for
+    `broker.paper.performance.compute_paper_performance_report`'s own
+    `equity_history` input (Session 38)."""
     records = risk_repository.list_all(security_id=representative_security_id, end=up_to)
-    return [r.risk_state.portfolio_value for r in records if r.risk_state is not None]
+    return [(r.as_of_time, r.risk_state.portfolio_value) for r in records if r.risk_state is not None]
+
+
+def _reconstruct_value_history(risk_repository, representative_security_id: str, up_to: datetime) -> list:
+    """Real, already-persisted portfolio values only (no timestamps) --
+    what `PaperRunnerState.value_history` seeding needs. See
+    `_equity_history` above for the timestamped version and for why
+    this repository, not `PortfolioAccounting`, is the durable source."""
+    return [value for _, value in _equity_history(risk_repository, representative_security_id, up_to)]
 
 
 def main(argv=None) -> int:
@@ -370,6 +390,42 @@ def main(argv=None) -> int:
             print(f"  [{i + 1}/{len(checkpoints)}] {checkpoint.date()} -- submitted so far: {total_submitted}, filled so far: {total_filled}", flush=True)
 
     final_account = session.account_summary(as_of=checkpoints[-1])
+
+    # Session 38: Phase 18's compute_paper_performance_report, wired
+    # into this real production entrypoint for the first time (it was
+    # previously only exercised by tests -- see ADR-0136). Persisted
+    # through the same DuckDBPaperPerformanceReportRepository the tests
+    # already use, one real report per invocation, natural-key-deduped
+    # on report_id like every other repository in this pipeline.
+    performance_repository = DuckDBPaperPerformanceReportRepository(store_engine)
+    paper_session_id = f"paper-session-{args.universe.lower()}"
+    equity_history = _equity_history(risk_repository, security_ids[0], checkpoints[-1])
+    trades = trade_journal_repository.list_trades(
+        provenance=TradeProvenance.PAPER_TRADING, start=args.start, end=args.end,
+    )
+    next_performance_report_id = _next_starting_id(
+        r.report_id for r in performance_repository.list_for_session(paper_session_id)
+    )
+    performance_report = compute_paper_performance_report(
+        report_id=f"PAPERPERF-{next_performance_report_id:06d}",
+        paper_session_id=paper_session_id,
+        equity_history=equity_history,
+        trades=trades,
+        evaluated_at=checkpoints[-1],
+        # `session.adapter.accounting.turnover()` is deliberately NOT
+        # used here -- its own `_valuation_history` (the denominator) is
+        # real only within this ONE process (`PaperTradingSession.
+        # restore()` never replays past `mark_to_market` calls -- see
+        # `_equity_history`'s own docstring above), while its
+        # `_trade_notionals` numerator IS durable across every past
+        # --resume run. Combining a durable numerator with a fresh-
+        # this-run-only denominator would silently overstate turnover on
+        # every resumed run after the first -- left `None` (honestly
+        # "not_supplied") rather than reported wrong.
+        strategy_version="baseline_rule",
+    )
+    performance_repository.record(performance_report)
+
     checksum = compute_data_version({
         "universe": args.universe, "security_ids": sorted(security_ids),
         "start": args.start.isoformat(), "end": args.end.isoformat(),
@@ -410,6 +466,7 @@ def main(argv=None) -> int:
             "max_drawdown": args.max_drawdown, "max_portfolio_volatility": args.max_portfolio_volatility,
             "reentry_cooldown_days": args.reentry_cooldown_days,
         },
+        "performance": paper_performance_report_to_payload(performance_report),
         "content_checksum": checksum,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -418,6 +475,7 @@ def main(argv=None) -> int:
     print(f"Checkpoints run: {len(checkpoints)}")
     print(f"Orders submitted: {total_submitted} (filled: {total_filled})")
     print(f"Final cash: {final_account.cash}")
+    print(f"Sharpe ratio: {performance_report.sharpe_ratio} (reason if None: {performance_report.reasons.get('sharpe_ratio')})")
     print(f"Report written to: {args.out}")
     data_engine.close()
     store_engine.close()

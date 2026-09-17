@@ -24,6 +24,7 @@ from data_infra.universe import SymbolMetadata, UniverseDefinition
 from storage.config import StorageConfig
 from storage.data_repository import DuckDBDataRepository
 from storage.engine import StorageEngine
+from storage.paper_performance_repository import DuckDBPaperPerformanceReportRepository
 from storage.paper_repository import DuckDBPaperFillRepository, DuckDBPaperOrderRepository
 from storage.prediction_repository import DuckDBPredictionRepository
 from storage.trade_journal_repository import DuckDBTradeJournalRepository
@@ -350,3 +351,100 @@ class TestResume:
         # every real prior point PLUS this run's own new checkpoints --
         # never reset to only the new ones.
         assert second["value_history_length"] == first["value_history_length"] + second["checkpoints_run"]
+
+
+class TestPerformanceReportWiring:
+    """Session 38 (ADR-0136): before this, `broker.paper.performance.
+    compute_paper_performance_report` (Phase 18) was implemented and
+    tested but never actually called by this script -- a documented gap
+    the account owner's own uploaded evaluation reports flagged."""
+
+    def test_report_json_includes_a_real_performance_section(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())
+
+        performance = report["performance"]
+        assert performance["paper_session_id"] == "paper-session-test_universe"
+        assert performance["report_id"] == "PAPERPERF-000001"
+        # Real trades happened this window (see
+        # test_a_run_populates_the_real_trade_journal) -- num_trades
+        # must reflect that, never a fabricated 0.
+        assert performance["num_trades"] > 0
+        # This project's own "turnover" honesty rule (see the script's
+        # own comment on why): never a guessed number combining a
+        # durable numerator with a fresh-only denominator.
+        assert performance["turnover"] is None
+        assert performance["reasons"]["turnover"] == "not_supplied"
+
+    def test_performance_report_is_really_persisted_not_only_in_the_json_output(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        assert module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+        ]) == 0
+
+        store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        performance_repository = DuckDBPaperPerformanceReportRepository(store_engine)
+        persisted = performance_repository.list_for_session("paper-session-test_universe")
+        store_engine.close()
+
+        assert len(persisted) == 1
+        assert persisted[0].report_id == "PAPERPERF-000001"
+
+    def test_resumed_runs_each_add_a_new_performance_report_not_overwriting_the_last(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_long_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        def _run(out_name, *, resume, end):
+            out_path = tmp_path / out_name
+            argv = [
+                "--universe", "TEST_UNIVERSE",
+                "--db-path", str(db_path),
+                "--paper-store", str(paper_store),
+                "--start", "2024-06-15", "--end", end,
+                "--out", str(out_path),
+            ]
+            if resume:
+                argv.append("--resume")
+            assert module.main(argv) == 0
+            return json.loads(out_path.read_text())
+
+        first = _run("first.json", resume=False, end="2024-06-20")
+        second = _run("second.json", resume=True, end="2024-06-25")
+
+        assert first["performance"]["report_id"] == "PAPERPERF-000001"
+        assert second["performance"]["report_id"] == "PAPERPERF-000002"
+
+        store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        performance_repository = DuckDBPaperPerformanceReportRepository(store_engine)
+        persisted = performance_repository.list_for_session("paper-session-test_universe")
+        store_engine.close()
+        assert len(persisted) == 2
