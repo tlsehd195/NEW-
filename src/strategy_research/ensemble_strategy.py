@@ -101,6 +101,7 @@ class RankAverageEnsembleStrategy:
                 net_margin_scores[security_id] = nm
 
         intents: list[OrderIntent] = []
+        combined: dict[str, float] = {}
         if not leverage_scores:
             target: set[str] = set()
         else:
@@ -111,9 +112,22 @@ class RankAverageEnsembleStrategy:
             ranked = sorted(combined, key=lambda sid: combined[sid], reverse=True)
             target = set(ranked[: self._params.top_n])
 
+        # External review, ADR-0048's own original gap: attach the real
+        # scores this security's ranking was already computed from --
+        # no new computation, omitted (never fabricated) for a security
+        # outside `combined` (one or both raw scores were None above).
+        def _features(security_id: str) -> Optional[dict]:
+            if security_id not in combined:
+                return None
+            return {
+                "leverage_score": leverage_scores[security_id],
+                "net_margin_score": net_margin_scores[security_id],
+                "combined_rank_average": combined[security_id],
+            }
+
         for security_id, position in portfolio.positions.items():
             if security_id not in target and position.quantity > 0:
-                intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET))
+                intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET, features=_features(security_id)))
 
         to_buy = [sid for sid in target if portfolio.quantity_of(sid) == 0]
         if to_buy:
@@ -127,5 +141,5 @@ class RankAverageEnsembleStrategy:
                     continue
                 quantity = float(int(per_symbol_cash / price))
                 if quantity > 0:
-                    intents.append(OrderIntent(security_id, OrderSide.BUY, quantity, OrderType.MARKET))
+                    intents.append(OrderIntent(security_id, OrderSide.BUY, quantity, OrderType.MARKET, features=_features(security_id)))
         return intents

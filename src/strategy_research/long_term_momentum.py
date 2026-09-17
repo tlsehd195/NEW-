@@ -112,7 +112,12 @@ class LongTermMomentumStrategy:
         intents: list[OrderIntent] = []
         for security_id, position in portfolio.positions.items():
             if security_id not in target and position.quantity > 0:
-                intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET))
+                # External review, ADR-0048's own original gap: attach
+                # the real momentum score this security's ranking was
+                # already computed from -- no new computation, omitted
+                # (never fabricated) for a security not in `scores`.
+                features = {"momentum_score": scores[security_id]} if security_id in scores else None
+                intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET, features=features))
 
         to_buy = [sid for sid in target if portfolio.quantity_of(sid) == 0]
         if to_buy:
@@ -126,5 +131,6 @@ class LongTermMomentumStrategy:
                     continue
                 quantity = float(int(per_symbol_cash / price))
                 if quantity > 0:
-                    intents.append(OrderIntent(security_id, OrderSide.BUY, quantity, OrderType.MARKET))
+                    features = {"momentum_score": scores[security_id]} if security_id in scores else None
+                    intents.append(OrderIntent(security_id, OrderSide.BUY, quantity, OrderType.MARKET, features=features))
         return intents

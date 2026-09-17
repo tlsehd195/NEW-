@@ -73,3 +73,26 @@ class TestParameterValidation:
     def test_rejects_out_of_range_max_position_weight(self) -> None:
         with pytest.raises(ValueError):
             RiskControlledMomentumParameters(max_position_weight=0.5)
+
+
+class TestOrderIntentFeatures:
+    """External review, ADR-0048's own original gap (closed this
+    session): `OrderIntent.features` was never populated by any real
+    Strategy. `Order.features` copies straight through from
+    `OrderIntent.features` unconditionally, so checkable directly on
+    `BacktestResult.orders`."""
+
+    def test_the_buy_order_carries_momentum_score_and_inverse_vol_weight(self) -> None:
+        universe = ("TRENDUP", "CYCLICAL")
+        start, end = date(2020, 1, 2), date(2021, 6, 1)
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        params = RiskControlledMomentumParameters(lookback_months=6, top_n=2, rebalance_months=3, max_position_weight=0.3)
+        strategy = RiskControlledMomentumStrategy(list(universe), params)
+        result = BacktestEngine(repo, _config(start, end, universe), strategy).run()
+
+        buy_orders = [o for o in result.orders if o.side.value == "BUY"]
+        assert buy_orders
+        for order in buy_orders:
+            assert order.features is not None
+            assert isinstance(order.features["momentum_score"], float)
+            assert isinstance(order.features["inverse_vol_weight"], float)

@@ -142,7 +142,12 @@ class RiskControlledMomentumStrategy:
         target = set(ranked)
         for security_id, position in portfolio.positions.items():
             if security_id not in target and position.quantity > 0:
-                intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET))
+                # External review, ADR-0048's own original gap: attach
+                # the real momentum score this security's ranking was
+                # already computed from -- no new computation, omitted
+                # (never fabricated) for a security not in `scores`.
+                features = {"momentum_score": scores[security_id]} if security_id in scores else None
+                intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET, features=features))
 
         if not ranked:
             return intents
@@ -177,6 +182,10 @@ class RiskControlledMomentumStrategy:
                 continue
             quantity = float(int(target_notional / price))
             if quantity > 0:
-                intents.append(OrderIntent(security_id, OrderSide.BUY, quantity, OrderType.MARKET))
+                features = {
+                    "momentum_score": scores[security_id],
+                    "inverse_vol_weight": capped_weights[security_id],
+                }
+                intents.append(OrderIntent(security_id, OrderSide.BUY, quantity, OrderType.MARKET, features=features))
                 available_cash -= quantity * price
         return intents

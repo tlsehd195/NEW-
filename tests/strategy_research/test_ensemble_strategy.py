@@ -151,3 +151,30 @@ class TestParameterValidation:
     def test_rejects_non_positive_top_n(self) -> None:
         with pytest.raises(ValueError):
             RankAverageEnsembleParameters(top_n=0)
+
+
+class TestOrderIntentFeatures:
+    """External review, ADR-0048's own original gap (closed this
+    session): `OrderIntent.features` was never populated by any real
+    Strategy. `Order.features` copies straight through from
+    `OrderIntent.features` unconditionally, so checkable directly on
+    `BacktestResult.orders`."""
+
+    def test_the_buy_order_carries_both_raw_scores_and_the_combined_rank_average(self, tmp_path) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        start, end = date(2020, 1, 2), date(2020, 6, 1)
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        fundamentals_repo = _fundamentals_repo(tmp_path, better_id="TRENDDOWN", worse_id="TRENDUP")
+
+        strategy = RankAverageEnsembleStrategy(
+            list(universe), fundamentals_repo, RankAverageEnsembleParameters(top_n=1, rebalance_months=3),
+        )
+        result = BacktestEngine(price_repo, _config(start, end, universe), strategy).run()
+
+        buy_orders = [o for o in result.orders if o.security_id == "TRENDDOWN" and o.side.value == "BUY"]
+        assert buy_orders
+        features = buy_orders[0].features
+        assert features is not None
+        assert isinstance(features["leverage_score"], float)
+        assert isinstance(features["net_margin_score"], float)
+        assert isinstance(features["combined_rank_average"], float)

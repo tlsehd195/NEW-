@@ -159,11 +159,23 @@ def _select_target(ranked: Sequence[str], params: FactorStrategyParameters) -> s
 
 def _orders_from_target(
     target: set[str], portfolio: PortfolioView, data: AsOfDataView, as_of_time: datetime,
+    scores: Optional[dict[str, float]] = None,
 ) -> list[OrderIntent]:
+    """`scores`, when supplied (external review, ADR-0048's own
+    original gap): the real score each security's ranking was already
+    computed from this same rebalance, attached to its own `OrderIntent.
+    features` as `{"factor_score": <value>}` so it reaches `Decision
+    Snapshot.features` via `trade_journal.backtest_adapter` (unchanged
+    -- `features=order.features` there, no transformation). No new
+    computation -- every caller here already built `scores` to rank
+    `target` in the first place; only a security absent from `scores`
+    (its own score was `None` and excluded from ranking) gets no
+    `features` at all, never a fabricated value."""
     intents: list[OrderIntent] = []
     for security_id, position in portfolio.positions.items():
         if security_id not in target and position.quantity > 0:
-            intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET))
+            features = {"factor_score": scores[security_id]} if scores and security_id in scores else None
+            intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET, features=features))
 
     to_buy = [sid for sid in target if portfolio.quantity_of(sid) == 0]
     if to_buy:
@@ -177,7 +189,8 @@ def _orders_from_target(
                 continue
             quantity = float(int(per_symbol_cash / price))
             if quantity > 0:
-                intents.append(OrderIntent(security_id, OrderSide.BUY, quantity, OrderType.MARKET))
+                features = {"factor_score": scores[security_id]} if scores and security_id in scores else None
+                intents.append(OrderIntent(security_id, OrderSide.BUY, quantity, OrderType.MARKET, features=features))
     return intents
 
 
@@ -215,7 +228,7 @@ class PriceFactorStrategy:
 
         ranked = sorted(scores, key=lambda sid: scores[sid], reverse=True)
         target = _select_target(ranked, self._params)
-        return _orders_from_target(target, portfolio, data, as_of_time)
+        return _orders_from_target(target, portfolio, data, as_of_time, scores)
 
 
 class FundamentalsFactorStrategy:
@@ -255,7 +268,7 @@ class FundamentalsFactorStrategy:
 
         ranked = sorted(scores, key=lambda sid: scores[sid], reverse=True)
         target = _select_target(ranked, self._params)
-        return _orders_from_target(target, portfolio, data, as_of_time)
+        return _orders_from_target(target, portfolio, data, as_of_time, scores)
 
 
 class HybridFactorStrategy:
@@ -299,7 +312,7 @@ class HybridFactorStrategy:
 
         ranked = sorted(scores, key=lambda sid: scores[sid], reverse=True)
         target = _select_target(ranked, self._params)
-        return _orders_from_target(target, portfolio, data, as_of_time)
+        return _orders_from_target(target, portfolio, data, as_of_time, scores)
 
 
 class UniverseFactorStrategy:
@@ -338,4 +351,4 @@ class UniverseFactorStrategy:
         )
         ranked = sorted(scores, key=lambda sid: scores[sid], reverse=True)
         target = _select_target(ranked, self._params)
-        return _orders_from_target(target, portfolio, data, as_of_time)
+        return _orders_from_target(target, portfolio, data, as_of_time, scores)
