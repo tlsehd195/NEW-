@@ -353,6 +353,87 @@ class TestResume:
         assert second["value_history_length"] == first["value_history_length"] + second["checkpoints_run"]
 
 
+class TestFractionalShareSizing:
+    """Session 38: `--lot-size` was not previously a flag at all --
+    `risk.sizing.DeterministicPositionSizer` already floors to a
+    multiple of `PositionSizingConfig.lot_size` (already a plain
+    `float`, not hardcoded to whole shares), but `orchestration.
+    paper_strategies.build_run_cycle_components` had no parameter to
+    reach it, so this script always got the default `lot_size=1.0`
+    (whole shares) no matter what."""
+
+    def test_default_lot_size_produces_whole_share_quantities(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())
+        assert report["lot_size"] == 1.0
+        for quantity in report["final_positions"].values():
+            assert quantity == int(quantity)
+
+    def test_fractional_lot_size_produces_a_real_fractional_quantity(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+            "--lot-size", "0.01",
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())
+        assert report["lot_size"] == 0.01
+        assert report["final_positions"]  # a real BUY happened this window
+        # At least one real held quantity is genuinely fractional --
+        # never rounded back to a whole share.
+        assert any(round(quantity, 10) != int(quantity) for quantity in report["final_positions"].values())
+
+    def test_different_lot_size_produces_a_different_checksum(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        _seed_long_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        def _run(paper_store_name, **kwargs):
+            out_path = tmp_path / f"{paper_store_name}.json"
+            argv = [
+                "--universe", "TEST_UNIVERSE",
+                "--db-path", str(db_path),
+                "--paper-store", str(tmp_path / paper_store_name),
+                "--start", "2024-06-15", "--end", "2024-06-25",
+                "--out", str(out_path),
+            ]
+            for flag, value in kwargs.items():
+                argv += [flag, str(value)]
+            assert module.main(argv) == 0
+            return json.loads(out_path.read_text())
+
+        whole_shares = _run("store_a")
+        fractional = _run("store_b", **{"--lot-size": 0.01})
+        assert whole_shares["content_checksum"] != fractional["content_checksum"]
+
+
 class TestPerformanceReportWiring:
     """Session 38 (ADR-0136): before this, `broker.paper.performance.
     compute_paper_performance_report` (Phase 18) was implemented and

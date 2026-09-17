@@ -138,6 +138,7 @@ class RunCycleStartingIds:
 
 def build_run_cycle_components(
     name: str, *, risk_config: RiskConfig, starting_ids: Optional[RunCycleStartingIds] = None,
+    sizing_config: Optional[PositionSizingConfig] = None,
 ) -> dict:
     """Builds the exact `(predictor, regime_detector, decision_agent,
     position_sizer, risk_engine)` dict `orchestration.paper_runner.
@@ -145,7 +146,20 @@ def build_run_cycle_components(
     name. Raises `KeyError` for a BUY_AND_HOLD or unregistered name --
     callers must check `STRATEGIES[name].kind` first (mirroring
     `PaperTradingSession`'s own fail-closed discipline: no silent
-    fallback to a different strategy)."""
+    fallback to a different strategy).
+
+    `sizing_config` (Session 38): was previously not a parameter at
+    all -- this function always built its own `PositionSizingConfig()`
+    inline, with no way for a caller to reach `PositionSizingConfig.
+    lot_size` (already a generic `float`, not hardcoded to whole
+    shares -- `DeterministicPositionSizer.size()`'s own `math.floor(
+    raw_quantity / config.lot_size) * config.lot_size` already produces
+    a genuinely fractional quantity for any `lot_size < 1.0`, and
+    nothing downstream -- `ValidatedOrder.quantity`/`Fill.quantity`/
+    `Position.quantity` are all plain `float`, confirmed by a repo-wide
+    search for an `int(...)`-cast quantity finding none -- assumes a
+    whole share). Defaults to `PositionSizingConfig()` (unchanged
+    behavior, `lot_size=1.0`) when omitted."""
     if name not in _PREDICTOR_CLASSES:
         raise KeyError(f"'{name}' is not a registered PaperStrategyKind.RUN_CYCLE strategy")
     ids = starting_ids or RunCycleStartingIds()
@@ -162,6 +176,6 @@ def build_run_cycle_components(
             RegimeConfig(), starting_observation_id=ids.observation, starting_composite_id=ids.composite,
         ),
         decision_agent=BaselineRuleDecisionAgent(DecisionConfig(), starting_id=ids.decision),
-        position_sizer=DeterministicPositionSizer(PositionSizingConfig(), starting_id=ids.sizing),
+        position_sizer=DeterministicPositionSizer(sizing_config or PositionSizingConfig(), starting_id=ids.sizing),
         risk_engine=DeterministicPortfolioRiskEngine(risk_config, starting_id=ids.risk),
     )
