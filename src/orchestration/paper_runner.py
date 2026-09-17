@@ -172,6 +172,7 @@ from predict.models import PredictionOutput
 from predict.predictor import Predictor
 
 from regime.detector import RegimeDetector
+from regime.enums import AXIS_STATE_ENUM
 from regime.models import CompositeRegimeObservation
 
 from risk.engine import PortfolioRiskEngine
@@ -318,6 +319,62 @@ def _prediction_features(prediction: PredictionOutput) -> Optional[dict]:
     }
     features = {k: v for k, v in raw.items() if v is not None}
     return features or None
+
+
+def _regime_features(regime: CompositeRegimeObservation) -> Optional[dict]:
+    """External review (Session 38 continued, ADR-0141's own disclosed
+    trade-off): "regime axis observations (categorical, e.g.
+    LiquidityState) are not encoded into numeric features" -- closes
+    that gap. Each axis contributes independently, since a
+    `RegimeObservation`'s own `.value` (numeric) and `.state`
+    (categorical) are independent facts -- `compute_volatility` can
+    return a real `.value` (the raw annualized vol estimate) even while
+    `.state` is still `UNKNOWN` (insufficient percentile history to
+    classify it), so this function never assumes one implies the other
+    is present.
+
+    `.value` (already numeric): included as `regime_<axis>_value`
+    whenever not `None` -- no new computation, the same value
+    `RegimeObservation` already carries.
+
+    `.state` (categorical): one-hot encoded as `regime_<axis>_is_<state>`
+    -- one key per state THIS axis can real-take (from `regime.enums.
+    AXIS_STATE_ENUM`, excluding `UNKNOWN` itself), 1.0 for the active
+    state and 0.0 for every other real state of that SAME axis (a true,
+    not fabricated, fact: the axis genuinely is not in that other
+    state). The entire one-hot block for an axis is OMITTED when that
+    axis's own state is `UNKNOWN` -- writing an all-zero block would
+    read downstream as "confidently observed none of these states,"
+    which is a different (false) claim from "this axis was never
+    classified," the same "never leave a landmine for downstream
+    arithmetic" distinction `_prediction_features` above already
+    applies to `None`.
+
+    Returns `None` (not `{}`) when every axis is missing/`UNKNOWN`."""
+    features: dict = {}
+    for axis, observation in regime.axes.items():
+        axis_name = axis.value.lower()
+        if observation.value is not None:
+            features[f"regime_{axis_name}_value"] = observation.value
+        state_enum = AXIS_STATE_ENUM[axis]
+        if observation.state != state_enum.UNKNOWN.value:
+            for member in state_enum:
+                if member == state_enum.UNKNOWN:
+                    continue
+                features[f"regime_{axis_name}_is_{member.value.lower()}"] = (
+                    1.0 if observation.state == member.value else 0.0
+                )
+    return features or None
+
+
+def _decision_features(prediction: PredictionOutput, regime: CompositeRegimeObservation) -> Optional[dict]:
+    """Combines `_prediction_features`/`_regime_features` into the one
+    dict `record_decision(features=...)` takes -- kept as two separate,
+    independently-testable functions above rather than one, since a
+    caller with only a `PredictionOutput` (no regime context) can still
+    use `_prediction_features` alone."""
+    merged = {**(_prediction_features(prediction) or {}), **(_regime_features(regime) or {})}
+    return merged or None
 
 
 def _portfolio_view(account, view: AsOfDataView, as_of_time: datetime) -> PortfolioView:
@@ -616,7 +673,7 @@ def run_cycle(
                     decision_time=as_of_time, security_id=security_id, decision=decision.action,
                     natural_key=("paper_decision", experiment_id, security_id, as_of_time),
                     portfolio_state=portfolio, market_state={}, confidence=decision.confidence,
-                    features=_prediction_features(prediction),
+                    features=_decision_features(prediction, regime),
                     decision_reason=decision.decision_reason, model_version=decision.model_version,
                     strategy_version=decision.strategy_version or "unknown",
                     feature_version=decision.feature_version, data_version=decision.data_version,

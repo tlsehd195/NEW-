@@ -597,6 +597,111 @@ class TestDecisionSnapshotFeatures:
         )
         assert _prediction_features(prediction) is None
 
+    def test_regime_state_is_one_hot_encoded_excluding_unknown(self) -> None:
+        """External review (Session 38 continued, ADR-0141's own
+        disclosed trade-off): regime axis observations were not encoded
+        into numeric features at all. A real (non-UNKNOWN) state gets
+        one key per real state of that SAME axis -- 1.0 for the active
+        one, 0.0 for the others -- never a fabricated value for the
+        UNKNOWN axis (Distribution) below."""
+        from orchestration.paper_runner import _regime_features
+        from regime.enums import RegimeAxis, SubjectKind
+        from regime.models import CompositeRegimeObservation, RegimeObservation
+
+        as_of = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        trend_obs = RegimeObservation(
+            regime_id="REG-000001", axis=RegimeAxis.TREND, subject_id="AAA",
+            subject_kind=SubjectKind.SECURITY, timestamp=as_of, as_of_time=as_of,
+            state="BULL", value=0.05, definition="trend_ma_crossover_v1", reliability=1.0,
+            lookback_days=20, feature_version="f1", data_version=("d1",),
+            method_version="m1", configuration_version="c1",
+        )
+        distribution_obs = RegimeObservation(
+            regime_id="REG-000002", axis=RegimeAxis.DISTRIBUTION, subject_id="AAA",
+            subject_kind=SubjectKind.SECURITY, timestamp=as_of, as_of_time=as_of,
+            state="UNKNOWN", value=None, definition="distribution_days_v1", reliability=0.0,
+            lookback_days=20, feature_version="f1", data_version=("d1",),
+            method_version="m1", configuration_version="c1",
+        )
+        regime = CompositeRegimeObservation(
+            composite_id="CREG-000001", subject_id="AAA", subject_kind=SubjectKind.SECURITY,
+            as_of_time=as_of, axes={RegimeAxis.TREND: trend_obs, RegimeAxis.DISTRIBUTION: distribution_obs},
+        )
+
+        features = _regime_features(regime)
+        assert features == {
+            "regime_trend_value": 0.05,
+            "regime_trend_is_bull": 1.0,
+            "regime_trend_is_bear": 0.0,
+            "regime_trend_is_neutral": 0.0,
+        }
+        # The UNKNOWN Distribution axis contributes nothing at all --
+        # never an all-zero one-hot block, never a fabricated value.
+        assert not any(k.startswith("regime_distribution_") for k in features)
+
+    def test_regime_value_can_be_present_even_when_state_is_unknown(self) -> None:
+        """`compute_volatility` can return a real `.value` (the raw
+        annualized vol estimate) while `.state` is still `UNKNOWN`
+        (insufficient percentile history to classify it) -- value and
+        state are independent facts, confirmed here directly."""
+        from orchestration.paper_runner import _regime_features
+        from regime.enums import RegimeAxis, SubjectKind
+        from regime.models import CompositeRegimeObservation, RegimeObservation
+
+        as_of = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        vol_obs = RegimeObservation(
+            regime_id="REG-000001", axis=RegimeAxis.VOLATILITY, subject_id="AAA",
+            subject_kind=SubjectKind.SECURITY, timestamp=as_of, as_of_time=as_of,
+            state="UNKNOWN", value=0.22, definition="realized_vol_v1", reliability=0.4,
+            lookback_days=20, feature_version="f1", data_version=("d1",),
+            method_version="m1", configuration_version="c1",
+        )
+        regime = CompositeRegimeObservation(
+            composite_id="CREG-000001", subject_id="AAA", subject_kind=SubjectKind.SECURITY,
+            as_of_time=as_of, axes={RegimeAxis.VOLATILITY: vol_obs},
+        )
+
+        features = _regime_features(regime)
+        assert features == {"regime_volatility_value": 0.22}  # value present, no state one-hot
+
+    def test_all_axes_unknown_and_valueless_returns_none(self) -> None:
+        from orchestration.paper_runner import _regime_features
+        from regime.enums import RegimeAxis, SubjectKind
+        from regime.models import CompositeRegimeObservation, RegimeObservation
+
+        as_of = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        obs = RegimeObservation(
+            regime_id="REG-000001", axis=RegimeAxis.TREND, subject_id="AAA",
+            subject_kind=SubjectKind.SECURITY, timestamp=as_of, as_of_time=as_of,
+            state="UNKNOWN", value=None, definition="trend_ma_crossover_v1", reliability=0.0,
+            lookback_days=20, feature_version="f1", data_version=("d1",),
+            method_version="m1", configuration_version="c1",
+        )
+        regime = CompositeRegimeObservation(
+            composite_id="CREG-000001", subject_id="AAA", subject_kind=SubjectKind.SECURITY,
+            as_of_time=as_of, axes={RegimeAxis.TREND: obs},
+        )
+        assert _regime_features(regime) is None
+
+    def test_a_real_cycle_s_decision_snapshot_carries_both_prediction_and_regime_features(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+
+        run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(),
+            trade_journal_repository=journal,
+        )
+
+        trade = journal.list_trades(security_id="AAA")[0]
+        decision_snapshot = journal.get_decision(trade.decision_id)
+        assert decision_snapshot.features is not None
+        assert "expected_return" in decision_snapshot.features  # prediction side, unchanged
+        # At least one real regime key reached the snapshot too -- the
+        # fixture's own drift produces a real, classifiable Trend axis.
+        assert any(k.startswith("regime_") for k in decision_snapshot.features)
+
 
 class TestValueHistoryState:
     """Session 36 continued -- PaperRunnerState lets max_drawdown/
