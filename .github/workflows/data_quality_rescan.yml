@@ -1,18 +1,18 @@
-# Retroactive + ongoing data quality rescan (Session 37, ADR-0128,
-# revised by ADR-0129 to add a weekly schedule alongside the original
+# Retroactive + ongoing data quality rescan (Session 37, ADR-0144,
+# revised by ADR-0145 to add a weekly schedule alongside the original
 # workflow_dispatch).
 #
-# ADR-0127 made DuckDBDataRepository.get_bars() exclude a CRITICAL-
+# ADR-0143 made DuckDBDataRepository.get_bars() exclude a CRITICAL-
 # flagged bar by default, but only for bars a run actually quality-
 # checks -- the daily Paper Trading Cycle only ever checks the
 # INCREMENTAL window it just fetched (ADR-0085), so a bar already
-# sitting in the catalog from before ADR-0127 (or from any run whose
+# sitting in the catalog from before ADR-0143 (or from any run whose
 # findings simply were never persisted) is never re-examined by any
 # later, ordinary run. This workflow runs scripts/rescan_data_quality.py
 # against the WHOLE existing market-data-catalog, closing that gap.
 #
-# ADR-0128 originally made this workflow_dispatch-only, reasoning a full
-# rescan every run would be wasteful/noisy. ADR-0129 revisited that: at
+# ADR-0144 originally made this workflow_dispatch-only, reasoning a full
+# rescan every run would be wasteful/noisy. ADR-0145 revisited that: at
 # this project's actual data scale (a pilot/research universe, a few
 # years of daily bars -- tens of thousands of rows, not millions),
 # DataQualityFramework.run() over the ENTIRE catalog is computationally
@@ -20,7 +20,7 @@
 # NOTHING), so a recurring rescan costs almost nothing and gives ongoing
 # defense-in-depth beyond a one-time catch-up -- it also catches
 # anything a future edge case in the incremental checker might miss,
-# not just pre-ADR-0127 history. Scheduled weekly (Saturday 05:00 UTC --
+# not just pre-ADR-0143 history. Scheduled weekly (Saturday 05:00 UTC --
 # after the week's last weekday Paper Trading run at Friday 22:00 UTC,
 # before the Learning Cycle's own Saturday 06:00 UTC run, so a bad bar
 # found here is already excluded before that week's retraining reads

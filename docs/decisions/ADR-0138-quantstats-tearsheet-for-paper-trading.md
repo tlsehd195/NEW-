@@ -103,7 +103,7 @@ itself already applies via its own `reasons` dict).
   to `.github/workflows/paper_trading_cycle.yml`'s own scheduled run
   (that workflow's `ubuntu-latest` runner would need the `[reporting]`
   extra installed, and the resulting HTML would need somewhere to go,
-  e.g. an artifact upload or the Discord webhook (ADR-0135) sending a
+  e.g. an artifact upload or the Discord webhook (ADR-0146) sending a
   link) -- left as a natural next step, not done here, since this
   session's own scope was "wire the library up and prove it works,"
   not "add a second scheduled workflow step."

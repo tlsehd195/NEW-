@@ -18,7 +18,7 @@ Missing symbols (zero bars): []
 Data quality status: FAILED (400 issues: WARNING 1, ERROR 399, CRITICAL 0)
 ```
 
-`quality_run.status` was not `CRITICAL_FAILURE` -- ADR-0127's gate was not
+`quality_run.status` was not `CRITICAL_FAILURE` -- ADR-0143's gate was not
 what failed this run. The `PARTIAL_SUCCESS` came from the pre-existing,
 much older `IngestionRunner.run()` result status check, and
 `missing_symbols` (computed only from zero-bar counts) was empty -- so
@@ -33,7 +33,7 @@ this development environment's own egress proxy has been unable to
 reach all session -- so this specific run's real cause could not be
 pinned down further from here.
 
-This is the same shape of gap ADR-0127 already fixed for data quality
+This is the same shape of gap ADR-0143 already fixed for data quality
 severity: real information existed in the manifest but was invisible
 from CI logs alone.
 

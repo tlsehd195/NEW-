@@ -117,7 +117,7 @@ class TestImportExternalMarketDataCli:
         assert failed[0]["error"] is not None
 
     def test_a_critical_data_quality_finding_fails_the_run_and_excludes_the_bar(self, tmp_path) -> None:
-        """Session 37 (real-data DQ gap, ADR-0127): a non-finite close
+        """Session 37 (real-data DQ gap, ADR-0143): a non-finite close
         (e.g. a malformed export) is a CRITICAL-severity `non_finite_value`
         finding -- the run must now fail loudly (previously this script's
         exit code ignored quality_run.status entirely), and the affected

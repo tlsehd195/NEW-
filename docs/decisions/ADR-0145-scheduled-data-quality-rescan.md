@@ -1,11 +1,11 @@
-# ADR-0129: Schedule the data quality rescan (amends ADR-0128)
+# ADR-0145: Schedule the data quality rescan (amends ADR-0144)
 
 **Status:** Accepted
 **Session:** 37 (continued)
 
 ## Context
 
-Immediately after ADR-0128 shipped (`workflow_dispatch`-only, no
+Immediately after ADR-0144 shipped (`workflow_dispatch`-only, no
 schedule, with the stated reasoning that a full rescan every run would
 be wasteful and noisy), the account owner asked two direct questions:
 
@@ -13,7 +13,7 @@ be wasteful and noisy), the account owner asked two direct questions:
 2. "지금 실패했던 데이터들 처리 완료 한거야?" (Is the data from the
    already-failed run actually processed now?)
 
-Question 2's honest answer is no -- see ADR-0128 itself: writing the
+Question 2's honest answer is no -- see ADR-0144 itself: writing the
 script and workflow does not, by itself, run them against the real
 `market-data-catalog` artifact. Verified directly (not assumed) this
 session: `mcp__github__actions_list` (`list_workflows`) shows GitHub
@@ -30,7 +30,7 @@ merged, a human must either wait for the next Saturday 05:00 UTC
 schedule (see Decision below) or manually dispatch "Retroactive Data
 Quality Rescan" from the Actions tab.
 
-Question 1 is what this ADR is about. Re-examining ADR-0128's own
+Question 1 is what this ADR is about. Re-examining ADR-0144's own
 "wasteful/noisy" reasoning: it was true in the abstract but overstated
 for this project's actual data scale. This project's real Paper Trading
 universe (`RESEARCH_UNIVERSE`/`PILOT_UNIVERSE`, see
@@ -47,7 +47,7 @@ correctness problem -- and it is outweighed by a real, ongoing benefit a
 one-time catch-up does not provide: continuous defense-in-depth against
 any FUTURE gap in the incremental checker (`ingest_real_market_data.py`
 only ever quality-checks its own incremental window, per ADR-0085) that
-a periodic full rescan would still catch even after the pre-ADR-0127
+a periodic full rescan would still catch even after the pre-ADR-0143
 backlog is cleared.
 
 ## Decision

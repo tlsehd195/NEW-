@@ -6,7 +6,7 @@
 **Related documents:** `docs/decisions/ADR-0024-paper-performance-and-validation.md`
 (Phase 18, the module this ADR wires up unmodified),
 `docs/decisions/ADR-0096-...` (the identical "always populated" precedent
-this ADR reuses for the accounting side), `docs/decisions/ADR-0135-...`
+this ADR reuses for the accounting side), `docs/decisions/ADR-0146-...`
 (the Discord notification this ADR's new report field now also reaches)
 
 ---
@@ -100,7 +100,7 @@ latest.
 produces a JSON-safe dict (Phase 18's own DuckDB persistence uses it) --
 reused directly as the new `report["performance"]` key rather than
 writing a second serializer. `notifications.discord_webhook.format_
-paper_trading_cycle_report` (ADR-0135, merged earlier this session) now
+paper_trading_cycle_report` (ADR-0146, merged earlier this session) now
 also renders Sharpe/Sortino/max drawdown/total return when present,
 skipping each individually absent/`None` metric rather than fabricating
 one -- an older report file with no `performance` key at all (written
@@ -116,7 +116,7 @@ before this ADR) is rendered exactly as before.
 - `run_cycle`'s accounting is now mark-to-market-current for the first
   time, benefiting any future caller (e.g. `run_multi_strategy_paper_
   trading_cycle.py`) that wants a real, single-process equity curve.
-- Discord notifications (ADR-0135) now carry Sharpe/Sortino/drawdown/
+- Discord notifications (ADR-0146) now carry Sharpe/Sortino/drawdown/
   total return once available, with no separate wiring needed.
 
 ### Negative / Trade-offs

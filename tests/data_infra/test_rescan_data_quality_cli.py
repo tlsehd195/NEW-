@@ -1,5 +1,5 @@
 """Real, executable tests for `scripts/rescan_data_quality.py` (Session
-37, ADR-0128).
+37, ADR-0144).
 
 Like `scripts/import_external_market_data.py`, this script makes NO
 network call -- it only reads an already-persisted local DuckDB/Parquet
@@ -43,7 +43,7 @@ class TestRescanDataQualityCli:
         bad = dataclasses.replace(make_bar("AAA", date(2024, 1, 3), 100.0), close=math.nan)
         repo.append_bars([good, bad])
         # Simulates the real gap this rescan closes: the bad bar was
-        # persisted by an earlier (pre-ADR-0127) run and never quality
+        # persisted by an earlier (pre-ADR-0143) run and never quality
         # checked -- get_bars() still returns it, unfiltered, right now.
         before = repo.get_bars("AAA", datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 31, tzinfo=timezone.utc), as_of_time=datetime(2024, 1, 31, tzinfo=timezone.utc))
         assert len(before) == 2

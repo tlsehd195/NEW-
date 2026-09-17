@@ -1,4 +1,4 @@
-# ADR-0127: Data quality gate and CRITICAL-finding rejection
+# ADR-0143: Data quality gate and CRITICAL-finding rejection
 
 **Status:** Accepted
 **Session:** 37 (continued)
