@@ -30,6 +30,26 @@ reporting = [
 research = [
     "alphalens-reloaded>=0.4.6",
 ]
+# ADR-0151, Decision 1 -- src/risk/sizing.py only sizes one security at
+# a time despite Phase 8's own "Portfolio Risk Engine" docstring; not
+# yet wired into src/risk/ (separate, scheduled Phase work).
+portfolio-optimization = [
+    "skfolio>=1.2.1",
+]
+# ADR-0151, Decision 5 -- fills two independently-documented, deferred
+# gaps at once: Purged K-Fold/Embargo (ADR-0008) and PBO/Deflated
+# Sharpe Ratio computation (ADR-0031's evidence.py). Not yet wired into
+# src/backtest/validation.py or src/strategy_research/evidence.py.
+backtest-integrity-stats = [
+    "purgedcv>=0.1.6",
+]
+# ADR-0151, Decision 7 -- src/data_infra/calendar.py's own hand-picked
+# holiday sample is explicitly non-production-accurate (missing Korea's
+# lunar holidays, most US federal holidays). Not yet wired in --
+# TradingCalendar is already a Protocol for this exact swap.
+market-calendars = [
+    "exchange_calendars>=4.13.2",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
