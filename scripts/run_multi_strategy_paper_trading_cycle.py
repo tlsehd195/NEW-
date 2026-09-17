@@ -166,6 +166,11 @@ def _run_run_cycle_strategy(
 
     total_submitted = 0
     total_filled = 0
+    # ADR-0154: `outcome.submission.filled_quantity` is now ALWAYS None
+    # right after `run_cycle` returns -- see `run_paper_trading_cycle.
+    # py`'s identical fix for why. Re-derived below from each submitted
+    # order's real, current status instead.
+    submitted_client_order_ids: list[str] = []
     checkpoint_index_by_value = {c: i for i, c in enumerate(checkpoints)}
     for checkpoint in strategy_checkpoints:
         clock.index = checkpoint_index_by_value[checkpoint]
@@ -179,8 +184,15 @@ def _run_run_cycle_strategy(
         for outcome in outcomes:
             if outcome.submission is not None:
                 total_submitted += 1
-                if outcome.submission.filled_quantity:
-                    total_filled += 1
+                submitted_client_order_ids.append(outcome.submission.request_client_order_id)
+
+    total_filled = 0
+    if submitted_client_order_ids:
+        as_of_final = strategy_checkpoints[-1] if strategy_checkpoints else checkpoints[-1]
+        total_filled = sum(
+            1 for cid in submitted_client_order_ids
+            if (session.adapter.get_order_status(cid, as_of=as_of_final).filled_quantity or 0) > 0
+        )
 
     return {
         "kind": PaperStrategyKind.RUN_CYCLE.value,
@@ -234,6 +246,16 @@ def _run_buy_and_hold_strategy(
     value_history = []
     for i, checkpoint in enumerate(checkpoints):
         clock.index = i
+        # ADR-0154: `PaperBrokerAdapter.submit_order` never fills
+        # synchronously any more -- the initial buy (and any order
+        # still open from a resumed run) only ever gets a fill attempt
+        # through an explicit `advance()` call. `_run_run_cycle_strategy`
+        # gets this for free from `run_cycle`'s own internal `session.
+        # advance(as_of_time)` call; this strategy submits no orders of
+        # its own past the first checkpoint, so it must call it here
+        # itself, or a Buy & Hold order would stay PENDING for the
+        # entire run and `final_cash` would silently never move.
+        session.advance(checkpoint)
         value_history.append(compute_portfolio_snapshot(session, view, checkpoint).portfolio_value)
 
     return {

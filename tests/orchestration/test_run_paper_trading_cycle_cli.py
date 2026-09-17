@@ -135,7 +135,14 @@ class TestEndToEndAgainstASeededCatalog:
             # -- see _seed_long_catalog's own docstring for why anything
             # earlier never produces a real BUY at all (TREND stays
             # UNKNOWN, confirmed by directly instrumenting run_cycle).
-            "--start", "2024-06-15", "--end", "2024-06-25",
+            # ADR-0154: the real BUY this range produces is decided on
+            # its OWN last checkpoint if `--end` stops at "2024-06-25"
+            # exactly -- since a fill is now deferred to the NEXT
+            # checkpoint's advance() (never same-cycle), `--end` is
+            # extended a couple of real trading days further so that
+            # next checkpoint (and therefore the fill) actually exists
+            # within this run's own range.
+            "--start", "2024-06-15", "--end", "2024-06-27",
             "--out", str(out_path),
         ])
         assert rc == 0

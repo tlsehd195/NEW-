@@ -146,10 +146,11 @@ class TestFullChainProducesOneOutcomePerSecurityWithConsistentLineage:
 class TestOrdersActuallySubmitAndFill:
     def test_a_warranted_buy_is_submitted_and_filled(self) -> None:
         repo, config, bars = _scenario()
-        view, _, _ = _build_view(repo, config, 100)
+        view, clock, _ = _build_view(repo, config, 100)
         session = _session(bars)
+        components = _components()
 
-        outcomes = run_cycle(["AAA"], view.current_time, view, session, **_components())
+        outcomes = run_cycle(["AAA"], view.current_time, view, session, **components)
         outcome = outcomes[0]
 
         # The synthetic fixture is a steady upward drift starting from
@@ -157,7 +158,17 @@ class TestOrdersActuallySubmitAndFill:
         # confidence threshold is expected to propose a BUY here.
         assert outcome.validation.status == OrderValidationStatus.ACCEPTED
         assert outcome.submission is not None
-        assert outcome.submission.status in (BrokerOrderStatus.FILLED, BrokerOrderStatus.PARTIAL_FILLED)
+        # ADR-0154: submission never fills synchronously -- the fill is
+        # deferred to the NEXT cycle's own advance() call.
+        assert outcome.submission.status == BrokerOrderStatus.PENDING
+
+        clock.index = 101
+        # No new decision this cycle (empty security_ids) -- isolates
+        # this call to exercise only the delayed-fill retry run_cycle
+        # performs first, via its own advance().
+        assert run_cycle([], view.current_time, view, session, **components) == ()
+        status = session.adapter.get_order_status(outcome.submission.request_client_order_id, as_of=view.current_time)
+        assert status.status in (BrokerOrderStatus.FILLED, BrokerOrderStatus.PARTIAL_FILLED)
 
     def test_a_second_cycle_sees_the_first_cycles_real_fill_via_account_summary(self) -> None:
         repo, config, bars = _scenario()
@@ -166,17 +177,22 @@ class TestOrdersActuallySubmitAndFill:
         components = _components()
 
         first = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
-        assert first.submission is not None and first.submission.status == BrokerOrderStatus.FILLED
+        assert first.submission is not None and first.submission.status == BrokerOrderStatus.PENDING  # ADR-0154
 
+        # Before the second cycle's own advance() runs, the fill has not
+        # landed yet -- no position exists, never a fabricated one.
         account_before_second = session.account_summary(as_of=view.current_time)
-        assert "AAA" in account_before_second.positions
-        assert account_before_second.positions["AAA"].quantity == first.submission.filled_quantity
+        assert "AAA" not in account_before_second.positions
 
         clock.index = 101
         second = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
-        # The portfolio state fed into the second cycle's decision/sizing
-        # must reflect the real position from the first cycle's fill --
-        # never a fabricated/reset-to-empty state.
+        # The second cycle's own advance() (called first, before its own
+        # decision) fills the first cycle's order -- its decision/sizing/
+        # risk chain therefore sees a real, non-empty position, never a
+        # fabricated one.
+        account_after_advance = session.account_summary(as_of=view.current_time)
+        assert "AAA" in account_after_advance.positions
+        assert account_after_advance.positions["AAA"].quantity > 0
         assert second.decision.as_of_time == view.current_time
 
     def test_risk_state_position_weight_reflects_real_price_not_stale_fill_cost(self) -> None:
@@ -194,8 +210,13 @@ class TestOrdersActuallySubmitAndFill:
         components = _components()
 
         first = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
-        assert first.submission is not None and first.submission.status == BrokerOrderStatus.FILLED
-        fill_price = first.submission.avg_fill_price
+        assert first.submission is not None and first.submission.status == BrokerOrderStatus.PENDING  # ADR-0154
+
+        clock.index = 101
+        run_cycle([], view.current_time, view, session, **components)  # delayed fill lands here
+        status = session.adapter.get_order_status(first.submission.request_client_order_id, as_of=view.current_time)
+        assert status.status == BrokerOrderStatus.FILLED
+        fill_price = status.avg_fill_price
 
         clock.index = 130  # far enough past the drift to move price meaningfully
         second = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
@@ -253,13 +274,21 @@ class TestMaxOrderNotionalPropagatesThroughTheWholeChain:
 
         loose_session = _session(bars, risk_config=loose_config)
         loose_outcome = run_cycle(["AAA"], view.current_time, view, loose_session, **_components(loose_config))[0]
+        loose_session.advance(view.current_time)  # ADR-0154: fill is deferred -- attempt it now
 
         tight_session = _session(bars, risk_config=tight_config)
         tight_outcome = run_cycle(["AAA"], view.current_time, view, tight_session, **_components(tight_config))[0]
+        tight_session.advance(view.current_time)  # ADR-0154: fill is deferred -- attempt it now
 
         assert "max_order_notional" in tight_outcome.risk_checked.breached_limits
         assert tight_outcome.submission is not None
-        assert tight_outcome.submission.filled_quantity < loose_outcome.submission.filled_quantity
+        loose_status = loose_session.adapter.get_order_status(
+            loose_outcome.submission.request_client_order_id, as_of=view.current_time,
+        )
+        tight_status = tight_session.adapter.get_order_status(
+            tight_outcome.submission.request_client_order_id, as_of=view.current_time,
+        )
+        assert tight_status.filled_quantity < loose_status.filled_quantity
 
 
 class TestReentryCooldownPropagatesThroughTheWholeChain:
@@ -354,28 +383,46 @@ class TestTradeJournalWriteSide:
         ADR-0097's own documented "not joinable" limitation) -- verified
         by actually resolving the join, not just comparing IDs, since
         `learning.cleaning.DataCleaner.clean` depends on exactly this
-        join succeeding (`journal.get_decision(record.decision_id)`)."""
+        join succeeding (`journal.get_decision(record.decision_id)`).
+
+        ADR-0154: the decision is recorded in the SAME cycle it is made,
+        but the fill (and therefore the TradeRecord) is deferred to the
+        NEXT cycle's `advance()` -- so this test now spans two cycles."""
         repo, config, bars = _scenario()
-        view, _, _ = _build_view(repo, config, 100)
+        view, clock, _ = _build_view(repo, config, 100)
         session = _session(bars)
         journal = InMemoryTradeJournalRepository()
+        components = _components()
 
+        cycle1_time = view.current_time
         outcome = run_cycle(
-            ["AAA"], view.current_time, view, session, **_components(),
+            ["AAA"], cycle1_time, view, session, **components,
             trade_journal_repository=journal,
         )[0]
+        assert outcome.submission is not None
+        assert outcome.submission.status == BrokerOrderStatus.PENDING  # ADR-0154: fill deferred
+        assert journal.list_trades() == []  # no premature TradeRecord this cycle
 
-        assert outcome.submission is not None and outcome.submission.filled_quantity
+        decision_snapshot_pending = journal.get_decision_by_natural_key(
+            ("paper_decision", None, "AAA", cycle1_time),
+        )
+        assert decision_snapshot_pending is not None  # the decision itself IS recorded immediately
+
+        clock.index = 101
+        run_cycle([], view.current_time, view, session, **components, trade_journal_repository=journal)  # delayed fill lands here
+
         trades = journal.list_trades(security_id="AAA")
         assert len(trades) == 1
         trade = trades[0]
         assert trade.side == OrderSide.BUY
-        assert trade.quantity == outcome.submission.filled_quantity
-        assert trade.position_after == outcome.submission.filled_quantity  # started from an empty portfolio
+        status = session.adapter.get_order_status(outcome.submission.request_client_order_id, as_of=cycle1_time)
+        assert trade.quantity == status.filled_quantity
+        assert trade.position_after == status.filled_quantity  # started from an empty portfolio
         assert trade.provenance == TradeProvenance.PAPER_TRADING
 
         decision_snapshot = journal.get_decision(trade.decision_id)
         assert decision_snapshot is not None  # the real join DataCleaner.clean depends on
+        assert decision_snapshot.snapshot_id == decision_snapshot_pending.snapshot_id  # the SAME decision, joined via natural_key
         assert decision_snapshot.security_id == "AAA"
         assert decision_snapshot.decision == outcome.decision.action
         assert decision_snapshot.order is None  # never a ValidatedOrder -- see module docstring
@@ -402,12 +449,18 @@ class TestTradeJournalWriteSide:
 
     def test_omitted_trade_journal_repository_writes_nothing_and_does_not_crash(self) -> None:
         repo, config, bars = _scenario()
-        view, _, _ = _build_view(repo, config, 100)
+        view, clock, _ = _build_view(repo, config, 100)
         session = _session(bars)
+        components = _components()
 
-        outcome = run_cycle(["AAA"], view.current_time, view, session, **_components())[0]
+        outcome = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
+        assert outcome.submission is not None
+        assert outcome.submission.status == BrokerOrderStatus.PENDING  # ADR-0154: fill deferred
 
-        assert outcome.submission is not None and outcome.submission.filled_quantity
+        clock.index = 101
+        run_cycle([], view.current_time, view, session, **components)  # advance() must not crash without a journal
+        status = session.adapter.get_order_status(outcome.submission.request_client_order_id, as_of=view.current_time)
+        assert status.status in (BrokerOrderStatus.FILLED, BrokerOrderStatus.PARTIAL_FILLED)
 
     def test_a_closing_sell_records_real_realized_pnl_return_and_holding_period(self) -> None:
         """Session 37 (ADR-0113): ADR-0096/ADR-0097's original write-side
@@ -426,17 +479,23 @@ class TestTradeJournalWriteSide:
         journal = InMemoryTradeJournalRepository()
         components = _components()
 
-        sell_outcome = None
+        # ADR-0154: a SELL decided this cycle only fills (and therefore
+        # only reaches the Trade Journal) on a LATER cycle's advance() --
+        # so this loop watches the journal itself for the real SELL
+        # TradeRecord to appear, rather than the same-cycle `outcome.
+        # decision.action` this used to check before fills were deferred.
+        sell_trade = None
         for offset in range(0, len(checkpoints) - 100):
             clock.index = 100 + offset
-            outcome = run_cycle(
+            run_cycle(
                 ["AAA"], view.current_time, view, session, trade_journal_repository=journal, **components,
-            )[0]
-            if outcome.submission is not None and outcome.decision.action.value == "SELL":
-                sell_outcome = outcome
+            )
+            sell_trades = [t for t in journal.list_trades(security_id="AAA") if t.side == OrderSide.SELL]
+            if sell_trades:
+                sell_trade = sell_trades[0]
                 break
 
-        assert sell_outcome is not None, "fixture must produce a real SELL -- see _reversal_scenario's own docstring"
+        assert sell_trade is not None, "fixture must produce a real SELL -- see _reversal_scenario's own docstring"
 
         trades = journal.list_trades(security_id="AAA")
         buy_trades = [t for t in trades if t.side == OrderSide.BUY]
@@ -503,11 +562,13 @@ class TestTradeJournalWriteSide:
             else:
                 session.account_summary = real_account_summary
 
-            outcome = run_cycle(
+            run_cycle(
                 ["AAA"], view.current_time, view, session, trade_journal_repository=journal, **components,
-            )[0]
-            if outcome.submission is not None and outcome.decision.action.value == "SELL":
-                sell_outcome = outcome
+            )
+            # ADR-0154: watch the journal itself for the real (delayed)
+            # SELL fill, rather than the same-cycle `outcome.decision`.
+            if [t for t in journal.list_trades(security_id="AAA") if t.side == OrderSide.SELL]:
+                sell_outcome = True
                 break
 
         assert sell_outcome is not None, "fixture must produce a real SELL -- see _reversal_scenario's own docstring"
@@ -549,13 +610,17 @@ class TestDecisionSnapshotFeatures:
         session = _session(bars)
         journal = InMemoryTradeJournalRepository()
 
+        cycle_time = view.current_time
         outcome = run_cycle(
-            ["AAA"], view.current_time, view, session, **_components(),
+            ["AAA"], cycle_time, view, session, **_components(),
             trade_journal_repository=journal,
         )[0]
 
-        trade = journal.list_trades(security_id="AAA")[0]
-        decision_snapshot = journal.get_decision(trade.decision_id)
+        # ADR-0154: the decision is recorded immediately (a TradeRecord
+        # is not, since the fill is deferred) -- fetched here via the
+        # SAME natural_key `record_decision` indexes it under.
+        decision_snapshot = journal.get_decision_by_natural_key(("paper_decision", None, "AAA", cycle_time))
+        assert decision_snapshot is not None
         assert decision_snapshot.features is not None
         # Every value actually matches this cycle's own real prediction
         # -- never a fabricated or re-derived number.
@@ -689,13 +754,16 @@ class TestDecisionSnapshotFeatures:
         session = _session(bars)
         journal = InMemoryTradeJournalRepository()
 
+        cycle_time = view.current_time
         run_cycle(
-            ["AAA"], view.current_time, view, session, **_components(),
+            ["AAA"], cycle_time, view, session, **_components(),
             trade_journal_repository=journal,
         )
 
-        trade = journal.list_trades(security_id="AAA")[0]
-        decision_snapshot = journal.get_decision(trade.decision_id)
+        # ADR-0154: the fill (and therefore a TradeRecord) is deferred --
+        # the decision itself is recorded immediately, so it is fetched
+        # directly via its natural_key rather than through a TradeRecord.
+        decision_snapshot = journal.get_decision_by_natural_key(("paper_decision", None, "AAA", cycle_time))
         assert decision_snapshot.features is not None
         assert "expected_return" in decision_snapshot.features  # prediction side, unchanged
         # At least one real regime key reached the snapshot too -- the
@@ -827,14 +895,17 @@ class TestMarkToMarketAccounting:
 
     def test_turnover_reflects_real_fills_within_one_process(self) -> None:
         repo, config, bars = _scenario()
-        view, _, _ = _build_view(repo, config, 100)
+        view, clock, _ = _build_view(repo, config, 100)
         session = _session(bars)
         components = _components()
 
         assert session.adapter.accounting.turnover() == 0.0
         outcome = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
-        assert outcome.submission is not None  # a real BUY happened this cycle
+        assert outcome.submission is not None  # a real BUY was decided this cycle
+        assert session.adapter.accounting.turnover() == 0.0  # ADR-0154: no fill has landed yet
 
+        clock.index = 101
+        run_cycle([], view.current_time, view, session, **components)  # the delayed fill lands here
         assert session.adapter.accounting.turnover() > 0.0
 
     def test_a_held_security_with_no_price_this_cycle_is_recorded_as_missing(self) -> None:
@@ -850,7 +921,7 @@ class TestMarkToMarketAccounting:
         state = PaperRunnerState()
 
         outcome = run_cycle(["AAA"], view.current_time, view, session, state=state, **components)[0]
-        assert outcome.submission is not None  # a real BUY happened this cycle -- AAA is now held
+        assert outcome.submission is not None  # a real BUY was decided this cycle (fill still PENDING, ADR-0154)
         assert state.mark_to_market_missing == []
 
         clock.index = 101
@@ -906,8 +977,13 @@ class TestStuckOrderRetryViaAdvance:
             configuration_version="cfg-v1",
         )
         response, _ = session.submit(order, requested_at=view.current_time)
-        assert response.status == BrokerOrderStatus.PARTIAL_FILLED
-        assert response.filled_quantity == 2_000.0
+        assert response.status == BrokerOrderStatus.PENDING  # ADR-0154: fill is deferred
+
+        _, fills = session.advance(view.current_time)  # first (deferred) fill attempt
+        assert len(fills) == 1
+        status = session.adapter.get_order_status(order.client_order_id, as_of=view.current_time)
+        assert status.status == BrokerOrderStatus.PARTIAL_FILLED
+        assert status.filled_quantity == 2_000.0
 
         clock.index = 101
         # An empty security_ids list means run_cycle makes NO new
@@ -924,3 +1000,105 @@ class TestStuckOrderRetryViaAdvance:
         # a genuine retry of the original order, not a new one (no new
         # order was ever submitted in this test).
         assert account.positions["AAA"].quantity == 4_000.0
+
+
+class TestDeferredFillDecisionJournalLink:
+    """ADR-0154: dedicated coverage for the new deferred-fill contract
+    and its Trade Journal join -- on top of the same-cycle/reversal
+    tests above (which now exercise this path implicitly), these name
+    each individual guarantee explicitly."""
+
+    def test_a_fresh_order_stays_pending_through_its_own_cycle_and_writes_no_premature_trade(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(),
+            trade_journal_repository=journal,
+        )[0]
+
+        assert outcome.submission is not None
+        assert outcome.submission.status == BrokerOrderStatus.PENDING
+        assert journal.list_trades() == []  # no premature TradeRecord this cycle
+
+    def test_the_same_order_fills_next_cycle_and_joins_its_original_decision(self) -> None:
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+        components = _components()
+
+        cycle1_time = view.current_time
+        outcome = run_cycle(
+            ["AAA"], cycle1_time, view, session, **components,
+            trade_journal_repository=journal,
+        )[0]
+        decision_snapshot = journal.get_decision_by_natural_key(("paper_decision", None, "AAA", cycle1_time))
+        assert decision_snapshot is not None
+
+        clock.index = 101
+        run_cycle([], view.current_time, view, session, **components, trade_journal_repository=journal)
+
+        trades = journal.list_trades(security_id="AAA")
+        assert len(trades) == 1
+        trade = trades[0]
+        # A real decision_id resolving through get_decision -- never
+        # missing or fabricated -- is exactly what learning.cleaning.
+        # DataCleaner.clean depends on for this sample to be usable.
+        assert trade.decision_id == decision_snapshot.snapshot_id
+        assert journal.get_decision(trade.decision_id) is not None
+        assert trade.side == OrderSide.BUY
+
+    def test_get_decision_by_natural_key_returns_none_gracefully_when_never_recorded(self) -> None:
+        """A delayed fill for an order whose original cycle had no
+        `trade_journal_repository` at all must be skipped silently when
+        that fill later lands under a DIFFERENT cycle that does supply
+        one -- never a crash, never a fabricated decision link."""
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+
+        # Cycle 1: no journal supplied at all -- the decision is never recorded.
+        outcome = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
+        assert outcome.submission is not None and outcome.submission.status == BrokerOrderStatus.PENDING
+
+        journal = InMemoryTradeJournalRepository()
+        assert journal.get_decision_by_natural_key(("paper_decision", None, "AAA", view.current_time)) is None
+
+        clock.index = 101
+        # Cycle 2: a journal IS supplied now -- cycle 1's order fills
+        # here (delayed), but its decision was never recorded anywhere,
+        # so this fill must be skipped, never crash.
+        run_cycle([], view.current_time, view, session, **components, trade_journal_repository=journal)
+
+        assert journal.list_trades() == []  # skipped, not fabricated
+
+    def test_delayed_fill_closing_sell_computes_real_realized_pnl_and_holding_period(self) -> None:
+        """The same realized_pnl/holding_period invariant `TestTradeJournalWriteSide::
+        test_a_closing_sell_records_real_realized_pnl_return_and_holding_period`
+        already checks -- named here explicitly as the deferred-fill scenario,
+        since every fill in this pipeline is now a delayed one (ADR-0154)."""
+        repo, config, bars = _reversal_scenario()
+        view, clock, checkpoints = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+        components = _components()
+
+        sell_trade = None
+        for offset in range(0, len(checkpoints) - 100):
+            clock.index = 100 + offset
+            run_cycle(["AAA"], view.current_time, view, session, trade_journal_repository=journal, **components)
+            sell_trades = [t for t in journal.list_trades(security_id="AAA") if t.side == OrderSide.SELL]
+            if sell_trades:
+                sell_trade = sell_trades[0]
+                break
+
+        assert sell_trade is not None, "fixture must produce a real SELL -- see _reversal_scenario's own docstring"
+        buy_trade = [t for t in journal.list_trades(security_id="AAA") if t.side == OrderSide.BUY][0]
+        buy_fill, sell_fill = buy_trade.fill, sell_trade.fill
+        expected_pnl = (sell_fill.price - buy_fill.price) * sell_fill.quantity - sell_fill.commission
+        assert sell_trade.realized_pnl == pytest.approx(expected_pnl)
+        assert sell_trade.holding_period == sell_fill.execution_time - buy_fill.execution_time

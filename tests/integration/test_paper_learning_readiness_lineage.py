@@ -67,7 +67,10 @@ class TestScenarioA_BuyFillJournalExperience:
         session = PaperTradingSession(config, mds)
 
         response, fills = session.submit(order, requested_at=as_of)
-        assert response.status == BrokerOrderStatus.FILLED
+        assert response.status == BrokerOrderStatus.PENDING  # ADR-0154: fill is deferred
+        assert len(fills) == 0
+
+        _, fills = session.advance(as_of)  # first (deferred) fill attempt
         assert len(fills) == 1
 
         trade = journal.record_trade(
@@ -103,8 +106,11 @@ class TestScenarioB_PartialThenFullFillJournalExperience:
         mds = InMemoryPaperMarketDataSource([make_bar(security_id=order.security_id, available_time=day1, volume=1_000.0)])
         session = PaperTradingSession(config, mds)
 
-        response1, fills1 = session.submit(order, requested_at=day1)
-        assert response1.status == BrokerOrderStatus.PARTIAL_FILLED
+        response1, fills0 = session.submit(order, requested_at=day1)
+        assert response1.status == BrokerOrderStatus.PENDING  # ADR-0154: fill is deferred
+        assert len(fills0) == 0
+
+        _, fills1 = session.advance(day1)  # first (deferred) fill attempt -- same bar submission decided against
         assert len(fills1) == 1 and fills1[0].fill.quantity == 100.0
 
         mds.register(make_bar(security_id=order.security_id, available_time=day2, volume=1_000.0))
@@ -228,7 +234,8 @@ class TestScenarioE_CompletedTradeReachesPostTradeAnalysisCounterfactualAndLearn
         ])
         session = PaperTradingSession(config, mds)
 
-        _, buy_fills = session.submit(buy_order, requested_at=buy_day)
+        session.submit(buy_order, requested_at=buy_day)
+        _, buy_fills = session.advance(buy_day)  # ADR-0154: fill is deferred -- attempt it now
         buy_trade = journal.record_trade(
             decision_id=buy_decision.snapshot_id, fill=buy_fills[0].fill, position_after=10.0,
             provenance=TradeProvenance.PAPER_TRADING,
@@ -243,7 +250,8 @@ class TestScenarioE_CompletedTradeReachesPostTradeAnalysisCounterfactualAndLearn
         assert sell_order.side == OrderSide.SELL
         sell_decision = journal.record_decision(decision_time=sell_day, security_id=sell_order.security_id, decision=DecisionAction.SELL)
 
-        _, sell_fills = session.submit(sell_order, requested_at=sell_day)
+        session.submit(sell_order, requested_at=sell_day)
+        _, sell_fills = session.advance(sell_day)  # ADR-0154: fill is deferred -- attempt it now
         sell_trade = journal.record_trade(
             decision_id=sell_decision.snapshot_id, fill=sell_fills[0].fill, position_after=0.0,
             realized_pnl=95.0, realized_return=0.095, holding_period=sell_day - buy_day,
@@ -295,7 +303,8 @@ class TestPaperToLearningProvenanceSafety:
             config = make_paper_config(initial_cash=1_000_000.0, max_participation=1.0)
             mds = InMemoryPaperMarketDataSource([make_bar(security_id=order.security_id, available_time=as_of, volume=1_000_000.0)])
             session = PaperTradingSession(config, mds)
-            _, fills = session.submit(order, requested_at=as_of)
+            session.submit(order, requested_at=as_of)
+            _, fills = session.advance(as_of)  # ADR-0154: fill is deferred -- attempt it now
             journal.record_trade(
                 decision_id=decision.snapshot_id, fill=fills[0].fill, position_after=10.0,
                 realized_pnl=1.0, realized_return=0.01, provenance=provenance,

@@ -130,6 +130,20 @@ class DuckDBTradeJournalRepository:
             return None
         return payload_to_decision_snapshot(json_loads(row[0]))
 
+    def get_decision_by_natural_key(self, natural_key: tuple) -> Optional[DecisionSnapshot]:
+        """ADR-0154: same `key_str` construction `record_decision` above
+        already uses to populate `decisions.natural_key` -- used to join
+        a delayed `advance_simulation` fill back to the DecisionSnapshot
+        its originating order was submitted under. Returns `None` (never
+        fabricated) when no decision was ever recorded under this key."""
+        key_str = "|".join(str(part) for part in natural_key)
+        row = self._engine.connection.execute(
+            "SELECT payload_json FROM decisions WHERE natural_key = ?", [key_str]
+        ).fetchone()
+        if row is None:
+            return None
+        return payload_to_decision_snapshot(json_loads(row[0]))
+
     def list_decisions(
         self, *, security_id: Optional[str] = None, provenance: Optional[TradeProvenance] = None,
     ) -> list[DecisionSnapshot]:

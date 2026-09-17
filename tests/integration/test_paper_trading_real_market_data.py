@@ -151,8 +151,9 @@ class TestRealMarketDataFeedsPaperTradingEndToEnd:
             session.adapter, buy_order, execution_mode="PAPER", requested_at=buy_time,
             configuration_version="cfg-v1", request_repository=request_repo, response_repository=response_repo,
         )
+        assert buy_response.status.value == "PENDING"  # ADR-0154: fill is deferred
+        session.adapter.advance_simulation(buy_time)  # first (deferred) fill attempt
         buy_fills = session.capture(buy_order.client_order_id, as_of=buy_time)
-        assert buy_response.status.value == "FILLED"
         assert len(buy_fills) == 1
         # -- the fill price is derived from the real ingested bar's
         # close (185.64), through the cost model, not a fixture value --
@@ -178,8 +179,9 @@ class TestRealMarketDataFeedsPaperTradingEndToEnd:
             session.adapter, sell_order, execution_mode="PAPER", requested_at=sell_time,
             configuration_version="cfg-v1", request_repository=request_repo, response_repository=response_repo,
         )
+        assert sell_response.status.value == "PENDING"  # ADR-0154: fill is deferred
+        session.adapter.advance_simulation(sell_time)  # first (deferred) fill attempt
         sell_fills = session.capture(sell_order.client_order_id, as_of=sell_time)
-        assert sell_response.status.value == "FILLED"
         journal_repo.record_trade(
             decision_id=sell_decision.snapshot_id, fill=sell_fills[0].fill, position_after=0.0,
             realized_pnl=sell_fills[0].fill.price * 100.0 - buy_fills[0].fill.price * 100.0,

@@ -156,6 +156,16 @@ class TestUSLongTermPaperTradingFullLineage:
         )
         assert len(buy_result.orders) == 3
         assert buy_result.skipped_symbols == ()
+        for outcome in buy_result.orders:
+            # ADR-0154: the runner never fills synchronously -- every
+            # order stays PENDING until an explicit advance() call.
+            assert outcome.response.status.value == "PENDING"
+            assert outcome.fills == ()
+
+        _, advance_fills = session.advance(buy_time)  # first (deferred) fill attempt for every order
+        fills_by_order_id: dict = {}
+        for fill_record in advance_fills:
+            fills_by_order_id.setdefault(fill_record.client_order_id, []).append(fill_record)
 
         # -- Record each buy as a Trade Journal decision+trade -- the
         # broker_requests/broker_responses audit trail was already
@@ -164,8 +174,9 @@ class TestUSLongTermPaperTradingFullLineage:
         # separate/duplicate submission needed. --
         for outcome in buy_result.orders:
             decision = journal_repo.record_decision(decision_time=buy_day, security_id=outcome.security_id, decision=DecisionAction.BUY)
+            order_fills = fills_by_order_id[outcome.response.request_client_order_id]
             journal_repo.record_trade(
-                decision_id=decision.snapshot_id, fill=outcome.fills[0].fill, position_after=outcome.quantity,
+                decision_id=decision.snapshot_id, fill=order_fills[0].fill, position_after=outcome.quantity,
                 provenance=TradeProvenance.PAPER_TRADING,
             )
 

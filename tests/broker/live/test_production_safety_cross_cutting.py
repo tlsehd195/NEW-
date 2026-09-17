@@ -125,7 +125,11 @@ class TestIdempotentReplayIsConsistentAcrossAdapters:
         r1 = adapter.submit_order(order, requested_at=utc(2024, 1, 2))
         r2 = adapter.submit_order(order, requested_at=utc(2024, 1, 2))
         assert r1.broker_order_id == r2.broker_order_id
-        assert r1.status == r2.status == BrokerOrderStatus.FILLED
+        assert r1.status == r2.status == BrokerOrderStatus.PENDING  # ADR-0154: fill is deferred
+
+        adapter.advance_simulation(utc(2024, 1, 2))  # first (deferred) fill attempt
+        r3 = adapter.submit_order(order, requested_at=utc(2024, 1, 2))  # a replay after the real fill
+        assert r3.status == BrokerOrderStatus.FILLED
 
     def test_mock_adapter_replays_idempotently(self) -> None:
         from broker_helpers import make_risk_checked_position

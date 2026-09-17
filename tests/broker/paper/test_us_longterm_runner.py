@@ -40,10 +40,18 @@ class TestEqualWeightAllocation:
 
         assert len(result.orders) == 2
         assert result.skipped_symbols == ()
+        for outcome in result.orders:
+            # ADR-0154: submission never fills synchronously -- the
+            # order stays PENDING until an explicit advance() call.
+            assert outcome.response.status.value == "PENDING"
+            assert len(outcome.fills) == 0
+
+        session.advance(buy_time)  # first (deferred) fill attempt for every order this call submitted
+
         by_symbol = {o.security_id: o for o in result.orders}
         for outcome in result.orders:
-            assert outcome.response.status.value == "FILLED"
-            assert len(outcome.fills) == 1
+            status = session.adapter.get_order_status(outcome.response.request_client_order_id, as_of=buy_time)
+            assert status.status.value == "FILLED"
         # Roughly equal notional value per symbol (not exact -- a
         # cost-safety-margin and per-fill commission/spread mean each
         # leg spends a slightly different amount, and BBB is priced
@@ -67,6 +75,7 @@ class TestEqualWeightAllocation:
 
         first = run_buy_and_hold_paper_session(["AAA"], mds, session, buy_time=buy_time, configuration_version="cfg-v1")
         assert len(first.orders) == 1
+        session.advance(buy_time)  # ADR-0154: fill is deferred -- attempt it now
         remaining_cash = session.adapter.get_account(as_of=buy_time).cash
         assert remaining_cash < 1000.0  # cash was actually spent, not simulated
 

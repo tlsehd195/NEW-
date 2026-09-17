@@ -23,7 +23,11 @@ class TestCashNeverNegative:
         adapter = PaperBrokerAdapter(config, mds)
         order = make_validated_order(quantity=10.0)  # notional ~1000, far above 100 cash
         response = adapter.submit_order(order, requested_at=utc(2024, 1, 2))
-        assert response.status == BrokerOrderStatus.REJECTED
+        assert response.status == BrokerOrderStatus.PENDING  # fill is deferred (ADR-0154)
+
+        adapter.advance_simulation(utc(2024, 1, 2))  # first (and only) fill attempt
+        status = adapter.get_order_status(order.client_order_id, as_of=utc(2024, 1, 2))
+        assert status.status == BrokerOrderStatus.REJECTED
         assert adapter.get_account(as_of=utc(2024, 1, 2)).cash >= 0
 
     def test_cash_never_negative_across_many_buys(self) -> None:
@@ -33,6 +37,7 @@ class TestCashNeverNegative:
         for i in range(20):
             order = make_validated_order(client_order_id=f"CID-{i:03d}", quantity=10.0)
             adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))  # ADR-0154: fills are deferred -- attempt them now
         assert adapter.get_account(as_of=utc(2024, 1, 2)).cash >= 0
 
 
@@ -54,8 +59,10 @@ class TestFilledQuantityNeverExceedsRequested:
         mds = InMemoryPaperMarketDataSource([make_bar(available_time=utc(2024, 1, 2), volume=1_000_000.0)])
         adapter = PaperBrokerAdapter(config, mds)
         order = make_validated_order(quantity=10.0)
-        response = adapter.submit_order(order, requested_at=utc(2024, 1, 2))
-        assert response.filled_quantity <= order.quantity
+        adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))  # ADR-0154: fill is deferred -- attempt it now
+        status = adapter.get_order_status(order.client_order_id, as_of=utc(2024, 1, 2))
+        assert status.filled_quantity <= order.quantity
 
 
 class TestTerminalStatesRejectFurtherFills:
@@ -80,6 +87,9 @@ class TestTerminalStatesRejectFurtherFills:
         adapter = PaperBrokerAdapter(config, mds)
         order = make_validated_order(quantity=10.0)
         adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+
+        updates0 = adapter.advance_simulation(utc(2024, 1, 2))  # ADR-0154: first (deferred) fill attempt
+        assert updates0[-1].status == BrokerOrderStatus.FILLED
 
         mds.register(make_bar(available_time=utc(2024, 1, 3), volume=1_000_000.0))
         updates = adapter.advance_simulation(utc(2024, 1, 3))
@@ -117,6 +127,7 @@ class TestCostsNeverNegative:
         adapter = PaperBrokerAdapter(config, mds)
         order = make_validated_order(quantity=10.0)
         adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))  # ADR-0154: fill is deferred -- attempt it now
         _, _, fill = adapter.pop_new_fills()[0]
         assert fill.commission >= 0
         assert fill.spread_cost >= 0
@@ -130,6 +141,7 @@ class TestSlippageDirectionConsistentWithSide:
         adapter = PaperBrokerAdapter(config, mds)
         order = make_validated_order(side=OrderSide.BUY, quantity=10.0)
         adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))  # ADR-0154: fill is deferred -- attempt it now
         _, _, fill = adapter.pop_new_fills()[0]
         assert fill.price >= fill.reference_price
 
@@ -139,9 +151,11 @@ class TestSlippageDirectionConsistentWithSide:
         adapter = PaperBrokerAdapter(config, mds)
         buy = make_validated_order(client_order_id="CID-B", side=OrderSide.BUY, quantity=10.0)
         adapter.submit_order(buy, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))  # ADR-0154: fills the BUY
         adapter.pop_new_fills()
         sell = make_validated_order(client_order_id="CID-S", side=OrderSide.SELL, quantity=5.0)
         adapter.submit_order(sell, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))  # ADR-0154: fills the SELL
         _, _, fill = adapter.pop_new_fills()[0]
         assert fill.price <= fill.reference_price
 
@@ -158,6 +172,7 @@ class TestEquityEqualsCashPlusMarketValue:
         adapter = PaperBrokerAdapter(config, mds)
         order = make_validated_order(quantity=10.0)
         adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))  # ADR-0154: fill is deferred -- attempt it now
         _, _, fill = adapter.pop_new_fills()[0]
 
         account = adapter.get_account(as_of=utc(2024, 1, 2))

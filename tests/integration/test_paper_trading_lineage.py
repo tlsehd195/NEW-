@@ -70,8 +70,9 @@ class TestRiskToPaperTradingLineageEndToEnd:
             session.adapter, order, execution_mode="PAPER", requested_at=as_of, configuration_version="cfg-v1",
             request_repository=request_repo, response_repository=response_repo,
         )
-        assert order_response.status == BrokerOrderStatus.FILLED
+        assert order_response.status == BrokerOrderStatus.PENDING  # ADR-0154: fill is deferred
 
+        session.adapter.advance_simulation(as_of)  # first (deferred) fill attempt
         fills = session.capture(order.client_order_id, as_of=as_of)
         assert len(fills) == 1
 

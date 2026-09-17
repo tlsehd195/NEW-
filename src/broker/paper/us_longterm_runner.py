@@ -126,18 +126,27 @@ def run_buy_and_hold_paper_session(
     skipped: list[str] = []
     skip_reasons: dict = {}
     remaining = len(security_ids)
+    # ADR-0154: tracked locally, never re-read from `session.adapter.
+    # get_account` inside the loop. Before ADR-0154, `submit_order`
+    # filled synchronously, so a re-query here already reflected every
+    # order submitted earlier in this same loop, and dividing the
+    # actual remaining cash by the actual remaining symbol count at
+    # each step kept the allocation honestly equal-weight net of real
+    # transaction costs. Now that fills are deferred (T+1) -- a fill
+    # only lands on a LATER `advance_simulation` call, never
+    # synchronously at `submit_order` -- `get_account` would hand every
+    # symbol in this loop the SAME undiminished cash, since none of
+    # this call's own orders has actually debited anything yet. This
+    # local tracker reserves each submitted order's estimated notional
+    # (quantity * reference price, before commission/slippage -- the
+    # same reference price `usable_cash` below was already computed
+    # from, not a new fabricated figure) so the next symbol's split is
+    # still computed net of it, preserving the original equal-weight
+    # allocation intent exactly.
+    available_cash = account.cash
 
     for security_id in security_ids:
-        # Re-fetched fresh before each symbol (never a single up-front
-        # split): commission/spread on each fill consumes slightly more
-        # cash than quantity * price, so a fixed initial_cash / N share
-        # computed once would overspend by the time later symbols are
-        # reached. Dividing the *actual remaining* cash by the *actual
-        # remaining* symbol count at each step keeps the allocation
-        # honestly equal-weight net of real transaction costs, never
-        # producing a fabricated "should have been enough" rejection.
-        current_cash = session.adapter.get_account(as_of=buy_time).cash or 0.0
-        cash_for_this_symbol = current_cash / remaining
+        cash_for_this_symbol = available_cash / remaining
         remaining -= 1
 
         bar = market_data.get_reference_bar(security_id, as_of=buy_time)
@@ -179,5 +188,6 @@ def run_buy_and_hold_paper_session(
         else:
             response, fills = session.submit(validation.validated_order, requested_at=buy_time)
         orders.append(BuyAndHoldOrderOutcome(security_id=security_id, quantity=quantity, response=response, fills=fills))
+        available_cash -= quantity * bar.close
 
     return BuyAndHoldRunResult(buy_time=buy_time, orders=tuple(orders), skipped_symbols=tuple(skipped), skip_reasons=skip_reasons)
