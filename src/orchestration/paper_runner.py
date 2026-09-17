@@ -274,6 +274,40 @@ def _reference_price(view: AsOfDataView, security_id: str, as_of_time: datetime)
     return bars[-1].close
 
 
+def _prediction_features(prediction: PredictionOutput) -> Optional[dict]:
+    """Session 38: `DecisionSnapshot.features` (and therefore
+    `LabeledSample.features`) has been real, structured data since
+    Phase 3/9 existed, but nothing in this codebase ever populated it
+    for a real Paper/Live decision -- `scripts/run_learning_cycle.py`'s
+    own module docstring already disclosed this honestly ("no Strategy/
+    DecisionAgent... sets OrderIntent.features yet"), which is why
+    `learning.linear_trainer.LinearRegressionTrainer` always reported
+    `fitted=False, train_sample_count=0` against real data. Reuses the
+    five real, already-computed `PredictionOutput` fields PROJECT_
+    MASTER_PLAN.md section 8.1 itself names -- no new computation, no
+    new data source. Each is `Optional[float]` on `PredictionOutput`
+    itself; a `None` value is OMITTED from the dict entirely, never
+    written as `"key": None` -- `LinearRegressionTrainer._samples_
+    with_required_features` only checks KEY PRESENCE (`required <=
+    set(s.features)`), so a present-but-`None` value would pass that
+    check and then crash `LinearRegressionModel.fit`'s own arithmetic;
+    omitting the key instead makes that sample correctly excluded for
+    lacking that feature, matching every other "never fabricate/never
+    leave a landmine" convention already in this codebase. Returns
+    `None` (not `{}`) when every field is `None`, so `DecisionSnapshot.
+    features` stays a real "no features available" rather than an
+    empty-but-present dict that reads differently downstream."""
+    raw = {
+        "expected_return": prediction.expected_return,
+        "probability": prediction.probability,
+        "expected_volatility": prediction.expected_volatility,
+        "uncertainty": prediction.uncertainty,
+        "confidence": prediction.confidence,
+    }
+    features = {k: v for k, v in raw.items() if v is not None}
+    return features or None
+
+
 def _portfolio_view(account, view: AsOfDataView, as_of_time: datetime) -> PortfolioView:
     """Builds the `PortfolioView` every downstream stage needs from
     `PaperTradingSession.account_summary()`'s own `BrokerPosition`
@@ -531,6 +565,7 @@ def run_cycle(
                     decision_time=as_of_time, security_id=security_id, decision=decision.action,
                     natural_key=("paper_decision", experiment_id, security_id, as_of_time),
                     portfolio_state=portfolio, market_state={}, confidence=decision.confidence,
+                    features=_prediction_features(prediction),
                     decision_reason=decision.decision_reason, model_version=decision.model_version,
                     strategy_version=decision.strategy_version or "unknown",
                     feature_version=decision.feature_version, data_version=decision.data_version,
