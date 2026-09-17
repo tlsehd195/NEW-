@@ -432,7 +432,34 @@ def run_cycle(
     as `last_exit_time_by_security` (see module docstring) -- `None`
     (the default) means the reentry-cooldown check is simply not
     evaluated for this call, same opt-in contract `sector_by_security`
-    already has."""
+    already has.
+
+    **Stuck-order retry (Session 38): always attempted, first thing.**
+    `session.advance(as_of_time)` runs before anything else below --
+    confirmed by reading every real caller of this function that
+    nothing previously called `PaperTradingSession.advance`/`adapter.
+    advance_simulation` anywhere in this pipeline, so an order that only
+    partially filled on its own submission day (e.g. `PaperTradingConfig.
+    max_participation`'s default 10%-of-bar-volume cap on a large order)
+    stayed PARTIAL_FILLED/PENDING forever -- never retried against a
+    later day's fresh market data, a real "zombie order" bug, not a
+    hypothetical one. Any fill this produces is already persisted
+    through `broker.paper.*`'s own order/fill/status repositories (the
+    same ones `session.submit` already writes to) via `advance()`
+    itself, and reflected in `account`/`portfolio` below like any other
+    prior fill. **Known, disclosed limitation, not fixed here:** unlike
+    a same-cycle fill from `session.submit` (recorded into the Trade
+    Journal a few lines below, with a real `decision_snapshot` link),
+    a delayed fill `advance()` produces for an OLDER order is not yet
+    mirrored into the Trade Journal -- that order's original
+    `DecisionSnapshot` was recorded on a past checkpoint this call has
+    no natural-key-safe way to re-locate without a new persistent
+    order-id -> decision-snapshot-id index, a real design change judged
+    out of scope for this fix. Concretely: `--reentry-cooldown-days`
+    will not see a delayed SELL fill as a real exit until that gap is
+    closed -- disclosed, not silently worked around."""
+    session.advance(as_of_time)
+
     account = session.account_summary(as_of=as_of_time)
     portfolio = _portfolio_view(account, view, as_of_time)
 
