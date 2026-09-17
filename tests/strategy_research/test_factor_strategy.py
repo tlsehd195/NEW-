@@ -338,3 +338,27 @@ class TestSectorCapEndToEnd:
         # skipped (Energy already at its cap from TRENDUP) and FLATLOW
         # is bought instead.
         assert bought == {"TRENDUP", "FLATLOW"}
+
+
+class TestOrderIntentFeatures:
+    """External review, ADR-0048's own original gap (closed this
+    session): `_orders_from_target` (shared by all four variants) was
+    never given the `scores` it had already computed to rank `target`
+    in the first place. `Order.features` copies straight through from
+    `OrderIntent.features` unconditionally, so checkable directly on
+    `BacktestResult.orders`."""
+
+    def test_the_buy_order_carries_the_real_factor_score(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        start, end = date(2020, 1, 2), date(2020, 6, 1)
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+
+        strategy = PriceFactorStrategy(
+            list(universe), _fake_price_score_fn, version="fake_price_v1",
+            params=FactorStrategyParameters(top_n=1, rebalance_months=3),
+        )
+        result = BacktestEngine(price_repo, _config(start, end, universe), strategy).run()
+
+        buy_orders = [o for o in result.orders if o.security_id == "TRENDDOWN" and o.side.value == "BUY"]
+        assert buy_orders
+        assert buy_orders[0].features == {"factor_score": 1.0}  # _PRICE_SCORES["TRENDDOWN"], the real fake score

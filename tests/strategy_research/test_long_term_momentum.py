@@ -82,3 +82,23 @@ class TestParameterValidation:
 
         with pytest.raises(ValueError):
             LongTermMomentumParameters(rebalance_months=2)
+
+
+class TestOrderIntentFeatures:
+    """External review, ADR-0048's own original gap (closed this
+    session): `OrderIntent.features` was never populated by any real
+    Strategy. `Order.features` copies straight through from
+    `OrderIntent.features` unconditionally, so checkable directly on
+    `BacktestResult.orders`."""
+
+    def test_the_buy_order_carries_the_real_momentum_score(self) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        start, end = date(2020, 1, 2), date(2021, 6, 1)
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        strategy = LongTermMomentumStrategy(list(universe), LongTermMomentumParameters(lookback_months=6, top_n=1, rebalance_months=3))
+        result = BacktestEngine(repo, _config(start, end, universe), strategy).run()
+
+        buy_orders = [o for o in result.orders if o.security_id == "TRENDUP" and o.side.value == "BUY"]
+        assert buy_orders
+        assert buy_orders[0].features is not None
+        assert isinstance(buy_orders[0].features["momentum_score"], float)

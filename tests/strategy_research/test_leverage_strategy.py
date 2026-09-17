@@ -132,3 +132,31 @@ class TestParameterValidation:
     def test_rejects_non_positive_top_n(self) -> None:
         with pytest.raises(ValueError):
             LeverageParameters(top_n=0)
+
+
+class TestOrderIntentFeatures:
+    """External review, ADR-0048's own original gap (closed this
+    session): `OrderIntent.features` -- plumbing that has existed since
+    Session 36 -- was never actually populated by any real Strategy.
+    `Order.features` copies straight through from `OrderIntent.features`
+    unconditionally (backtest.orders.Order construction), so this is
+    checkable directly on `BacktestResult.orders` without a separate
+    Trade Journal ingestion step."""
+
+    def test_the_buy_order_carries_the_real_leverage_score(self, tmp_path) -> None:
+        universe = ("TRENDUP", "TRENDDOWN")
+        start, end = date(2020, 1, 2), date(2020, 6, 1)
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        fundamentals_repo = _fundamentals_repo(tmp_path, low_leverage_id="TRENDDOWN", high_leverage_id="TRENDUP")
+
+        strategy = LeverageStrategy(list(universe), fundamentals_repo, LeverageParameters(top_n=1, rebalance_months=3))
+        result = BacktestEngine(price_repo, _config(start, end, universe), strategy).run()
+
+        buy_orders = [o for o in result.orders if o.security_id == "TRENDDOWN" and o.side.value == "BUY"]
+        assert buy_orders
+        assert buy_orders[0].features is not None
+        # Liabilities=20 / StockholdersEquity=100 -- the real score
+        # leverage_score computes for this exact fixture, not a
+        # fabricated placeholder.
+        assert buy_orders[0].features["leverage_score"] is not None
+        assert isinstance(buy_orders[0].features["leverage_score"], float)
