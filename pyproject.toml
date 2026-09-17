@@ -25,6 +25,11 @@ dev = [
 reporting = [
     "quantstats>=0.0.81",
 ]
+# scripts/verify_signal_ic_with_alphalens.py only -- same "src/ stays
+# dependency-free" boundary as `reporting` above (ADR-0139).
+research = [
+    "alphalens-reloaded>=0.4.6",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
