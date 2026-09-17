@@ -48,6 +48,8 @@ class TradeJournalRepository(Protocol):
 
     def get_decision(self, snapshot_id: str) -> Optional[DecisionSnapshot]: ...
 
+    def get_decision_by_natural_key(self, natural_key: tuple) -> Optional[DecisionSnapshot]: ...
+
     def get_trade(self, trade_id: str) -> Optional[TradeRecord]: ...
 
     def list_trades(
@@ -126,6 +128,18 @@ class InMemoryTradeJournalRepository:
         return snapshot
 
     def get_decision(self, snapshot_id: str) -> Optional[DecisionSnapshot]:
+        return self._decisions.get(snapshot_id)
+
+    def get_decision_by_natural_key(self, natural_key: tuple) -> Optional[DecisionSnapshot]:
+        """ADR-0154: looks up a previously `record_decision`-ed snapshot
+        by the exact same `natural_key` tuple `record_decision` itself
+        indexes `_decision_natural_keys` by -- used to join a delayed
+        `advance_simulation` fill back to the DecisionSnapshot its
+        originating order was submitted under. Returns `None` (never
+        fabricated) when no decision was ever recorded under this key."""
+        snapshot_id = self._decision_natural_keys.get(natural_key)
+        if snapshot_id is None:
+            return None
         return self._decisions.get(snapshot_id)
 
     def list_decisions(

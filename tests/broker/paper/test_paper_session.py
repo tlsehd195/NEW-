@@ -33,11 +33,13 @@ class TestSubmitPersistsOrderFillsAndStatus:
         )
         order = make_validated_order(quantity=10.0)
         response, fills = session.submit(order, requested_at=utc(2024, 1, 2))
+        assert response.status == BrokerOrderStatus.PENDING  # ADR-0154: fill is deferred
+        assert len(fills) == 0
 
-        assert response.status == BrokerOrderStatus.FILLED
+        _, fills2 = session.advance(utc(2024, 1, 2))  # first (deferred) fill attempt
+        assert len(fills2) == 1
         assert order_repo.get(order.client_order_id) is not None
         assert len(fill_repo.list_all()) == 1
-        assert len(fills) == 1
         assert status_repo.get_latest(order.client_order_id).status == BrokerOrderStatus.FILLED
 
 
@@ -49,6 +51,11 @@ class TestAdvancePersistsIncrementalFills:
         )
         order = make_validated_order(quantity=250.0)
         session.submit(order, requested_at=utc(2024, 1, 2))
+        assert len(fill_repo.list_all()) == 0  # ADR-0154: fill is deferred
+
+        updates0, fills0 = session.advance(utc(2024, 1, 2))  # first (deferred) fill attempt
+        assert len(updates0) == 1
+        assert len(fills0) == 1
         assert len(fill_repo.list_all()) == 1
 
         mds.register(make_bar(timestamp=utc(2024, 1, 3), available_time=utc(2024, 1, 3), volume=1_000.0))
@@ -75,6 +82,7 @@ class TestAccountSummary:
         )
         order = make_validated_order(quantity=10.0)
         session.submit(order, requested_at=utc(2024, 1, 2))
+        session.advance(utc(2024, 1, 2))  # ADR-0154: fill is deferred -- attempt it now
         summary = session.account_summary(as_of=utc(2024, 1, 2))
         assert summary.cash < session.config.initial_cash
         assert summary.positions["AAA"].quantity == 10.0
@@ -88,8 +96,9 @@ class TestRestoreRehydratesFullState:
         )
         order = make_validated_order(quantity=250.0)
         session.submit(order, requested_at=utc(2024, 1, 2))
+        session.advance(utc(2024, 1, 2))  # ADR-0154: first (deferred) fill attempt -- consumes day 2's cap
         mds.register(make_bar(timestamp=utc(2024, 1, 3), available_time=utc(2024, 1, 3), volume=1_000.0))
-        session.advance(utc(2024, 1, 3))
+        session.advance(utc(2024, 1, 3))  # a fresh cap -- 100 more, total 200
 
         before = session.account_summary(as_of=utc(2024, 1, 3))
 
@@ -116,6 +125,7 @@ class TestRestoreRehydratesFullState:
         )
         order = make_validated_order(quantity=10.0)
         session.submit(order, requested_at=utc(2024, 1, 2))
+        session.advance(utc(2024, 1, 2))  # ADR-0154: fill is deferred -- attempt it now
         assert len(fill_repo.list_all()) == 1
 
         mds2 = InMemoryPaperMarketDataSource([make_bar(available_time=utc(2024, 1, 2), volume=1_000_000.0)])

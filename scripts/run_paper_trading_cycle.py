@@ -377,6 +377,15 @@ def main(argv=None) -> int:
 
     total_submitted = 0
     total_filled = 0
+    # ADR-0154: `outcome.submission.filled_quantity` is now ALWAYS None
+    # right after `run_cycle` returns -- `PaperBrokerAdapter.submit_order`
+    # never fills synchronously any more, so a fill (when it lands, on a
+    # LATER cycle's own `session.advance()`) can never show up on the
+    # SAME `BrokerOrderResponse` this cycle's submission produced.
+    # "filled so far" is therefore re-derived below from each submitted
+    # order's real, current status, not from that now-permanently-None
+    # field.
+    submitted_client_order_ids: list[str] = []
     for i, checkpoint in enumerate(checkpoints):
         clock.index = i
         outcomes = run_cycle(
@@ -389,9 +398,12 @@ def main(argv=None) -> int:
         for outcome in outcomes:
             if outcome.submission is not None:
                 total_submitted += 1
-                if outcome.submission.filled_quantity:
-                    total_filled += 1
+                submitted_client_order_ids.append(outcome.submission.request_client_order_id)
         if (i + 1) % 10 == 0 or i == len(checkpoints) - 1:
+            total_filled = sum(
+                1 for cid in submitted_client_order_ids
+                if (session.adapter.get_order_status(cid, as_of=checkpoint).filled_quantity or 0) > 0
+            )
             print(f"  [{i + 1}/{len(checkpoints)}] {checkpoint.date()} -- submitted so far: {total_submitted}, filled so far: {total_filled}", flush=True)
 
     # External review, Session 38 continued: `mark_to_market` falling

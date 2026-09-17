@@ -162,7 +162,8 @@ from backtest.enums import OrderSide
 from backtest.portfolio import PortfolioView, PositionView
 
 from broker.models import BrokerOrderResponse, OrderValidationResult
-from broker.paper.session import PaperTradingSession
+from broker.paper.models import PaperFillRecord
+from broker.paper.session import AccountSummary, PaperTradingSession
 from broker.validation import build_validated_order
 
 from decision.agent import DecisionAgent
@@ -231,6 +232,8 @@ class TradeJournalRepositoryLike(Protocol):
     ) -> list[TradeRecord]: ...
 
     def record_decision(self, **fields) -> DecisionSnapshot: ...
+
+    def get_decision_by_natural_key(self, natural_key: tuple) -> Optional[DecisionSnapshot]: ...
 
     def record_trade(
         self, *, decision_id: str, fill, position_after: float,
@@ -465,6 +468,143 @@ def _position_opened_at(
     return opened_at
 
 
+def _record_fills_to_journal(
+    trade_journal_repository: TradeJournalRepositoryLike,
+    decision_snapshot: DecisionSnapshot,
+    fill_records: Sequence[PaperFillRecord],
+    *,
+    running_quantity: float,
+    position_average_cost: Optional[float],
+    opened_at: Optional[datetime],
+    provenance: TradeProvenance,
+    experiment_id: Optional[str],
+) -> float:
+    """ADR-0154: the shared "given a decision + a sequence of fills +
+    starting quantity/avg-cost/opened_at, write TradeRecords" logic,
+    extracted so the same-cycle path (a fresh order's own fill from
+    `session.submit`) and the delayed-fill path (an OLDER order's fill
+    surfacing only via `session.advance`) compute realized_pnl/
+    realized_return/holding_period identically rather than maintaining
+    two copies of this arithmetic. Returns the running signed quantity
+    after every fill in `fill_records`, so a caller processing several
+    orders for the same security in sequence can thread it through."""
+    for fill_record in fill_records:
+        fill = fill_record.fill
+        signed = fill.quantity if fill.side == OrderSide.BUY else -fill.quantity
+        running_quantity += signed
+
+        realized_pnl: Optional[float] = None
+        realized_return: Optional[float] = None
+        holding_period: Optional[timedelta] = None
+        if fill.side == OrderSide.SELL and position_average_cost is not None:
+            # commission ONLY, not fill.total_cost -- see
+            # backtest.portfolio.PortfolioAccounting.apply_fill's own
+            # comment (Session 37, ADR-0114): fill.price already nets
+            # out spread/slippage on both the entry and exit leg, so
+            # subtracting spread_cost/slippage_cost again here
+            # double-counts them.
+            realized_pnl = (fill.price - position_average_cost) * fill.quantity - fill.commission
+            cost_basis = position_average_cost * fill.quantity
+            realized_return = (realized_pnl / cost_basis) if cost_basis else None
+            if opened_at is not None:
+                holding_period = fill.execution_time - opened_at
+
+        trade_journal_repository.record_trade(
+            decision_id=decision_snapshot.snapshot_id, fill=fill, position_after=running_quantity,
+            realized_pnl=realized_pnl, realized_return=realized_return, holding_period=holding_period,
+            provenance=provenance, experiment_id=experiment_id,
+        )
+    return running_quantity
+
+
+def _record_delayed_advance_fills(
+    trade_journal_repository: TradeJournalRepositoryLike,
+    session: PaperTradingSession,
+    pre_advance_account: AccountSummary,
+    advance_fills: Sequence[PaperFillRecord],
+    as_of_time: datetime,
+) -> None:
+    """ADR-0154: mirrors the same-cycle Trade Journal write below, but
+    for fills `session.advance(as_of_time)` produces for an OLDER
+    order (the T+1 fill this order's own submission cycle deferred --
+    see `PaperBrokerAdapter.submit_order`'s own docstring). Closes the
+    gap this module's docstring ("Decision join") used to disclose as
+    a known limitation: once fills are deferred, EVERY first fill is
+    exactly this delayed case, so leaving it unrecorded would silently
+    stop Paper Trading from ever populating the Trade Journal at all.
+
+    Groups `advance_fills` by `client_order_id` (preserving `advance`'s
+    own relative ordering) so a partially-filled order's own several
+    fills this call produces still accumulate the correct cumulative
+    `running_quantity`, and further by `security_id` so two different
+    orders for the same security in one `advance()` call share one
+    running quantity/avg-cost/opened_at, exactly like the same-cycle
+    path already does across fills of one order.
+
+    Each order's original `DecisionSnapshot` is re-located by
+    `get_decision_by_natural_key` using the exact natural_key tuple the
+    same-cycle path already records it under
+    (`("paper_decision", experiment_id, security_id, requested_at)`,
+    read from the order's own persisted `PaperOrderRecord` --
+    `record.validated_order.experiment_id`/`.security_id`/
+    `record.requested_at`). A `None` result (the decision was never
+    recorded, e.g. `trade_journal_repository` was absent during the
+    original submission) means this fill is skipped silently -- never
+    a fabricated/missing-but-pretended link."""
+    fills_by_order: dict[str, list[PaperFillRecord]] = {}
+    order_sequence: list[str] = []
+    for fill_record in advance_fills:
+        if fill_record.client_order_id not in fills_by_order:
+            fills_by_order[fill_record.client_order_id] = []
+            order_sequence.append(fill_record.client_order_id)
+        fills_by_order[fill_record.client_order_id].append(fill_record)
+
+    running_quantity_by_security: dict[str, float] = {}
+    position_average_cost_by_security: dict[str, Optional[float]] = {}
+    opened_at_by_security: dict[str, Optional[datetime]] = {}
+    decision_cache: dict[tuple, Optional[DecisionSnapshot]] = {}
+
+    for client_order_id in order_sequence:
+        order_record = session.adapter.get_order_record(client_order_id)
+        if order_record is None:
+            continue  # structurally should not happen -- never fabricate a link
+        validated_order = order_record.validated_order
+        security_id = validated_order.security_id
+        experiment_id = validated_order.experiment_id
+        provenance = validated_order.provenance
+
+        natural_key = ("paper_decision", experiment_id, security_id, order_record.requested_at)
+        if natural_key not in decision_cache:
+            decision_cache[natural_key] = trade_journal_repository.get_decision_by_natural_key(natural_key)
+        decision_snapshot = decision_cache[natural_key]
+        if decision_snapshot is None:
+            continue  # this order's decision was never recorded -- skip, never fabricate
+
+        if security_id not in running_quantity_by_security:
+            account_position = pre_advance_account.positions.get(security_id)
+            running_quantity_by_security[security_id] = (
+                account_position.quantity
+                if account_position is not None and account_position.available and account_position.quantity is not None
+                else 0.0
+            )
+            position_average_cost_by_security[security_id] = (
+                account_position.average_cost
+                if account_position is not None and account_position.available
+                else None
+            )
+            opened_at_by_security[security_id] = _position_opened_at(
+                security_id, as_of_time, trade_journal_repository, provenance,
+            )
+
+        running_quantity_by_security[security_id] = _record_fills_to_journal(
+            trade_journal_repository, decision_snapshot, fills_by_order[client_order_id],
+            running_quantity=running_quantity_by_security[security_id],
+            position_average_cost=position_average_cost_by_security[security_id],
+            opened_at=opened_at_by_security[security_id],
+            provenance=provenance, experiment_id=experiment_id,
+        )
+
+
 def compute_portfolio_snapshot(session: PaperTradingSession, view: AsOfDataView, as_of_time: datetime) -> PortfolioView:
     """Public wrapper around the exact same mark-to-market snapshot
     `run_cycle` itself takes at the start of every checkpoint (cash +
@@ -589,18 +729,29 @@ def run_cycle(
     through `broker.paper.*`'s own order/fill/status repositories (the
     same ones `session.submit` already writes to) via `advance()`
     itself, and reflected in `account`/`portfolio` below like any other
-    prior fill. **Known, disclosed limitation, not fixed here:** unlike
-    a same-cycle fill from `session.submit` (recorded into the Trade
-    Journal a few lines below, with a real `decision_snapshot` link),
-    a delayed fill `advance()` produces for an OLDER order is not yet
-    mirrored into the Trade Journal -- that order's original
-    `DecisionSnapshot` was recorded on a past checkpoint this call has
-    no natural-key-safe way to re-locate without a new persistent
-    order-id -> decision-snapshot-id index, a real design change judged
-    out of scope for this fix. Concretely: `--reentry-cooldown-days`
-    will not see a delayed SELL fill as a real exit until that gap is
-    closed -- disclosed, not silently worked around."""
-    session.advance(as_of_time)
+    prior fill.
+
+    **Decision-journal join for a delayed fill (ADR-0154): the gap this
+    docstring used to disclose here is now CLOSED.** `PaperBrokerAdapter.
+    submit_order` no longer attempts a fill synchronously (ADR-0154's
+    T+1 fix for Paper Trading's own same-bar-decide-and-fill leak) -- so
+    EVERY order's first fill now surfaces only through this `advance()`
+    call, one cycle later. `pre_advance_account` (captured immediately
+    BEFORE `advance()` runs, so it reflects state as of the END of the
+    PRIOR cycle -- the correct pre-fill `average_cost`/`quantity` for
+    realized-PnL math, the exact same "read before this cycle's own
+    fills land" discipline the same-cycle path below already applies to
+    `account`) is handed to `_record_delayed_advance_fills`, which
+    re-locates each delayed fill's originating `DecisionSnapshot` via
+    `get_decision_by_natural_key` and writes a real, joinable
+    `TradeRecord` for it -- see that helper's own docstring. A decision
+    that was never recorded (e.g. `trade_journal_repository` was absent
+    during the original submission) is skipped silently, never
+    fabricated."""
+    pre_advance_account = session.account_summary(as_of=as_of_time)
+    advance_updates, advance_fills = session.advance(as_of_time)
+    if trade_journal_repository is not None and advance_fills:
+        _record_delayed_advance_fills(trade_journal_repository, session, pre_advance_account, advance_fills, as_of_time)
 
     account = session.account_summary(as_of=as_of_time)
     portfolio = _portfolio_view(account, view, as_of_time)
@@ -717,32 +868,17 @@ def run_cycle(
                     else None
                 )
                 opened_at = _position_opened_at(security_id, as_of_time, trade_journal_repository, provenance)
-                for fill_record in fills:
-                    fill = fill_record.fill
-                    signed = fill.quantity if fill.side == OrderSide.BUY else -fill.quantity
-                    running_quantity += signed
-
-                    realized_pnl: Optional[float] = None
-                    realized_return: Optional[float] = None
-                    holding_period: Optional[timedelta] = None
-                    if fill.side == OrderSide.SELL and position_average_cost is not None:
-                        # commission ONLY, not fill.total_cost -- see
-                        # backtest.portfolio.PortfolioAccounting.apply_fill's
-                        # own comment (Session 37, ADR-0114): fill.price
-                        # already nets out spread/slippage on both the
-                        # entry and exit leg, so subtracting spread_cost/
-                        # slippage_cost again here double-counts them.
-                        realized_pnl = (fill.price - position_average_cost) * fill.quantity - fill.commission
-                        cost_basis = position_average_cost * fill.quantity
-                        realized_return = (realized_pnl / cost_basis) if cost_basis else None
-                        if opened_at is not None:
-                            holding_period = fill.execution_time - opened_at
-
-                    trade_journal_repository.record_trade(
-                        decision_id=decision_snapshot.snapshot_id, fill=fill, position_after=running_quantity,
-                        realized_pnl=realized_pnl, realized_return=realized_return, holding_period=holding_period,
-                        provenance=provenance, experiment_id=experiment_id,
-                    )
+                # ADR-0154: this fill-writing arithmetic (signed running
+                # quantity, realized_pnl/realized_return/holding_period)
+                # is shared verbatim with the delayed-fill path
+                # (`_record_delayed_advance_fills` below) via
+                # `_record_fills_to_journal`, rather than duplicated --
+                # behavior here is unchanged from before this refactor.
+                _record_fills_to_journal(
+                    trade_journal_repository, decision_snapshot, fills,
+                    running_quantity=running_quantity, position_average_cost=position_average_cost,
+                    opened_at=opened_at, provenance=provenance, experiment_id=experiment_id,
+                )
 
         outcomes.append(CycleOutcome(
             security_id=security_id, prediction=prediction, regime=regime, decision=decision,

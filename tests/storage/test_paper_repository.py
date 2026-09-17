@@ -149,7 +149,8 @@ class TestFullSessionRestartAgainstDuckDB:
         session = PaperTradingSession(config, mds, order_repository=order_repo, fill_repository=fill_repo, status_repository=status_repo)
 
         order = make_validated_order(quantity=250.0)
-        session.submit(order, requested_at=utc(2024, 1, 2))  # fills up to 100 -- PARTIAL_FILLED
+        session.submit(order, requested_at=utc(2024, 1, 2))
+        session.advance(utc(2024, 1, 2))  # ADR-0154: first (deferred) fill attempt -- fills up to 100
         mds.register(make_bar(timestamp=utc(2024, 1, 3), available_time=utc(2024, 1, 3), volume=1_000.0))
         session.advance(utc(2024, 1, 3))  # fills up to another 100 (200 total) -- still PARTIAL_FILLED
         assert status_repo.get_latest(order.client_order_id).status == BrokerOrderStatus.PARTIAL_FILLED

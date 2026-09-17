@@ -56,7 +56,8 @@ class TestScenarioA_BuyFilledSellClosed:
         buy_validation = _validated_order(quantity=100.0, risk_id="RISK-A1")
         buy_order = buy_validation.validated_order
         buy_decision = journal.record_decision(decision_time=buy_day, security_id=buy_order.security_id, decision=DecisionAction.BUY)
-        _, buy_fills = session.submit(buy_order, requested_at=buy_day)
+        session.submit(buy_order, requested_at=buy_day)
+        _, buy_fills = session.advance(buy_day)  # ADR-0154: fill is deferred -- attempt it now
         assert buy_fills[0].fill.side.value == "BUY"
         buy_trade = journal.record_trade(
             decision_id=buy_decision.snapshot_id, fill=buy_fills[0].fill, position_after=100.0,
@@ -67,7 +68,8 @@ class TestScenarioA_BuyFilledSellClosed:
         sell_validation = _validated_order(quantity=0.0, risk_id="RISK-A2", current_quantity=100.0)
         sell_order = sell_validation.validated_order
         sell_decision = journal.record_decision(decision_time=sell_day, security_id=sell_order.security_id, decision=DecisionAction.SELL)
-        _, sell_fills = session.submit(sell_order, requested_at=sell_day)
+        session.submit(sell_order, requested_at=sell_day)
+        _, sell_fills = session.advance(sell_day)  # ADR-0154: fill is deferred -- attempt it now
         assert sell_fills[0].fill.side.value == "SELL"
         sell_trade = journal.record_trade(
             decision_id=sell_decision.snapshot_id, fill=sell_fills[0].fill, position_after=0.0,
@@ -102,7 +104,8 @@ class TestScenarioB_PartialThenFullFillThenSell:
         order = validation.validated_order
         decision = journal.record_decision(decision_time=day1, security_id=order.security_id, decision=DecisionAction.BUY)
 
-        _, fills1 = session.submit(order, requested_at=day1)
+        session.submit(order, requested_at=day1)
+        _, fills1 = session.advance(day1)  # ADR-0154: first (deferred) fill attempt
         assert fills1[0].fill.quantity == 100.0  # 10% of 1000 volume
         journal.record_trade(decision_id=decision.snapshot_id, fill=fills1[0].fill, position_after=100.0, provenance=TradeProvenance.PAPER_TRADING)
 
@@ -117,7 +120,8 @@ class TestScenarioB_PartialThenFullFillThenSell:
         sell_order = sell_validation.validated_order
         sell_decision = journal.record_decision(decision_time=sell_day, security_id=sell_order.security_id, decision=DecisionAction.SELL)
         mds.register(make_bar(available_time=sell_day, volume=1_000_000.0, close=105.0))
-        _, sell_fills = session.submit(sell_order, requested_at=sell_day)
+        session.submit(sell_order, requested_at=sell_day)
+        _, sell_fills = session.advance(sell_day)  # ADR-0154: fill is deferred -- attempt it now
         journal.record_trade(
             decision_id=sell_decision.snapshot_id, fill=sell_fills[0].fill, position_after=0.0,
             realized_pnl=500.0, realized_return=0.033, provenance=TradeProvenance.PAPER_TRADING,
@@ -143,10 +147,14 @@ class TestScenarioC_InsufficientCashRejected:
         validation = _validated_order(quantity=1000.0, risk_id="RISK-C1")
         order = validation.validated_order
         response, fills = session.submit(order, requested_at=day)
-
-        assert response.status == BrokerOrderStatus.REJECTED
-        assert response.error_code == "insufficient_cash"
+        assert response.status == BrokerOrderStatus.PENDING  # ADR-0154: the cash check happens only at fill-attempt time
         assert fills == ()
+
+        _, fills = session.advance(day)  # first (deferred) fill attempt -- this is where insufficient_cash surfaces
+        assert fills == ()
+        record = session.adapter.get_order_record(order.client_order_id)
+        assert record.initial_status == BrokerOrderStatus.REJECTED
+        assert record.rejection_reason == "insufficient_cash"
         assert journal.list_trades() == []  # no false trade for a rejected order
 
 
@@ -187,10 +195,13 @@ class TestScenarioE_DuplicateClientOrderIdNeverDuplicates:
         decision = journal.record_decision(decision_time=day, security_id=order.security_id, decision=DecisionAction.BUY)
 
         response1, fills1 = session.submit(order, requested_at=day)
+        assert response1.status == BrokerOrderStatus.PENDING  # ADR-0154: fill is deferred
+        _, fills1 = session.advance(day)  # first (deferred) fill attempt
         journal.record_trade(decision_id=decision.snapshot_id, fill=fills1[0].fill, position_after=10.0, provenance=TradeProvenance.PAPER_TRADING)
 
         response2, fills2 = session.submit(order, requested_at=day)  # identical client_order_id
         assert response2.broker_order_id == response1.broker_order_id
+        assert response2.status == BrokerOrderStatus.FILLED  # already filled by the advance() above
         assert fills2 == ()  # idempotent replay -- no new fill surfaced to capture
         assert len(journal.list_trades()) == 1
 
@@ -227,7 +238,8 @@ class TestScenarioG_TransactionCostAndSlippageFlowIntoTheReport:
         validation = _validated_order(quantity=100.0, risk_id="RISK-G1")
         order = validation.validated_order
         decision = journal.record_decision(decision_time=day, security_id=order.security_id, decision=DecisionAction.BUY)
-        _, fills = session.submit(order, requested_at=day)
+        session.submit(order, requested_at=day)
+        _, fills = session.advance(day)  # ADR-0154: fill is deferred -- attempt it now
         assert fills[0].fill.slippage_cost > 0
         assert fills[0].fill.commission > 0
         trade = journal.record_trade(decision_id=decision.snapshot_id, fill=fills[0].fill, position_after=100.0, provenance=TradeProvenance.PAPER_TRADING)
@@ -250,6 +262,7 @@ class TestScenarioH_DrawdownIsReflectedInTheReport:
         validation = _validated_order(quantity=1000.0, risk_id="RISK-H1")
         order = validation.validated_order
         session.submit(order, requested_at=day1)
+        session.advance(day1)  # ADR-0154: fill is deferred -- attempt it now
 
         session.adapter.accounting.mark_to_market({order.security_id: 100.0}, day1)
         session.adapter.accounting.mark_to_market({order.security_id: 130.0}, day2)  # peak

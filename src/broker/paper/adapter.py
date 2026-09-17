@@ -218,6 +218,11 @@ class PaperBrokerAdapter:
         return self._response_for(order.client_order_id, requested_at)
 
     def _attempt_fill(self, client_order_id: str, *, as_of: datetime) -> None:
+        """T+1 discipline (ADR-0154): called ONLY from `advance_simulation`
+        now -- never synchronously from `submit_order`. An order's first
+        fill attempt therefore always happens on a LATER `as_of` than the
+        one it was submitted at (the next driving-loop cycle's), so a
+        decision and its fill can never share the same reference bar."""
         record = self._orders[client_order_id]
         if client_order_id in self._cancelled or record.initial_status == BrokerOrderStatus.REJECTED:
             return
@@ -323,7 +328,16 @@ class PaperBrokerAdapter:
         self._fills[order.client_order_id] = []
         self._record_status(order.client_order_id, as_of=requested_at)
 
-        self._attempt_fill(order.client_order_id, as_of=requested_at)
+        # T+1 discipline (ADR-0154): unlike an earlier version of this
+        # method, submission never attempts a fill synchronously against
+        # `requested_at`'s own reference bar -- that would let a decision
+        # and its fill share the identical bar/price, the same same-bar
+        # leak `backtest.engine.BacktestEngine` structurally forbids (a
+        # decision at `checkpoint` only ever fills at `next_checkpoint`).
+        # The order stays PENDING here; its first fill attempt happens
+        # only via `advance_simulation`, called by the driving loop at
+        # the START of the NEXT cycle, once a later `as_of` (and
+        # therefore a later reference bar) is in play.
 
         return self._response_for(order.client_order_id, requested_at)
 
