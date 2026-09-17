@@ -135,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             all_bars, dataset="phase31_external_import", data_version="external-import-run",
             known_security_ids=set(symbols), as_of_now=args.end,
         )
-        # Session 37 (real-data DQ gap, ADR-0127): see the identical
+        # Session 37 (real-data DQ gap, ADR-0143): see the identical
         # comment in scripts/ingest_real_market_data.py -- implements
         # Phase 1 spec section 3.1's QUALITY_REJECTED/QUALITY_FLAGGED
         # states so a CRITICAL finding actually stops the affected bar

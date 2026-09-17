@@ -1,5 +1,5 @@
 """Static consistency checks for the manual Retroactive Data Quality
-Rescan workflow (Session 37, ADR-0128). Same category of checks
+Rescan workflow (Session 37, ADR-0144). Same category of checks
 `test_paper_trading_cycle_workflow.py`/`test_learning_cycle_workflow.py`
 already established: the workflow's real execution (against a real
 restored market-data-catalog artifact) cannot happen inside this test
@@ -35,7 +35,7 @@ def _run_text(steps: list[dict]) -> str:
 
 
 def test_workflow_is_valid_yaml_with_a_weekly_schedule_and_manual_dispatch():
-    """ADR-0129 revised ADR-0128's original manual-only decision: at this
+    """ADR-0145 revised ADR-0144's original manual-only decision: at this
     project's actual data scale, a full rescan is cheap enough to run
     weekly (defense-in-depth), timed before the Saturday Learning Cycle
     reads the same catalog. workflow_dispatch stays too, for an

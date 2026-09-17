@@ -1,4 +1,4 @@
-# ADR-0135: Discord Webhook Notifications for Scheduled Reports
+# ADR-0146: Discord Webhook Notifications for Scheduled Reports
 
 **Status:** Accepted
 **Date:** 2026-09-17

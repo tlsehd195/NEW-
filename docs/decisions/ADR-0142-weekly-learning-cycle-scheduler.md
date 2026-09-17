@@ -1,4 +1,4 @@
-# ADR-0126: Weekly Learning Cycle scheduler
+# ADR-0142: Weekly Learning Cycle scheduler
 
 **Status:** Accepted
 **Session:** 36 (continued)

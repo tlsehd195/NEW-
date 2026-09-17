@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """One-time (or on-demand) retroactive data quality rescan (Session 37,
-ADR-0128 -- follow-up to ADR-0127).
+ADR-0144 -- follow-up to ADR-0143).
 
-ADR-0127 made `DuckDBDataRepository.get_bars()` exclude a CRITICAL-flagged
+ADR-0143 made `DuckDBDataRepository.get_bars()` exclude a CRITICAL-flagged
 bar by default going forward, but it explicitly does NOT retroactively
 re-examine bars a catalog already had before that change: the daily
 `ingest_real_market_data.py` only ever quality-checks the INCREMENTAL
@@ -29,7 +29,7 @@ every day would be wasteful (duplicate/gap-style checks over a
 growing, mostly-already-checked series) and noisy (the same historical
 WARNING would be "re-found" every single day). This is a `workflow_dispatch`
 -only operation (see `.github/workflows/data_quality_rescan.yml`) --
-run it once now to catch up pre-ADR-0127 data, and again by hand any
+run it once now to catch up pre-ADR-0143 data, and again by hand any
 time there is a specific reason to suspect the catalog needs re-checking.
 
 Scope: unlike `ingest_real_market_data.py`, this script does NOT pass
@@ -38,7 +38,7 @@ Scope: unlike `ingest_real_market_data.py`, this script does NOT pass
 for every security already in the catalog is a bigger, separate
 operation this focused backfill tool does not need in order to catch
 the corruption-class findings (`non_finite_value`, `ohlc_consistency`,
-`duplicate_records`, ...) ADR-0127's exclusion actually acts on.
+`duplicate_records`, ...) ADR-0143's exclusion actually acts on.
 `known_security_ids` is also not passed (so `symbol_mismatch` is
 skipped) -- there is no independent "expected universe" to check
 against here, only "what this catalog already has."
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         report = {
             "note": (
                 "Retroactive rescan of every bar already in this catalog -- see this "
-                "script's own module docstring (ADR-0128) for why this exists and what "
+                "script's own module docstring (ADR-0144) for why this exists and what "
                 "it deliberately does not check (no corporate-action consistency checks, "
                 "no symbol_mismatch)."
             ),

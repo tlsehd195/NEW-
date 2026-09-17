@@ -51,6 +51,15 @@ env:
   START_DATE: "2024-01-02"
   MARKET_DATA_DIR: data/real_market_data
   PAPER_STORE_DIR: data/paper_trading_store
+  # Workflow-level (not step-level) on purpose: a step's own `if:`
+  # cannot read an `env:` block defined on that SAME step, and cannot
+  # reference the `secrets` context directly at all -- confirmed via
+  # GitHub's own documented workaround ("map a secret into an
+  # environment variable, then reference that environment variable in
+  # if:") and actions/runner issue #520. Defining it here, at the
+  # workflow level, makes `env.DISCORD_WEBHOOK_URL` readable by the
+  # "Send Discord notification" step's own `if:` below.
+  DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
 jobs:
   run-cycle:
@@ -187,10 +196,19 @@ jobs:
       # means paper_trading_cycle_report.json may exist even after an
       # earlier step failed; this step still attempts to send whatever
       # was written.
+      #
+      # Session 38 continued (external review, verified against GitHub's
+      # own docs/actions-runner#520 before fixing): the `secrets` context
+      # is NOT a valid reference inside a step's own `if:` -- this
+      # originally read `if: always() && secrets.DISCORD_WEBHOOK_URL != ''`,
+      # which GitHub Actions rejects at workflow-parse time ("Unrecognized
+      # named-value: 'secrets'"), invalidating this ENTIRE workflow run,
+      # not just this one step. Fixed by reading the workflow-level
+      # `env.DISCORD_WEBHOOK_URL` (set above from the same secret) instead
+      # -- `DISCORD_WEBHOOK_URL` is no longer redeclared in this step's own
+      # `env:` since the workflow-level one above already covers `run:`.
       - name: Send Discord notification
-        if: always() && secrets.DISCORD_WEBHOOK_URL != ''
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        if: always() && env.DISCORD_WEBHOOK_URL != ''
         run: |
           python3 scripts/send_discord_notification.py \
             --report paper_trading_cycle_report.json \
