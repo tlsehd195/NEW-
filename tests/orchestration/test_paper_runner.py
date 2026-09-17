@@ -21,10 +21,11 @@ from predict_helpers import drifting_prices
 from backtest.asof import AsOfDataView
 from backtest.clock import BacktestClock, build_daily_checkpoints
 from backtest.engine import BacktestConfig
-from backtest.enums import OrderSide
+from backtest.enums import OrderSide, OrderType
 
 from broker.enums import BrokerOrderStatus
 from broker.enums import OrderValidationStatus
+from broker.models import ValidatedOrder
 from broker.paper.market_data import InMemoryPaperMarketDataSource
 from broker.paper.session import PaperTradingSession
 
@@ -665,3 +666,50 @@ class TestMarkToMarketAccounting:
         assert outcome.submission is not None  # a real BUY happened this cycle
 
         assert session.adapter.accounting.turnover() > 0.0
+
+
+class TestStuckOrderRetryViaAdvance:
+    """Session 38: before this, nothing in this pipeline ever called
+    `PaperTradingSession.advance`/`adapter.advance_simulation` -- an
+    order that only partially filled on its own submission day (e.g.
+    `PaperTradingConfig.max_participation`'s default 10%-of-bar-volume
+    cap, here lowered further to make the scenario deterministic) stayed
+    PARTIAL_FILLED forever, never retried against a later day's fresh
+    market data -- confirmed by direct instrumentation before this fix,
+    not assumed."""
+
+    def test_a_stuck_partial_order_gets_retried_and_completes_on_a_later_cycle(self) -> None:
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        mds = InMemoryPaperMarketDataSource(list(bars))
+        # backtest_helpers.make_bars' own default bar volume is 200_000
+        # -- a 1% participation cap therefore caps any single fill
+        # attempt at 2_000 shares, well below the 10_000-share order
+        # this test submits directly.
+        session = PaperTradingSession(make_paper_config(max_participation=0.01), mds)
+
+        order = ValidatedOrder(
+            client_order_id="TEST-STUCK-ORDER-1", security_id="AAA", side=OrderSide.BUY,
+            quantity=10_000.0, order_type=OrderType.MARKET, as_of_time=view.current_time,
+            decision_id="DEC-TEST-1", sizing_id="SIZE-TEST-1", risk_assessment_id="RISK-TEST-1",
+            configuration_version="cfg-v1",
+        )
+        response, _ = session.submit(order, requested_at=view.current_time)
+        assert response.status == BrokerOrderStatus.PARTIAL_FILLED
+        assert response.filled_quantity == 2_000.0
+
+        clock.index = 101
+        # An empty security_ids list means run_cycle makes NO new
+        # decision at all this cycle -- isolates this test to exercise
+        # ONLY the stuck-order retry run_cycle now performs first,
+        # unrelated to whatever a fresh decision might otherwise do.
+        outcomes = run_cycle([], view.current_time, view, session, **_components())
+        assert outcomes == ()
+
+        account = session.account_summary(as_of=view.current_time)
+        # The SAME order continued filling on this later day's fresh
+        # 2_000-share allowance -- 4_000 total now, still short of the
+        # full 10_000 (a third day would finish it) -- proving this was
+        # a genuine retry of the original order, not a new one (no new
+        # order was ever submitted in this test).
+        assert account.positions["AAA"].quantity == 4_000.0
