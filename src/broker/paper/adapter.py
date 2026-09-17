@@ -332,8 +332,21 @@ class PaperBrokerAdapter:
         orchestration hook a driving loop calls to let still-open orders
         attempt further fills as simulated time (and therefore market
         data availability) moves forward. Returns every status
-        observation whose status actually changed this call."""
+        observation whose status actually changed this call.
+
+        `PaperTradingConfig.pending_order_ttl_days` (external review,
+        Session 38 continued): before attempting a fill, an order still
+        open past its TTL (measured from `record.requested_at`, the
+        order's own original submission time -- never its last partial
+        fill, so TTL is a real submission-to-give-up window, not one
+        that quietly resets on every partial) is auto-cancelled instead
+        -- the same terminal state `cancel_order` already produces, so
+        every downstream consumer (Trade Journal, risk checks) sees one
+        cancellation vocabulary, not two. `None` (default) never
+        triggers this -- an order stays open indefinitely, unchanged
+        from every caller's pre-existing expectation."""
         updates: list[OrderStatusObservation] = []
+        ttl_days = self._config.pending_order_ttl_days
         for client_order_id, record in list(self._orders.items()):
             if client_order_id in self._cancelled or record.initial_status == BrokerOrderStatus.REJECTED:
                 continue
@@ -341,7 +354,11 @@ class PaperBrokerAdapter:
             if status_before == BrokerOrderStatus.FILLED:
                 continue
             history_len_before = len(self._status_history.get(client_order_id, ()))
-            self._attempt_fill(client_order_id, as_of=as_of)
+            if ttl_days is not None and (as_of - record.requested_at).days >= ttl_days:
+                self._cancelled.add(client_order_id)
+                self._record_status(client_order_id, as_of=as_of)
+            else:
+                self._attempt_fill(client_order_id, as_of=as_of)
             history = self._status_history.get(client_order_id, ())
             if len(history) > history_len_before:
                 updates.append(history[-1])

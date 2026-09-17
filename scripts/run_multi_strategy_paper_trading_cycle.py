@@ -273,6 +273,14 @@ def main(argv=None) -> int:
     parser.add_argument("--max-drawdown", type=float, default=None)
     parser.add_argument("--max-portfolio-volatility", type=float, default=None)
     parser.add_argument("--reentry-cooldown-days", type=int, default=None)
+    parser.add_argument(
+        "--pending-order-ttl-days", type=int, default=None,
+        help=(
+            "PaperTradingConfig.pending_order_ttl_days, applied uniformly to every requested "
+            "strategy. Disabled by default -- a still-open order that can never fill stays open "
+            "forever, unchanged from every prior run."
+        ),
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
@@ -333,7 +341,7 @@ def main(argv=None) -> int:
             capital = PAPER_CAPITAL_USD
         else:
             capital = PaperTradingConfig().initial_cash
-        paper_config = PaperTradingConfig(initial_cash=capital)
+        paper_config = PaperTradingConfig(initial_cash=capital, pending_order_ttl_days=args.pending_order_ttl_days)
 
         paper_store = args.paper_store_root / name
         store_engine = StorageEngine(StorageConfig(root_dir=paper_store))

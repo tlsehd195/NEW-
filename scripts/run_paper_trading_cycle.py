@@ -216,6 +216,16 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument(
+        "--pending-order-ttl-days", type=int, default=None,
+        help=(
+            "PaperTradingConfig.pending_order_ttl_days. Disabled by default (None) -- a still-open "
+            "order that can never fill (e.g. its security permanently loses liquidity) stays "
+            "PENDING/PARTIAL_FILLED forever, unchanged from every prior run. When set, "
+            "session.advance() auto-cancels an order once it has been open this many days "
+            "(measured from its own original submission time), instead of retrying it forever."
+        ),
+    )
+    parser.add_argument(
         "--resume", action="store_true",
         help=(
             "Safe to invoke repeatedly (e.g. from an external cron) with the same --start/--end/"
@@ -252,7 +262,9 @@ def main(argv=None) -> int:
     print(f"Fetched {len(bars)} real bars.", flush=True)
 
     market_data_source = InMemoryPaperMarketDataSource(bars)
-    paper_config = PaperTradingConfig(initial_cash=args.initial_capital)
+    paper_config = PaperTradingConfig(
+        initial_cash=args.initial_capital, pending_order_ttl_days=args.pending_order_ttl_days,
+    )
 
     store_engine = StorageEngine(StorageConfig(root_dir=args.paper_store))
     order_repository = DuckDBPaperOrderRepository(store_engine)
@@ -453,6 +465,9 @@ def main(argv=None) -> int:
         # 38) -- omitting it here would repeat the exact reproducibility
         # gap risk_config's own comment above already documents.
         "lot_size": args.lot_size,
+        # --pending-order-ttl-days changes which orders get auto-cancelled
+        # vs. retried -- same reproducibility rationale as lot_size above.
+        "pending_order_ttl_days": args.pending_order_ttl_days,
     })
 
     report = {
@@ -478,6 +493,7 @@ def main(argv=None) -> int:
             "reentry_cooldown_days": args.reentry_cooldown_days,
         },
         "lot_size": args.lot_size,
+        "pending_order_ttl_days": args.pending_order_ttl_days,
         "mark_to_market_missing": [
             {"as_of_time": as_of.isoformat(), "security_ids": list(missing)}
             for as_of, missing in state.mark_to_market_missing
