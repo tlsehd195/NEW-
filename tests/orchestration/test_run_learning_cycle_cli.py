@@ -144,13 +144,18 @@ class TestEndToEndAgainstARealPaperStore:
         assert rc == 1
 
     def test_linear_regression_against_real_data_honestly_reports_unfitted(self, tmp_path) -> None:
-        """No Strategy in this codebase sets OrderIntent.features yet
-        (ADR-0048's own documented gap) -- every real DecisionSnapshot
-        this script reads today has features=None, so a real
-        LinearRegressionTrainer run against real Paper data must report
-        fitted=False rather than fabricate a fit. This is the module
-        docstring's own documented limitation, verified here rather than
-        just asserted in prose."""
+        """Session 38: `orchestration.paper_runner.run_cycle` now
+        populates real `DecisionSnapshot.features` (see `Test
+        FullLoopWithARealClosedTrade`'s own new assertion for direct
+        proof) -- so this fixture's `fitted=False` here is no longer
+        because features are missing. It is `INSUFFICIENT_SAMPLES` for
+        an entirely unrelated, still-true reason: this fixture's steady
+        upward drift produces one real opening BUY that never closes
+        within the window, and Data Cleaning's own `require_realized_
+        outcome=True` default excludes an unrealized leg (see
+        `TestEndToEndAgainstARealPaperStore`'s own class-level
+        precedent) -- zero real TRAIN samples reach the trainer at all,
+        regardless of which real `--feature-id` is requested."""
         db_path = tmp_path / "market_data"
         paper_store = tmp_path / "paper_store"
         _seed_catalog(db_path)
@@ -160,7 +165,7 @@ class TestEndToEndAgainstARealPaperStore:
         out_path = tmp_path / "learning_report.json"
         rc = module.main([
             "--paper-store", str(paper_store), "--trainer", "linear_regression",
-            "--feature-id", "momentum_20d", "--out", str(out_path),
+            "--feature-id", "expected_return", "--out", str(out_path),
         ])
         # Session 37 (ADR-0115, external review N-15/N-10): this fixture's
         # single unrealized-BUY-only dataset is INSUFFICIENT_SAMPLES (see
@@ -384,5 +389,23 @@ class TestFullLoopWithARealClosedTrade:
         engine = StorageEngine(StorageConfig(root_dir=paper_store))
         dataset_repo = DuckDBTrainingDatasetRepository(engine)
         real_dataset = dataset_repo.get(report["dataset_id"])
+
+        # Session 38: this closing SELL's own DecisionSnapshot must now
+        # carry real, non-fabricated features (orchestration.paper_runner.
+        # run_cycle's own _prediction_features, wired in this session) --
+        # before this fix, every real DecisionSnapshot had features=None
+        # (see TestEndToEndAgainstARealPaperStore's own precedent, still
+        # true there only because THAT fixture has zero real closed
+        # trades at all, an unrelated reason).
+        from storage.trade_journal_repository import DuckDBTradeJournalRepository
+
+        trade_journal = DuckDBTradeJournalRepository(engine)
+        closing_trades = [t for t in trade_journal.list_trades(security_id="AAA") if t.realized_return is not None]
+        assert len(closing_trades) == 1
+        closing_decision = trade_journal.get_decision(closing_trades[0].decision_id)
         engine.close()
+        assert closing_decision is not None
+        assert closing_decision.features is not None
+        assert "expected_return" in closing_decision.features
+
         assert real_dataset is not None and real_dataset.sample_count == 1

@@ -9,7 +9,7 @@ ADR-0062's `sector_by_security` parameter specifically."""
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -531,6 +531,71 @@ class TestTradeJournalWriteSide:
 
         outcomes = run_cycle(["AAA"], view.current_time, view, session, **_components())
         assert outcomes[0].submission is not None  # unchanged baseline behavior
+
+
+class TestDecisionSnapshotFeatures:
+    """Session 38: before this, `run_cycle` never populated `Decision
+    Snapshot.features` for any real Paper Trading decision --
+    `scripts/run_learning_cycle.py`'s own module docstring already
+    disclosed this honestly ("no Strategy/DecisionAgent... sets
+    OrderIntent.features yet"), which is why `learning.linear_trainer.
+    LinearRegressionTrainer` always reported `fitted=False,
+    train_sample_count=0` against real data regardless of how much
+    real Paper Trading history existed."""
+
+    def test_real_prediction_fields_reach_the_decision_snapshot(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, **_components(),
+            trade_journal_repository=journal,
+        )[0]
+
+        trade = journal.list_trades(security_id="AAA")[0]
+        decision_snapshot = journal.get_decision(trade.decision_id)
+        assert decision_snapshot.features is not None
+        # Every value actually matches this cycle's own real prediction
+        # -- never a fabricated or re-derived number.
+        assert decision_snapshot.features["expected_return"] == outcome.prediction.expected_return
+        assert decision_snapshot.features["confidence"] == outcome.prediction.confidence
+
+    def test_a_none_valued_prediction_field_is_omitted_not_written_as_none(self) -> None:
+        """`LinearRegressionTrainer._samples_with_required_features`
+        only checks KEY PRESENCE (`required <= set(s.features)`) --
+        writing `"key": None` would pass that check and then crash
+        `LinearRegressionModel.fit`'s own arithmetic on a real
+        (fitted=True-eligible) sample. Confirmed directly against the
+        real helper function, not just asserted."""
+        from orchestration.paper_runner import _prediction_features
+        from predict.models import PredictionOutput
+        from predict.enums import PredictionMethodType
+
+        prediction = PredictionOutput(
+            prediction_id="PRED-000001", security_id="AAA", as_of_time=datetime(2024, 6, 1, tzinfo=timezone.utc),
+            horizon_days=20, expected_return=0.01, probability=None, expected_volatility=0.2,
+            uncertainty=None, confidence=0.8, method="drift_v1", method_type=PredictionMethodType.MODEL_BASED,
+            feature_version="fv1", data_version=(), method_version="mv1", configuration_version="cv1",
+        )
+        features = _prediction_features(prediction)
+        assert features == {"expected_return": 0.01, "expected_volatility": 0.2, "confidence": 0.8}
+        assert "probability" not in features
+        assert "uncertainty" not in features
+
+    def test_all_fields_none_returns_none_not_an_empty_dict(self) -> None:
+        from orchestration.paper_runner import _prediction_features
+        from predict.models import PredictionOutput
+        from predict.enums import PredictionMethodType
+
+        prediction = PredictionOutput(
+            prediction_id="PRED-000001", security_id="AAA", as_of_time=datetime(2024, 6, 1, tzinfo=timezone.utc),
+            horizon_days=20, expected_return=None, probability=None, expected_volatility=None,
+            uncertainty=None, confidence=None, method="drift_v1", method_type=PredictionMethodType.MODEL_BASED,
+            feature_version="fv1", data_version=(), method_version="mv1", configuration_version="cv1",
+        )
+        assert _prediction_features(prediction) is None
 
 
 class TestValueHistoryState:
