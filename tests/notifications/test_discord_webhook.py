@@ -78,6 +78,31 @@ class TestFormatPaperTradingCycleReport:
         assert "Open positions: 20 (too many to list)" in message
         assert "SYM0" not in message
 
+    def test_performance_section_metrics_are_rendered_when_present(self) -> None:
+        report = {
+            "performance": {
+                "sharpe_ratio": 1.2345, "sortino_ratio": 2.0, "max_drawdown": -0.15, "total_return": 0.081,
+            },
+        }
+        message = format_paper_trading_cycle_report(report)
+        assert "Sharpe ratio: 1.234" in message
+        assert "Sortino ratio: 2.000" in message
+        assert "Max drawdown: -15.00%" in message
+        assert "Total return: 8.10%" in message
+
+    def test_performance_metrics_that_are_none_are_skipped_not_fabricated(self) -> None:
+        """`reasons`-carrying `None` metrics (e.g. insufficient_data) must
+        never render as 0/N/A."""
+        report = {"performance": {"sharpe_ratio": None, "reasons": {"sharpe_ratio": "insufficient_data"}}}
+        message = format_paper_trading_cycle_report(report)
+        assert "Sharpe ratio" not in message
+
+    def test_missing_performance_section_is_skipped_entirely(self) -> None:
+        """An older report file (written before ADR-0136) has no
+        `performance` key at all -- must not raise."""
+        message = format_paper_trading_cycle_report({"universe": "PILOT_UNIVERSE"})
+        assert "Sharpe" not in message
+
 
 class TestTruncateForDiscord:
     def test_short_content_is_unchanged(self) -> None:

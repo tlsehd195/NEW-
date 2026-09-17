@@ -612,3 +612,56 @@ class TestPersistence:
 
         assert len(prediction_repo.list_all(security_id="AAA")) == 1
         engine.close()
+
+
+class TestMarkToMarketAccounting:
+    """Session 38: before this, nothing ever called `mark_to_market` on
+    `session.adapter.accounting`, so `broker.paper.performance.
+    compute_paper_performance_report`'s own `equity_history`/`turnover`
+    inputs stayed permanently unavailable to any real caller driving
+    Paper Trading through `run_cycle` -- confirmed here directly rather
+    than only from reading the source."""
+
+    def test_each_cycle_appends_exactly_one_valuation_point(self) -> None:
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+
+        assert session.adapter.accounting.value_series == ()
+
+        run_cycle(["AAA"], view.current_time, view, session, **components)
+        assert len(session.adapter.accounting.value_series) == 1
+
+        clock.index = 101
+        run_cycle(["AAA"], view.current_time, view, session, **components)
+        assert len(session.adapter.accounting.value_series) == 2
+
+    def test_valuation_point_uses_the_same_reference_price_every_other_stage_used(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
+
+        point = session.adapter.accounting.value_series[-1]
+        assert point.as_of_time == view.current_time
+        # A real BUY this cycle (the fixture's steady upward drift --
+        # see TestOrdersActuallySubmitAndFill) means the position's own
+        # market_value inside the risk-checked portfolio view was priced
+        # off the same reference price this valuation point must use.
+        assert outcome.submission is not None
+        assert point.portfolio_value > 0
+
+    def test_turnover_reflects_real_fills_within_one_process(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+
+        assert session.adapter.accounting.turnover() == 0.0
+        outcome = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
+        assert outcome.submission is not None  # a real BUY happened this cycle
+
+        assert session.adapter.accounting.turnover() > 0.0

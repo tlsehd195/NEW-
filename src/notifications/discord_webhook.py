@@ -76,6 +76,28 @@ def format_paper_trading_cycle_report(report: dict) -> str:
         else:
             lines.append(f"Open positions: {len(positions)} (too many to list)")
 
+    # Session 38 continued: `performance` is `storage.serialization.
+    # paper_performance_report_to_payload`'s own JSON-safe dict, present
+    # once `scripts/run_paper_trading_cycle.py` started computing it
+    # (ADR-0136) -- absent entirely on an older report file, and every
+    # individual metric inside it may honestly be `None` (see that
+    # module's own `reasons` dict) rather than a real number. Both cases
+    # are skipped, never rendered as a fabricated 0/N/A.
+    performance = report.get("performance")
+    if performance is not None:
+        sharpe = performance.get("sharpe_ratio")
+        if sharpe is not None:
+            lines.append(f"Sharpe ratio: {sharpe:.3f}")
+        sortino = performance.get("sortino_ratio")
+        if sortino is not None:
+            lines.append(f"Sortino ratio: {sortino:.3f}")
+        max_dd = performance.get("max_drawdown")
+        if max_dd is not None:
+            lines.append(f"Max drawdown: {max_dd:.2%}")
+        total_return = performance.get("total_return")
+        if total_return is not None:
+            lines.append(f"Total return: {total_return:.2%}")
+
     note = report.get("note")
     if note:
         lines.append(f"_{note}_")
