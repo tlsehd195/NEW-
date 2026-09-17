@@ -14,6 +14,17 @@ dev = [
     "pytest>=8.0",
     "pyyaml>=6.0",
 ]
+# Session 38: scripts/generate_paper_performance_tearsheet.py only --
+# never imported by src/, which stays pandas/numpy-free. Deliberately
+# `quantstats`, NOT the "actively maintained" `quantstats-reloaded`
+# fork an external evaluation report recommended: direct testing
+# (ADR-0138) found quantstats-reloaded==0.1.0's reports.html() crashes
+# with a real ValueError on the single-strategy/no-benchmark case --
+# the exact case this project's own Paper Trading has (no S&P 500 data
+# ingested, ADR-0005) -- while the original quantstats==0.0.81 does not.
+reporting = [
+    "quantstats>=0.0.81",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
