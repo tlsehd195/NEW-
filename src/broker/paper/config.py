@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Optional
 
-from backtest.costs import FixedBpsSlippageModel, TransactionCostModel
+from backtest.costs import VolumeScaledSlippageModel, TransactionCostModel
 
 from data_infra.versioning import compute_data_version
 
@@ -32,9 +32,35 @@ class PaperTradingConfig:
     commission_per_share: float = 0.005
     spread_bps: float = 2.0
     slippage_bps: float = 5.0
+    # External review (Session 38 continued): `backtest.costs.
+    # VolumeScaledSlippageModel` already existed but `slippage_model()`
+    # below never used it -- every Paper Trading fill got the SAME flat
+    # slippage regardless of how large a bite it took out of that bar's
+    # own liquidity, silently underpricing large/illiquid fills relative
+    # to `max_participation`'s own 10%-of-volume cap. `slippage_bps`
+    # above is reused as the impact model's flat `base_bps` (same
+    # meaning at zero participation, so an existing `slippage_bps`
+    # override still means the same thing); this field is the EXTRA bps
+    # charged at 100% participation, matching `VolumeScaledSlippageModel`'s
+    # own default.
+    slippage_impact_coefficient_bps: float = 100.0
 
     max_participation: float = 0.10  # same default as backtest.fills.FillSimulator
     partial_fill_enabled: bool = True
+
+    # External review (Session 38 continued): before ADR-0137 wired
+    # `advance_simulation` into `run_cycle` at all, a still-open
+    # (PENDING/PARTIAL_FILLED) order simply never retried. Retrying is
+    # now unconditional, but nothing yet stops an order that STILL can't
+    # fill (e.g. its security permanently drops below the participation
+    # cap's liquidity, or leaves the universe) from sitting open forever
+    # -- a real "zombie order" risk. `None` (the default) preserves the
+    # exact pre-existing behavior: no TTL, an order stays open
+    # indefinitely, matching every existing caller's expectations. A
+    # caller that wants auto-cancellation sets a real day count; this is
+    # opt-in because "how long is too long" is a real risk-policy
+    # decision this config should not make silently on a caller's behalf.
+    pending_order_ttl_days: Optional[int] = None
 
     # None | "rejected" | "timeout" | "auth" | "rate_limit" | "malformed" |
     # "unavailable" | "unknown_status" -- mirrors broker.mock.MockBrokerAdapter's
@@ -67,12 +93,16 @@ class PaperTradingConfig:
             raise ValueError("PaperTradingConfig commission fields must not be negative")
         if self.spread_bps < 0 or self.slippage_bps < 0:
             raise ValueError("PaperTradingConfig.spread_bps/slippage_bps must not be negative")
+        if self.slippage_impact_coefficient_bps < 0:
+            raise ValueError("PaperTradingConfig.slippage_impact_coefficient_bps must not be negative")
         if not 0.0 < self.max_participation <= 1.0:
             raise ValueError("PaperTradingConfig.max_participation must be in (0, 1]")
         if self.maximum_order_quantity is not None and self.maximum_order_quantity <= 0:
             raise ValueError("PaperTradingConfig.maximum_order_quantity must be positive if set")
         if self.maximum_notional is not None and self.maximum_notional <= 0:
             raise ValueError("PaperTradingConfig.maximum_notional must be positive if set")
+        if self.pending_order_ttl_days is not None and self.pending_order_ttl_days <= 0:
+            raise ValueError("PaperTradingConfig.pending_order_ttl_days must be positive if set")
         allowed_failure_modes = {
             None, "rejected", "timeout", "auth", "rate_limit", "malformed", "unavailable", "unknown_status",
         }
@@ -85,8 +115,10 @@ class PaperTradingConfig:
             spread_bps=self.spread_bps,
         )
 
-    def slippage_model(self) -> FixedBpsSlippageModel:
-        return FixedBpsSlippageModel(bps=self.slippage_bps)
+    def slippage_model(self) -> VolumeScaledSlippageModel:
+        return VolumeScaledSlippageModel(
+            base_bps=self.slippage_bps, impact_coefficient_bps=self.slippage_impact_coefficient_bps,
+        )
 
     def configuration_version(self) -> str:
         return compute_data_version(asdict(self))

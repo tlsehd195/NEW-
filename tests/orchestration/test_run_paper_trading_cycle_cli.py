@@ -434,6 +434,53 @@ class TestFractionalShareSizing:
         assert whole_shares["content_checksum"] != fractional["content_checksum"]
 
 
+class TestPendingOrderTTLFlag:
+    """External review (Session 38 continued): `--pending-order-ttl-days`
+    threads through to `PaperTradingConfig.pending_order_ttl_days` --
+    disabled by default, an explicit opt-in when set."""
+
+    def test_defaults_to_disabled(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())
+        assert report["pending_order_ttl_days"] is None
+
+    def test_flag_threads_through_to_the_report(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+            "--pending-order-ttl-days", "30",
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())
+        assert report["pending_order_ttl_days"] == 30
+
+
 class TestPerformanceReportWiring:
     """Session 38 (ADR-0136): before this, `broker.paper.performance.
     compute_paper_performance_report` (Phase 18) was implemented and

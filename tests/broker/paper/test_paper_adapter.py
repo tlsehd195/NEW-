@@ -92,6 +92,69 @@ class TestPartialFill:
         assert response.filled_quantity is None
 
 
+class TestPendingOrderTTL:
+    """External review (Session 38 continued): before this, a still-open
+    order that could never fill (e.g. its security permanently lost
+    liquidity) stayed PENDING/PARTIAL_FILLED forever -- `advance_
+    simulation` retries it every call with no way to give up.
+    `PaperTradingConfig.pending_order_ttl_days` is opt-in (`None` by
+    default) auto-cancellation past a real day count."""
+
+    def test_ttl_none_leaves_a_stuck_order_pending_forever(self) -> None:
+        adapter, mds = _adapter(
+            config=make_paper_config(max_participation=0.10, partial_fill_enabled=False),
+            bars=[make_bar(available_time=utc(2024, 1, 2), volume=1.0)],
+        )
+        order = make_validated_order(quantity=1_000.0)
+        response = adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        assert response.status == BrokerOrderStatus.PENDING
+
+        mds.register(make_bar(available_time=utc(2024, 6, 1), volume=1.0))
+        updates = adapter.advance_simulation(utc(2024, 6, 1))
+        assert updates == ()  # still can't fill -- but never gives up either
+        assert adapter.get_order_status(order.client_order_id, as_of=utc(2024, 6, 1)).status == BrokerOrderStatus.PENDING
+
+    def test_order_older_than_ttl_is_auto_cancelled_instead_of_retried(self) -> None:
+        adapter, mds = _adapter(
+            config=make_paper_config(max_participation=0.10, partial_fill_enabled=False, pending_order_ttl_days=30),
+            bars=[make_bar(available_time=utc(2024, 1, 2), volume=1.0)],
+        )
+        order = make_validated_order(quantity=1_000.0)
+        response = adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        assert response.status == BrokerOrderStatus.PENDING
+
+        mds.register(make_bar(available_time=utc(2024, 2, 5), volume=1_000_000.0))  # 34 days later, ample liquidity now
+        updates = adapter.advance_simulation(utc(2024, 2, 5))
+        assert len(updates) == 1
+        assert updates[0].status == BrokerOrderStatus.CANCELED
+        assert adapter.get_order_status(order.client_order_id, as_of=utc(2024, 2, 5)).status == BrokerOrderStatus.CANCELED
+
+    def test_order_younger_than_ttl_still_retries_normally(self) -> None:
+        adapter, mds = _adapter(
+            config=make_paper_config(max_participation=0.10, partial_fill_enabled=False, pending_order_ttl_days=30),
+            bars=[make_bar(available_time=utc(2024, 1, 2), volume=1.0)],
+        )
+        order = make_validated_order(quantity=1_000.0)
+        adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+
+        mds.register(make_bar(available_time=utc(2024, 1, 20), volume=1_000_000.0))  # 18 days later -- within TTL
+        updates = adapter.advance_simulation(utc(2024, 1, 20))
+        assert len(updates) == 1
+        assert updates[0].status == BrokerOrderStatus.FILLED  # retried and filled, not cancelled
+
+    def test_a_filled_order_is_never_touched_by_ttl(self) -> None:
+        adapter, _ = _adapter(
+            config=make_paper_config(pending_order_ttl_days=1),
+            bars=[make_bar(available_time=utc(2024, 1, 2))],
+        )
+        order = make_validated_order(quantity=10.0)
+        response = adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        assert response.status == BrokerOrderStatus.FILLED
+
+        updates = adapter.advance_simulation(utc(2024, 6, 1))  # far past the 1-day TTL
+        assert updates == ()  # already FILLED -- advance_simulation skips it entirely
+
+
 class TestParticipationCapSharedAcrossOrdersInTheSameBar:
     """External review, MEDIUM-2 (Session 38 continued): before this,
     `simulate_fill` recomputed `max_fillable = bar.volume *
