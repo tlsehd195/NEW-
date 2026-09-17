@@ -177,3 +177,21 @@ jobs:
           name: paper-trading-cycle-report-${{ github.run_id }}
           path: paper_trading_cycle_report.json
           retention-days: 90
+
+      # Session 38 (account owner's own request: 페이퍼 트레이딩 데일리
+      # 사이클 리포트를 클로드 앱이 아니라 디스코드로도 받고 싶다). Runs
+      # only once a real DISCORD_WEBHOOK_URL repo secret exists -- until
+      # then this step is skipped rather than failing the whole job, so
+      # merging this workflow change does not require the secret to
+      # already be configured. `if: always()` on the run step above
+      # means paper_trading_cycle_report.json may exist even after an
+      # earlier step failed; this step still attempts to send whatever
+      # was written.
+      - name: Send Discord notification
+        if: always() && secrets.DISCORD_WEBHOOK_URL != ''
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python3 scripts/send_discord_notification.py \
+            --report paper_trading_cycle_report.json \
+            --report-type paper_trading_cycle
