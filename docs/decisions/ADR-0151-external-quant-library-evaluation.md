@@ -7,23 +7,63 @@ recover this content and asked for independent re-verification rather
 than a branch merge)
 **Provenance note:** This ADR's Decisions 1-7 were originally written on
 a separate branch, `claude/ruflo-features-review-hqrvqa`, as its own
-`ADR-0032`. That branch was found this session to share NO common git
-ancestor with `main` (`git merge-base` returns empty — a disjoint
-history, not a normal stale feature branch, despite two earlier
-uploaded evaluation reports describing it as "19 commits behind,
-diverging at a shared point"), so merging it directly would have been
-an unrelated-histories merge, not a normal one. The account owner chose
-instead to have this session read the branch's actual final content
-directly and re-author it fresh on top of current `main`, renumbered
-(main already has an unrelated `ADR-0032`) and with the three ADOPTED
-libraries (skfolio, purgedcv, exchange_calendars) independently
-re-installed and re-verified in THIS session's own environment rather
-than trusted from the original ADR's prose. The REJECTED candidates
-(Kronos, NautilusTrader, Vibe-Trading, almgren-chriss) are carried over
-as reasoning, not independently re-checked against their current
-upstream state — rejections are lower-risk to carry forward than
-adoptions, and the reasoning for each does not depend on a moment-in-time
-fact likely to have flipped.
+`ADR-0032`. This note originally claimed that branch shared NO common
+git ancestor with `main` (`git merge-base` returning empty — a
+"disjoint history"), contradicting two earlier uploaded evaluation
+reports that described it as an ordinary stale branch ("19 commits
+behind, diverging at a shared point"), and went on to conclude from
+that claim that `main`'s own history had been rewritten at some point.
+The account owner chose to have this session read the branch's actual
+final content directly and re-author it fresh on top of current `main`
+rather than merge it, specifically because of that (as it turns out,
+incorrect) disjoint-history claim.
+
+**Correction (2026-09-17, later the same session, per an independently
+uploaded third-party verification report):** The disjoint-history claim
+above was wrong, and the two earlier reports it contradicted were
+right. Root cause, confirmed directly in this session: the working
+clone was a *shallow* clone (`git rev-parse --is-shallow-repository`
+returned `true`) at the time the original claim was made — a shallow
+clone can make `git merge-base` return empty and make a recent commit
+look like a history root, exactly the two symptoms that led to the
+wrong conclusion. After running `git fetch --unshallow`, re-running the
+same checks gives: `git merge-base origin/main
+origin/claude/ruflo-features-review-hqrvqa` = `61c9507` ("Phase 28:
+document exhaustive real-data search + provenance-check fix",
+2026-08-28) — a real, present common ancestor, not empty; `git rev-list
+--max-parents=0` returns the SAME root commit (`c3abad0`, "Initial
+commit") for both `main` and the ruflo branch, so `main`'s history was
+never rewritten; and `git log --oneline
+origin/claude/ruflo-features-review-hqrvqa ^origin/main` lists exactly
+19 unmerged commits — matching the two earlier reports' description
+precisely. `claude/ruflo-features-review-hqrvqa` is therefore an
+ordinary stale feature branch, not a disjoint history.
+
+This does NOT change the recovery decision itself: the account owner's
+choice to re-author only the four `ADR-0032`/library-adoption commits
+fresh on `main` (rather than merge the whole branch, which also carries
+unrelated archify/task-observer/skill-tooling commits out of this
+ADR's scope) remains sound on its own merits, and the content recovered
+below was independently re-verified in this session regardless of the
+branch-history question. What changes is only the REASON given at the
+time for not doing a normal merge, and the false "main's history was
+rewritten" suspicion, which is retracted here and must not be repeated
+by a future session. The original 19 unmerged commits (listed above)
+remain on `claude/ruflo-features-review-hqrvqa` and are additionally
+preserved under the branch `ruflo-features-review-backup` (created via
+the GitHub API pointing at the same tip commit, `04e4481` — a direct
+`git push` of a new tag was refused by this session's own push-scope
+policy) against accidental branch deletion, per the same third-party
+report's recommendation.
+
+The three ADOPTED libraries (skfolio, purgedcv, exchange_calendars)
+were independently re-installed and re-verified in THIS session's own
+environment rather than trusted from the original ADR's prose. The
+REJECTED candidates (Kronos, NautilusTrader, Vibe-Trading,
+almgren-chriss) are carried over as reasoning, not independently
+re-checked against their current upstream state — rejections are
+lower-risk to carry forward than adoptions, and the reasoning for each
+does not depend on a moment-in-time fact likely to have flipped.
 
 ---
 
