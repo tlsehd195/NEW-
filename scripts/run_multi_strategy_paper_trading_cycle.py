@@ -75,7 +75,9 @@ from broker.pipeline import seed_broker_pipeline_ids  # noqa: E402
 from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
 from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 
-from orchestration.paper_runner import PaperRunnerState, compute_portfolio_snapshot, run_cycle  # noqa: E402
+from orchestration.paper_runner import (  # noqa: E402
+    PaperRunnerState, compute_portfolio_snapshot, equity_history_from_risk_repository, run_cycle,
+)
 from orchestration.paper_strategies import (  # noqa: E402
     STRATEGIES,
     PaperStrategyKind,
@@ -124,11 +126,6 @@ def _last_processed_checkpoint(prediction_repository, representative_security_id
     return max(r.as_of_time for r in records)
 
 
-def _reconstruct_value_history(risk_repository, representative_security_id: str, up_to: datetime) -> list:
-    records = risk_repository.list_all(security_id=representative_security_id, end=up_to)
-    return [r.risk_state.portfolio_value for r in records if r.risk_state is not None]
-
-
 def _run_run_cycle_strategy(
     *, name, security_ids, sector_by_security, checkpoints, view, clock, session, store_engine,
     risk_config, resume: bool,
@@ -151,7 +148,11 @@ def _run_run_cycle_strategy(
         last_processed = _last_processed_checkpoint(prediction_repository, security_ids[0])
         if last_processed is not None:
             strategy_checkpoints = [c for c in checkpoints if c > last_processed]
-            state.value_history.extend(_reconstruct_value_history(risk_repository, security_ids[0], last_processed))
+            state.value_history.extend(
+                value for _, value in equity_history_from_risk_repository(
+                    risk_repository, security_ids[0], up_to=last_processed,
+                )
+            )
 
     starting_ids = RunCycleStartingIds(
         prediction=_next_starting_id(r.prediction_id for r in prediction_repository.list_all()),
@@ -187,6 +188,13 @@ def _run_run_cycle_strategy(
         "total_orders_submitted": total_submitted,
         "total_orders_with_a_fill": total_filled,
         "value_history_length": len(state.value_history),
+        # External review, Session 38 continued: same mark_to_market
+        # missing-price visibility as run_paper_trading_cycle.py -- see
+        # `orchestration.paper_runner.PaperRunnerState.mark_to_market_missing`.
+        "mark_to_market_missing": [
+            {"as_of_time": as_of.isoformat(), "security_ids": list(missing)}
+            for as_of, missing in state.mark_to_market_missing
+        ],
     }
 
 

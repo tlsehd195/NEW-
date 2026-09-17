@@ -13,13 +13,15 @@ reloaded==0.1.0's own `reports.html()` crashes with a real, reproducible
 this project's own case (no real S&P 500 data has been ingested,
 ADR-0005) -- while the original quantstats==0.0.81 does not.
 
-The real, durable equity curve this reads comes from the SAME source
-`scripts/run_paper_trading_cycle.py`'s own `_equity_history()` already
-established (ADR-0136): `RiskCheckedPosition.as_of_time`/`.risk_state.
-portfolio_value`, one real snapshot per checkpoint, across every past
-`--resume` invocation this `--paper-store` has ever recorded -- never
-`PortfolioAccounting.value_series` (real only within one process, see
-that ADR's own Decision 2).
+The real, durable equity curve this reads comes from `orchestration.
+paper_runner.equity_history_from_risk_repository` (established as
+`scripts/run_paper_trading_cycle.py`'s own `_equity_history()` in
+ADR-0136, promoted to a shared helper across all three Paper Trading
+scripts in ADR-0148's LOW-1 fix): `RiskCheckedPosition.as_of_time`/`.
+risk_state.portfolio_value`, one real snapshot per checkpoint, across
+every past `--resume` invocation this `--paper-store` has ever
+recorded -- never `PortfolioAccounting.value_series` (real only within
+one process, see ADR-0136's own Decision 2).
 
 Usage (against a real --paper-store scripts/run_paper_trading_cycle.py
 already wrote to):
@@ -34,32 +36,21 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from orchestration.paper_runner import equity_history_from_risk_repository  # noqa: E402
 
 from storage.config import StorageConfig  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.risk_repository import DuckDBRiskRepository  # noqa: E402
 
 
-def _equity_history(risk_repository, representative_security_id: str) -> list[tuple[datetime, float]]:
-    """Same real, durable source `scripts/run_paper_trading_cycle.py`'s
-    own `_equity_history()` uses (ADR-0136) -- one real snapshot per
-    checkpoint, in chronological order, never fabricated for a
-    checkpoint whose `risk_state` is unexpectedly absent."""
-    records = risk_repository.list_all(security_id=representative_security_id)
-    return sorted(
-        ((r.as_of_time, r.risk_state.portfolio_value) for r in records if r.risk_state is not None),
-        key=lambda pair: pair[0],
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--paper-store", required=True, type=Path, help="A real --paper-store directory scripts/run_paper_trading_cycle.py already wrote to")
-    parser.add_argument("--security-id", required=True, type=str, help="Any security this --paper-store's own universe includes -- used the same way scripts/run_paper_trading_cycle.py's own _equity_history() is, as a representative proxy for this run's shared per-checkpoint portfolio value (see that script's own docstring)")
+    parser.add_argument("--security-id", required=True, type=str, help="Any security this --paper-store's own universe includes -- used the same way scripts/run_paper_trading_cycle.py uses it, as a representative proxy for this run's shared per-checkpoint portfolio value (see orchestration.paper_runner.equity_history_from_risk_repository's own docstring)")
     parser.add_argument("--out", required=True, type=Path, help="Where to write the HTML tearsheet")
     parser.add_argument("--title", type=str, default=None, help="Tearsheet title (default: derived from --security-id)")
     args = parser.parse_args(argv)
@@ -82,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
 
     engine = StorageEngine(StorageConfig(root_dir=args.paper_store))
     risk_repository = DuckDBRiskRepository(engine)
-    equity_history = _equity_history(risk_repository, args.security_id)
+    equity_history = equity_history_from_risk_repository(risk_repository, args.security_id)
     engine.close()
 
     if len(equity_history) < 2:

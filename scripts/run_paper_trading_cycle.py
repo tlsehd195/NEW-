@@ -109,7 +109,7 @@ from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
 from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from data_infra.versioning import compute_data_version  # noqa: E402
 
-from orchestration.paper_runner import PaperRunnerState, run_cycle  # noqa: E402
+from orchestration.paper_runner import PaperRunnerState, equity_history_from_risk_repository, run_cycle  # noqa: E402
 from orchestration.paper_strategies import RunCycleStartingIds, build_run_cycle_components  # noqa: E402
 
 from risk.config import PositionSizingConfig, RiskConfig  # noqa: E402
@@ -172,34 +172,13 @@ def _next_starting_id(record_ids) -> int:
     return max(int(rid.rsplit("-", 1)[1]) for rid in ids) + 1
 
 
-def _equity_history(risk_repository, representative_security_id: str, up_to: datetime) -> list[tuple[datetime, float]]:
-    """Real, already-persisted `(as_of_time, portfolio_value)` pairs for
-    every checkpoint up to and including `up_to`, in chronological
-    order -- reconstructed from `RiskCheckedPosition.as_of_time`/`.
-    risk_state.portfolio_value` (one real snapshot per checkpoint,
-    shared across every security assessed that cycle) rather than
-    guessed or interpolated. Never fabricates a point for a checkpoint
-    whose `risk_state` is unexpectedly absent -- that checkpoint is
-    simply skipped, matching this project's fail-closed discipline.
-
-    Unlike `session.adapter.accounting.value_series` (real only within
-    ONE process -- `PaperTradingSession.restore()` replays fills, never
-    replays the `mark_to_market` calls that build that series), this
-    repository-backed history is durable across every past `--resume`
-    invocation against the same `--paper-store`, which is why it -- not
-    `accounting.value_series` -- is this script's real source for
-    `broker.paper.performance.compute_paper_performance_report`'s own
-    `equity_history` input (Session 38)."""
-    records = risk_repository.list_all(security_id=representative_security_id, end=up_to)
-    return [(r.as_of_time, r.risk_state.portfolio_value) for r in records if r.risk_state is not None]
-
-
 def _reconstruct_value_history(risk_repository, representative_security_id: str, up_to: datetime) -> list:
     """Real, already-persisted portfolio values only (no timestamps) --
     what `PaperRunnerState.value_history` seeding needs. See
-    `_equity_history` above for the timestamped version and for why
-    this repository, not `PortfolioAccounting`, is the durable source."""
-    return [value for _, value in _equity_history(risk_repository, representative_security_id, up_to)]
+    `orchestration.paper_runner.equity_history_from_risk_repository` for
+    the timestamped version and for why this repository, not
+    `PortfolioAccounting`, is the durable source."""
+    return [value for _, value in equity_history_from_risk_repository(risk_repository, representative_security_id, up_to=up_to)]
 
 
 def main(argv=None) -> int:
@@ -403,6 +382,20 @@ def main(argv=None) -> int:
         if (i + 1) % 10 == 0 or i == len(checkpoints) - 1:
             print(f"  [{i + 1}/{len(checkpoints)}] {checkpoint.date()} -- submitted so far: {total_submitted}, filled so far: {total_filled}", flush=True)
 
+    # External review, Session 38 continued: `mark_to_market` falling
+    # back to average cost for a held security with no real price is a
+    # real, honest gap -- surfacing it here (stdout + report JSON) is
+    # the same "never let a real issue arrive with zero signal" treatment
+    # `ingest_real_market_data.py`'s own missing_symbols print already gets.
+    if state.mark_to_market_missing:
+        total_missing_occurrences = sum(len(missing) for _, missing in state.mark_to_market_missing)
+        print(
+            f"WARNING: mark_to_market fell back to average cost {total_missing_occurrences} time(s) "
+            f"across {len(state.mark_to_market_missing)} checkpoint(s) (no real price available) -- see "
+            "mark_to_market_missing in the report JSON for details.",
+            flush=True,
+        )
+
     final_account = session.account_summary(as_of=checkpoints[-1])
 
     # Session 38: Phase 18's compute_paper_performance_report, wired
@@ -413,7 +406,7 @@ def main(argv=None) -> int:
     # on report_id like every other repository in this pipeline.
     performance_repository = DuckDBPaperPerformanceReportRepository(store_engine)
     paper_session_id = f"paper-session-{args.universe.lower()}"
-    equity_history = _equity_history(risk_repository, security_ids[0], checkpoints[-1])
+    equity_history = equity_history_from_risk_repository(risk_repository, security_ids[0], up_to=checkpoints[-1])
     trades = trade_journal_repository.list_trades(
         provenance=TradeProvenance.PAPER_TRADING, start=args.start, end=args.end,
     )
@@ -430,7 +423,7 @@ def main(argv=None) -> int:
         # used here -- its own `_valuation_history` (the denominator) is
         # real only within this ONE process (`PaperTradingSession.
         # restore()` never replays past `mark_to_market` calls -- see
-        # `_equity_history`'s own docstring above), while its
+        # `equity_history_from_risk_repository`'s own docstring), while its
         # `_trade_notionals` numerator IS durable across every past
         # --resume run. Combining a durable numerator with a fresh-
         # this-run-only denominator would silently overstate turnover on
@@ -485,6 +478,10 @@ def main(argv=None) -> int:
             "reentry_cooldown_days": args.reentry_cooldown_days,
         },
         "lot_size": args.lot_size,
+        "mark_to_market_missing": [
+            {"as_of_time": as_of.isoformat(), "security_ids": list(missing)}
+            for as_of, missing in state.mark_to_market_missing
+        ],
         "performance": paper_performance_report_to_payload(performance_report),
         "content_checksum": checksum,
     }

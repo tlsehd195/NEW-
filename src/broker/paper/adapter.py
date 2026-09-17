@@ -75,6 +75,19 @@ class PaperBrokerAdapter:
         self._cancelled: set[str] = set()
         self._status_history: dict[str, list[OrderStatusObservation]] = {}
         self._pending_fill_events: list[tuple[str, str, Fill]] = []
+        # External review, MEDIUM-2 (Session 38 continued): per-
+        # (security_id, bar.available_time, bar.timestamp) cumulative
+        # filled quantity, so
+        # two different orders attempting a fill against the SAME bar
+        # (e.g. yesterday's still-open order retried via
+        # `advance_simulation` alongside a freshly-submitted one) share
+        # ONE real `max_participation` cap on that bar's volume instead
+        # of each independently claiming a full share. Deliberately
+        # process-local, like `PortfolioAccounting._valuation_history`
+        # -- not replayed by `restore_fill` (a restart resets it), the
+        # same disclosed limitation `_equity_history`'s own docstring
+        # already carries for a different piece of process-local state.
+        self._bar_participation_consumed: dict[tuple[str, datetime], float] = {}
 
         self._response_ids = _IdAllocator("PAPERRESP")
         self._observation_ids = _IdAllocator("PAPEROSTAT")
@@ -218,11 +231,24 @@ class PaperBrokerAdapter:
         if bar is None:
             return  # no data available yet -- stays PENDING/PARTIAL_FILLED, never guesses a price
 
+        # Keyed on the SAME `(available_time, timestamp)` pair
+        # `PaperMarketDataSource.get_reference_bar` itself uses to pick
+        # "the" bar (its own `max(..., key=lambda b: (b.available_time,
+        # b.timestamp))`) -- `timestamp` alone is not a safe proxy for
+        # "which real bar this is": real production data couples them
+        # 1:1 (`data_infra.provider.bar_available_time()`), but several
+        # existing test fixtures deliberately vary only `available_time`
+        # across otherwise-distinct bars while reusing `make_bar`'s
+        # default `timestamp`, which `bar.timestamp` alone would
+        # (wrongly) treat as the same bar.
+        bar_key = (order.security_id, bar.available_time, bar.timestamp)
+        already_consumed_this_bar = self._bar_participation_consumed.get(bar_key, 0.0)
         fill = simulate_fill(
             order_id=order.client_order_id, security_id=order.security_id, side=order.side,
             remaining_quantity=remaining, bar=bar, cost_model=self._cost_model, slippage_model=self._slippage_model,
             max_participation=self._config.max_participation, partial_fill_enabled=self._config.partial_fill_enabled,
             decision_time=order.as_of_time, execution_time=as_of,
+            already_consumed_this_bar=already_consumed_this_bar,
         )
         if fill is None:
             return
@@ -241,6 +267,7 @@ class PaperBrokerAdapter:
         self._accounting.apply_fill(fill)
         self._fills.setdefault(client_order_id, []).append((fill_id, fill))
         self._pending_fill_events.append((client_order_id, fill_id, fill))
+        self._bar_participation_consumed[bar_key] = already_consumed_this_bar + fill.quantity
         self._record_status(client_order_id, as_of=as_of)
 
     def pop_new_fills(self) -> tuple[tuple[str, str, Fill], ...]:

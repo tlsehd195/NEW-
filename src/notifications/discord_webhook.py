@@ -105,13 +105,47 @@ def format_paper_trading_cycle_report(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _utf16_length(s: str) -> int:
+    """Discord (like most JS-originated web APIs) measures a string's
+    length the same way JavaScript's own `.length` does: UTF-16 CODE
+    UNITS, not Unicode codepoints -- confirmed via independent search,
+    not assumed (multiple sources agree Discord/Telegram-style chunking
+    tools have to special-case this exact gap). Python's `len()` counts
+    codepoints, so a character outside the Basic Multilingual Plane
+    (e.g. most emoji, U+10000 and above) counts as ONE codepoint in
+    Python but TWO UTF-16 code units in Discord's own accounting --
+    `len()` alone under-counts exactly those characters."""
+    return len(s.encode("utf-16-le")) // 2
+
+
 def truncate_for_discord(content: str, *, limit: int = _DISCORD_CONTENT_LIMIT) -> str:
     """Pure. Discord's webhook API rejects (HTTP 400) any `content` over
-    `limit` characters -- truncate rather than let a long report crash
-    the send outright."""
-    if len(content) <= limit:
+    `limit` UTF-16 code units (see `_utf16_length`) -- truncate rather
+    than let a long report crash the send outright.
+
+    External review, LOW-2 (Session 38 continued): previously compared
+    `len(content)` (Python codepoints) against `limit` directly. Every
+    report this module formats today has at most one astral character
+    (a single leading emoji), so the previous version never actually
+    mis-truncated in practice -- but a future formatter combining
+    several emoji/rare CJK characters near the boundary could have
+    silently sent oversized content and gotten a real HTTP 400. Never
+    splits a surrogate pair mid-character -- iterates by Python
+    codepoint (each one already a complete, valid character) and stops
+    BEFORE a codepoint that would push the running UTF-16 count over
+    budget, so truncation always lands on a whole-character boundary."""
+    if _utf16_length(content) <= limit:
         return content
-    return content[: limit - len(_TRUNCATION_SUFFIX)] + _TRUNCATION_SUFFIX
+    budget = limit - _utf16_length(_TRUNCATION_SUFFIX)
+    kept: list[str] = []
+    used = 0
+    for ch in content:
+        ch_length = 2 if ord(ch) > 0xFFFF else 1
+        if used + ch_length > budget:
+            break
+        kept.append(ch)
+        used += ch_length
+    return "".join(kept) + _TRUNCATION_SUFFIX
 
 
 def send_discord_message(webhook_url: str, content: str, *, timeout: float = 10.0) -> None:
