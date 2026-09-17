@@ -74,6 +74,42 @@ list (isolating the assertion to only this fix -- no new decision is
 made that cycle) and confirms the SAME order's position grows to 4,000
 shares, never a new order. Full suite re-run clean after this change.
 
+## Update (external review, MEDIUM-2, ADR-0147's fix batch): the participation cap this ADR relies on was per-order, not per-bar
+
+This ADR's own wiring made it reachable for the first time: retrying a
+still-`PENDING`/`PARTIAL_FILLED` order via `advance()` alongside a
+freshly-submitted order for the SAME security could hit the SAME bar
+twice, and `broker.paper.execution.simulate_fill` recomputed
+`max_fillable = floor(bar.volume * max_participation)` fresh on every
+call -- with no memory of what another order already consumed from
+that same bar. Two orders could each independently claim the full 10%
+share, doubling the real per-bar participation cap this ADR's own
+"Context" section above describes as a hard limit.
+
+Fixed by having `PaperBrokerAdapter` track cumulative filled quantity
+per `(security_id, bar.available_time, bar.timestamp)`
+(`_bar_participation_consumed`) and subtracting it from `max_fillable`
+on every subsequent attempt against that same bar -- see
+`broker.paper.execution.simulate_fill`'s new `already_consumed_this_bar`
+parameter. Keyed on the SAME tuple `PaperMarketDataSource.
+get_reference_bar` itself uses to pick "the" bar (`bar.timestamp` alone
+is not a safe proxy: real production data couples `timestamp` and
+`available_time` 1:1, but several existing test fixtures deliberately
+vary only `available_time` across otherwise-distinct bars). Deliberately
+**process-local**, matching `PortfolioAccounting._valuation_history`'s
+own disclosed scope: `PaperBrokerAdapter.restore_fill` (restart
+rehydration) does not repopulate it, since a `Fill` alone does not
+carry the bar's own `timestamp`/`available_time` distinctly from
+`execution_time`. A process restart mid-bar therefore still resets this
+specific tracking -- a narrower, disclosed residual of the same class
+of gap, not a new one introduced by this fix.
+
+Tests: `tests/broker/paper/test_paper_adapter.py::
+TestParticipationCapSharedAcrossOrdersInTheSameBar` (3 new tests: a
+second order against an already-fully-consumed bar gets nothing, a
+second order gets only the remaining share of the cap, and a later bar
+gets its own fresh cap). Full suite re-run clean.
+
 ## Status of Implementation at Time of This ADR
 
 Code, test, and documentation complete and committed.

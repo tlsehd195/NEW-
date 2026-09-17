@@ -92,6 +92,59 @@ class TestPartialFill:
         assert response.filled_quantity is None
 
 
+class TestParticipationCapSharedAcrossOrdersInTheSameBar:
+    """External review, MEDIUM-2 (Session 38 continued): before this,
+    `simulate_fill` recomputed `max_fillable = bar.volume *
+    max_participation` fresh on every call, so two different orders
+    against the same (security_id, bar) each independently got the
+    full participation share -- doubling the real cap for that bar."""
+
+    def test_second_order_gets_zero_once_the_first_consumed_the_whole_cap(self) -> None:
+        adapter, _ = _adapter(
+            config=make_paper_config(max_participation=0.10),
+            bars=[make_bar(timestamp=utc(2024, 1, 2), available_time=utc(2024, 1, 2), volume=1_000.0)],
+        )
+        first = make_validated_order(client_order_id="CID-1", quantity=100.0)
+        response1 = adapter.submit_order(first, requested_at=utc(2024, 1, 2))
+        assert response1.status == BrokerOrderStatus.FILLED
+        assert response1.filled_quantity == 100.0  # the whole 10% cap of this bar's 1,000 volume
+
+        second = make_validated_order(client_order_id="CID-2", quantity=50.0)
+        response2 = adapter.submit_order(second, requested_at=utc(2024, 1, 2))
+        assert response2.status == BrokerOrderStatus.PENDING  # no participation cap left on this bar
+        assert response2.filled_quantity is None
+
+    def test_second_order_gets_only_the_remaining_share_of_the_cap(self) -> None:
+        adapter, _ = _adapter(
+            config=make_paper_config(max_participation=0.10),
+            bars=[make_bar(timestamp=utc(2024, 1, 2), available_time=utc(2024, 1, 2), volume=1_000.0)],
+        )
+        first = make_validated_order(client_order_id="CID-1", quantity=60.0)
+        response1 = adapter.submit_order(first, requested_at=utc(2024, 1, 2))
+        assert response1.status == BrokerOrderStatus.FILLED
+        assert response1.filled_quantity == 60.0
+
+        second = make_validated_order(client_order_id="CID-2", quantity=100.0)
+        response2 = adapter.submit_order(second, requested_at=utc(2024, 1, 2))
+        # Only 100 - 60 = 40 of the 100-share cap remains for this bar.
+        assert response2.status == BrokerOrderStatus.PARTIAL_FILLED
+        assert response2.filled_quantity == 40.0
+
+    def test_a_later_bar_gets_a_fresh_cap(self) -> None:
+        adapter, mds = _adapter(
+            config=make_paper_config(max_participation=0.10),
+            bars=[make_bar(timestamp=utc(2024, 1, 2), available_time=utc(2024, 1, 2), volume=1_000.0)],
+        )
+        first = make_validated_order(client_order_id="CID-1", quantity=100.0)
+        adapter.submit_order(first, requested_at=utc(2024, 1, 2))
+
+        mds.register(make_bar(timestamp=utc(2024, 1, 3), available_time=utc(2024, 1, 3), volume=1_000.0))
+        second = make_validated_order(client_order_id="CID-2", quantity=100.0)
+        response2 = adapter.submit_order(second, requested_at=utc(2024, 1, 3))
+        assert response2.status == BrokerOrderStatus.FILLED
+        assert response2.filled_quantity == 100.0  # a different bar -- its own, unconsumed cap
+
+
 class TestIdempotency:
     def test_duplicate_submission_returns_same_logical_order(self) -> None:
         adapter, _ = _adapter(bars=[make_bar(available_time=utc(2024, 1, 2))])

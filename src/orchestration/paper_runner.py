@@ -250,9 +250,21 @@ class PaperRunnerState:
     caller resuming a previous one should seed `value_history` from
     whatever real, already-persisted portfolio-value log it has --
     this object never fabricates or backfills a gap with guessed
-    values."""
+    values.
+
+    `mark_to_market_missing` (external review, Session 38 continued):
+    each cycle's own `mark_to_market` call returns the security_ids it
+    had no real price for and had to fall back to average cost for
+    (`backtest.portfolio.PortfolioAccounting.mark_to_market`'s own
+    second return value) -- previously discarded entirely by
+    `run_cycle`, silently turning a missing-price gap into an
+    unflagged, cost-basis valuation. Recorded here (one entry per
+    cycle where the list was non-empty) so a caller can surface it --
+    e.g. `scripts/run_paper_trading_cycle.py` prints a warning and
+    writes it into the run's own report JSON."""
 
     value_history: list[float] = field(default_factory=list)
+    mark_to_market_missing: list[tuple[datetime, tuple[str, ...]]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -410,6 +422,45 @@ def compute_portfolio_snapshot(session: PaperTradingSession, view: AsOfDataView,
     allocation)."""
     account = session.account_summary(as_of=as_of_time)
     return _portfolio_view(account, view, as_of_time)
+
+
+def equity_history_from_risk_repository(
+    risk_repository, representative_security_id: str, *, up_to: Optional[datetime] = None,
+) -> list[tuple[datetime, float]]:
+    """Real, already-persisted `(as_of_time, portfolio_value)` pairs for
+    one security's own `RiskCheckedPosition` history, in chronological
+    order -- reconstructed from `.as_of_time`/`.risk_state.
+    portfolio_value` (one real snapshot per checkpoint, shared across
+    every security assessed that cycle, so any one security already
+    assessed is a valid representative proxy) rather than guessed or
+    interpolated. Never fabricates a point for a checkpoint whose
+    `risk_state` is unexpectedly absent -- that checkpoint is simply
+    skipped, matching this project's fail-closed discipline.
+
+    Unlike `session.adapter.accounting.value_series` (real only within
+    ONE process -- `PaperTradingSession.restore()` replays fills, never
+    replays the `mark_to_market` calls that build that series), this
+    repository-backed history is durable across every past `--resume`
+    invocation against the same `--paper-store` -- why it, not
+    `accounting.value_series`, is every real caller's source for
+    `broker.paper.performance.compute_paper_performance_report`'s own
+    `equity_history` input (ADR-0136).
+
+    External review, LOW-1 (Session 38 continued): this exact
+    reconstruction previously existed as three separate, independently
+    written copies -- `scripts/run_paper_trading_cycle.py`'s own
+    `_equity_history`/`_reconstruct_value_history`,
+    `scripts/generate_paper_performance_tearsheet.py`'s own
+    `_equity_history`, and `scripts/run_multi_strategy_paper_trading_
+    cycle.py`'s own `_reconstruct_value_history` -- promoted here to one
+    shared source all three now call. `up_to`, when supplied, filters to
+    checkpoints at or before it (a resumed run's own already-processed
+    history); omitted, every real checkpoint on record is returned."""
+    records = risk_repository.list_all(security_id=representative_security_id, end=up_to)
+    return sorted(
+        ((r.as_of_time, r.risk_state.portfolio_value) for r in records if r.risk_state is not None),
+        key=lambda pair: pair[0],
+    )
 
 
 def run_cycle(
@@ -652,6 +703,8 @@ def run_cycle(
     # other stage above already used, reused rather than re-derived)
     # makes both real for the first time, at zero extra network/DB cost
     # and no change to any of this function's own return values.
-    session.adapter.accounting.mark_to_market(prices_by_security, as_of_time)
+    _, mtm_missing = session.adapter.accounting.mark_to_market(prices_by_security, as_of_time)
+    if mtm_missing and state is not None:
+        state.mark_to_market_missing.append((as_of_time, tuple(mtm_missing)))
 
     return tuple(outcomes)

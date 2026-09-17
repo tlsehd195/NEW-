@@ -44,13 +44,26 @@ def simulate_fill(
     partial_fill_enabled: bool,
     decision_time: datetime,
     execution_time: datetime,
+    already_consumed_this_bar: float = 0.0,
 ) -> Optional[Fill]:
     """`None` when nothing can be filled this attempt (no liquidity) --
-    never a zero-quantity `Fill`."""
+    never a zero-quantity `Fill`.
+
+    `already_consumed_this_bar` (external review, MEDIUM-2, Session 38
+    continued): `max_participation` caps a single call's own share of
+    `bar.volume`, but this function is stateless -- without a caller
+    telling it how much of THIS bar's liquidity another order already
+    consumed, two orders against the same security/bar (e.g. yesterday's
+    still-PENDING order retried via `advance_simulation` alongside a
+    freshly-submitted one) could each independently claim the full
+    `max_participation` share, doubling the real participation cap for
+    that bar. `PaperBrokerAdapter._attempt_fill` tracks this per
+    `(security_id, bar.available_time, bar.timestamp)` and passes it
+    here."""
     if remaining_quantity <= 0:
         return None
 
-    max_fillable = math.floor(bar.volume * max_participation)
+    max_fillable = math.floor(bar.volume * max_participation) - already_consumed_this_bar
     if max_fillable <= 0:
         return None
 

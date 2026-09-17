@@ -114,6 +114,37 @@ class TestTruncateForDiscord:
         assert len(truncated) == 2000
         assert truncated.endswith("... (truncated)")
 
+    def test_astral_characters_count_as_two_units_like_discord_does(self) -> None:
+        """External review, LOW-2: Discord measures `content` in UTF-16
+        code units, not Python codepoints -- an astral character (e.g.
+        emoji U+10000 and above) is ONE Python codepoint but TWO UTF-16
+        units. All-BMP content, so `len()` and the real UTF-16 count
+        agree here -- this just pins the boundary math itself."""
+        content = "x" * 1999 + "\U0001F4C8"  # 📈, U+1F4C8 -- one codepoint, two UTF-16 units
+        # UTF-16 length is 1999 + 2 = 2001 -- one over the limit, even
+        # though `len(content)` (Python codepoints) is only 2000.
+        assert len(content) == 2000
+        truncated = truncate_for_discord(content, limit=2000)
+        assert truncated.endswith("... (truncated)")
+        assert "\U0001F4C8" not in truncated  # the emoji itself didn't fit -- dropped whole, never split
+
+    def test_content_that_fits_by_utf16_count_is_left_unchanged(self) -> None:
+        """The inverse check: content whose UTF-16 length is exactly at
+        the limit must NOT be truncated, even though it contains an
+        astral character that a naive codepoint count would undercount."""
+        content = "x" * 1998 + "\U0001F4C8"  # UTF-16 length: 1998 + 2 = 2000
+        assert len(content) == 1999  # codepoint count would (wrongly) say "well under limit"
+        assert truncate_for_discord(content, limit=2000) == content
+
+    def test_truncation_never_splits_a_surrogate_pair(self) -> None:
+        """Truncating right at an astral character's own boundary must
+        drop that character whole, never emit half of a surrogate pair
+        (which `str.encode` would refuse, raising `UnicodeEncodeError`
+        on `surrogatepass`-free encoding)."""
+        content = "x" * 1999 + "\U0001F4C8" + "y" * 10
+        truncated = truncate_for_discord(content, limit=2000)
+        truncated.encode("utf-16-le")  # must not raise
+
 
 class TestSendDiscordMessage:
     def test_successful_post_sends_json_content(self, monkeypatch) -> None:

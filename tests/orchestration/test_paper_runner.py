@@ -732,6 +732,47 @@ class TestMarkToMarketAccounting:
 
         assert session.adapter.accounting.turnover() > 0.0
 
+    def test_a_held_security_with_no_price_this_cycle_is_recorded_as_missing(self) -> None:
+        """External review (Session 38 continued): before this, `run_cycle`
+        discarded `mark_to_market`'s own second return value entirely --
+        a held security silently falling back to average-cost valuation
+        left no signal anywhere. Now recorded on the caller's own
+        `PaperRunnerState` when supplied."""
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+        state = PaperRunnerState()
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, state=state, **components)[0]
+        assert outcome.submission is not None  # a real BUY happened this cycle -- AAA is now held
+        assert state.mark_to_market_missing == []
+
+        clock.index = 101
+        # No security_ids this cycle at all -- AAA is still held in
+        # `session.adapter.accounting`, but `prices_by_security` stays
+        # empty, so `mark_to_market` must fall back to AAA's average
+        # cost and report it as missing.
+        run_cycle([], view.current_time, view, session, state=state, **components)
+
+        assert len(state.mark_to_market_missing) == 1
+        as_of, missing = state.mark_to_market_missing[0]
+        assert as_of == view.current_time
+        assert missing == ("AAA",)
+
+    def test_missing_is_not_tracked_when_no_state_is_supplied(self) -> None:
+        """`state` stays optional -- a caller that doesn't pass one gets
+        the original unconditional-mark_to_market behavior with no
+        AttributeError, exactly like `value_history`."""
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+
+        run_cycle(["AAA"], view.current_time, view, session, **components)
+        clock.index = 101
+        run_cycle([], view.current_time, view, session, **components)  # must not raise
+
 
 class TestStuckOrderRetryViaAdvance:
     """Session 38: before this, nothing in this pipeline ever called
