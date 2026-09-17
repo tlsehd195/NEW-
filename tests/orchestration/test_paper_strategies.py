@@ -17,7 +17,7 @@ from orchestration.paper_strategies import (
 
 from predict.predictor import DriftPredictor, RandomWalkPredictor
 
-from risk.config import RiskConfig
+from risk.config import PositionSizingConfig, RiskConfig
 
 
 class TestRegistryContents:
@@ -70,3 +70,18 @@ class TestBuildRunCycleComponents:
     def test_default_starting_ids_all_start_at_one(self) -> None:
         components = build_run_cycle_components("baseline_rule", risk_config=RiskConfig())
         assert components["predictor"]._ids.allocate() == "PRED-000001"
+
+    def test_default_sizing_config_is_whole_share_lot_size(self) -> None:
+        components = build_run_cycle_components("baseline_rule", risk_config=RiskConfig())
+        assert components["position_sizer"]._config.lot_size == 1.0
+
+    def test_custom_sizing_config_is_forwarded_to_the_position_sizer(self) -> None:
+        """Session 38: before this, `sizing_config` was not a parameter
+        at all -- this function always built its own `PositionSizingConfig()`
+        inline, with no way for a caller to reach `lot_size` (e.g. for
+        fractional-share support -- the account owner's own Toss
+        Securities broker allows it)."""
+        components = build_run_cycle_components(
+            "baseline_rule", risk_config=RiskConfig(), sizing_config=PositionSizingConfig(lot_size=0.0001),
+        )
+        assert components["position_sizer"]._config.lot_size == 0.0001

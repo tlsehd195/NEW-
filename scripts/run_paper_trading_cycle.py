@@ -112,7 +112,7 @@ from data_infra.versioning import compute_data_version  # noqa: E402
 from orchestration.paper_runner import PaperRunnerState, run_cycle  # noqa: E402
 from orchestration.paper_strategies import RunCycleStartingIds, build_run_cycle_components  # noqa: E402
 
-from risk.config import RiskConfig  # noqa: E402
+from risk.config import PositionSizingConfig, RiskConfig  # noqa: E402
 
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
@@ -214,6 +214,19 @@ def main(argv=None) -> int:
     parser.add_argument("--max-order-notional", type=float, default=None)
     parser.add_argument("--max-drawdown", type=float, default=None, help="Disabled by default -- see module docstring")
     parser.add_argument("--max-portfolio-volatility", type=float, default=None)
+    parser.add_argument(
+        "--lot-size", type=float, default=1.0,
+        help=(
+            "risk.config.PositionSizingConfig.lot_size, threaded through unchanged (Session 38) -- "
+            "quantities are already floored to a multiple of this, so a fractional value (e.g. 0.0001) "
+            "produces genuinely fractional share counts. Was already supported at the data-model level "
+            "(ValidatedOrder.quantity/Fill.quantity/Position.quantity are all plain float -- confirmed by "
+            "a repo-wide search for an int(...)-cast quantity, finding none); this flag is the first way "
+            "to actually reach it from this script, for a real broker that supports fractional buys "
+            "(the account owner's own Toss Securities does). Default 1.0 (whole shares) preserves "
+            "every existing behavior exactly."
+        ),
+    )
     parser.add_argument(
         "--reentry-cooldown-days", type=int, default=None,
         help=(
@@ -353,6 +366,7 @@ def main(argv=None) -> int:
         max_drawdown=args.max_drawdown, max_portfolio_volatility=args.max_portfolio_volatility,
         reentry_cooldown_days=args.reentry_cooldown_days,
     )
+    sizing_config = PositionSizingConfig(lot_size=args.lot_size)
     # "baseline_rule" (Session 36 continued, ADR-0110): the exact
     # DriftPredictor + BaselineRuleDecisionAgent + DeterministicPositionSizer
     # + DeterministicPortfolioRiskEngine configuration this script ran
@@ -360,7 +374,7 @@ def main(argv=None) -> int:
     # construction there and calling it by name here changes nothing about
     # what this script actually runs.
     components = build_run_cycle_components(
-        "baseline_rule", risk_config=risk_config,
+        "baseline_rule", risk_config=risk_config, sizing_config=sizing_config,
         starting_ids=RunCycleStartingIds(
             prediction=next_prediction_id, observation=next_observation_id, composite=next_composite_id,
             decision=next_decision_id, sizing=next_sizing_id, risk=next_risk_id,
@@ -442,6 +456,10 @@ def main(argv=None) -> int:
             "max_drawdown": args.max_drawdown, "max_portfolio_volatility": args.max_portfolio_volatility,
             "reentry_cooldown_days": args.reentry_cooldown_days,
         },
+        # --lot-size directly changes every proposed quantity (Session
+        # 38) -- omitting it here would repeat the exact reproducibility
+        # gap risk_config's own comment above already documents.
+        "lot_size": args.lot_size,
     })
 
     report = {
@@ -466,6 +484,7 @@ def main(argv=None) -> int:
             "max_drawdown": args.max_drawdown, "max_portfolio_volatility": args.max_portfolio_volatility,
             "reentry_cooldown_days": args.reentry_cooldown_days,
         },
+        "lot_size": args.lot_size,
         "performance": paper_performance_report_to_payload(performance_report),
         "content_checksum": checksum,
     }
