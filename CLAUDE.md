@@ -11,3 +11,12 @@
 - CI가 없거나 실패해서 병합을 못 하면, 왜 못 했는지 사용자에게 명확히 알리고 브랜치를 남겨둔 이유를 설명한다 — 그냥 조용히 방치하지 않는다.
 - 병합 방식(merge/squash/rebase)은 저장소에 기존 병합 이력이 있으면 그 관례를 따르고, 없으면 `merge`를 기본으로 한다.
 - 이 규칙은 2026-09-13에 사용자가 명시적으로 요청해서 추가됨 — PR을 만들지 않는다는 기존의 일반 원칙보다 이 저장소에서는 이 규칙이 우선한다.
+
+## 브랜치 시작 규칙 (동일 브랜치 이름 재사용 시)
+
+세션 시작 시, 같은 브랜치 이름(`claude/autonomous-ai-investment-system-plan-4-ha7y35` 등)을 이어서 쓰기 전에 **반드시** 그 브랜치가 `origin/main`의 최신 병합을 실제로 반영하고 있는지 직접 확인한다.
+(외부 검증 리포트가 2026-09-17에 실제로 재현한 사고 — stale 브랜치 재사용 때문에 (1) main에 이미 있던 다른 세션의 ADR 번호와 충돌, (2) main 쪽 변경 사항을 못 본 채 코드를 계속 쌓는 문제가 동시에 발생했음. ADR-0147 참고.)
+
+- 확인 방법: `git fetch origin main <branch-name>` 후 `git merge-base --is-ancestor origin/main <branch-name>`으로 그 브랜치가 origin/main을 진짜로 포함하고 있는지 검사한다. 포함하지 않으면(즉 origin/main이 그 브랜치의 조상이 아니면) 그 브랜치는 stale — 바로 코드를 쌓지 말고 먼저 `origin/main`으로 fast-forward(또는 rebase)한다.
+- fast-forward 전에 로컬에 커밋되지 않은 변경이 있으면 먼저 `git stash push -u`로 보존한 뒤 fast-forward, 그다음 `git stash pop`으로 되돌린다 — 작업물을 잃지 않는다.
+- 이 확인은 매 세션 시작 시 1회, 그리고 다른 세션/PR이 그 사이 `main`에 병합됐다는 신호가 있을 때(예: 사용자가 다른 작업을 언급하거나, PR 목록에 새 병합이 보일 때)마다 재확인한다.
