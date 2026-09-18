@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if not args.report.is_file():
-        # ADR-0164: an earlier upstream step (e.g. "Ingest latest market
+        # ADR-0165: an earlier upstream step (e.g. "Ingest latest market
         # data") can fail and cause the report-producing step to be
         # skipped, so `--report` never gets written -- this is not a
         # rare edge case, it already happened in production (run #33,

@@ -42,7 +42,7 @@ class TestMissingInputs:
         assert exit_code == 1
 
     def test_missing_report_file_fails_but_still_sends_a_discord_failure_notice(self, tmp_path, monkeypatch) -> None:
-        """ADR-0164: a missing report (e.g. an earlier workflow step
+        """ADR-0165: a missing report (e.g. an earlier workflow step
         failed and this one was skipped) must not leave Discord
         completely silent -- the whole point of this script."""
         module = _load_script()

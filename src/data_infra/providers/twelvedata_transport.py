@@ -16,7 +16,18 @@ an error object in the JSON body (`{"code": 429, "status": "error",
 ...}`, a documented API quirk, not this project's guess), so that
 body-shape interpretation lives in `TwelveDataDataProvider.fetch()`
 instead, mirroring how `StooqDataProvider.fetch()` (not its transport)
-interprets Stooq's own CSV-body "no data" shape.
+interprets Stooq's own CSV-body "no data" shape. In practice a real
+production run (ADR-0164's own follow-up correction) found Twelve Data
+returns a real HTTP 429 for a burst of requests, handled by the
+ordinary 429 branch below -- the body-shape branch in `fetch()` remains
+for the documented quirk, not because the 429 branch here was wrong.
+
+ADR-0164 (follow-up correction): owns a `TwelveDataRateLimiter` (one
+per instance, shared by whichever caller holds this instance) and
+paces every real call through it -- see that module's own docstring
+for why a real production run made this necessary (the same category
+of real-usage gap `TiingoRequestBudget`/ADR-0160 found for Tiingo,
+just per-minute instead of per-hour).
 """
 
 from __future__ import annotations
@@ -28,6 +39,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from data_infra.provider import PermanentProviderError, TransientProviderError, parse_retry_after_seconds
+from data_infra.providers.twelvedata_ratelimit import TwelveDataRateLimiter
 
 _SAFE_RESPONSE_HEADERS = {"content-type", "retry-after", "x-request-id"}
 
@@ -49,10 +61,19 @@ class TwelveDataTransportResponse:
 
 
 class TwelveDataHttpTransport:
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, *, rate_limiter: Optional[TwelveDataRateLimiter] = None) -> None:
         self._base_url = base_url.rstrip("/")
+        # A fresh, instance-owned limiter when the caller does not
+        # supply one -- constructing exactly one TwelveDataHttpTransport
+        # and reusing it is what makes this shared without any caller
+        # having to pass one explicitly, same discipline
+        # TiingoHttpTransport's own budget parameter already has.
+        self._rate_limiter = rate_limiter if rate_limiter is not None else TwelveDataRateLimiter()
 
     def get(self, path: str, *, params: dict[str, str], timeout: float) -> TwelveDataTransportResponse:
+        self._rate_limiter.wait_if_needed()
+        self._rate_limiter.record_request()
+
         query = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"{self._base_url}{path}?{query}" if query else f"{self._base_url}{path}"
         req = urllib.request.Request(url, headers={"Content-Type": "application/json"}, method="GET")
