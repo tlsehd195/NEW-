@@ -194,6 +194,40 @@ jobs:
             --max-sector-weight 0.25 --max-order-notional 1000 \
             --out paper_trading_cycle_report.json
 
+      # Account owner's own request (2026-09-18): automate the
+      # optional quantstats tearsheet (ADR-0138) so nobody needs a
+      # local `pip install -e '.[reporting]'` to see it -- unlike
+      # scripts/verify_signal_ic_with_alphalens.py (ADR-0139), this
+      # script has no TEST-1 locked-window concept at all (it only
+      # reads this run's own real, already-elapsed equity curve via
+      # equity_history_from_risk_repository, never a historical
+      # factor/universe window), so running it daily is safe. Never
+      # fails the job: `continue-on-error` -- a fresh --paper-store
+      # with fewer than 2 checkpoints exits 1 by design (never
+      # fabricates a synthetic point), which is expected on this
+      # cycle's very first few runs, not a real failure.
+      - name: Install reporting extras (quantstats)
+        if: always()
+        continue-on-error: true
+        run: pip install -e '.[reporting]'
+
+      - name: Generate performance tearsheet
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/generate_paper_performance_tearsheet.py \
+            --paper-store "$PAPER_STORE_DIR" --security-id AAPL \
+            --out paper_performance_tearsheet.html
+
+      - name: Upload performance tearsheet
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-performance-tearsheet-${{ github.run_id }}
+          path: paper_performance_tearsheet.html
+          retention-days: 90
+          if-no-files-found: ignore
+
       - name: Upload updated market-data catalog
         if: always()
         uses: actions/upload-artifact@v4

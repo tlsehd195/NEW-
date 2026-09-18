@@ -149,6 +149,48 @@ def test_cycle_step_uses_resume_and_ratified_risk_limits():
     assert "--max-order-notional 1000" in text
 
 
+def test_performance_tearsheet_is_generated_and_never_fails_the_job():
+    """Account owner's own request (2026-09-18): automate the optional
+    quantstats tearsheet (ADR-0138) so nobody needs a local `pip
+    install -e '.[reporting]'` -- must never fail the job (a fresh
+    --paper-store with fewer than 2 checkpoints is expected on this
+    cycle's very first few runs, not a real failure)."""
+    steps = _steps(_load())
+    text = _run_text(steps)
+    assert "pip install -e '.[reporting]'" in text
+    assert "generate_paper_performance_tearsheet.py" in text
+    assert '--paper-store "$PAPER_STORE_DIR"' in text
+
+    tearsheet_steps = [
+        s for s in steps
+        if "reporting" in s.get("run", "") or "tearsheet" in s.get("run", "")
+    ]
+    assert tearsheet_steps
+    for step in tearsheet_steps:
+        assert step.get("continue-on-error") is True, (
+            f"{step.get('name')} must set continue-on-error so a tearsheet "
+            "failure never blocks the real trading cycle"
+        )
+
+    upload_steps = [s for s in _steps(_load()) if s.get("uses", "").startswith("actions/upload-artifact")]
+    tearsheet_upload = next(s for s in upload_steps if "tearsheet" in s["with"]["name"])
+    assert tearsheet_upload.get("if") == "always()"
+    assert tearsheet_upload["with"].get("if-no-files-found") == "ignore"
+
+
+def test_signal_ic_alphalens_script_is_deliberately_not_automated():
+    """TEST-1 (src/strategy_research/locked_windows.py) spans
+    2023-04-28 to 2026-08-27, which covers this project's entire real
+    ingested history (START_DATE 2024-01-02) until very recently --
+    wiring scripts/verify_signal_ic_with_alphalens.py (ADR-0139) into
+    this daily schedule would either violate the locked-window guard
+    every single run or run over too little post-lock data to mean
+    anything. Deliberately left as a manual/occasional research
+    script, unlike the tearsheet above."""
+    text = _run_text(_steps(_load()))
+    assert "verify_signal_ic_with_alphalens.py" not in text
+
+
 def test_both_state_directories_are_restored_and_reuploaded():
     doc = _load()
     steps = _steps(doc)
