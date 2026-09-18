@@ -106,3 +106,14 @@ Code, tests, and documentation complete and committed. Not yet
 exercised against a real scheduled run (this workflow's own
 `workflow_dispatch` re-run after this PR merges is the first real test,
 matching every other workflow change in this repo's own precedent).
+
+**Update (2026-09-18, ADR-0156):** that first real exercise found this
+design's "introspect and dump every table automatically" choice swept
+in several multi-hundred-MB-to-multi-GB Learning Engine/telemetry
+tables never actually named as this backup's target, which made
+`git push` fail atomically and silently kept even the real ledger
+tables (`paper_orders`/`paper_fills`/`decisions`/`trades`) from ever
+being backed up. See ADR-0156 for the root cause and fix (an explicit
+ledger-table allowlist plus a size safety cap) — the Decision/
+Consequences above describe the ORIGINAL design; ADR-0156 is the
+correction actually running in production now.
