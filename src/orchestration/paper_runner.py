@@ -788,9 +788,12 @@ def run_cycle(
     evaluated for this call, same opt-in contract `sector_by_security`
     already has.
 
-    **Stuck-order retry (Session 38): always attempted, first thing.**
-    `session.advance(as_of_time)` runs before anything else below --
-    confirmed by reading every real caller of this function that
+    **Stuck-order retry (Session 38): always attempted, right after
+    corporate actions above (ADR-0158 reordered this to run AFTER
+    `apply_due_corporate_actions`, not before -- see that paragraph
+    below for why).** `session.advance(as_of_time)` runs before this
+    cycle's own `account`/`portfolio` snapshot below -- confirmed by
+    reading every real caller of this function that
     nothing previously called `PaperTradingSession.advance`/`adapter.
     advance_simulation` anywhere in this pipeline, so an order that only
     partially filled on its own submission day (e.g. `PaperTradingConfig.
