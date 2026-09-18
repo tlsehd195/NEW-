@@ -8,17 +8,28 @@ or CI (no automated test in this repository may ever call the real
 Tiingo API -- ADR-0025). `tests/data_infra/test_tiingo_transport.py` is
 the only test file allowed to import this module, and it stubs
 `urllib.request.urlopen` rather than reaching the network.
+
+ADR-0160: owns a `TiingoRequestBudget` (one per instance, shared by
+whichever caller holds this instance) and checks it before every real
+call -- see that module's own docstring for why a real production run
+made this necessary, and why owning it here (rather than in `Tiingo
+DataProvider` or the calling script) covers every method that reaches
+Tiingo for free.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Optional
 
 from data_infra.provider import PermanentProviderError, TransientProviderError, parse_retry_after_seconds
+from data_infra.providers.tiingo_budget import TiingoRequestBudget
+
+logger = logging.getLogger(__name__)
 
 _SAFE_RESPONSE_HEADERS = {"content-type", "retry-after", "x-request-id"}
 
@@ -41,10 +52,32 @@ class TiingoTransportResponse:
 
 
 class TiingoHttpTransport:
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, *, budget: Optional[TiingoRequestBudget] = None) -> None:
         self._base_url = base_url.rstrip("/")
+        # A fresh, instance-owned budget when the caller does not
+        # supply one -- constructing exactly one `TiingoHttpTransport`
+        # and reusing it (as `scripts/ingest_real_market_data.py`
+        # already does for both real call paths) is what makes this
+        # shared without any caller having to pass one explicitly.
+        self._budget = budget if budget is not None else TiingoRequestBudget()
 
     def get(self, path: str, *, params: dict[str, str], timeout: float) -> TiingoTransportResponse:
+        if self._budget.would_exceed():
+            message = (
+                f"Tiingo request budget exhausted (proactive client-side cap at "
+                f"{self._budget.limit_per_hour - self._budget.safety_margin} of the real "
+                f"~{self._budget.limit_per_hour}/hour account limit, ADR-0160) -- refusing to "
+                f"call {path}: retrying an already-exhausted hourly quota cannot refill it, "
+                f"it only wastes time proving the obvious"
+            )
+            logger.warning(message)
+            raise PermanentProviderError(message)
+        # Counted against the budget before the real call, not after --
+        # Tiingo's own server-side quota is consumed by the account
+        # receiving the request at all, regardless of what it responds
+        # (including a failure this transport goes on to raise for).
+        self._budget.record_request()
+
         query = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"{self._base_url}{path}?{query}" if query else f"{self._base_url}{path}"
         req = urllib.request.Request(url, headers={"Content-Type": "application/json"}, method="GET")

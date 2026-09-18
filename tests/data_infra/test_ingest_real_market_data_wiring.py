@@ -277,3 +277,29 @@ class TestManifestReportsActiveCountAndSurvivorshipMitigationStatus:
         assert isinstance(survivorship_node, ast.Name)
         assert isinstance(membership_node, ast.Name)
         assert survivorship_node.id == membership_node.id
+
+
+class TestTiingoRequestBudgetSharedAcrossBothCallPaths:
+    """ADR-0160: `TiingoDataProvider.fetch()` (via `FallbackDataProvider`/
+    `IngestionRunner`) and the direct `fetch_corporate_actions` loop
+    below it must both decrement the SAME `TiingoRequestBudget` -- which
+    happens automatically as long as exactly one `TiingoHttpTransport`
+    is constructed and the same `tiingo` provider instance backs both
+    call paths. Regression-tests that structural sharing on the
+    script's own source, the same discipline
+    `TestManifestReportsProvidersUsedAndMissingSymbols` etc. already use
+    above, since this script is never imported/executed by the test
+    suite (real network call, see its own module docstring)."""
+
+    def test_exactly_one_tiingo_http_transport_is_constructed(self) -> None:
+        # If a future change ever constructed a second TiingoHttpTransport
+        # (e.g. one per call path) without explicitly sharing a budget
+        # between them, the proactive tracking would silently become
+        # fake -- see TiingoRequestBudget's own module docstring.
+        source = _source()
+        assert source.count("TiingoHttpTransport(") == 1
+
+    def test_the_same_tiingo_variable_backs_both_the_fallback_provider_and_the_direct_corporate_actions_call(self) -> None:
+        source = _source()
+        assert "FallbackDataProvider(tiingo, stooq)" in source
+        assert "tiingo.fetch_corporate_actions(" in source
