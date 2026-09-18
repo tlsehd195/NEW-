@@ -197,6 +197,19 @@ had, until now, quietly relied on it:
   of gap, but it is a real behavior change for any caller that assumed
   every submission within a finite range eventually fills within that
   same range.
+- **`PaperTradingConfig.pending_order_ttl_days` interaction (external
+  review, 4th verification report, LOW):** TTL is checked in
+  `advance_simulation` BEFORE that call's own fill attempt
+  (`(as_of - record.requested_at).days >= ttl_days`), and this ADR
+  moved every order's FIRST real fill attempt to exactly that same
+  call, one cycle after submission. With this project's daily cadence,
+  `--pending-order-ttl-days 1` now cancels every order before it is
+  ever given a real chance to fill — a value that was harmless before
+  this ADR (when the first attempt was already synchronous, at
+  submission) is now a footgun. `--pending-order-ttl-days`'s own
+  `--help` text in both driving scripts now says so explicitly (at
+  least 2 to allow one real attempt); not a code change, since TTL
+  itself is opt-in and defaults to `None` (unaffected).
 
 ## Tests
 

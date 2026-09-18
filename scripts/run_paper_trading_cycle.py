@@ -226,7 +226,11 @@ def main(argv=None) -> int:
             "order that can never fill (e.g. its security permanently loses liquidity) stays "
             "PENDING/PARTIAL_FILLED forever, unchanged from every prior run. When set, "
             "session.advance() auto-cancels an order once it has been open this many days "
-            "(measured from its own original submission time), instead of retrying it forever."
+            "(measured from its own original submission time), instead of retrying it forever. "
+            "ADR-0154 (T+1 fill): an order's FIRST fill attempt already happens one cycle after "
+            "submission (never same-cycle), so with this script's daily cadence a value of 1 "
+            "cancels every order before it ever gets a real chance to fill -- set to at least 2 "
+            "to allow one real attempt."
         ),
     )
     parser.add_argument(

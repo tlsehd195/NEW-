@@ -316,7 +316,10 @@ def main(argv=None) -> int:
         help=(
             "PaperTradingConfig.pending_order_ttl_days, applied uniformly to every requested "
             "strategy. Disabled by default -- a still-open order that can never fill stays open "
-            "forever, unchanged from every prior run."
+            "forever, unchanged from every prior run. ADR-0154 (T+1 fill): an order's FIRST fill "
+            "attempt already happens one cycle after submission, so with this script's daily "
+            "cadence a value of 1 cancels every order before it ever gets a real chance to fill -- "
+            "set to at least 2 to allow one real attempt."
         ),
     )
     parser.add_argument("--resume", action="store_true")

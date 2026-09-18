@@ -780,12 +780,13 @@ def run_cycle(
     during the original submission) is skipped silently, never
     fabricated.
 
-    **Corporate actions (ADR-0155): always applied, right after the
-    stuck-order retry above and before this cycle's own `account`/
-    `portfolio` snapshot.** Closes the gap Paper Trading had before this:
-    `broker/paper/*` had zero corporate-action handling at all, so a
-    real split/dividend on a held position would silently corrupt
-    `PaperBrokerAdapter.accounting`'s `quantity`/`average_cost` forever.
+    **Corporate actions (ADR-0155, reordered by ADR-0158): always
+    applied FIRST, before the stuck-order retry/T+1 fill attempt below
+    and before this cycle's own `account`/`portfolio` snapshot.**
+    Closes the gap Paper Trading had before this: `broker/paper/*` had
+    zero corporate-action handling at all, so a real split/dividend on
+    a held position would silently corrupt `PaperBrokerAdapter.
+    accounting`'s `quantity`/`average_cost` forever.
     `session.apply_corporate_actions(...)` is called with every
     corporate action `view.get_corporate_actions` returns for
     `security_ids` plus any currently-held position not in that list
@@ -803,26 +804,29 @@ def run_cycle(
     type such as MERGER) is recorded on `state.corporate_action_warnings`
     when `state` is supplied, the same opt-in surfacing
     `mark_to_market_missing` already gets below -- never raised, never
-    silently discarded."""
-    pre_advance_account = session.account_summary(as_of=as_of_time)
-    advance_updates, advance_fills = session.advance(as_of_time)
-    if trade_journal_repository is not None and advance_fills:
-        _record_delayed_advance_fills(trade_journal_repository, session, pre_advance_account, advance_fills, as_of_time)
+    silently discarded.
 
-    # ADR-0155: always attempted, unconditional (same "on by default"
-    # treatment mark_to_market already gets below) -- applied BEFORE
-    # this cycle's own `account`/`portfolio` snapshot a few lines down,
-    # so a real split/dividend that just became available is already
-    # reflected in the very same portfolio state the Prediction/
-    # Decision/Sizing/Risk chain evaluates THIS cycle, not one cycle
-    # late. `_tracked_security_ids`/the 400-day lookback both mirror
-    # `backtest.engine.BacktestEngine.run()`'s own corporate-action block
-    # exactly (see that function's own comments for why). `session.
-    # apply_corporate_actions` itself is the persisted-ledger-checked
-    # entry point (`broker.paper.session.PaperTradingSession.
-    # apply_corporate_actions`) -- safe to call every cycle with a full
-    # lookback window's worth of actions without ever double-applying
-    # one, even across a restart between cycles (ADR-0155).
+    **ADR-0158 (external review): corporate actions must be applied
+    BEFORE this cycle's T+1 fill attempt below, never after.** An
+    earlier version of this function applied actions AFTER
+    `session.advance(as_of_time)` -- the exact same same-time-boundary
+    corruption `backtest.engine.BacktestEngine.run()` already had to
+    fix once (ADR-0115): a same-`as_of_time` fill landing on an
+    already-split-adjusted market price would then get the position's
+    own `PortfolioAccounting.apply_split` blindly multiplied onto it a
+    SECOND time; a same-`as_of_time` BUY would wrongly receive a
+    dividend declared for holders as of the prior close; and a same-
+    `as_of_time` SELL that fully closed a position would already have
+    removed it from `accounting.positions` by the time the dividend
+    that position WAS entitled to (held through the prior close) would
+    have been applied -- `apply_dividend`'s own `if pos is None or
+    pos.quantity == 0: return` guard makes that a silent no-op, not an
+    error. Applying every action effective as of `as_of_time` FIRST
+    fixes all three the same way engine.py's own next_checkpoint block
+    already does: existing holdings are correctly adjusted/paid BEFORE
+    any new fill lands (so a new fill is never double-adjusted or
+    wrongly paid), and a same-cycle closing SELL still receives the
+    dividend it earned before its fill removes the position."""
     all_corporate_actions: list[CorporateAction] = []
     for security_id in _tracked_security_ids(security_ids, session):
         all_corporate_actions.extend(
@@ -834,6 +838,16 @@ def run_cycle(
         corporate_action_warnings = session.apply_corporate_actions(all_corporate_actions, as_of_time)
         if corporate_action_warnings and state is not None:
             state.corporate_action_warnings.append((as_of_time, tuple(corporate_action_warnings)))
+
+    # ADR-0158: captured AFTER corporate actions above, so a split/
+    # dividend effective this same as_of_time is already reflected --
+    # the correct pre-fill baseline for _record_delayed_advance_fills's
+    # realized_pnl math even on a cycle where an action and a delayed
+    # fill land at the same as_of_time.
+    pre_advance_account = session.account_summary(as_of=as_of_time)
+    advance_updates, advance_fills = session.advance(as_of_time)
+    if trade_journal_repository is not None and advance_fills:
+        _record_delayed_advance_fills(trade_journal_repository, session, pre_advance_account, advance_fills, as_of_time)
 
     account = session.account_summary(as_of=as_of_time)
     portfolio = _portfolio_view(account, view, as_of_time)
