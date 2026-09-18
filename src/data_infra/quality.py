@@ -192,19 +192,55 @@ class DataQualityFramework:
 
     @staticmethod
     def _check_duplicates(bars: Sequence[PriceBar]) -> list[DataQualityIssue]:
-        seen: dict[tuple[str, datetime, str], int] = {}
-        issues: list[DataQualityIssue] = []
+        """More than one physical bar for the same (security_id,
+        timestamp, source) has two real causes this check tells apart:
+        a true accidental duplicate (every field identical, including
+        `provenance.data_version` -- this can only happen if something
+        bypassed `DuckDBDataRepository.append_bars`'s own dedup, a real
+        storage-layer bug) stays ERROR; a provider revising an
+        already-ingested value (ADR-0085's deliberate 7-day ingestion
+        overlap re-fetches recent days specifically to catch this --
+        the differing `data_version` content hash is *why*
+        `append_bars` correctly does not treat it as a duplicate at
+        write time) is downgraded to WARNING, since
+        `DuckDBDataRepository.get_bars` now resolves it to a single
+        canonical (most-recently-ingested) bar for every real consumer
+        (external review, 2026-09-18: previously ERROR for both cases,
+        which meant every legitimate revision -- the common case in
+        production -- drowned out the rare, actually-actionable true
+        duplicate)."""
+        groups: dict[tuple[str, datetime, str], list[PriceBar]] = {}
         for bar in bars:
             key = (bar.security_id, bar.timestamp, bar.provenance.source)
-            seen[key] = seen.get(key, 0) + 1
-        for (security_id, timestamp, source), count in seen.items():
-            if count > 1:
+            groups.setdefault(key, []).append(bar)
+        issues: list[DataQualityIssue] = []
+        for (security_id, timestamp, source), group in groups.items():
+            if len(group) <= 1:
+                continue
+            distinct_versions = {bar.provenance.data_version for bar in group}
+            if len(distinct_versions) > 1:
+                issues.append(
+                    DataQualityIssue(
+                        check="duplicate_records",
+                        severity=DataQualitySeverity.WARNING,
+                        message=f"{len(group)} records found for security_id={security_id} "
+                        f"timestamp={timestamp.isoformat()} source={source} with "
+                        f"{len(distinct_versions)} distinct data_version(s) -- a provider-side "
+                        "revision (ADR-0085's overlap re-fetch), not a duplicate ingestion; "
+                        "get_bars() resolves this to the most recently ingested version",
+                        security_id=security_id,
+                        timestamp=timestamp,
+                    )
+                )
+            else:
                 issues.append(
                     DataQualityIssue(
                         check="duplicate_records",
                         severity=DataQualitySeverity.ERROR,
-                        message=f"{count} records found for security_id={security_id} "
-                        f"timestamp={timestamp.isoformat()} source={source}",
+                        message=f"{len(group)} records found for security_id={security_id} "
+                        f"timestamp={timestamp.isoformat()} source={source} with identical "
+                        "content (same data_version) -- this should be impossible via "
+                        "append_bars's own dedup and indicates a real storage-layer bug",
                         security_id=security_id,
                         timestamp=timestamp,
                     )

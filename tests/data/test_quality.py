@@ -152,6 +152,23 @@ class TestDuplicateDetection:
         run = DataQualityFramework().run([bar1, bar2], dataset="test", data_version="v1")
         assert not any(i.check == "duplicate_records" for i in run.issues)
 
+    def test_same_source_different_data_version_is_a_revision_warning_not_an_error(self) -> None:
+        """ADR-0085's deliberate 7-day ingestion overlap re-fetches recent
+        days specifically to catch a provider revising an already-ingested
+        value -- that lands as two physical rows with the same
+        (security_id, timestamp, source) but different data_version
+        (append_bars's own dedup key includes data_version, a content
+        hash, so the revision is intentionally not treated as a duplicate
+        at write time). This is not an accidental duplicate ingestion, so
+        it must not be ERROR-severity (external review, 2026-09-18)."""
+        bar1 = _bar(day=2, provenance=make_provenance(source_record_id="rec-2", data_version="v1-preliminary"))
+        bar2 = _bar(day=2, provenance=make_provenance(source_record_id="rec-2", data_version="v2-finalized"))
+        run = DataQualityFramework().run([bar1, bar2], dataset="test", data_version="v1")
+        dup_issues = [i for i in run.issues if i.check == "duplicate_records"]
+        assert len(dup_issues) == 1
+        assert dup_issues[0].severity == DataQualitySeverity.WARNING
+        assert run.status == DataQualityRunStatus.PASSED_WITH_WARNINGS
+
 
 class TestRunStatusResolution:
     def test_critical_issue_yields_critical_failure_status(self) -> None:

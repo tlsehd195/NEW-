@@ -1,6 +1,11 @@
 # ADR-0167: Surface the real, pre-existing data quality ERROR backlog (866 issues) instead of guessing at it
 
-**Status:** Accepted (diagnostics only -- root cause of the 866 issues remains OPEN, see below)
+**Status:** Accepted (diagnostics only -- root cause of the 866 issues remains OPEN, see below).
+**Follow-up:** `docs/decisions/ADR-0168-real-data-quality-error-backlog-root-cause-and-fix.md`
+confirms both root causes (a provider-revision/duplicate-check key
+mismatch, and pre-ADR-0115 grandfathered bars) and fixes them --
+read that ADR for the resolved state; this one is kept as the
+historical record of the investigation that got there.
 **Date:** 2026-09-18
 **Deciders:** Claude Code (session continued), account owner (asked directly
 whether the live data was actually clean, rather than accepting reassurance)

@@ -67,6 +67,29 @@ def _rows(cursor) -> list[dict]:
 RAW_MARKET_DATA_COLUMNS = ("security_id", "source", "ingestion_time", "batch_id", "raw_payload_json")
 
 
+def _dedupe_latest_per_timestamp(bars: list[PriceBar]) -> list[PriceBar]:
+    """Collapses `bars` to at most one entry per `timestamp`, keeping the
+    one with the latest `ingestion_time` (a tie -- same `ingestion_time`
+    exactly -- breaks on `provenance.data_version` for a deterministic,
+    if arbitrary, result). See `get_bars`'s own docstring for why more
+    than one physical row for the same (security_id, timestamp) is an
+    expected, legitimate outcome of ADR-0085's overlap re-fetch, not a
+    sign of a broken ingestion run."""
+    if len(bars) < 2:
+        return list(bars)
+    latest_by_timestamp: dict[datetime, PriceBar] = {}
+    for bar in bars:
+        current = latest_by_timestamp.get(bar.timestamp)
+        if current is None:
+            latest_by_timestamp[bar.timestamp] = bar
+            continue
+        candidate_key = (bar.ingestion_time, bar.provenance.data_version)
+        current_key = (current.ingestion_time, current.provenance.data_version)
+        if candidate_key > current_key:
+            latest_by_timestamp[bar.timestamp] = bar
+    return sorted(latest_by_timestamp.values(), key=lambda b: b.timestamp)
+
+
 class DuckDBDataRepository:
     def __init__(
         self,
@@ -196,10 +219,28 @@ class DuckDBDataRepository:
         include_quality_rejected: bool = False,
     ) -> list[PriceBar]:
         """`include_quality_rejected=True` bypasses the QUALITY_REJECTED
-        filter below for audit/debugging -- the underlying Parquet bar is
-        never deleted (Raw Immutability, Phase 1 spec section 17), only
-        excluded from the default query view every real consumer
-        (Paper Trading, backtest, strategy_research, Learning Cycle) uses."""
+        filter below, and the same-timestamp dedup after it, for
+        audit/debugging (`scripts/ingest_real_market_data.py`'s own data
+        quality run uses this to see every physical row, including
+        ones a later provider revision superseded, so
+        `DataQualityFramework._check_duplicates` can still surface
+        them) -- the underlying Parquet bar is never deleted (Raw
+        Immutability, Phase 1 spec section 17), only excluded from the
+        default query view every real consumer (Paper Trading,
+        backtest, strategy_research, Learning Cycle) uses.
+
+        For that default view, when more than one physical bar exists
+        for the same (security_id, timestamp) -- ADR-0085's deliberate
+        7-day ingestion overlap re-fetches recent days specifically to
+        catch a provider revising an already-ingested value, which
+        lands as a second physical row rather than replacing the first
+        (append_bars's own dedup key includes provenance.data_version,
+        a content hash, so a genuinely revised value is intentionally
+        NOT treated as a duplicate at write time) -- only the most
+        recently ingested version is returned, so a caller never sees
+        the same calendar day twice (external review, 2026-09-18: this
+        was previously reaching every real consumer as two bars for one
+        trading day)."""
         for name, value in (("start", start), ("end", end), ("as_of_time", as_of_time)):
             _require_aware(name, value)
         bars = self._bars_for_security(security_id)
@@ -210,6 +251,7 @@ class DuckDBDataRepository:
             rejected = self._critical_rejected_timestamps(security_id)
             if rejected:
                 result = [b for b in result if b.timestamp not in rejected]
+            result = _dedupe_latest_per_timestamp(result)
         return result
 
     def get_security(self, security_id: str, as_of_time: datetime) -> Optional[SecurityMaster]:
