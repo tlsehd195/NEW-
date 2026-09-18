@@ -13,6 +13,7 @@ import urllib.error
 import pytest
 
 from data_infra.provider import PermanentProviderError, TransientProviderError
+from data_infra.providers.twelvedata_ratelimit import TwelveDataRateLimiter
 from data_infra.providers.twelvedata_transport import TwelveDataHttpTransport
 
 
@@ -124,6 +125,42 @@ class TestMalformedResponse:
         transport = TwelveDataHttpTransport("https://api.twelvedata.com")
         response = transport.get("/time_series", params={}, timeout=5.0)
         assert response.body is None
+
+
+class TestRateLimiting:
+    """ADR-0164 follow-up correction: a real production run burst
+    through Twelve Data's real 8/minute limit with no pacing at all --
+    `get()` must consult a shared `TwelveDataRateLimiter` before every
+    real call, mirroring `TiingoHttpTransport`'s identical
+    `TestRequestBudget` discipline for its own budget."""
+
+    def test_a_shared_rate_limiter_is_paced_across_repeated_calls(self, monkeypatch) -> None:
+        def fake_urlopen(req, timeout):
+            return _FakeHTTPResponse(200, {"values": []}, {})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        clock_value = {"t": 0.0}
+        waits: list[float] = []
+
+        def fake_sleep(seconds: float) -> None:
+            waits.append(seconds)
+            clock_value["t"] += seconds  # a real sleep_fn must advance real wall-clock time
+
+        limiter = TwelveDataRateLimiter(
+            limit_per_minute=8, safety_margin=1, clock=lambda: clock_value["t"], sleep_fn=fake_sleep,
+        )
+        transport = TwelveDataHttpTransport("https://api.twelvedata.com", rate_limiter=limiter)
+        for _ in range(8):  # effective cap is 7 -- the 8th must wait
+            transport.get("/time_series", params={}, timeout=5.0)
+        assert len(waits) == 1
+
+    def test_without_an_explicit_rate_limiter_a_default_one_is_still_enforced(self, monkeypatch) -> None:
+        def fake_urlopen(req, timeout):
+            return _FakeHTTPResponse(200, {"values": []}, {})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = TwelveDataHttpTransport("https://api.twelvedata.com")
+        assert transport._rate_limiter is not None
 
 
 class TestNoSecretInRequestConstruction:

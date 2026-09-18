@@ -16,18 +16,29 @@ still Tier 2 (public documentation, not exercised live in this
 environment) -- isolated entirely in `fetch()`'s error-body branch
 below.
 
-**No native date-range query parameter**: unlike Tiingo/Twelve Data,
-`TIME_SERIES_DAILY` always returns either the most recent ~100 daily
-bars (`outputsize=compact`) or the full available history
-(`outputsize=full`) for a symbol -- there is no `start`/`end` the
-server accepts. This provider always requests `full` (never `compact`)
-so an arbitrary `[start, end]` range is always answered correctly
-regardless of how far back `start` falls, then filters to that range
-itself in `fetch()`, mirroring `MockDataProvider.fetch()`'s identical
-client-side range filter. The extra response size is an accepted
-tradeoff for correctness -- this tier is only reached when both Tiingo
-and Twelve Data have already failed for a symbol, so it is the least
-frequently called of the three.
+**No native date-range query parameter, and `outputsize=full` is a
+paid-only feature (Tier 1, corrected after this provider's first real
+production run, ADR-0164's own follow-up correction)**: unlike
+Tiingo/Twelve Data, `TIME_SERIES_DAILY` always returns either the most
+recent ~100 daily bars (`outputsize=compact`) or the full available
+history (`outputsize=full`) for a symbol -- there is no `start`/`end`
+the server accepts. This provider was originally written to always
+request `full` for date-range correctness regardless of how far back
+`start` fell; a real production run found every single real call
+rejected with `"The outputsize=full parameter value is a premium
+feature for the TIME_SERIES_DAILY endpoint"` -- `full` is not available
+on the free tier at all, contrary to this module's own original,
+unverified assumption. This provider now always requests `compact`
+(the only option the free tier actually serves) and filters to
+`[start, end]` itself in `fetch()`, mirroring `MockDataProvider.
+fetch()`'s identical client-side range filter. **Real, accepted
+limitation**: `compact` only ever returns the ~100 most recent trading
+days, so a requested `start` older than that will simply return fewer
+bars than asked for, never an error and never fabricated data -- this
+is acceptable because this tier is only reached when both Tiingo and
+Twelve Data have already failed for a symbol during this project's own
+narrow daily incremental catch-up window (a few weeks at most, ADR-0164),
+not a broad historical backfill.
 
 **Deliberately does NOT implement corporate-action fetching**, same
 reasoning as `StooqDataProvider`/`TwelveDataDataProvider`: Tiingo
@@ -72,7 +83,10 @@ class AlphaVantageDataProvider:
         params = {
             "function": "TIME_SERIES_DAILY",
             "symbol": security_id,
-            "outputsize": "full",  # see module docstring -- no native date-range param
+            # "full" is a paid-only feature on this endpoint (confirmed
+            # by a real rejected call, see module docstring) -- "compact"
+            # is the only option the free tier actually serves.
+            "outputsize": "compact",
             "apikey": api_key,
         }
         response = self._transport.get(_QUERY_PATH, params=params, timeout=self._config.timeout_seconds)

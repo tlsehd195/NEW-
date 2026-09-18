@@ -1,4 +1,4 @@
-# ADR-0164: Send a Discord failure notice when the report file is missing
+# ADR-0165: Send a Discord failure notice when the report file is missing
 
 **Status:** Accepted
 **Date:** 2026-09-18
@@ -7,6 +7,16 @@
 (the original feature), `docs/decisions/ADR-0160-tiingo-proactive-budget-and-stooq-js-challenge-dead-end.md`
 (the proactive Tiingo quota cap whose PARTIAL_SUCCESS days are exactly
 when this gap shows up)
+**Renumbering note:** originally authored and merged as `ADR-0164` from
+a separate, concurrently-running session/branch
+(`claude/phase-11-model-evolution-7hpibr`, PR #56) -- collided with an
+unrelated `ADR-0164` (second/third fallback data providers) merged
+minutes earlier from a different branch. Renumbered to `ADR-0165` here
+(this file, its own title, and its two in-code comment references) on
+discovery, same as this repository's own `ADR-0147` precedent for a
+duplicate-numbering collision -- the earlier-merged ADR keeps its
+number, the later one is renumbered. No content change beyond the
+number itself.
 
 ## Context
 

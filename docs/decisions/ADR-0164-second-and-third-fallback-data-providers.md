@@ -197,3 +197,54 @@ next real scheduled/`workflow_dispatch` run can exercise this chain for
 real -- this session's own egress cannot verify that end-to-end run
 directly (both domains return a 403 CONNECT rejection here, same as
 every other market-data provider domain, ADR-0025).
+
+## Follow-up correction (same day, first real end-to-end run)
+
+The account owner added both secrets and triggered a real
+`workflow_dispatch` run (`35345167963`) immediately after this ADR's
+initial merge. It still failed, surfacing two real gaps neither
+provider's Tier-2-only original implementation had caught:
+
+1. **Alpha Vantage's `outputsize=full` is a paid-only feature.** Every
+   real call was rejected with `"The outputsize=full parameter value is
+   a premium feature for the TIME_SERIES_DAILY endpoint"` -- this ADR's
+   original "always request full for date-range correctness" decision
+   was itself never actually verified against a real free-tier call
+   before being written. Fixed by switching to `outputsize=compact`
+   (the only option the free tier actually serves) -- see the real,
+   accepted limitation this reintroduces, documented directly in
+   `alphavantage.py`'s own module docstring.
+2. **Twelve Data's real 8/minute limit was hit immediately** by the
+   ~39-symbol burst with no pacing between calls at all -- confirmed
+   directly in the run's own logs (`TransientProviderError(rate limited
+   calling /time_series)` repeated across most of the tail-39 symbols).
+   Fixed by adding `TwelveDataRateLimiter` (`twelvedata_ratelimit.py`),
+   a proactive per-minute pacer `TwelveDataHttpTransport.get()` now
+   consults before every real call -- sleeping until safe rather than
+   refusing (Twelve Data's per-minute window genuinely clears within
+   seconds, unlike Tiingo's per-hour cap), same category of real-usage
+   gap `TiingoRequestBudget`/ADR-0160 already found and fixed for
+   Tiingo, just discovered one layer later because this ADR's own first
+   real run only exercised the success path, never a real sustained
+   burst.
+
+Both gaps existed because this ADR's Tier 1 evidence (the account
+owner's manual test script) exercised each provider with only 3 calls,
+spaced well apart, using default parameters that happened not to hit
+either free-tier gate -- sufficient to confirm the response *shape*,
+not sufficient to exercise the free tier's real request-volume/
+parameter restrictions under this project's actual 39-symbol daily
+load. Neither gap was a reason to distrust the original evidence; both
+are the correct next thing a real production run is supposed to find.
+
+3 new tests for `TwelveDataRateLimiter` (`test_twelvedata_ratelimit.py`)
+plus 2 more in `test_twelvedata_transport.py` confirming
+`TwelveDataHttpTransport.get()` actually consults a shared limiter
+(mirroring `TiingoHttpTransport`'s own `TestRequestBudget` coverage),
+and `test_alphavantage_provider.py` updated for `outputsize=compact`.
+Full suite re-run: see `docs/PROJECT_STATUS.md`'s session log for the
+exact before/after counts.
+
+**Still pending**: a second real `workflow_dispatch` run to confirm
+these two fixes actually resolve the failure end-to-end (this session's
+own egress cannot make that call directly).

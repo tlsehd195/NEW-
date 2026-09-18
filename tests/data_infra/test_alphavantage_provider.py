@@ -48,13 +48,17 @@ class TestFetch:
         transport = _StubTransport(_VALID_BODY)
         provider = AlphaVantageDataProvider(AlphaVantageConfig(), transport)
         records = provider.fetch("SO", utc(2024, 1, 1), utc(2024, 1, 4))
-        # the 2023-06-01 row is present in the fixture (outputsize=full
-        # always returns full history) but must be filtered out here --
-        # see module docstring's "No native date-range query parameter"
+        # the 2023-06-01 row is present in the fixture (this test's stub
+        # transport doesn't care what outputsize is requested, only real
+        # Alpha Vantage does) but must be filtered out here -- see module
+        # docstring's "No native date-range query parameter"
         assert len(records) == 2
         assert {r["datetime"] for r in records} == {"2024-01-02", "2024-01-03"}
         assert records[0]["security_id"] == "SO"
-        assert transport.calls[0][1]["outputsize"] == "full"
+        # ADR-0164 follow-up correction: "full" is a real, confirmed
+        # paid-only feature on this endpoint -- "compact" is the only
+        # option the free tier actually serves.
+        assert transport.calls[0][1]["outputsize"] == "compact"
         assert transport.calls[0][1]["apikey"] == "test-key-123"
 
     def test_fetch_raises_permanent_error_on_bad_symbol(self) -> None:
