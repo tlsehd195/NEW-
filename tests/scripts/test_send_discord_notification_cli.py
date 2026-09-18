@@ -58,7 +58,7 @@ class TestMissingInputs:
             ["--report", str(missing), "--report-type", "paper_trading_cycle", "--webhook-url", "https://discord.com/api/webhooks/x"]
         )
         assert exit_code == 1
-        assert "report not generated" in captured["body"]["content"]
+        assert "리포트가 생성되지 않았습니다" in captured["body"]["content"]
 
     def test_missing_report_file_and_a_failing_discord_send_both_report_failure(self, tmp_path, monkeypatch) -> None:
         import urllib.error
@@ -98,7 +98,7 @@ class TestSuccessfulSend:
         )
         assert exit_code == 0
         assert "PILOT_UNIVERSE" in captured["body"]["content"]
-        assert "Checkpoints run: 3" in captured["body"]["content"]
+        assert "처리된 체크포인트: 3개" in captured["body"]["content"]
 
     def test_webhook_url_env_var_is_used_when_flag_omitted(self, tmp_path, monkeypatch) -> None:
         module = _load_script()

@@ -322,6 +322,12 @@ class TestResume:
 
         assert first["checkpoints_run"] > 0
         assert second["checkpoints_run"] == 0
+        # External review: the early-exit report previously had no
+        # start/end/last_processed at all, leaving a consumer like
+        # notifications.discord_webhook with no date to show.
+        assert second["start"] == "2024-02-01T00:00:00+00:00"
+        assert second["end"] == "2024-02-15T00:00:00+00:00"
+        assert "last_processed" in second
 
     def test_resume_reconstructs_value_history_across_invocations(self, tmp_path) -> None:
         """`state.value_history` must reflect the FULL real history

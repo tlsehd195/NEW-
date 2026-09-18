@@ -48,34 +48,43 @@ class TestFormatPaperTradingCycleReport:
         }
         message = format_paper_trading_cycle_report(report)
         assert "RESEARCH_UNIVERSE" in message
-        assert "2024-01-02 -> 2026-09-17" in message
-        assert "Checkpoints run: 187" in message
-        assert "Orders submitted: 42 (filled: 39)" in message
-        assert "Final cash: 12,345.68" in message
+        assert "2024-01-02 ~ 2026-09-17" in message
+        assert "처리된 체크포인트: 187개" in message
+        assert "주문 제출: 42건 (체결: 39건)" in message
+        assert "최종 현금: 12,345.68" in message
         assert "AAPL: 10" in message and "MSFT: 5" in message
+        # An unrecognized note string (not one of the fixed known ones)
+        # must still be shown as-is, never dropped or mistranslated.
         assert "Real Paper Trading cycle run." in message
 
     def test_early_exit_resume_shape_never_fabricates_missing_fields(self) -> None:
-        """`--resume`'s "nothing new to process" report has no `start`/
-        `end`/`total_orders_submitted` keys at all -- the formatter must
-        skip those lines, never render them as 0/None/"unknown"."""
+        """`--resume`'s "nothing new to process" report has no
+        `total_orders_submitted` key at all (it never got that far) --
+        the formatter must skip that line, never render it as
+        0/None/"unknown". `start`/`end`/`last_processed` ARE present on
+        this shape (added after an external review found the account
+        owner's real Discord message had no date at all on this
+        shape) -- the period line must still render from those."""
         report = {
             "note": "Nothing new to process -- every requested checkpoint was already recorded.",
             "universe": "RESEARCH_UNIVERSE",
             "checkpoints_run": 0,
+            "start": "2024-02-01T00:00:00+00:00",
+            "end": "2024-02-15T00:00:00+00:00",
+            "last_processed": "2024-02-14T00:00:00+00:00",
             "final_cash": 5000.0,
             "final_positions": {},
         }
         message = format_paper_trading_cycle_report(report)
-        assert "Period:" not in message
-        assert "Orders submitted:" not in message
-        assert "Open positions: none" in message
-        assert "Checkpoints run: 0" in message
+        assert "기간" in message and "2024-02-01" in message and "2024-02-15" in message
+        assert "주문 제출" not in message
+        assert "보유 포지션: 없음" in message
+        assert "처리된 체크포인트: 0" in message
 
     def test_more_than_fifteen_positions_are_summarized_not_listed(self) -> None:
         report = {"final_positions": {f"SYM{i}": i for i in range(20)}}
         message = format_paper_trading_cycle_report(report)
-        assert "Open positions: 20 (too many to list)" in message
+        assert "보유 포지션: 20개 (너무 많아 표시 생략)" in message
         assert "SYM0" not in message
 
     def test_performance_section_metrics_are_rendered_when_present(self) -> None:
@@ -85,17 +94,32 @@ class TestFormatPaperTradingCycleReport:
             },
         }
         message = format_paper_trading_cycle_report(report)
-        assert "Sharpe ratio: 1.234" in message
-        assert "Sortino ratio: 2.000" in message
-        assert "Max drawdown: -15.00%" in message
-        assert "Total return: 8.10%" in message
+        assert "샤프 비율: 1.234 (양호)" in message
+        assert "소르티노 비율: 2.000" in message
+        assert "최대 낙폭: -15.00%" in message
+        assert "총 수익률: ▲ 8.10%" in message
+
+    def test_negative_total_return_gets_a_down_arrow(self) -> None:
+        report = {"performance": {"total_return": -0.05}}
+        message = format_paper_trading_cycle_report(report)
+        assert "총 수익률: ▼ -5.00%" in message
+
+    def test_sharpe_label_buckets(self) -> None:
+        assert "양호" in format_paper_trading_cycle_report({"performance": {"sharpe_ratio": 1.5}})
+        assert "보통" in format_paper_trading_cycle_report({"performance": {"sharpe_ratio": 0.5}})
+        assert "부진" in format_paper_trading_cycle_report({"performance": {"sharpe_ratio": -0.5}})
 
     def test_performance_metrics_that_are_none_are_skipped_not_fabricated(self) -> None:
         """`reasons`-carrying `None` metrics (e.g. insufficient_data) must
         never render as 0/N/A."""
         report = {"performance": {"sharpe_ratio": None, "reasons": {"sharpe_ratio": "insufficient_data"}}}
         message = format_paper_trading_cycle_report(report)
-        assert "Sharpe ratio" not in message
+        assert "샤프 비율" not in message
+
+    def test_known_note_is_translated_to_korean(self) -> None:
+        report = {"note": "Nothing new to process -- every requested checkpoint was already recorded."}
+        message = format_paper_trading_cycle_report(report)
+        assert "새로 처리할 체크포인트 없음" in message
 
     def test_missing_performance_section_is_skipped_entirely(self) -> None:
         """An older report file (written before ADR-0136) has no

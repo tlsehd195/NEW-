@@ -34,47 +34,86 @@ _TRUNCATION_SUFFIX = "\n... (truncated)"
 _MAX_POSITIONS_TO_LIST = 15
 
 
+# `note` is a small, fixed set of static boilerplate strings this
+# project's own scripts generate (never free-form/user text) -- a
+# direct lookup to a Korean equivalent is honest (not a guess at
+# meaning) precisely because the source set is fixed and known. Any
+# future/unrecognized note string falls back to being shown as-is
+# (see below) rather than silently dropped or mistranslated.
+_KNOWN_NOTES_KO = {
+    "Nothing new to process -- every requested checkpoint was already recorded.": (
+        "새로 처리할 체크포인트 없음 -- 요청한 기간이 이미 전부 처리되어 있습니다."
+    ),
+    (
+        "Real Paper Trading cycle run against a real market-data catalog -- "
+        "every checkpoint's Prediction/Regime/Decision/Sizing/Risk output and "
+        "every real order/fill is persisted in --paper-store, queryable by the "
+        "same repository classes this run used. Not an always-on process -- "
+        "this run covers exactly [--start, --end] and then exits."
+    ): "실제 시장 데이터로 진행된 페이퍼 트레이딩 사이클입니다.",
+}
+
+
+# A simple, disclosed rule-of-thumb bucket for the Sharpe ratio -- not
+# a claim of statistical rigor, just a quick label next to the real
+# number so the raw value isn't the only thing shown. Thresholds are a
+# common informal convention (>=1 good, 0-1 middling, <0 poor), not
+# this project's own invention or a backtested claim.
+def _sharpe_label(sharpe: float) -> str:
+    if sharpe >= 1.0:
+        return "양호"
+    if sharpe >= 0.0:
+        return "보통"
+    return "부진"
+
+
 def format_paper_trading_cycle_report(report: dict) -> str:
     """`report` -- exactly the dict `scripts/run_paper_trading_cycle.py`
     itself writes to `--out`: either the full-run shape, or its
     "nothing new to process" early-exit shape (fewer keys -- see that
-    script's own `--resume` early-return branch). Every field is read
-    with `.get()` and its line skipped entirely when absent -- never
-    defaulted to `0`/`"unknown"`, matching this project's own "never
-    fabricate a value that wasn't really computed" rule."""
-    lines = ["**\U0001f4c8 Paper Trading Daily Cycle**"]
+    script's own `--resume` early-return branch; `start`/`end`/
+    `last_processed` were added to that shape after an external review
+    found a real Discord message from it had no date at all). Every
+    field is read with `.get()` and its line skipped entirely when
+    absent -- never defaulted to `0`/`"모름"`, matching this project's
+    own "never fabricate a value that wasn't really computed" rule."""
+    lines = ["**\U0001f4c8 페이퍼 트레이딩 데일리 사이클**"]
 
     universe = report.get("universe")
     if universe is not None:
-        lines.append(f"Universe: {universe}")
+        lines.append(f"유니버스: {universe}")
 
     start, end = report.get("start"), report.get("end")
     if start and end:
-        lines.append(f"Period: {start} -> {end}")
+        period_line = f"기간: {start[:10]} ~ {end[:10]}"
+        last_processed = report.get("last_processed")
+        if report.get("checkpoints_run") == 0 and last_processed:
+            period_line += f" (마지막 처리일: {last_processed[:10]})"
+        lines.append(period_line)
 
     checkpoints_run = report.get("checkpoints_run")
     if checkpoints_run is not None:
-        lines.append(f"Checkpoints run: {checkpoints_run}")
+        lines.append(f"처리된 체크포인트: {checkpoints_run}개")
 
     submitted = report.get("total_orders_submitted")
     if submitted is not None:
         filled = report.get("total_orders_with_a_fill")
-        fill_note = f" (filled: {filled})" if filled is not None else ""
-        lines.append(f"Orders submitted: {submitted}{fill_note}")
+        fill_note = f" (체결: {filled}건)" if filled is not None else ""
+        lines.append(f"주문 제출: {submitted}건{fill_note}")
 
     final_cash = report.get("final_cash")
     if final_cash is not None:
-        lines.append(f"Final cash: {final_cash:,.2f}")
+        lines.append(f"최종 현금: {final_cash:,.2f}")
 
     positions = report.get("final_positions")
     if positions is not None:
         if not positions:
-            lines.append("Open positions: none")
+            lines.append("보유 포지션: 없음")
         elif len(positions) <= _MAX_POSITIONS_TO_LIST:
             position_list = ", ".join(f"{sid}: {qty}" for sid, qty in sorted(positions.items()))
-            lines.append(f"Open positions ({len(positions)}): {position_list}")
+            lines.append(f"보유 포지션 ({len(positions)}개): {position_list}")
         else:
-            lines.append(f"Open positions: {len(positions)} (too many to list)")
+            lines.append(f"보유 포지션: {len(positions)}개 (너무 많아 표시 생략)")
 
     # Session 38 continued: `performance` is `storage.serialization.
     # paper_performance_report_to_payload`'s own JSON-safe dict, present
@@ -87,20 +126,21 @@ def format_paper_trading_cycle_report(report: dict) -> str:
     if performance is not None:
         sharpe = performance.get("sharpe_ratio")
         if sharpe is not None:
-            lines.append(f"Sharpe ratio: {sharpe:.3f}")
+            lines.append(f"샤프 비율: {sharpe:.3f} ({_sharpe_label(sharpe)})")
         sortino = performance.get("sortino_ratio")
         if sortino is not None:
-            lines.append(f"Sortino ratio: {sortino:.3f}")
+            lines.append(f"소르티노 비율: {sortino:.3f}")
         max_dd = performance.get("max_drawdown")
         if max_dd is not None:
-            lines.append(f"Max drawdown: {max_dd:.2%}")
+            lines.append(f"최대 낙폭: {max_dd:.2%}")
         total_return = performance.get("total_return")
         if total_return is not None:
-            lines.append(f"Total return: {total_return:.2%}")
+            arrow = "▲" if total_return >= 0 else "▼"
+            lines.append(f"총 수익률: {arrow} {total_return:.2%}")
 
     note = report.get("note")
     if note:
-        lines.append(f"_{note}_")
+        lines.append(f"_{_KNOWN_NOTES_KO.get(note, note)}_")
 
     return "\n".join(lines)
 
