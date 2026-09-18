@@ -76,6 +76,18 @@ class StooqDataProvider:
             # for an unrecognized symbol or an out-of-range date window
             # rather than a proper CSV header -- never guessed at, never
             # parsed as if it were valid data.
+            #
+            # ADR-0160: this branch is ALSO what catches Stooq's real,
+            # confirmed failure mode after ADR-0157's User-Agent fix --
+            # a 200 response whose body is an HTML JS bot-verification
+            # challenge page, not CSV. That page's first row is not
+            # `_EXPECTED_HEADER` either, so it is correctly rejected
+            # here as PermanentProviderError, same as any other
+            # malformed response. This is a confirmed, permanent,
+            # non-fixable-via-plain-HTTP dead end (no header or
+            # User-Agent can pass an active JS challenge from a
+            # non-browser client) -- see ADR-0160 before attempting
+            # another header-based fix here.
             raise PermanentProviderError(
                 f"unexpected Stooq response shape for {security_id}: expected CSV header {_EXPECTED_HEADER}, "
                 f"got {rows[0] if rows else '(empty)'}"
