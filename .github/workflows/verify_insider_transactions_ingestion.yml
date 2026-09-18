@@ -1,0 +1,69 @@
+# One-shot verification that `scripts/ingest_insider_transactions.py`
+# (SEC Form 4 insider-transaction ingestion, ADR-0086/ADR-0088/ADR-0089/
+# ADR-0132) actually works from a GitHub Actions runner. This script's
+# own docstring already says it "is NEVER executed by this
+# repository's own automated test suite... run it only in an
+# environment with real internet access" -- this session's own egress
+# blocks www.sec.gov/data.sec.gov outright, so it has only ever been
+# run manually via Google Colab (docs/PROJECT_STATUS.md, Session 37).
+# The last recorded state there was "재수집 재개" (resumed re-collecting
+# the remaining 78 of 87 symbols) with no later completion entry --
+# this workflow exists to check, for real, whether a GitHub Actions
+# runner can pick this up instead of relying on a manually-managed
+# Colab session, starting with ONE already-known-good symbol (JPM,
+# the one ADR-0132's own Colab re-verification confirmed worked)
+# before trusting a full-universe run -- same "verify one symbol
+# first" discipline this script's own module docstring already
+# establishes for the data.sec.gov switch itself.
+#
+# `--db-path` is a fresh, throwaway directory every run (no artifact
+# restore) -- this is a correctness/reachability check, not the real
+# collection run. A real full-universe run, if this succeeds, is
+# separate follow-up work with its own artifact-persistence design.
+name: Verify SEC Form 4 Insider Transactions Ingestion
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_agent:
+        description: "SEC fair-access contact string, e.g. 'ProjectName you@example.com' (SEC requires a real, reachable identifier here)"
+        type: string
+        required: true
+      symbols:
+        description: "Space-separated symbols to verify (default: JPM, the one symbol ADR-0132's own Colab re-verification already confirmed works)"
+        type: string
+        default: "JPM"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Ingest Form 4 filings for the verification symbol(s)
+        run: |
+          python3 scripts/ingest_insider_transactions.py \
+            --symbols ${{ inputs.symbols }} \
+            --user-agent "${{ inputs.user_agent }}" \
+            --as-of "$(date -u +%F)" \
+            --db-path ./data/insider_verification \
+            --manifest-out insider_verification_manifest.json
+
+      - name: Upload verification manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: insider-transactions-verification-manifest-${{ github.run_id }}
+          path: insider_verification_manifest.json
+          retention-days: 90
+          if-no-files-found: ignore
