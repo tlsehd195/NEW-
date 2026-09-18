@@ -164,6 +164,13 @@ def main() -> int:
         universe = _UNIVERSES[args.universe]
         symbols = list(universe.symbol_ids) + [BENCHMARK_SYMBOL]
 
+    # ADR-0160: exactly one TiingoHttpTransport is constructed here and
+    # reused by both real call paths below (FallbackDataProvider's
+    # IngestionRunner-driven fetch(), and the direct
+    # fetch_corporate_actions loop further down) -- this is what makes
+    # TiingoRequestBudget's proactive 50/hour tracking shared between
+    # them for free. Do not construct a second TiingoHttpTransport for
+    # either path without explicitly sharing its budget.
     tiingo = TiingoDataProvider(DEFAULT_TIINGO_CONFIG, TiingoHttpTransport(DEFAULT_TIINGO_CONFIG.base_url))
     stooq = StooqDataProvider(DEFAULT_STOOQ_CONFIG, StooqHttpTransport(DEFAULT_STOOQ_CONFIG.base_url))
     provider = FallbackDataProvider(tiingo, stooq)

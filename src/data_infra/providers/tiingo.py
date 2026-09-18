@@ -176,7 +176,14 @@ class TiingoDataProvider:
         return {
             "provider_id": self._config.provider_id,
             "provider_name": "Tiingo",
-            "rate_limit_per_minute": None,  # UNKNOWN -- see ADR-0025, not asserted without Tier 1 confirmation
+            # This field is per-MINUTE and Tiingo's confirmed real cap
+            # is per-HOUR (50/hour, confirmed directly against the
+            # account -- ADR-0160), so it stays None rather than
+            # forcing a false per-minute figure into a field shaped for
+            # a different unit. The real cap is enforced proactively by
+            # `TiingoRequestBudget` inside `TiingoHttpTransport`, not by
+            # this metadata dict.
+            "rate_limit_per_minute": None,
             "is_real_external_provider": True,
             "configuration_version": self._config.configuration_version(),
         }
