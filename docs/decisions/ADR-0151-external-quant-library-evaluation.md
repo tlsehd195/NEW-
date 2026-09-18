@@ -49,11 +49,14 @@ branch-history question. What changes is only the REASON given at the
 time for not doing a normal merge, and the false "main's history was
 rewritten" suspicion, which is retracted here and must not be repeated
 by a future session. The original 19 unmerged commits (reproducible via
-`git log --oneline origin/claude/ruflo-features-review-hqrvqa
-^origin/main`, re-confirmed 2026-09-18 per an independent fourth
-verification report's own LOW-severity finding that this ADR asserted
-"listed above" with no such list actually present anywhere in this
-file):
+`git log --oneline ruflo-features-review-backup ^origin/main` — pinned
+to the backup branch's fixed tip `04e4481`, not the mutable
+`claude/ruflo-features-review-hqrvqa` branch, which a sixth independent
+verification report found had since moved and returns 20 commits
+against this same command; re-confirmed 2026-09-18 per an independent
+fourth verification report's own LOW-severity finding that this ADR
+asserted "listed above" with no such list actually present anywhere in
+this file):
 
 ```
 04e4481 Adopt exchange_calendars; document almgren-chriss and factor-attribution as unfilled gaps (ADR-0032)
