@@ -48,13 +48,45 @@ below was independently re-verified in this session regardless of the
 branch-history question. What changes is only the REASON given at the
 time for not doing a normal merge, and the false "main's history was
 rewritten" suspicion, which is retracted here and must not be repeated
-by a future session. The original 19 unmerged commits (listed above)
-remain on `claude/ruflo-features-review-hqrvqa` and are additionally
-preserved under the branch `ruflo-features-review-backup` (created via
-the GitHub API pointing at the same tip commit, `04e4481` — a direct
-`git push` of a new tag was refused by this session's own push-scope
-policy) against accidental branch deletion, per the same third-party
-report's recommendation.
+by a future session. The original 19 unmerged commits (reproducible via
+`git log --oneline origin/claude/ruflo-features-review-hqrvqa
+^origin/main`, re-confirmed 2026-09-18 per an independent fourth
+verification report's own LOW-severity finding that this ADR asserted
+"listed above" with no such list actually present anywhere in this
+file):
+
+```
+04e4481 Adopt exchange_calendars; document almgren-chriss and factor-attribution as unfilled gaps (ADR-0032)
+af29e2f Adopt purgedcv; record statsmodels/darts as future predictor candidate (ADR-0032)
+a909f0c Strengthen ADR-0032's Kronos evidence with direct upstream verification
+b629614 Adopt skfolio for future portfolio optimization; document evaluation of 4 external quant tools
+e2ee5ce Remove decision/risk/predict workflow diagram
+2298837 Add decision/risk/predict algorithm-level workflow diagram (archify)
+f310141 Add full 16-package architecture diagram (archify)
+5efa3a4 Translate core-trading-pipeline diagram to Korean
+20eefa4 Add core trading pipeline architecture diagram (archify)
+b6578b2 Add archify skill for evidence-verified architecture diagrams
+29aa3a3 Add src/ module map to CLAUDE.md to cut codebase-orientation tokens
+419f2f2 Initialize task-observer workspace and log first observation
+e989ed2 Activate task-observer with a pinned workspace and enforced review-state hook
+1f995e9 Add CLAUDE.md with tool-usage rules for the installed skills/MCP tools
+6d86a77 Auto-reinstall machine-level tools on every session start
+7d28b47 Add ponytail skill family for over-engineering discipline
+416b96a Add task-observer skill for skill-improvement discovery
+461776d Add safety-guardrail and session-context Claude Code hooks
+ddcf562 Add curated Claude Code skills for this project's workflow
+```
+
+The top 4 (`04e4481`/`af29e2f`/`a909f0c`/`b629614`) are exactly this
+ADR's own recovered content, already independently re-verified above.
+The remaining 15 are the archify/task-observer/skill-tooling commits
+this ADR's own Consequences section already disclosed as out of scope.
+All 19 remain on `claude/ruflo-features-review-hqrvqa` and are
+additionally preserved under the branch `ruflo-features-review-backup`
+(created via the GitHub API pointing at the same tip commit, `04e4481`
+— a direct `git push` of a new tag was refused by this session's own
+push-scope policy) against accidental branch deletion, per the same
+third-party report's recommendation.
 
 The three ADOPTED libraries (skfolio, purgedcv, exchange_calendars)
 were independently re-installed and re-verified in THIS session's own

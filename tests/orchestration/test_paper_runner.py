@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from backtest_helpers import build_repository, checkpoint, make_bars, make_provenance, make_security, make_split, trading_days
+from backtest_helpers import build_repository, checkpoint, make_bars, make_dividend, make_provenance, make_security, make_split, trading_days
 from journal_helpers import make_fill, make_order
 from paper_helpers import make_paper_config
 from predict_helpers import drifting_prices
@@ -1168,3 +1168,100 @@ class TestCorporateActionsAppliedEachCycle:
         run_cycle([], view.current_time, view, session, **components)
         quantity_after_split = session.account_summary(as_of=view.current_time).positions["AAA"].quantity
         assert quantity_after_split == pytest.approx(quantity_before_split * 2.0)
+
+
+class TestCorporateActionOrderingRelativeToFill:
+    """ADR-0158 (external review): corporate actions must be applied
+    BEFORE this cycle's own T+1 fill attempt, never after -- the exact
+    same-`as_of_time` boundary corruption `backtest.engine.
+    BacktestEngine.run()` already had to fix once (ADR-0115). An
+    earlier version of `run_cycle` applied corporate actions AFTER
+    `session.advance()`, so a fill landing on the SAME `as_of_time` a
+    split/dividend became available got corrupted by it."""
+
+    def test_a_fill_landing_the_same_cycle_a_split_becomes_available_is_not_double_adjusted(self) -> None:
+        days = trading_days(date(2024, 1, 2), date(2024, 8, 30))
+        prices = drifting_prices(days, daily_return=0.006)
+        bars = make_bars("AAA", days, prices)
+        securities = [make_security("AAA", "AAA")]
+        config = BacktestConfig(
+            market="US_EQUITY", start_date=days[0], end_date=days[-1], initial_capital=100_000.0,
+            security_ids=("AAA",), code_version="paper-runner-corporate-action-same-day-fill-test",
+        )
+        components = _components()
+
+        # Baseline: identical scenario, no corporate action at all -- the
+        # real quantity a fresh BUY submitted at day[100] and filled
+        # (delayed, T+1) at day[101] actually produces.
+        repo_baseline = build_repository(bars=bars, securities=securities)
+        view_b, clock_b, _ = _build_view(repo_baseline, config, 100)
+        session_b = _session(bars)
+        run_cycle(["AAA"], view_b.current_time, view_b, session_b, **components)
+        clock_b.index = 101
+        run_cycle([], view_b.current_time, view_b, session_b, **components)
+        baseline_quantity = session_b.account_summary(as_of=view_b.current_time).positions["AAA"].quantity
+        assert baseline_quantity > 0
+
+        # Same scenario, but a 2:1 split becomes available on day[101] --
+        # the EXACT same as_of_time the delayed BUY fill from day[100]
+        # also lands on. There is no PRIOR holding for the split to
+        # legitimately act on (this is the position's very first fill);
+        # applying the split AFTER that fill would blindly double it too
+        # (baseline_quantity * 2), since PortfolioAccounting.apply_split
+        # multiplies whatever is currently held with no notion of "how
+        # it got there."
+        split = make_split("AAA", days[101])
+        repo_overlap = build_repository(bars=bars, securities=securities, corporate_actions=[split])
+        view_s, clock_s, _ = _build_view(repo_overlap, config, 100)
+        session_s = _session(bars)
+        run_cycle(["AAA"], view_s.current_time, view_s, session_s, **components)
+        clock_s.index = 101
+        run_cycle([], view_s.current_time, view_s, session_s, **components)
+        quantity_with_overlap = session_s.account_summary(as_of=view_s.current_time).positions["AAA"].quantity
+
+        assert quantity_with_overlap == pytest.approx(baseline_quantity)
+
+    def test_a_closing_sell_landing_the_same_cycle_a_dividend_becomes_available_still_receives_it(self) -> None:
+        repo_baseline, config, bars = _reversal_scenario()
+        view, clock, checkpoints = _build_view(repo_baseline, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+        components = _components()
+
+        sell_fill = None
+        for offset in range(0, len(checkpoints) - 100):
+            clock.index = 100 + offset
+            run_cycle(["AAA"], view.current_time, view, session, trade_journal_repository=journal, **components)
+            sell_trades = [t for t in journal.list_trades(security_id="AAA") if t.side == OrderSide.SELL]
+            if sell_trades:
+                sell_fill = sell_trades[0].fill
+                break
+        assert sell_fill is not None, "fixture must produce a real SELL -- see _reversal_scenario's own docstring"
+        cash_without_dividend = session.account_summary(as_of=sell_fill.execution_time).cash
+
+        # Re-run the identical scenario, but with a dividend that becomes
+        # available on the EXACT same as_of_time the closing SELL's own
+        # delayed fill lands on. The position must still be open (and
+        # therefore entitled) at the moment the dividend is applied --
+        # PortfolioAccounting.apply_dividend is a silent no-op against a
+        # flat/closed position (`if pos is None or pos.quantity == 0:
+        # return`), so applying it AFTER a same-cycle closing fill would
+        # silently skip the dividend this holder actually earned.
+        dividend_amount = 0.50
+        dividend = make_dividend("AAA", sell_fill.execution_time.date(), dividend_amount)
+        _, config2, bars2 = _reversal_scenario()  # deterministic (fixed seed) -- identical scenario
+        repo_with_dividend = build_repository(
+            bars=bars2, securities=[make_security("AAA", "AAA")], corporate_actions=[dividend],
+        )
+        view2, clock2, _ = _build_view(repo_with_dividend, config2, 100)
+        session2 = _session(bars2)
+        journal2 = InMemoryTradeJournalRepository()
+        for offset in range(0, len(checkpoints) - 100):
+            clock2.index = 100 + offset
+            run_cycle(["AAA"], view2.current_time, view2, session2, trade_journal_repository=journal2, **components)
+            sell_trades2 = [t for t in journal2.list_trades(security_id="AAA") if t.side == OrderSide.SELL]
+            if sell_trades2:
+                break
+        cash_with_dividend = session2.account_summary(as_of=sell_fill.execution_time).cash
+
+        assert cash_with_dividend == pytest.approx(cash_without_dividend + sell_fill.quantity * dividend_amount)
