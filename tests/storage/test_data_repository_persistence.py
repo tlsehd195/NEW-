@@ -10,6 +10,7 @@ definition.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 
 from backtest_helpers import (
@@ -106,6 +107,38 @@ class TestPersistenceAndRestart:
         written = repo.append_bars([bar, bar2])
         assert written == 1  # only the new bar was written
         assert len(repo.all_bars()) == 2
+        engine.close()
+
+    def test_revised_value_same_day_returns_one_bar_not_two(self, tmp_path) -> None:
+        """ADR-0085's deliberate 7-day ingestion overlap re-fetches
+        recent days specifically to catch a provider revising an
+        already-ingested value -- since append_bars's natural key
+        includes provenance.data_version (a content hash), a genuinely
+        revised value is intentionally NOT treated as a duplicate at
+        write time and lands as a second physical row for the same
+        (security_id, timestamp). get_bars must still return exactly
+        one bar per calendar day to every real consumer (external
+        review, 2026-09-18: previously returned both, so every
+        consumer -- Paper Trading, backtest, strategy_research -- saw
+        the same trading day twice)."""
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine)
+        preliminary = make_bar("AAA", date(2024, 1, 2), 100.0, data_version="v1-preliminary")
+        repo.append_bars([preliminary])
+        finalized = make_bar("AAA", date(2024, 1, 2), 101.0, data_version="v2-finalized")
+        finalized = replace(finalized, ingestion_time=utc(2024, 1, 3, 20))
+        written = repo.append_bars([finalized])
+        assert written == 1  # a genuine new row, not deduped away
+        assert len(repo.all_bars()) == 2  # both physical rows exist, immutably
+
+        got = repo.get_bars("AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
+        assert len(got) == 1  # but only one canonical bar reaches a real consumer
+        assert got[0].close == 101.0  # the most recently ingested (finalized) value
+
+        audit = repo.get_bars(
+            "AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31), include_quality_rejected=True
+        )
+        assert len(audit) == 2  # the audit/quality-check view still sees both physical rows
         engine.close()
 
     def test_append_creates_new_immutable_file_never_rewrites(self, tmp_path) -> None:

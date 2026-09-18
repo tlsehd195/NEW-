@@ -83,6 +83,9 @@ class TestRescanDataQualityCli:
         db_path = tmp_path / "catalog"
         engine = StorageEngine(StorageConfig(db_path))
         repo = DuckDBDataRepository(engine)
+        # Same (security_id, timestamp, source), different data_version --
+        # a provider revision (ADR-0085's overlap re-fetch), WARNING
+        # severity as of ADR-0168, not CRITICAL.
         dupe_a = make_bar("AAA", date(2024, 1, 3), 100.0, source="s1", data_version="v1")
         dupe_b = make_bar("AAA", date(2024, 1, 3), 101.0, source="s1", data_version="v2")
         repo.append_bars([dupe_a, dupe_b])
@@ -94,7 +97,7 @@ class TestRescanDataQualityCli:
         assert exit_code == 0
 
         report = json.loads(out_path.read_text())
-        assert report["data_quality_status"] == "FAILED"  # ERROR-severity duplicate, not CRITICAL
+        assert report["data_quality_status"] == "PASSED_WITH_WARNINGS"
         assert report["data_quality_severity_counts"]["CRITICAL"] == 0
 
     def test_running_the_rescan_twice_is_idempotent(self, tmp_path) -> None:

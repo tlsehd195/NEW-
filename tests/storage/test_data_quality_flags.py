@@ -116,8 +116,13 @@ class TestNonCriticalFindingsAreRecordedButNotExcluded:
         QUALITY_FLAGGED (promoted to Clean, carrying a reference a
         consumer can inspect/filter on) -- NOT rejected outright the way
         CRITICAL findings are. Two duplicate-timestamp records for the
-        same security is an ERROR-severity finding (`duplicate_records`)
-        that does not involve any non-finite value."""
+        same security, source, but a different data_version is exactly
+        ADR-0085's deliberate 7-day ingestion overlap catching a
+        provider revision -- a WARNING-severity `duplicate_records`
+        finding (external review, 2026-09-18: downgraded from ERROR,
+        since this is the expected outcome of a documented feature, not
+        an accidental duplicate ingestion), not a non-finite-value
+        problem."""
         engine = new_engine(tmp_path)
         repo = DuckDBDataRepository(engine)
         dupe_a = make_bar("AAA", date(2024, 1, 3), 100.0, source="s1")
@@ -132,13 +137,21 @@ class TestNonCriticalFindingsAreRecordedButNotExcluded:
         repo.append_bars([dupe_b])
 
         quality_run = DataQualityFramework().run([dupe_a, dupe_b], dataset="test", data_version="v1")
-        assert quality_run.status.value == "FAILED"
-        assert any(i.severity == DataQualitySeverity.ERROR for i in quality_run.issues)
+        assert quality_run.status.value == "PASSED_WITH_WARNINGS"
+        assert any(i.severity == DataQualitySeverity.WARNING for i in quality_run.issues)
+        assert not any(i.severity == DataQualitySeverity.ERROR for i in quality_run.issues)
         written = repo.record_quality_issues(quality_run)
         assert written >= 1
 
+        # Every real consumer sees exactly one canonical bar per calendar
+        # day -- the most recently ingested revision -- even though both
+        # physical rows are immutably persisted (Raw Immutability).
         result = repo.get_bars("AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31))
-        assert len(result) == 2
+        assert len(result) == 1
+        audit = repo.get_bars(
+            "AAA", utc(2024, 1, 1), utc(2024, 1, 31), as_of_time=utc(2024, 1, 31), include_quality_rejected=True
+        )
+        assert len(audit) == 2
 
         engine.close()
 
