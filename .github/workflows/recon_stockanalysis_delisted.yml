@@ -1,0 +1,35 @@
+# One-shot reconnaissance for the "stockanalysis.com 무인증 백필"
+# backlog item (docs/PROJECT_STATUS.md 2026-09-17 entry #1). This
+# session's own egress blocks stockanalysis.com outright (confirmed:
+# direct curl and WebFetch attempts both return EGRESS_BLOCKED), and no
+# documented public API for delisted-stock price history could be
+# found by research either -- see
+# scripts/recon_stockanalysis_delisted.py's own module docstring. This
+# workflow exists purely to observe, for real, whether a GitHub
+# Actions runner's own (separate, likely broader) egress can reach the
+# candidate URLs at all, and what they actually return -- nothing is
+# assumed or parsed yet.
+#
+# workflow_dispatch-only, one-shot -- delete or repurpose once the
+# real answer is known and the actual ingestion approach (or "this
+# source is a dead end") is decided.
+name: Recon stockanalysis.com delisted-stock data
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run reconnaissance (no parsing, just real status/body observation)
+        run: python3 scripts/recon_stockanalysis_delisted.py
