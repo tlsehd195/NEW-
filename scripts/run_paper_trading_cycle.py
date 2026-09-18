@@ -328,6 +328,14 @@ def main(argv=None) -> int:
                 report = {
                     "note": "Nothing new to process -- every requested checkpoint was already recorded.",
                     "universe": args.universe, "checkpoints_run": 0,
+                    # Real, already-computed values (the requested range,
+                    # and the last checkpoint this --paper-store actually
+                    # has) -- not present before, which left a consumer
+                    # like notifications.discord_webhook with no date to
+                    # show on an early-exit report (external review).
+                    "start": args.start.isoformat(),
+                    "end": args.end.isoformat(),
+                    "last_processed": last_processed.isoformat(),
                     "final_cash": final_account.cash,
                     "final_positions": {sid: pos.quantity for sid, pos in final_account.positions.items() if pos.available},
                 }

@@ -65,9 +65,9 @@ def main(argv: list[str] | None = None) -> int:
         # earlier failed step) is not duplicated or hidden by this,
         # just no longer the ONLY place the account owner would see it.
         failure_note = (
-            f"**⚠️ {args.report_type} report not generated** "
-            "-- an earlier step in the workflow run failed or was skipped. "
-            "Check the GitHub Actions run for details."
+            f"**⚠️ {args.report_type} 리포트가 생성되지 않았습니다** "
+            "-- 워크플로의 이전 단계가 실패했거나 건너뛰어졌습니다. "
+            "GitHub Actions 실행 로그를 확인해주세요."
         )
         try:
             send_discord_message(webhook_url, failure_note)
