@@ -103,6 +103,17 @@ def test_no_secret_value_is_hardcoded():
     )
 
 
+def test_second_and_third_tier_provider_keys_are_wired_via_secrets_context():
+    """ADR-0164: Twelve Data/Alpha Vantage extend the Tiingo fallback
+    chain (Stooq, the original secondary, is a confirmed permanent
+    dead end -- ADR-0160 -- and needs no API key/secret at all)."""
+    steps = _steps(_load())
+    ingest_step = next(s for s in steps if "ingest_real_market_data.py" in s.get("run", ""))
+    env = ingest_step.get("env", {})
+    assert env.get("TWELVEDATA_API_KEY") == "${{ secrets.TWELVEDATA_API_KEY }}"
+    assert env.get("ALPHAVANTAGE_API_KEY") == "${{ secrets.ALPHAVANTAGE_API_KEY }}"
+
+
 def test_ingestion_step_uses_ratified_universe_and_key_reference():
     steps = _steps(_load())
     text = _run_text(steps)

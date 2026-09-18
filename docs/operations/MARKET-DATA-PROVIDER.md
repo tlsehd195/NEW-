@@ -28,6 +28,24 @@ resulting record's `Provenance.source` naming which provider actually
 answered, never silently presenting a fallback result as if the
 primary had succeeded.
 
+**Update (ADR-0164, 2026-09-18): Stooq is no longer constructed in the
+live ingestion chain.** A real scheduled/`workflow_dispatch` run
+confirmed Stooq's already-documented permanent dead end (ADR-0160, a
+JS bot-verification challenge page on every request) in production,
+combined with `RESEARCH_UNIVERSE` (87 symbols) now exceeding Tiingo's
+real ~48/hour proactive budget cap in a single cycle. `scripts/ingest_
+real_market_data.py` now wires `FallbackDataProvider(tiingo, twelvedata,
+alphavantage)` -- Twelve Data (`TWELVEDATA_API_KEY`, real free-tier cap
+~800/day, verified against a real response) as the 2nd tier, Alpha
+Vantage (`ALPHAVANTAGE_API_KEY`, real free-tier cap ~25/day, likewise
+verified) as a 3rd-tier safety net. Both keys are, like
+`MARKET_DATA_API_KEY`, referenced (never filled in) in `.env.example`.
+See ADR-0164 for the full evidence, the providers considered and
+rejected (Polygon.io, FMP, Finnhub), and the real `FallbackDataProvider`
+nesting bug found and fixed while building this. Stooq's module/tests
+remain in the repository as a truthful historical record; this section
+above is kept for that history, not as current operational reality.
+
 ## Pilot Universe (Phase 22 -- supersedes Phase 20's list for Paper Trading)
 
 Phase 20 originally selected a 16-symbol universe optimized for

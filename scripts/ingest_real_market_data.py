@@ -3,25 +3,30 @@
 
 This script exists because this development environment's outbound
 network is blocked to every market-data provider domain (confirmed this
-session: `api.tiingo.com`, `stooq.com` both return a 403 CONNECT
-rejection at the egress proxy -- see
-`docs/operations/MARKET-DATA-PROVIDER.md`'s Phase 23 section). It is
-NEVER executed by this repository's own automated test suite, and it
-makes a REAL network call when run -- run it only in an environment with
-real internet access, with a real Tiingo API key set in the environment
-variable `MARKET_DATA_API_KEY` (never pass a key on the command line or
-write one into a file).
+session: `api.tiingo.com`, `stooq.com`, `api.twelvedata.com`,
+`www.alphavantage.co` all return a 403 CONNECT rejection at the egress
+proxy -- see `docs/operations/MARKET-DATA-PROVIDER.md`'s Phase 23
+section). It is NEVER executed by this repository's own automated test
+suite, and it makes a REAL network call when run -- run it only in an
+environment with real internet access, with a real Tiingo API key set
+in `MARKET_DATA_API_KEY`, a real Twelve Data API key set in
+`TWELVEDATA_API_KEY`, and a real Alpha Vantage API key set in
+`ALPHAVANTAGE_API_KEY` (never pass a key on the command line or write
+one into a file).
 
 Every module this script imports (`TiingoDataProvider`,
-`StooqDataProvider`, `FallbackDataProvider`, `IngestionRunner`,
-`DuckDBDataRepository`, `DataQualityFramework`) already exists and is
-already covered by this repository's own fixture-based test suite
-(Phase 20-22) -- this script performs no new data-handling logic itself,
-it only wires those exact, unmodified pieces together against a real
-network and a real on-disk DuckDB catalog.
+`TwelveDataDataProvider`, `AlphaVantageDataProvider`,
+`FallbackDataProvider`, `IngestionRunner`, `DuckDBDataRepository`,
+`DataQualityFramework`) already exists and is already covered by this
+repository's own fixture-based test suite (Phase 20-22, ADR-0164) --
+this script performs no new data-handling logic itself, it only wires
+those exact, unmodified pieces together against a real network and a
+real on-disk DuckDB catalog.
 
 Usage:
     export MARKET_DATA_API_KEY=<your real Tiingo API key>
+    export TWELVEDATA_API_KEY=<your real Twelve Data API key>
+    export ALPHAVANTAGE_API_KEY=<your real Alpha Vantage API key>
     python3 scripts/ingest_real_market_data.py \\
         --start 2024-01-02 --end 2024-06-28 \\
         --db-path ./data/real_market_data
@@ -59,9 +64,11 @@ observed as `impossible_price_movement` WARNINGs on a real run of this
 script) would mark-to-market against raw `close` with no offsetting
 share-count adjustment, producing a spurious large paper loss at the
 split date even though `adjusted_close` (used for signal generation)
-was never wrong. Corporate actions are Tiingo-only (Stooq has no
-corporate-action feed, `StooqDataProvider.metadata()["supports_corporate_actions"]
-== False`, ADR-0028) -- fetched directly from the `tiingo` provider
+was never wrong. Corporate actions are Tiingo-only (neither Twelve
+Data nor Alpha Vantage implement corporate-action fetching either,
+`metadata()["supports_corporate_actions"] == False` on both, ADR-0164 --
+same reasoning ADR-0028 already gave for Stooq, the secondary this
+chain used before it) -- fetched directly from the `tiingo` provider
 instance below, not through `FallbackDataProvider` (which only exposes
 the shared `DataProvider` Protocol, deliberately not extended for this).
 
@@ -111,13 +118,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data_infra.provider import IngestionRunner, PermanentProviderError, TransientProviderError  # noqa: E402
+from data_infra.providers.alphavantage import AlphaVantageDataProvider  # noqa: E402
+from data_infra.providers.alphavantage_config import DEFAULT_ALPHAVANTAGE_CONFIG  # noqa: E402
+from data_infra.providers.alphavantage_transport import AlphaVantageHttpTransport  # noqa: E402
 from data_infra.providers.fallback import FallbackDataProvider  # noqa: E402
-from data_infra.providers.stooq import StooqDataProvider  # noqa: E402
-from data_infra.providers.stooq_config import DEFAULT_STOOQ_CONFIG  # noqa: E402
-from data_infra.providers.stooq_transport import StooqHttpTransport  # noqa: E402
 from data_infra.providers.tiingo import TiingoDataProvider  # noqa: E402
 from data_infra.providers.tiingo_config import DEFAULT_TIINGO_CONFIG  # noqa: E402
 from data_infra.providers.tiingo_transport import TiingoHttpTransport  # noqa: E402
+from data_infra.providers.twelvedata import TwelveDataDataProvider  # noqa: E402
+from data_infra.providers.twelvedata_config import DEFAULT_TWELVEDATA_CONFIG  # noqa: E402
+from data_infra.providers.twelvedata_transport import TwelveDataHttpTransport  # noqa: E402
 from data_infra.quality import DataQualityFramework  # noqa: E402
 from data_infra.enums import DataQualityRunStatus, DataQualitySeverity, SecurityStatus  # noqa: E402
 from data_infra.universe import (  # noqa: E402
@@ -172,8 +182,23 @@ def main() -> int:
     # them for free. Do not construct a second TiingoHttpTransport for
     # either path without explicitly sharing its budget.
     tiingo = TiingoDataProvider(DEFAULT_TIINGO_CONFIG, TiingoHttpTransport(DEFAULT_TIINGO_CONFIG.base_url))
-    stooq = StooqDataProvider(DEFAULT_STOOQ_CONFIG, StooqHttpTransport(DEFAULT_STOOQ_CONFIG.base_url))
-    provider = FallbackDataProvider(tiingo, stooq)
+    # ADR-0164: Stooq (the original secondary, ADR-0025) is a confirmed
+    # permanent dead end (ADR-0160 -- a JS bot-verification challenge
+    # page on every real request, not fixable via headers) and is no
+    # longer constructed here at all. Twelve Data and Alpha Vantage
+    # extend this into a flat 3-tier chain in one FallbackDataProvider
+    # (widened to accept any number of providers, ADR-0164 -- nesting
+    # two instances was tried first and found to corrupt provenance/
+    # crash normalize(), see that module's own docstring) -- Tiingo's
+    # real ~48/hour budget cap (ADR-0160) hands off to Twelve Data (real
+    # free-tier cap ~800/day, verified against a real response) for the
+    # remainder of RESEARCH_UNIVERSE's 87 symbols, with Alpha Vantage
+    # (real free-tier cap ~25/day, likewise verified) as a third-tier
+    # safety net only reached when both of the first two fail for a
+    # given symbol.
+    twelvedata = TwelveDataDataProvider(DEFAULT_TWELVEDATA_CONFIG, TwelveDataHttpTransport(DEFAULT_TWELVEDATA_CONFIG.base_url))
+    alphavantage = AlphaVantageDataProvider(DEFAULT_ALPHAVANTAGE_CONFIG, AlphaVantageHttpTransport(DEFAULT_ALPHAVANTAGE_CONFIG.base_url))
+    provider = FallbackDataProvider(tiingo, twelvedata, alphavantage)
 
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
     repository = DuckDBDataRepository(engine)

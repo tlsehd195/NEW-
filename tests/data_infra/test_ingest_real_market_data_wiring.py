@@ -300,6 +300,10 @@ class TestTiingoRequestBudgetSharedAcrossBothCallPaths:
         assert source.count("TiingoHttpTransport(") == 1
 
     def test_the_same_tiingo_variable_backs_both_the_fallback_provider_and_the_direct_corporate_actions_call(self) -> None:
+        # ADR-0164: Stooq (the original secondary) is gone from the
+        # live chain -- Twelve Data/Alpha Vantage extend it into a flat
+        # 3-tier FallbackDataProvider instead, but `tiingo` must still
+        # be the chain's first tier.
         source = _source()
-        assert "FallbackDataProvider(tiingo, stooq)" in source
+        assert "FallbackDataProvider(tiingo, twelvedata, alphavantage)" in source
         assert "tiingo.fetch_corporate_actions(" in source
