@@ -1,0 +1,107 @@
+# One-time, on-demand repair for the grandfathered `ingestion_precedes_
+# availability` bars ADR-0168 confirmed (bars ingested before ADR-0115's
+# `clamp_ingestion_time` fix existed -- 87 of them, one per symbol,
+# found in a real production run). See
+# `docs/decisions/ADR-0168-real-data-quality-error-backlog-root-cause-and-fix.md`
+# and `scripts/repair_ingestion_time_inversions.py`'s own module
+# docstring for the full root cause and why this is safe (never
+# rewrites an existing Parquet file -- appends a corrected bar through
+# the ordinary, already-tested `append_bars()` path; idempotent; a
+# second run finds nothing left to repair).
+#
+# `workflow_dispatch`-only, like `data_quality_rescan.yml` originally
+# was before ADR-0145 moved that one to a weekly schedule -- unlike
+# that recurring defense-in-depth rescan, this is a specific, one-time
+# fix for a specific, already-identified defect. It does not need to
+# run again once the real catalog's 87 affected bars are corrected;
+# re-running afterwards is safe (idempotent) but a no-op.
+#
+# `apply` defaults to false (dry run: reports what WOULD change,
+# writes nothing) so an accidental manual trigger can never mutate the
+# real production catalog -- the real fix requires deliberately
+# re-running with `apply: true`.
+name: Repair Ingestion-Time Inversions
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Actually write the corrected bars (unchecked = dry run only, writes nothing)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  MARKET_DATA_DIR: data/real_market_data
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Restore market-data-catalog artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$MARKET_DATA_DIR"
+          ART_ID=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.name=="market-data-catalog" and .expired==false)] | sort_by(.created_at) | last | .id // empty')
+          if [ -n "$ART_ID" ]; then
+            echo "Restoring market-data-catalog artifact $ART_ID"
+            curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ART_ID/zip" -o catalog.zip
+            unzip -o -q catalog.zip -d "$MARKET_DATA_DIR"
+            rm -f catalog.zip
+            # Same wrapped-zip defense as paper_trading_cycle.yml's and
+            # data_quality_rescan.yml's identical restore steps
+            # (ADR-0115, external review N-14).
+            if [ ! -f "$MARKET_DATA_DIR/catalog.duckdb" ]; then
+              SUBDIRS=$(find "$MARKET_DATA_DIR" -mindepth 1 -maxdepth 1 -type d)
+              SUBDIR_COUNT=$(printf '%s\n' "$SUBDIRS" | grep -c . || true)
+              if [ "$SUBDIR_COUNT" = "1" ] && [ -f "$SUBDIRS/catalog.duckdb" ]; then
+                echo "Artifact was wrapped in a subfolder ($SUBDIRS) -- flattening"
+                cp -r "$SUBDIRS"/. "$MARKET_DATA_DIR"/
+                rm -rf "$SUBDIRS"
+              fi
+            fi
+          else
+            echo "FATAL: no market-data-catalog artifact found -- the daily Paper Trading Cycle must run at least once first" >&2
+            exit 1
+          fi
+
+      - name: Repair ingestion_time inversions
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            python3 scripts/repair_ingestion_time_inversions.py --db-path "$MARKET_DATA_DIR" --apply | tee repair_report.txt
+          else
+            python3 scripts/repair_ingestion_time_inversions.py --db-path "$MARKET_DATA_DIR" | tee repair_report.txt
+          fi
+
+      - name: Upload repair report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repair-ingestion-time-report-${{ github.run_id }}
+          path: repair_report.txt
+          retention-days: 90
+
+      - name: Upload updated market-data catalog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-data-catalog
+          path: ${{ env.MARKET_DATA_DIR }}
+          retention-days: 90
