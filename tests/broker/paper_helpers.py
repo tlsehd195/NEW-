@@ -10,7 +10,8 @@ from broker.paper.config import PaperTradingConfig
 
 from backtest.enums import OrderSide, OrderType
 
-from data_infra.models import PriceBar, Provenance
+from data_infra.enums import CorporateActionType
+from data_infra.models import CorporateAction, PriceBar, Provenance
 
 from trade_journal.enums import TradeProvenance
 
@@ -42,6 +43,22 @@ def make_bar(
     )
 
 
+def make_corporate_action(
+    *, security_id: str = "AAA", action_type: CorporateActionType = CorporateActionType.SPLIT,
+    available_time: datetime = utc(2024, 1, 2), source_record_id: Optional[str] = None,
+    details: Optional[dict] = None,
+) -> CorporateAction:
+    record_id = source_record_id or f"CA-{security_id}-{available_time.isoformat()}-{action_type.value}"
+    return CorporateAction(
+        security_id=security_id, action_type=action_type, available_time=available_time,
+        ingestion_time=available_time, provenance=make_provenance(record_id, available_time),
+        effective_time=available_time,
+        details=details if details is not None else ({"ratio": "2:1"} if action_type in (
+            CorporateActionType.SPLIT, CorporateActionType.REVERSE_SPLIT,
+        ) else {"amount": 0.5, "currency": "USD"}),
+    )
+
+
 def make_validated_order(
     *, client_order_id: str = "CID-000001", security_id: str = "AAA", side: OrderSide = OrderSide.BUY,
     quantity: float = 10.0, as_of_time: datetime = utc(2024, 1, 2), decision_id: str = "DEC-000001",
@@ -55,4 +72,4 @@ def make_validated_order(
     )
 
 
-__all__ = ["utc", "make_paper_config", "make_provenance", "make_bar", "make_validated_order"]
+__all__ = ["utc", "make_paper_config", "make_provenance", "make_bar", "make_corporate_action", "make_validated_order"]

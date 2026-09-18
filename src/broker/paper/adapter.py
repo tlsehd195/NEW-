@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Sequence
 
 from broker.capabilities import build_capabilities
 from broker.enums import BrokerCapability, BrokerOrderStatus, CapabilityStatus
@@ -29,9 +29,12 @@ from broker.paper.execution import simulate_fill
 from broker.paper.market_data import PaperMarketDataSource
 from broker.paper.models import PaperFillRecord, PaperOrderRecord
 
+from backtest.corporate_actions import CorporateActionApplier
 from backtest.enums import OrderSide
 from backtest.fills import Fill
 from backtest.portfolio import PortfolioAccounting
+
+from data_infra.models import CorporateAction
 
 
 class _IdAllocator:
@@ -69,6 +72,18 @@ class PaperBrokerAdapter:
         self._cost_model = config.transaction_cost_model()
         self._slippage_model = config.slippage_model()
         self._accounting = PortfolioAccounting(config.initial_cash)
+        # ADR-0155: the exact SPLIT/DIVIDEND dispatch/parsing logic
+        # `backtest.engine.BacktestEngine.run()` already uses, reused
+        # verbatim rather than reimplemented -- see `apply_corporate_
+        # actions` below. Its own `_applied` set only protects against
+        # re-applying the SAME action twice within this one process
+        # (backtest's single-long-lived-process model); Paper Trading's
+        # real cross-restart idempotency lives one layer up, in
+        # `broker.paper.session.PaperTradingSession`'s persisted
+        # `PaperCorporateActionRepository` (a fresh process here always
+        # gets a fresh, empty `_applied` set, same as a fresh
+        # `CorporateActionApplier()` anywhere else).
+        self._corporate_action_applier = CorporateActionApplier()
 
         self._orders: dict[str, PaperOrderRecord] = {}
         self._fills: dict[str, list[tuple[str, Fill]]] = {}
@@ -106,6 +121,35 @@ class PaperBrokerAdapter:
         each valuation point -- this adapter never calls it on its own
         (no behavior change for any existing caller)."""
         return self._accounting
+
+    def apply_corporate_actions(self, actions: Sequence[CorporateAction], as_of_time: datetime) -> list[str]:
+        """Thin wrapper around `backtest.corporate_actions.
+        CorporateActionApplier.apply`, applied to THIS adapter's own
+        `self._accounting` -- reused verbatim, not reimplemented (ADR-
+        0155). Returns whatever warnings `apply()` produced (e.g. an
+        unparseable split ratio, a missing dividend amount, or an
+        unhandled action type such as MERGER) -- never raises and never
+        fabricates a fallback value for one.
+
+        Used identically from BOTH contexts:
+        - a live per-cycle call (`broker.paper.session.
+          PaperTradingSession.apply_corporate_actions`), with a batch of
+          newly-fetched, not-yet-applied actions and the current real
+          `as_of_time`;
+        - a restart replay (`PaperTradingSession.restore`), with
+          `actions=[single_action]` and THAT action's own real
+          historical `applied_at` as `as_of_time`, called once per
+          record at its correct merge-sorted position in the replay
+          sequence -- never batched with a collapsed restore-time
+          timestamp, since `CashFlowRecord.as_of_time` (for a dividend)
+          must stay the real historical moment.
+
+        Needs no "restore_*"-prefixed twin, unlike `restore_order`/
+        `restore_fill` -- there is no failure_mode/cash-check logic for
+        a corporate action to skip re-running (unlike an order's
+        submission), so this one method is already safe to call from
+        either context."""
+        return self._corporate_action_applier.apply(actions, self._accounting, as_of_time)
 
     # -- rehydration (restart safety) -- never re-runs failure_mode/
     # cash-check logic, only replays what already happened. --

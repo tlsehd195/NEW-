@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Optional, Protocol
 
-from broker.paper.models import PaperFillRecord, PaperOrderRecord
+from broker.paper.models import PaperAppliedCorporateActionRecord, PaperFillRecord, PaperOrderRecord
 
 
 class PaperOrderRepository(Protocol):
@@ -71,3 +71,35 @@ class InMemoryPaperFillRepository:
 
     def list_all(self) -> list[PaperFillRecord]:
         return sorted(self._fills, key=lambda f: f.recorded_at)
+
+
+class PaperCorporateActionRepository(Protocol):
+    def record(self, record: PaperAppliedCorporateActionRecord) -> PaperAppliedCorporateActionRecord:
+        """Idempotent on `record.source_record_id` (==
+        `record.action.provenance.source_record_id`)."""
+        ...
+
+    def get(self, source_record_id: str) -> Optional[PaperAppliedCorporateActionRecord]: ...
+    def list_all(self) -> list[PaperAppliedCorporateActionRecord]:
+        """Sorted by `applied_at` -- the ordering `PaperTradingSession.
+        restore()`'s merge-sort-by-time replay against `PaperFillRecord.
+        fill.execution_time` depends on."""
+        ...
+
+
+class InMemoryPaperCorporateActionRepository:
+    def __init__(self) -> None:
+        self._records: dict[str, PaperAppliedCorporateActionRecord] = {}
+
+    def record(self, record: PaperAppliedCorporateActionRecord) -> PaperAppliedCorporateActionRecord:
+        existing = self._records.get(record.source_record_id)
+        if existing is not None:
+            return existing
+        self._records[record.source_record_id] = record
+        return record
+
+    def get(self, source_record_id: str) -> Optional[PaperAppliedCorporateActionRecord]:
+        return self._records.get(source_record_id)
+
+    def list_all(self) -> list[PaperAppliedCorporateActionRecord]:
+        return sorted(self._records.values(), key=lambda r: r.applied_at)

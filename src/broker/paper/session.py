@@ -16,15 +16,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Sequence
 
 from broker.models import BrokerOrderResponse, OrderStatusObservation, ValidatedOrder
 from broker.paper.adapter import PaperBrokerAdapter
 from broker.paper.config import PaperTradingConfig
 from broker.paper.market_data import PaperMarketDataSource
-from broker.paper.models import PaperFillRecord, PaperOrderRecord
-from broker.paper.repository import InMemoryPaperFillRepository, InMemoryPaperOrderRepository, PaperFillRepository, PaperOrderRepository
+from broker.paper.models import PaperAppliedCorporateActionRecord, PaperFillRecord, PaperOrderRecord
+from broker.paper.repository import (
+    InMemoryPaperCorporateActionRepository,
+    InMemoryPaperFillRepository,
+    InMemoryPaperOrderRepository,
+    PaperCorporateActionRepository,
+    PaperFillRepository,
+    PaperOrderRepository,
+)
 from broker.repository import InMemoryOrderStatusEventRepository, OrderStatusEventRepository
+
+from data_infra.models import CorporateAction
 
 
 class _IdAllocator:
@@ -59,12 +68,14 @@ class PaperTradingSession:
         order_repository: Optional[PaperOrderRepository] = None,
         fill_repository: Optional[PaperFillRepository] = None,
         status_repository: Optional[OrderStatusEventRepository] = None,
+        corporate_action_repository: Optional[PaperCorporateActionRepository] = None,
     ) -> None:
         self.config = config
         self.adapter = PaperBrokerAdapter(config, market_data_source)
         self._order_repository = order_repository or InMemoryPaperOrderRepository()
         self._fill_repository = fill_repository or InMemoryPaperFillRepository()
         self._status_repository = status_repository or InMemoryOrderStatusEventRepository()
+        self._corporate_action_repository = corporate_action_repository or InMemoryPaperCorporateActionRepository()
         self._fill_record_ids = _IdAllocator("PAPERFILLREC")
 
     def _persist_new_fills(self, *, recorded_at: datetime) -> tuple[PaperFillRecord, ...]:
@@ -109,6 +120,38 @@ class PaperTradingSession:
         fills = self._persist_new_fills(recorded_at=as_of)
         return updates, fills
 
+    def apply_corporate_actions(self, actions: Sequence[CorporateAction], as_of_time: datetime) -> list[str]:
+        """Applies `actions` to `self.adapter`'s own accounting, exactly
+        once each, EVER, across every process this session's persisted
+        `corporate_action_repository` has ever seen -- the piece
+        `broker.paper.adapter.PaperBrokerAdapter.apply_corporate_actions`
+        cannot provide by itself, since a fresh adapter's own
+        `CorporateActionApplier._applied` set is empty every restart
+        (ADR-0155).
+
+        Filters `actions` down to those whose `provenance.
+        source_record_id` is NOT already in `self._corporate_action_
+        repository` (a real persisted lookup, not the adapter's
+        in-process set), applies only the remaining ones, then persists
+        EVERY one of them regardless of whether `CorporateActionApplier.
+        apply()` returned a warning for it -- `apply()` itself already
+        adds every action's key to its own `_applied` set even on a
+        warning/unhandled-type path (e.g. MERGER, or an unparseable
+        ratio), so "never retry, whether it succeeded or only warned" is
+        the existing, correct idempotency contract this mirrors at the
+        persisted-ledger level too. Returns whatever warnings `apply()`
+        produced for the newly-applied subset."""
+        remaining = [
+            action for action in actions
+            if self._corporate_action_repository.get(action.provenance.source_record_id) is None
+        ]
+        warnings = self.adapter.apply_corporate_actions(remaining, as_of_time)
+        for action in remaining:
+            self._corporate_action_repository.record(
+                PaperAppliedCorporateActionRecord(action=action, applied_at=as_of_time)
+            )
+        return warnings
+
     def cancel(self, client_order_id: str, *, requested_at: datetime) -> BrokerOrderResponse:
         response = self.adapter.cancel_order(client_order_id, requested_at=requested_at)
         self.capture(client_order_id, as_of=requested_at)
@@ -128,22 +171,71 @@ class PaperTradingSession:
         order_repository: PaperOrderRepository,
         fill_repository: PaperFillRepository,
         status_repository: OrderStatusEventRepository,
+        corporate_action_repository: PaperCorporateActionRepository,
         as_of: datetime,
     ) -> "PaperTradingSession":
         """Rebuilds a fresh `PaperBrokerAdapter`'s entire in-memory state
         by replaying every persisted order (chronological by
-        `requested_at`) and then every persisted fill (chronological,
-        `list_all()`'s own ordering) -- never re-running failure_mode or
-        cash-check logic, only reproducing what already happened
-        (instruction section 17, 27)."""
+        `requested_at`), and then every persisted fill AND every
+        persisted applied-corporate-action record TOGETHER, in ONE
+        merged chronological sequence -- never re-running failure_mode
+        or cash-check logic, only reproducing what already happened
+        (instruction section 17, 27).
+
+        **Why fills and corporate actions must be interleaved, not
+        replayed as two separate batches (ADR-0155):** `backtest.
+        portfolio.PortfolioAccounting.apply_split`/`apply_dividend` is a
+        silent no-op against a position that does not exist yet, or that
+        is currently flat (`if pos is None or pos.quantity == 0: return`)
+        -- correct behavior for a real corporate action arriving while a
+        real account genuinely holds nothing in that security. But it
+        means REPLAY ORDER is not a stylistic choice: if every persisted
+        corporate action were replayed first, in one batch, before any
+        fill, a split that occurred while THIS replay had not yet
+        reached the fill that actually established the position (because
+        that fill is chronologically LATER in real history, even though
+        both are being replayed in the same `restore()` call) would
+        silently no-op and never get retroactively applied -- the
+        position would end up un-split-adjusted, silently wrong, with no
+        error. Replaying strictly in real chronological order (this
+        method merge-sorts `fill_repository.list_all()`, keyed by each
+        record's own `fill.execution_time`, together with
+        `corporate_action_repository.list_all()`, keyed by its own real
+        `applied_at`) reproduces exactly what actually happened: a fill
+        dated before a split gets adjusted BY that split when the split
+        is replayed at its own correct position afterward; a fill dated
+        after a split already reflects the real, already-adjusted
+        market price/quantity (a fill is never itself retroactively
+        adjusted -- only a pre-existing position held at the moment a
+        split/dividend occurs needs `apply_split`/`apply_dividend`
+        called on it, at the right moment in the sequence).
+
+        Each corporate action is replayed via `adapter.
+        apply_corporate_actions([action], as_of_time=record.applied_at)`
+        -- one call per record, at its own real historical timestamp,
+        never batched with a collapsed restore-time timestamp (so a
+        replayed dividend's `CashFlowRecord.as_of_time` stays the real
+        historical moment, not this restore call's own `as_of`)."""
         session = cls(
             config, market_data_source, order_repository=order_repository,
             fill_repository=fill_repository, status_repository=status_repository,
+            corporate_action_repository=corporate_action_repository,
         )
         for order_record in order_repository.list_all():
             session.adapter.restore_order(order_record)
-        for fill_record in fill_repository.list_all():
-            session.adapter.restore_fill(fill_record.fill_id, fill_record.client_order_id, fill_record.fill)
+
+        fill_records = fill_repository.list_all()
+        action_records = corporate_action_repository.list_all()
+        replay_items = sorted(
+            [("fill", r.fill.execution_time, r) for r in fill_records]
+            + [("action", r.applied_at, r) for r in action_records],
+            key=lambda item: item[1],
+        )
+        for kind, _, record in replay_items:
+            if kind == "fill":
+                session.adapter.restore_fill(record.fill_id, record.client_order_id, record.fill)
+            else:
+                session.adapter.apply_corporate_actions([record.action], as_of_time=record.applied_at)
 
         cancelled_ids = {
             obs.client_order_id for obs in status_repository.list_all()

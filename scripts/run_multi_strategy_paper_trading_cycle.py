@@ -92,7 +92,11 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.decision_repository import DuckDBDecisionRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
-from storage.paper_repository import DuckDBPaperFillRepository, DuckDBPaperOrderRepository  # noqa: E402
+from storage.paper_repository import (  # noqa: E402
+    DuckDBPaperCorporateActionRepository,
+    DuckDBPaperFillRepository,
+    DuckDBPaperOrderRepository,
+)
 from storage.prediction_repository import DuckDBPredictionRepository  # noqa: E402
 from storage.regime_repository import DuckDBRegimeRepository  # noqa: E402
 from storage.risk_repository import DuckDBPositionSizingRepository, DuckDBRiskRepository  # noqa: E402
@@ -206,6 +210,18 @@ def _run_run_cycle_strategy(
         "mark_to_market_missing": [
             {"as_of_time": as_of.isoformat(), "security_ids": list(missing)}
             for as_of, missing in state.mark_to_market_missing
+        ],
+        # ADR-0155: same surfacing treatment as mark_to_market_missing
+        # above -- see run_paper_trading_cycle.py's identical field for
+        # what populates it (orchestration.paper_runner.PaperRunnerState.
+        # corporate_action_warnings). Only RUN_CYCLE-kind strategies call
+        # run_cycle at all -- a BUY_AND_HOLD strategy (see
+        # _run_buy_and_hold_strategy) never applies corporate actions
+        # through this path (known scope limitation, not covered by
+        # this change).
+        "corporate_action_warnings": [
+            {"as_of_time": as_of.isoformat(), "warnings": list(warnings)}
+            for as_of, warnings in state.corporate_action_warnings
         ],
     }
 
@@ -370,9 +386,11 @@ def main(argv=None) -> int:
         order_repository = DuckDBPaperOrderRepository(store_engine)
         fill_repository = DuckDBPaperFillRepository(store_engine)
         status_repository = DuckDBOrderStatusEventRepository(store_engine)
+        corporate_action_repository = DuckDBPaperCorporateActionRepository(store_engine)
         session = PaperTradingSession.restore(
             paper_config, market_data_source,
             order_repository=order_repository, fill_repository=fill_repository, status_repository=status_repository,
+            corporate_action_repository=corporate_action_repository,
             as_of=args.end,
         )
 

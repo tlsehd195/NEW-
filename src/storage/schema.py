@@ -709,6 +709,25 @@ DDL_STATEMENTS: tuple[str, ...] = (
         payload_json TEXT NOT NULL
     )
     """,
+    # ADR-0155: the persisted idempotency ledger a fresh-per-process
+    # `PaperBrokerAdapter`/`CorporateActionApplier` needs across restarts
+    # -- `source_record_id` is the PRIMARY KEY (not an append-only seq
+    # like paper_fills), since a corporate action, unlike a fill, must
+    # never be recorded twice at all -- `record()`'s dedup query is a
+    # direct primary-key lookup. `applied_at` is indexed-by-scan order
+    # (ORDER BY, same as paper_orders/paper_fills) for `list_all()`'s
+    # required chronological ordering, used by `PaperTradingSession.
+    # restore()`'s merge-sort-by-time replay against `paper_fills.
+    # recorded_at`/`fill.execution_time`.
+    """
+    CREATE TABLE IF NOT EXISTS paper_applied_corporate_actions (
+        source_record_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        applied_at TIMESTAMP NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
     # -- Phase 16: Live Trading --
     """
     CREATE SEQUENCE IF NOT EXISTS kill_switch_event_seq START 1

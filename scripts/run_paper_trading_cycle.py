@@ -119,7 +119,11 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.decision_repository import DuckDBDecisionRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.paper_performance_repository import DuckDBPaperPerformanceReportRepository  # noqa: E402
-from storage.paper_repository import DuckDBPaperFillRepository, DuckDBPaperOrderRepository  # noqa: E402
+from storage.paper_repository import (  # noqa: E402
+    DuckDBPaperCorporateActionRepository,
+    DuckDBPaperFillRepository,
+    DuckDBPaperOrderRepository,
+)
 from storage.broker_repository import DuckDBOrderStatusEventRepository  # noqa: E402
 from storage.prediction_repository import DuckDBPredictionRepository  # noqa: E402
 from storage.regime_repository import DuckDBRegimeRepository  # noqa: E402
@@ -270,12 +274,14 @@ def main(argv=None) -> int:
     order_repository = DuckDBPaperOrderRepository(store_engine)
     fill_repository = DuckDBPaperFillRepository(store_engine)
     status_repository = DuckDBOrderStatusEventRepository(store_engine)
+    corporate_action_repository = DuckDBPaperCorporateActionRepository(store_engine)
     # `restore()` replays whatever this store already has (nothing, on a
     # brand-new store) -- strictly more correct than the plain
     # constructor for every case, not only --resume (ADR-0073).
     session = PaperTradingSession.restore(
         paper_config, market_data_source,
         order_repository=order_repository, fill_repository=fill_repository, status_repository=status_repository,
+        corporate_action_repository=corporate_action_repository,
         as_of=args.end,
     )
 
@@ -420,6 +426,21 @@ def main(argv=None) -> int:
             flush=True,
         )
 
+    # ADR-0155: same "never let a real issue arrive with zero signal"
+    # treatment as mark_to_market_missing above -- a corporate action
+    # `orchestration.paper_runner.run_cycle` could not fully apply
+    # (an unparseable split ratio, a missing dividend amount, or an
+    # unhandled type such as MERGER) is surfaced here rather than
+    # silently discarded.
+    if state.corporate_action_warnings:
+        total_ca_warnings = sum(len(warnings) for _, warnings in state.corporate_action_warnings)
+        print(
+            f"WARNING: {total_ca_warnings} corporate-action warning(s) across "
+            f"{len(state.corporate_action_warnings)} checkpoint(s) -- see corporate_action_warnings "
+            "in the report JSON for details.",
+            flush=True,
+        )
+
     final_account = session.account_summary(as_of=checkpoints[-1])
 
     # Session 38: Phase 18's compute_paper_performance_report, wired
@@ -509,6 +530,10 @@ def main(argv=None) -> int:
         "mark_to_market_missing": [
             {"as_of_time": as_of.isoformat(), "security_ids": list(missing)}
             for as_of, missing in state.mark_to_market_missing
+        ],
+        "corporate_action_warnings": [
+            {"as_of_time": as_of.isoformat(), "warnings": list(warnings)}
+            for as_of, warnings in state.corporate_action_warnings
         ],
         "performance": paper_performance_report_to_payload(performance_report),
         "content_checksum": checksum,
