@@ -12,7 +12,13 @@ from __future__ import annotations
 from helpers import utc
 
 from data_infra.enums import IngestionStatus
-from data_infra.provider import IngestionCheckpoint, IngestionRunner, MockDataProvider
+from data_infra.provider import (
+    IngestionCheckpoint,
+    IngestionRunner,
+    MockDataProvider,
+    TransientProviderError,
+    parse_retry_after_seconds,
+)
 from data_infra.repository import InMemoryDataRepository
 
 
@@ -94,6 +100,83 @@ class TestRetry:
         assert result.results[0].status == IngestionStatus.FAILED
         assert result.results[0].error is not None
         assert len(repo.all_bars()) == 0
+
+
+class _RetryAfterProvider:
+    """A minimal DataProvider (not MockDataProvider, which has no
+    concept of retry_after_seconds) whose fetch() always raises a
+    TransientProviderError carrying a real retry_after_seconds, so
+    IngestionRunner's own preference for it over its guessed
+    exponential backoff is directly observable."""
+
+    def __init__(self, retry_after_seconds: float) -> None:
+        self._retry_after_seconds = retry_after_seconds
+
+    def fetch(self, security_id, start, end):
+        raise TransientProviderError("rate limited", retry_after_seconds=self._retry_after_seconds)
+
+    def validate(self, raw_records):
+        return []
+
+    def normalize(self, security_id, raw_records):
+        return []
+
+    def metadata(self):
+        return {"provider_id": "retry_after_test_provider"}
+
+
+class TestRetryAfterPreferredOverGuessedBackoff:
+    """ADR-0157: a real Retry-After (e.g. from a 429) must be respected
+    over the fixed 2s/4s/8s exponential backoff, which has no
+    relationship to the server's own actual rate-limit window."""
+
+    def test_the_real_retry_after_value_is_slept_not_the_guessed_backoff(self) -> None:
+        provider = _RetryAfterProvider(retry_after_seconds=17.0)
+        repo = InMemoryDataRepository()
+        sleeps: list[float] = []
+        runner = IngestionRunner(provider, repo, max_retries=1, sleep_fn=sleeps.append)
+
+        runner.run(["AAA"], utc(2024, 1, 1), utc(2024, 1, 10))
+
+        assert sleeps == [17.0]  # not default_backoff_seconds(1) == 2.0
+
+    def test_an_unreasonably_large_retry_after_is_capped(self) -> None:
+        provider = _RetryAfterProvider(retry_after_seconds=999_999.0)
+        repo = InMemoryDataRepository()
+        sleeps: list[float] = []
+        runner = IngestionRunner(provider, repo, max_retries=1, sleep_fn=sleeps.append)
+
+        runner.run(["AAA"], utc(2024, 1, 1), utc(2024, 1, 10))
+
+        assert sleeps == [60.0]  # _MAX_RETRY_AFTER_SECONDS, not the raw value
+
+
+class TestParseRetryAfterSeconds:
+    def test_parses_plain_integer_seconds(self) -> None:
+        assert parse_retry_after_seconds("30") == 30.0
+
+    def test_parses_plain_float_seconds(self) -> None:
+        assert parse_retry_after_seconds("12.5") == 12.5
+
+    def test_parses_an_http_date_into_seconds_from_now(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        target = datetime.now(timezone.utc) + timedelta(seconds=120)
+        http_date = target.strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+        result = parse_retry_after_seconds(http_date)
+
+        assert result is not None
+        assert 110 <= result <= 130  # generous tolerance for test wall-clock drift
+
+    def test_returns_none_for_missing_header(self) -> None:
+        assert parse_retry_after_seconds(None) is None
+
+    def test_returns_none_for_unparseable_value(self) -> None:
+        assert parse_retry_after_seconds("not-a-real-value") is None
+
+    def test_returns_none_for_a_negative_value_never_fabricated_as_zero(self) -> None:
+        assert parse_retry_after_seconds("-5") is None
 
 
 class TestPartialFailure:
