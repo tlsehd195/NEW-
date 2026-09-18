@@ -336,6 +336,7 @@ def main(argv=None) -> int:
                     "start": args.start.isoformat(),
                     "end": args.end.isoformat(),
                     "last_processed": last_processed.isoformat(),
+                    "initial_capital": args.initial_capital,
                     "final_cash": final_account.cash,
                     "final_positions": {sid: pos.quantity for sid, pos in final_account.positions.items() if pos.available},
                 }
@@ -551,6 +552,12 @@ def main(argv=None) -> int:
         "universe": args.universe,
         "start": args.start.isoformat(),
         "end": args.end.isoformat(),
+        # External review (account owner, 2026-09-18): --initial-capital
+        # was already read into the reproducibility checksum below but
+        # never actually surfaced in the report itself -- a consumer
+        # like notifications.discord_webhook had no way to show what the
+        # account started with, only what it currently holds.
+        "initial_capital": args.initial_capital,
         "checkpoints_run": len(checkpoints),
         "total_orders_submitted": total_submitted,
         "total_orders_with_a_fill": total_filled,

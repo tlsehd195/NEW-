@@ -205,6 +205,22 @@ class TestCriticalDataQualityFindingsGateExitCode:
         keys = _manifest_keys(_tree())
         assert {"data_quality_severity_counts", "data_quality_flags_persisted"} <= keys
 
+    def test_manifest_reports_a_per_check_and_per_security_breakdown(self) -> None:
+        """External review (account owner, 2026-09-18): a real run
+        reported 866 ERROR-severity issues with only the aggregate
+        severity count visible -- no way to tell which check(s) fired
+        or which securities they hit without the actual catalog file
+        (this environment's own egress cannot reach the artifact
+        holding it, same wall `test_severity_breakdown_is_printed_to_
+        stdout_not_only_the_manifest` already documents)."""
+        keys = _manifest_keys(_tree())
+        assert {"data_quality_check_counts", "data_quality_error_security_ids"} <= keys
+
+    def test_check_and_security_breakdowns_are_printed_to_stdout_too(self) -> None:
+        source = _source()
+        assert "Data quality check breakdown" in source
+        assert "ERROR-severity issue" in source
+
     def test_severity_breakdown_is_printed_to_stdout_not_only_the_manifest(self) -> None:
         # The full per-issue detail only round-trips inside a GitHub
         # Actions artifact behind Azure Blob Storage, which this
