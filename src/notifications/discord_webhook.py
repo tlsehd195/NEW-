@@ -31,7 +31,15 @@ import urllib.request
 _DISCORD_CONTENT_LIMIT = 2000
 _TRUNCATION_SUFFIX = "\n... (truncated)"
 
-_MAX_POSITIONS_TO_LIST = 15
+# Discord's real 2000-UTF16-code-unit content limit (truncate_for_
+# discord's own hard backstop) comfortably fits far more than 15
+# "TICKER: qty" entries -- raised after a real production message
+# summarized away a real 37-position portfolio the account owner
+# actually wanted to see (external review). Still a real cap, not
+# removed outright: a genuinely huge position count (hundreds) would
+# still need summarizing rather than silently relying on
+# truncate_for_discord to cut it off mid-list.
+_MAX_POSITIONS_TO_LIST = 60
 
 
 # `note` is a small, fixed set of static boilerplate strings this

@@ -81,10 +81,19 @@ class TestFormatPaperTradingCycleReport:
         assert "보유 포지션: 없음" in message
         assert "처리된 체크포인트: 0" in message
 
-    def test_more_than_fifteen_positions_are_summarized_not_listed(self) -> None:
-        report = {"final_positions": {f"SYM{i}": i for i in range(20)}}
+    def test_a_37_position_portfolio_is_listed_in_full(self) -> None:
+        """External review: a real production message summarized away a
+        real 37-position portfolio the account owner actually wanted to
+        see -- must now list all of them (raised threshold)."""
+        report = {"final_positions": {f"SYM{i}": i for i in range(37)}}
         message = format_paper_trading_cycle_report(report)
-        assert "보유 포지션: 20개 (너무 많아 표시 생략)" in message
+        assert "보유 포지션 (37개):" in message
+        assert "SYM0: 0" in message and "SYM36: 36" in message
+
+    def test_way_too_many_positions_are_still_summarized_not_listed(self) -> None:
+        report = {"final_positions": {f"SYM{i}": i for i in range(200)}}
+        message = format_paper_trading_cycle_report(report)
+        assert "보유 포지션: 200개 (너무 많아 표시 생략)" in message
         assert "SYM0" not in message
 
     def test_performance_section_metrics_are_rendered_when_present(self) -> None:

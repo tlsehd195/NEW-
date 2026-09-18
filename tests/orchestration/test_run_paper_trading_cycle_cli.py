@@ -328,6 +328,10 @@ class TestResume:
         assert second["start"] == "2024-02-01T00:00:00+00:00"
         assert second["end"] == "2024-02-15T00:00:00+00:00"
         assert "last_processed" in second
+        # External review: the early-exit report also never carried
+        # performance metrics at all, even though the portfolio's real
+        # prior history already exists and is computable from it.
+        assert "performance" in second
 
     def test_resume_reconstructs_value_history_across_invocations(self, tmp_path) -> None:
         """`state.value_history` must reflect the FULL real history

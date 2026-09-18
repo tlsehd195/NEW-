@@ -339,6 +339,31 @@ def main(argv=None) -> int:
                     "final_cash": final_account.cash,
                     "final_positions": {sid: pos.quantity for sid, pos in final_account.positions.items() if pos.available},
                 }
+                # External review (account owner): the early-exit report
+                # never carried performance metrics at all, even though
+                # the portfolio's real prior history (equity_history,
+                # trades) already exists in --paper-store and is exactly
+                # what the full-run path below computes the same numbers
+                # from -- only `up_to`/`evaluated_at` differ (the last
+                # REAL checkpoint, since there is no new one this run).
+                # Deliberately NOT persisted via performance_repository
+                # (unlike the full-run path) -- there is no new activity
+                # to snapshot, so writing a new report row here would
+                # just duplicate the last real persisted one under a new
+                # id every time this branch fires.
+                equity_history = equity_history_from_risk_repository(risk_repository, security_ids[0], up_to=last_processed)
+                trades = trade_journal_repository.list_trades(
+                    provenance=TradeProvenance.PAPER_TRADING, start=args.start, end=args.end,
+                )
+                performance_report = compute_paper_performance_report(
+                    report_id="PAPERPERF-DISPLAY-ONLY",
+                    paper_session_id=f"paper-session-{args.universe.lower()}",
+                    equity_history=equity_history,
+                    trades=trades,
+                    evaluated_at=last_processed,
+                    strategy_version="baseline_rule",
+                )
+                report["performance"] = paper_performance_report_to_payload(performance_report)
                 args.out.parent.mkdir(parents=True, exist_ok=True)
                 args.out.write_text(json.dumps(report, indent=2))
                 data_engine.close()
