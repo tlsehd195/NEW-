@@ -40,6 +40,19 @@ _TRUNCATION_SUFFIX = "\n... (truncated)"
 # still need summarizing rather than silently relying on
 # truncate_for_discord to cut it off mid-list.
 _MAX_POSITIONS_TO_LIST = 60
+_POSITIONS_PER_LINE = 4
+
+
+def _format_quantity(qty: float) -> str:
+    """Rounds a real position quantity for DISPLAY only (the persisted/
+    computed value itself is never touched) -- a whole share count
+    (the common case) shows with no decimals at all; a real fractional
+    share (--lot-size, ADR-0140) shows up to 4 decimal places with
+    trailing zeros trimmed, never the full float repr (e.g.
+    3.162355322244007 -> 3.1624, 10.0 -> 10)."""
+    if qty == int(qty):
+        return str(int(qty))
+    return f"{qty:.4f}".rstrip("0").rstrip(".")
 
 
 # `note` is a small, fixed set of static boilerplate strings this
@@ -109,6 +122,14 @@ def format_paper_trading_cycle_report(report: dict) -> str:
         fill_note = f" (체결: {filled}건)" if filled is not None else ""
         lines.append(f"주문 제출: {submitted}건{fill_note}")
 
+    # External review (account owner, 2026-09-18): --initial-capital was
+    # already read by the script but never surfaced in the report at
+    # all -- shown next to final_cash so the two numbers are directly
+    # comparable at a glance.
+    initial_capital = report.get("initial_capital")
+    if initial_capital is not None:
+        lines.append(f"초기 자본: {initial_capital:,.2f}")
+
     final_cash = report.get("final_cash")
     if final_cash is not None:
         lines.append(f"최종 현금: {final_cash:,.2f}")
@@ -118,8 +139,16 @@ def format_paper_trading_cycle_report(report: dict) -> str:
         if not positions:
             lines.append("보유 포지션: 없음")
         elif len(positions) <= _MAX_POSITIONS_TO_LIST:
-            position_list = ", ".join(f"{sid}: {qty}" for sid, qty in sorted(positions.items()))
-            lines.append(f"보유 포지션 ({len(positions)}개): {position_list}")
+            # External review: a real 37-position message came back as
+            # one giant comma-separated line of unrounded floats (e.g.
+            # "AAPL: 3.162355322244007") -- unreadable. Quantities are
+            # rounded for display only (never re-derived/re-computed --
+            # the same real value, just fewer digits shown), and grouped
+            # a few per line instead of one long line.
+            entries = [f"{sid}: {_format_quantity(qty)}" for sid, qty in sorted(positions.items())]
+            grouped_lines = [", ".join(entries[i:i + _POSITIONS_PER_LINE]) for i in range(0, len(entries), _POSITIONS_PER_LINE)]
+            lines.append(f"보유 포지션 ({len(positions)}개):")
+            lines.extend(grouped_lines)
         else:
             lines.append(f"보유 포지션: {len(positions)}개 (너무 많아 표시 생략)")
 

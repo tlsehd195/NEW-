@@ -37,6 +37,7 @@ class TestFormatPaperTradingCycleReport:
             "universe": "RESEARCH_UNIVERSE",
             "start": "2024-01-02",
             "end": "2026-09-17",
+            "initial_capital": 1_000_000.0,
             "checkpoints_run": 187,
             "total_orders_submitted": 42,
             "total_orders_with_a_fill": 39,
@@ -51,6 +52,7 @@ class TestFormatPaperTradingCycleReport:
         assert "2024-01-02 ~ 2026-09-17" in message
         assert "처리된 체크포인트: 187개" in message
         assert "주문 제출: 42건 (체결: 39건)" in message
+        assert "초기 자본: 1,000,000.00" in message
         assert "최종 현금: 12,345.68" in message
         assert "AAPL: 10" in message and "MSFT: 5" in message
         # An unrecognized note string (not one of the fixed known ones)
@@ -95,6 +97,24 @@ class TestFormatPaperTradingCycleReport:
         message = format_paper_trading_cycle_report(report)
         assert "보유 포지션: 200개 (너무 많아 표시 생략)" in message
         assert "SYM0" not in message
+
+    def test_fractional_share_quantities_are_rounded_for_display(self) -> None:
+        """External review: a real message showed unrounded floats like
+        "AAPL: 3.162355322244007" (--lot-size, ADR-0140) -- must round
+        to a readable number of decimals, and a whole share count must
+        show with no decimals at all."""
+        report = {"final_positions": {"AAPL": 3.162355322244007, "MSFT": 10.0}}
+        message = format_paper_trading_cycle_report(report)
+        assert "AAPL: 3.1624" in message
+        assert "3.162355322244007" not in message
+        assert "MSFT: 10" in message
+        assert "MSFT: 10.0" not in message
+
+    def test_positions_are_grouped_a_few_per_line_not_one_long_line(self) -> None:
+        report = {"final_positions": {f"SYM{i}": i for i in range(8)}}
+        message = format_paper_trading_cycle_report(report)
+        position_section = message.split("보유 포지션 (8개):")[1]
+        assert position_section.count("\n") >= 1  # more than a single flat line
 
     def test_performance_section_metrics_are_rendered_when_present(self) -> None:
         report = {

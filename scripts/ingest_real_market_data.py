@@ -262,8 +262,27 @@ def main() -> int:
         # catalog, starting immediately after this call.
         quality_rows_written = repository.record_quality_issues(quality_run)
         severity_counts = {sev.value: 0 for sev in DataQualitySeverity}
+        # External review (account owner, 2026-09-18): a real run's
+        # "Data quality status: FAILED (867 issue(s))" only ever printed
+        # the severity breakdown, never which CHECK(s) actually fired or
+        # which securities they hit -- with 866 ERROR-severity issues on
+        # a single run, that aggregate number alone gives no way to tell
+        # a narrow, already-understood problem from a broad, unexamined
+        # one. This is not this session's own regression: the identical
+        # 867/866/1/0/0 breakdown was already present in an earlier run
+        # this same day that persisted almost no bars at all (most
+        # providers failing), strongly suggesting these are pre-existing
+        # issues already sitting in the catalog's history within
+        # [--start, --end], not something the Twelve Data/Alpha Vantage
+        # providers just introduced -- but that inference needs the real
+        # per-check/per-security breakdown to confirm, not another guess.
+        check_counts: dict[str, int] = {}
+        error_security_ids: set[str] = set()
         for issue in quality_run.issues:
             severity_counts[issue.severity.value] += 1
+            check_counts[issue.check] = check_counts.get(issue.check, 0) + 1
+            if issue.severity == DataQualitySeverity.ERROR:
+                error_security_ids.add(issue.security_id)
 
         checksum = compute_data_version(
             {
@@ -348,6 +367,8 @@ def main() -> int:
             "data_quality_status": quality_run.status.value,
             "data_quality_issue_count": len(quality_run.issues),
             "data_quality_severity_counts": severity_counts,
+            "data_quality_check_counts": check_counts,
+            "data_quality_error_security_ids": sorted(error_security_ids),
             "data_quality_flags_persisted": quality_rows_written,
             "data_quality_issues": [
                 {"check": i.check, "severity": i.severity.value, "security_id": i.security_id, "message": i.message}
@@ -395,6 +416,8 @@ def main() -> int:
         # docs/operations/MARKET-DATA-PROVIDER.md); this line is what
         # makes "how bad was this run" answerable straight from CI logs.
         print(f"Data quality severity breakdown: {severity_counts}")
+        print(f"Data quality check breakdown: {check_counts}")
+        print(f"Securities with at least one ERROR-severity issue ({len(error_security_ids)}): {sorted(error_security_ids)}")
         print(f"Data quality flags newly persisted to catalog: {quality_rows_written}")
         print(f"Content checksum: {checksum}")
         print(f"Manifest written to: {manifest_path}")
