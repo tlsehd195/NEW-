@@ -30,6 +30,12 @@ def _steps(doc: dict) -> list[dict]:
     return jobs["run-cycle"]["steps"]
 
 
+def _backup_job_steps(doc: dict) -> list[dict]:
+    jobs = doc["jobs"]
+    assert "commit-backup" in jobs
+    return jobs["commit-backup"]["steps"]
+
+
 def _run_text(steps: list[dict]) -> str:
     return "\n".join(step.get("run", "") for step in steps)
 
@@ -44,19 +50,47 @@ def test_workflow_is_valid_yaml_with_a_schedule_trigger():
     assert "workflow_dispatch" in triggers
 
 
-def test_workflow_grants_contents_write_for_the_backup_commit_step():
-    """External review (ADR-0149's own follow-up): `contents` was
-    `read`-only until the backup-commit step below needed to push a
-    JSON snapshot to this branch -- confirmed here that the elevation
-    is real and that the step actually using it exists, not a
-    permission granted and then unused."""
+def test_run_cycle_job_no_longer_has_contents_write():
+    """ADR-0162: `run-cycle` never pushes to this repo -- only the
+    "commit-backup" job below does -- so the workflow-level default
+    every job inherits (unless it overrides it, GitHub Actions'
+    documented `permissions:` semantics) must not grant `write` here.
+    `actions: read` stays, since `run-cycle`'s own artifact-restore
+    steps call `gh api .../actions/artifacts`."""
     doc = _load()
     perms = doc["permissions"]
+    assert perms.get("contents") == "read"
+    assert perms.get("actions") == "read"
+    assert "permissions" not in doc["jobs"]["run-cycle"], (
+        "run-cycle must not override the workflow-level default with its own write grant"
+    )
+
+
+def test_commit_backup_job_has_contents_write_and_the_real_push():
+    """ADR-0162: `contents: write` is narrowed to exactly the job whose
+    steps actually push -- confirmed here that the elevation is real
+    (the "commit-backup" job's own `permissions:`) and that the step
+    actually using it exists, not a permission granted and then
+    unused. Also depends on "run-cycle" and runs even on its failure
+    (`if: always()`), matching the single-job version's own "back up
+    whatever exists even after a failed cycle" guarantee."""
+    doc = _load()
+    backup_job = doc["jobs"]["commit-backup"]
+    perms = backup_job["permissions"]
     assert perms.get("contents") == "write"
     assert perms.get("actions") == "read"
-    steps = _steps(doc)
+    assert backup_job.get("needs") == "run-cycle"
+    assert backup_job.get("if") == "always()"
+
+    steps = _backup_job_steps(doc)
     backup_step = next(s for s in steps if "export_paper_store_backup.py" in s.get("run", ""))
     assert "git push" in backup_step["run"]
+
+    download_steps = [s for s in steps if s.get("uses", "").startswith("actions/download-artifact")]
+    assert any(s["with"]["name"] == "paper-trading-store" for s in download_steps), (
+        "commit-backup must download the paper-trading-store artifact run-cycle uploaded -- "
+        "jobs never share a filesystem, so this is its only path to the updated DuckDB store"
+    )
 
 
 def test_no_secret_value_is_hardcoded():

@@ -439,6 +439,47 @@ def _tracked_security_ids(security_ids: Sequence[str], session: PaperTradingSess
     return sorted(set(security_ids) | set(session.adapter.accounting.positions.keys()))
 
 
+def apply_due_corporate_actions(
+    security_ids: Sequence[str],
+    session: PaperTradingSession,
+    view: AsOfDataView,
+    as_of_time: datetime,
+    state: Optional[PaperRunnerState] = None,
+) -> None:
+    """Shared by `run_cycle` below and `scripts.run_multi_strategy_
+    paper_trading_cycle._run_buy_and_hold_strategy` (ADR-0163): fetches
+    every corporate action effective as of `as_of_time` for
+    `security_ids` plus any currently-held position not already in
+    that list (`_tracked_security_ids`, mirroring `backtest.engine.
+    BacktestEngine.run()`'s own `tracked_ids`), over the same
+    `_CORPORATE_ACTION_LOOKBACK_DAYS` window `run_cycle` has always
+    used, and applies them via `session.apply_corporate_actions` --
+    safe every call, including across a restart, because that method
+    checks a real persisted ledger before applying anything (ADR-0155).
+
+    Must be called BEFORE `session.advance(as_of_time)`/any same-cycle
+    fill attempt (ADR-0158) -- this function never calls `advance`
+    itself, so that ordering is the caller's own responsibility.
+
+    Any warning `session.apply_corporate_actions` returns (an
+    unparseable ratio, a missing dividend amount, an unhandled type
+    such as MERGER) is appended to `state.corporate_action_warnings`
+    when `state` is supplied -- the same opt-in surfacing
+    `mark_to_market_missing` already gets elsewhere in this module --
+    never raised, never silently discarded."""
+    all_corporate_actions: list[CorporateAction] = []
+    for security_id in _tracked_security_ids(security_ids, session):
+        all_corporate_actions.extend(
+            view.get_corporate_actions(
+                security_id, as_of_time - timedelta(days=_CORPORATE_ACTION_LOOKBACK_DAYS), as_of_time,
+            )
+        )
+    if all_corporate_actions:
+        corporate_action_warnings = session.apply_corporate_actions(all_corporate_actions, as_of_time)
+        if corporate_action_warnings and state is not None:
+            state.corporate_action_warnings.append((as_of_time, tuple(corporate_action_warnings)))
+
+
 def _last_exit_time_by_security(
     security_ids: Sequence[str], as_of_time: datetime, repository: TradeJournalRepositoryLike, provenance: TradeProvenance,
 ) -> dict[str, datetime]:
@@ -827,17 +868,7 @@ def run_cycle(
     any new fill lands (so a new fill is never double-adjusted or
     wrongly paid), and a same-cycle closing SELL still receives the
     dividend it earned before its fill removes the position."""
-    all_corporate_actions: list[CorporateAction] = []
-    for security_id in _tracked_security_ids(security_ids, session):
-        all_corporate_actions.extend(
-            view.get_corporate_actions(
-                security_id, as_of_time - timedelta(days=_CORPORATE_ACTION_LOOKBACK_DAYS), as_of_time,
-            )
-        )
-    if all_corporate_actions:
-        corporate_action_warnings = session.apply_corporate_actions(all_corporate_actions, as_of_time)
-        if corporate_action_warnings and state is not None:
-            state.corporate_action_warnings.append((as_of_time, tuple(corporate_action_warnings)))
+    apply_due_corporate_actions(security_ids, session, view, as_of_time, state)
 
     # ADR-0158: captured AFTER corporate actions above, so a split/
     # dividend effective this same as_of_time is already reflected --

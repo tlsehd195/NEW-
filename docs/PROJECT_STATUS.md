@@ -143,6 +143,20 @@ Tiingo/Stooq 워크플로 재실행 결과를 확인하던 중, 사용자가 4�
 
 전체 스위트 3222 passed(3221에서 증가). ADR-0159 신설.
 
+### Completed (Session 38 계속 — "내가 직접 해야하는 작업 제외하고 전부 진행" 지시로 남은 5개 항목 병행 착수: #35 BUY_AND_HOLD 기업활동 배선(ADR-0163), 워크플로 contents:write 권한 축소(ADR-0162), Tiingo 예산 추적+Stooq 사망선고(ADR-0160, 백그라운드 에이전트, 병합 완료), TrendVolatility 피처 배선(백그라운드 에이전트, rate limit로 미완료))
+
+사용자가 "내가 직접 해야하는 작업 제외하고 전부 진행" 지시 → 직전 세션이 정리한 미완료 5개 항목(#35 BUY_AND_HOLD 기업활동/#3 워크플로 권한 축소/#1 Tiingo 예산/#2 Stooq 문서화/#4 TrendVolatility 피처)을 병행 착수. #1+#2와 #4는 백그라운드 에이전트에 위임, #35와 #3은 직접 진행.
+
+**#35 (BUY_AND_HOLD 기업활동 배선, ADR-0163)**: ADR-0155가 스스로 공개한 범위 갭 — `run_multi_strategy_paper_trading_cycle.py`의 BUY_AND_HOLD 경로는 `run_cycle`을 전혀 안 써서 기업활동 처리가 배선돼 있지 않았음. `orchestration/paper_runner.py`의 기존 기업활동 fetch+apply 블록을 새 공유 함수 `apply_due_corporate_actions(security_ids, session, view, as_of_time, state=None)`로 추출(`run_cycle`은 이제 이 헬퍼를 호출하도록 리팩터, 동작 변화 없음), `_run_buy_and_hold_strategy`가 매 체크포인트 `session.advance()` 호출 전에 이 헬퍼를 호출하도록 배선(ADR-0158과 동일한 "액션 먼저, 체결 나중" 순서). 신규 테스트 1개(체크포인트 이후 발생한 2:1 분할이 `final_positions`에 두 배로 반영되는지) — 수정 전 코드로 일시 되돌려 실제로 48.0(오답)로 실패하는 것까지 확인 후 복원.
+
+**#3 (워크플로 `contents:write` 권한 축소, ADR-0162)**: `.github/workflows/paper_trading_cycle.yml`이 워크플로 레벨에서 `contents: write`를 부여하고 있었는데, 실제로 이 권한이 필요한 건 백업 커밋 스텝 하나뿐 — GitHub Actions의 `permissions:`는 job 단위로만 좁혀지므로, 단일 job이던 `run-cycle`을 `run-cycle`(권한 축소, `contents: read`) + `commit-backup`(`needs: run-cycle`, `if: always()`, 자신만 `contents: write` 보유, `run-cycle`이 업로드한 `paper-trading-store` 아티팩트를 `actions/download-artifact`로 내려받아 백업 커밋)로 분리. 기존 정적 검증 테스트(`test_workflow_grants_contents_write_for_the_backup_commit_step`)를 새 2-job 구조에 맞게 재작성(`test_run_cycle_job_no_longer_has_contents_write`/`test_commit_backup_job_has_contents_write_and_the_real_push`) — 수정 전 워크플로로 일시 되돌려 두 테스트 모두 실제로 실패(`KeyError: 'commit-backup'`)하는 것까지 확인 후 복원.
+
+**#1+#2 (Tiingo 예산 추적 + Stooq 사망선고, ADR-0160, 백그라운드 에이전트)**: 별도 worktree(`claude/tiingo-budget-stooq-dead-end`)에서 진행, PR #49로 병합 완료. `TiingoRequestBudget`(1시간 롤링 윈도우, 48회에서 소진 처리, 2회 안전마진) 신설, `TiingoHttpTransport`가 소유해 두 실제 호출 경로(FallbackDataProvider/IngestionRunner 경로와 `ingest_real_market_data.py`의 직접 `fetch_corporate_actions` 루프)가 이미 인스턴스 하나를 공유하고 있음을 코드로 직접 확인 후 그 공유 지점에 예산 체크를 배선(스크립트 쪽 변경 불필요) — 소진 시 `PermanentProviderError`(재시도 낭비 방지)로 실패. Stooq는 JS 봇 검증 페이지가 근본적으로 헤더/UA로 못 고치는 확정된 사망선고임을 ADR로 문서화, headless 브라우저 자동화는 명시적으로 기각. 신규 테스트 28개, 전체 스위트 3249 passed(3222에서 증가).
+
+**#4 (TrendVolatility 피처 배선, 미완료)**: 별도 worktree(`claude/trend-volatility-features`)에서 진행 중 계정 세션 사용량 한도(rate limit, 7:40am UTC 리셋)에 걸려 병합 전에 중단됨 — `_evaluate`로의 리팩터(bool 대신 `FilterEvaluation(passed, features)` 반환)까지는 로컬에 커밋됐지만 origin/main과의 병합 충돌 해소, 전체 스위트 재확인, PR/병합이 남아있음. 다음 세션(또는 한도 리셋 후)에 이어서 마무리 필요 — 방치하지 않고 여기 명시적으로 기록.
+
+이 세션에서 백그라운드 에이전트 2개를 동시에 돌리다 계정 사용량 한도에 걸려(#4 에이전트, 그리고 #1+#2 에이전트도 완료 후 한 번 더 rate limit 에러) 남은 작업 속도가 느려짐 — 사용자에게 원인(병렬 에이전트 각각이 전체 컨텍스트+3200개 테스트 스위트+ADR 작성 비용을 독립적으로 지불, 이 저장소 자체의 "항목마다 전체 스위트+ADR" 컨벤션이 원래 비용이 높음)과 대응(한도 리셋 전까지 신규 에이전트 생성 중단, 남은 작업은 순차 진행)을 정직하게 설명.
+
 ### Completed (Session 38 계속 — 사용자 본인 액션이 필요한 잔여 항목 재정리 및 확정, 코드 변경 없음)
 
 사용자가 "내가 직접 실행해야하는 작업들은 기록해두고 넘겨"라고 지시 → 09-17 07:09에 업로드된 12개 리포트를 전부 재확인한 결과, 이 세션이 코드로 처리할 수 없고 사용자 본인의 계정/키/로컬 실행이 필요한 항목을 아래에 전부 확정 기록:
