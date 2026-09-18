@@ -1,0 +1,31 @@
+# One-shot reconnaissance for the "Kenneth French Data Library"
+# backlog item (docs/PROJECT_STATUS.md 2026-09-17 entry #7). This
+# session's own egress blocks mba.tuck.dartmouth.edu outright. This
+# workflow exists purely to observe, for real, whether a GitHub
+# Actions runner's own (separate, likely broader) egress can reach the
+# data library's index page and one canonical Fama-French factor CSV
+# zip -- nothing is parsed or ingested yet, see
+# scripts/recon_kenneth_french_library.py's own module docstring.
+#
+# workflow_dispatch-only, one-shot -- delete or repurpose once the
+# real answer is known and the actual ingestion approach is decided.
+name: Recon Kenneth French Data Library
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run reconnaissance (no parsing, just real status/content-type observation)
+        run: python3 scripts/recon_kenneth_french_library.py
