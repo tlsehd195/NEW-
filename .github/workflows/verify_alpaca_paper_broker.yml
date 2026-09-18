@@ -1,0 +1,51 @@
+# One-time/on-demand verification that a real Alpaca **paper** trading
+# account works end to end: connects, submits a real market buy order,
+# waits for it to fill, then submits a real market sell to close the
+# position back out (account owner's own request, 2026-09-18 -- "매수/
+# 매도까지 검증"). See `scripts/verify_alpaca_paper_broker.py`'s own
+# module docstring for the full safety discussion (paper-domain-only
+# guard, no real money at risk).
+#
+# `workflow_dispatch`-only, like `repair_ingestion_time_inversions.yml` --
+# this places real (paper) orders every time it runs, so it must never
+# be on a recurring schedule; trigger it deliberately, ideally during
+# real US market hours (the script itself checks the market clock and
+# exits cleanly, without submitting anything, if the market is closed).
+name: Verify Alpaca Paper Broker
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Symbol to buy then sell back (default: AAPL)"
+        type: string
+        default: "AAPL"
+      qty:
+        description: "Shares to buy then sell back (default: 1)"
+        type: string
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project with broker-verification extra
+        run: pip install -e '.[broker-verification]'
+
+      - name: Verify Alpaca paper broker (real buy -> fill -> sell -> fill)
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          ALPACA_BASE_URL: ${{ secrets.ALPACA_BASE_URL }}
+        run: |
+          python3 scripts/verify_alpaca_paper_broker.py \
+            --symbol "${{ inputs.symbol }}" --qty "${{ inputs.qty }}"

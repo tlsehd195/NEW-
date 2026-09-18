@@ -50,6 +50,15 @@ backtest-integrity-stats = [
 market-calendars = [
     "exchange_calendars>=4.13.2",
 ]
+# scripts/verify_alpaca_paper_broker.py only -- a one-off,
+# workflow_dispatch/manual verification tool (account owner's own
+# request, 2026-09-18), not a component of the live trading pipeline
+# itself, so the official SDK is used directly rather than this
+# project's usual config/auth/transport-split, stdlib-urllib-only
+# provider stack (src/data_infra/providers/).
+broker-verification = [
+    "alpaca-py>=0.44.0",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
