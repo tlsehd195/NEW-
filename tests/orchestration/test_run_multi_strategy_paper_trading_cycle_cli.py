@@ -16,7 +16,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from backtest_helpers import make_bars, make_security, trading_days
+from backtest_helpers import make_bars, make_security, make_split, trading_days
 
 from data_infra.universe import SymbolMetadata, UniverseDefinition
 
@@ -169,6 +169,41 @@ class TestMultiStrategyIsolation:
 
         order_repo = DuckDBPaperOrderRepository(StorageEngine(StorageConfig(root_dir=store_root / "buy_and_hold")))
         assert len(order_repo.list_all()) == 1  # exactly one BUY, never a second
+
+    def test_buy_and_hold_applies_a_split_landing_after_the_initial_buy(self, tmp_path) -> None:
+        """ADR-0163: BUY_AND_HOLD never applied corporate actions at all
+        (a disclosed ADR-0155 scope gap) -- a 2:1 split effective well
+        after the initial buy must now double the held quantity, the
+        same real adjustment `_run_run_cycle_strategy` already gets via
+        `run_cycle`. Without the fix, `final_positions["AAA"]` stays at
+        the pre-split share count forever."""
+        db_path = tmp_path / "market_data"
+        store_root = tmp_path / "store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        engine = StorageEngine(StorageConfig(root_dir=db_path))
+        repository = DuckDBDataRepository(engine)
+        repository.add_corporate_action(make_split("AAA", date(2024, 6, 20)))
+        engine.close()
+
+        module = _load_module(_SCRIPT_PATH)
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store-root", str(store_root),
+            "--strategies", "buy_and_hold",
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        report = json.loads(out_path.read_text())["strategies"]["buy_and_hold"]
+
+        order_repo = DuckDBPaperOrderRepository(StorageEngine(StorageConfig(root_dir=store_root / "buy_and_hold")))
+        bought_quantity = order_repo.list_all()[0].validated_order.quantity
+        assert report["final_positions"]["AAA"] == bought_quantity * 2
 
     def test_buy_and_hold_defaults_to_paper_capital_usd_not_the_generic_default(self, tmp_path) -> None:
         # ADR-0115: without an explicit --initial-capital, buy_and_hold

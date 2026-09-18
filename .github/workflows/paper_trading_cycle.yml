@@ -53,11 +53,18 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  # write (not read): "Export and commit Paper Trading store backup"
-  # below pushes a JSON snapshot directly to this branch -- see that
-  # step's own comment for why (external review: the paper-trading-store
-  # artifact's 90-day retention is this ledger's ONLY persistence today).
-  contents: write
+  # ADR-0162 (external review, "잔여 작업" item 3): narrowed from a
+  # single workflow-level `contents: write` -- every step of "run-cycle"
+  # below (installing deps, calling the Tiingo/Stooq ingestion API,
+  # running the paper trading cycle itself) never writes to this repo at
+  # all; only "Export and commit Paper Trading store backup" does, and
+  # that step is now its own job ("commit-backup") with its OWN
+  # `permissions:` override granting `contents: write` -- see that job.
+  # A workflow-level `permissions:` block only sets the DEFAULT every job
+  # inherits unless it overrides it (GitHub Actions docs) -- narrowing
+  # requires at least two jobs, which is why this workflow didn't have a
+  # job split before now.
+  contents: read
   actions: read
 
 env:
@@ -193,36 +200,6 @@ jobs:
           path: ${{ env.PAPER_STORE_DIR }}
           retention-days: 90
 
-      # External review ("Paper Trading 100-point evaluation" report):
-      # the paper-trading-store artifact above is this ledger's ONLY
-      # persistence -- if scheduled runs fail for 90+ consecutive days,
-      # the artifact expires and the entire order/fill/trade history is
-      # gone with nothing to restore from. This step exports every table
-      # in that DuckDB catalog to plain JSON (scripts/export_paper_
-      # store_backup.py) and commits it directly to this branch, a
-      # durable, git-native backup with no expiry. Each run OVERWRITES
-      # the previous snapshot (never accumulates one folder per day) --
-      # the committed files are always a complete, standalone restore
-      # point, and a no-op run (nothing changed since last time) commits
-      # nothing. `if: always()`: even a failed cycle run leaves whatever
-      # state existed before it worth backing up.
-      - name: Export and commit Paper Trading store backup
-        if: always()
-        run: |
-          set -euo pipefail
-          python3 scripts/export_paper_store_backup.py \
-            --paper-store "$PAPER_STORE_DIR" \
-            --out-dir backups/paper_trading_store
-          if [ -n "$(git status --porcelain backups/paper_trading_store)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add backups/paper_trading_store
-            git commit -m "Update Paper Trading store backup snapshot [skip ci]"
-            git push
-          else
-            echo "No change to the backup snapshot since last run -- nothing to commit"
-          fi
-
       - name: Upload this run's report
         if: always()
         uses: actions/upload-artifact@v4
@@ -257,3 +234,65 @@ jobs:
           python3 scripts/send_discord_notification.py \
             --report paper_trading_cycle_report.json \
             --report-type paper_trading_cycle
+
+  # ADR-0162: split out of "run-cycle" above so `contents: write` (the
+  # ONE permission this whole workflow ever needs) is scoped to only
+  # this job's own steps, never to ingestion/paper-trading-cycle
+  # execution above. Runs from the "paper-trading-store" artifact
+  # "run-cycle" already uploads (`if: always()` there, so it exists even
+  # when a later step in that job failed) rather than re-deriving the
+  # store some other way -- jobs never share a filesystem, only
+  # artifacts, so this download IS this job's only path to the updated
+  # DuckDB store.
+  commit-backup:
+    needs: run-cycle
+    # External review ("Paper Trading 100-point evaluation" report): the
+    # paper-trading-store artifact is this ledger's ONLY persistence --
+    # if scheduled runs fail for 90+ consecutive days, the artifact
+    # expires and the entire order/fill/trade history is gone with
+    # nothing to restore from. `if: always()`: even a failed "run-cycle"
+    # leaves whatever state existed before it worth backing up -- this
+    # job must still run and back up whatever "run-cycle" managed to
+    # upload, exactly the same "always back up, never skip on failure"
+    # intent the single-job version's own `if: always()` already had.
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # To download the artifact "run-cycle" uploaded this same run.
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Download updated paper-trading store
+        uses: actions/download-artifact@v4
+        with:
+          name: paper-trading-store
+          path: ${{ env.PAPER_STORE_DIR }}
+
+      # Each run OVERWRITES the previous snapshot (never accumulates one
+      # folder per day) -- the committed files are always a complete,
+      # standalone restore point, and a no-op run (nothing changed since
+      # last time) commits nothing.
+      - name: Export and commit Paper Trading store backup
+        run: |
+          set -euo pipefail
+          python3 scripts/export_paper_store_backup.py \
+            --paper-store "$PAPER_STORE_DIR" \
+            --out-dir backups/paper_trading_store
+          if [ -n "$(git status --porcelain backups/paper_trading_store)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add backups/paper_trading_store
+            git commit -m "Update Paper Trading store backup snapshot [skip ci]"
+            git push
+          else
+            echo "No change to the backup snapshot since last run -- nothing to commit"
+          fi

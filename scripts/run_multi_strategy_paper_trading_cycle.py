@@ -76,7 +76,8 @@ from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
 from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 
 from orchestration.paper_runner import (  # noqa: E402
-    PaperRunnerState, compute_portfolio_snapshot, equity_history_from_risk_repository, run_cycle,
+    PaperRunnerState, apply_due_corporate_actions, compute_portfolio_snapshot,
+    equity_history_from_risk_repository, run_cycle,
 )
 from orchestration.paper_strategies import (  # noqa: E402
     STRATEGIES,
@@ -214,11 +215,10 @@ def _run_run_cycle_strategy(
         # ADR-0155: same surfacing treatment as mark_to_market_missing
         # above -- see run_paper_trading_cycle.py's identical field for
         # what populates it (orchestration.paper_runner.PaperRunnerState.
-        # corporate_action_warnings). Only RUN_CYCLE-kind strategies call
-        # run_cycle at all -- a BUY_AND_HOLD strategy (see
-        # _run_buy_and_hold_strategy) never applies corporate actions
-        # through this path (known scope limitation, not covered by
-        # this change).
+        # corporate_action_warnings). ADR-0163: _run_buy_and_hold_strategy
+        # below now applies and surfaces corporate actions too, via the
+        # same shared orchestration.paper_runner.apply_due_corporate_actions
+        # helper -- this is no longer a RUN_CYCLE-only field.
         "corporate_action_warnings": [
             {"as_of_time": as_of.isoformat(), "warnings": list(warnings)}
             for as_of, warnings in state.corporate_action_warnings
@@ -243,7 +243,19 @@ def _run_buy_and_hold_strategy(
     cutoff from `clock.current_time`, not from any argument passed to
     it (`backtest.asof.AsOfDataView.get_bars`), so skipping this would
     silently value every checkpoint using whatever the clock happened
-    to be left at, not that checkpoint's own real as-of-time."""
+    to be left at, not that checkpoint's own real as-of-time.
+
+    **Corporate actions (ADR-0163): applied every checkpoint, via the
+    same `orchestration.paper_runner.apply_due_corporate_actions` helper
+    `run_cycle` uses (ADR-0155/ADR-0158), and in the same BEFORE-the-fill
+    order.** Closes a disclosed ADR-0155 scope gap: a Buy & Hold position
+    held for months would otherwise silently drift un-split-adjusted/
+    un-paid forever, since this strategy submits no orders past the
+    first checkpoint and so never went through `run_cycle` at all. The
+    `session` passed in already has a real `corporate_action_repository`
+    wired (identical construction to the RUN_CYCLE path, see `main`
+    below) -- this was already feasible before this change, just never
+    called."""
     order_repository = DuckDBPaperOrderRepository(store_engine)
     request_repository = DuckDBBrokerRequestRepository(store_engine)
     response_repository = DuckDBBrokerResponseRepository(store_engine)
@@ -259,9 +271,15 @@ def _run_buy_and_hold_strategy(
         )
         skipped_symbols = result.skipped_symbols
 
+    state = PaperRunnerState()
     value_history = []
     for i, checkpoint in enumerate(checkpoints):
         clock.index = i
+        # ADR-0158 ordering: corporate actions effective as of this
+        # checkpoint are applied BEFORE the fill-retry advance() below,
+        # exactly like run_cycle -- a same-checkpoint split/dividend must
+        # never land after a fill it would then double-adjust or miss.
+        apply_due_corporate_actions(security_ids, session, view, checkpoint, state)
         # ADR-0154: `PaperBrokerAdapter.submit_order` never fills
         # synchronously any more -- the initial buy (and any order
         # still open from a resumed run) only ever gets a fill attempt
@@ -281,6 +299,12 @@ def _run_buy_and_hold_strategy(
         "skipped_symbols": list(skipped_symbols),
         "value_history_length": len(value_history),
         "final_portfolio_value": value_history[-1] if value_history else None,
+        # ADR-0163: same surfacing treatment as _run_run_cycle_strategy's
+        # own corporate_action_warnings field above.
+        "corporate_action_warnings": [
+            {"as_of_time": as_of.isoformat(), "warnings": list(warnings)}
+            for as_of, warnings in state.corporate_action_warnings
+        ],
     }
 
 
