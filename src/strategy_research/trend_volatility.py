@@ -38,6 +38,19 @@ VOL_THRESHOLD_RANGE = (0.25, 0.35, 0.45)
 
 
 @dataclass(frozen=True)
+class FilterEvaluation:
+    """Result of `TrendVolatilityStrategy._evaluate`: the boolean the
+    filter always produces, plus whatever of `moving_average`,
+    `current_price`, `realized_vol` was actually computed before that
+    result was reached (ADR-0161) -- never all three when an earlier
+    check already returned, so a rejection for a bad trend never claims
+    a `realized_vol` that was never computed."""
+
+    passed: bool
+    features: Optional[dict] = None
+
+
+@dataclass(frozen=True)
 class TrendVolatilityParameters:
     trend_lookback_months: int = 9
     vol_lookback_days: int = 90
@@ -71,7 +84,7 @@ class TrendVolatilityStrategy:
         self._params = params
         self._next_rebalance_time: Optional[datetime] = None
 
-    def _passes_filter(self, security_id: str, as_of_time: datetime, data: AsOfDataView) -> bool:
+    def _evaluate(self, security_id: str, as_of_time: datetime, data: AsOfDataView) -> FilterEvaluation:
         trend_days = self._params.trend_lookback_months * TRADING_DAYS_PER_MONTH
         # The *1.6 padding only guarantees enough calendar days are
         # fetched to contain `trend_days` trading days -- without
@@ -86,12 +99,15 @@ class TrendVolatilityStrategy:
             trend_days,
         )
         if len(trend_bars) < 2:
-            return False
+            return FilterEvaluation(False)
         closes = [b.adjusted_close or b.close for b in trend_bars]
         moving_average = sum(closes) / len(closes)
         current_price = closes[-1]
-        if moving_average <= 0 or current_price <= moving_average:
-            return False
+        if moving_average <= 0:
+            return FilterEvaluation(False)
+        features = {"moving_average": moving_average, "current_price": current_price}
+        if current_price <= moving_average:
+            return FilterEvaluation(False, features)
 
         vol_bars = trim_to_lookback(
             data.get_bars(
@@ -100,11 +116,18 @@ class TrendVolatilityStrategy:
             self._params.vol_lookback_days,
         )
         if len(vol_bars) < 2:
-            return False
+            return FilterEvaluation(False, features)
         vol_closes = [b.adjusted_close or b.close for b in vol_bars]
         returns = compute_returns(vol_closes)
         realized_vol = annualized_volatility(returns)
-        return realized_vol <= self._params.vol_threshold
+        features = {**features, "realized_vol": realized_vol}
+        return FilterEvaluation(realized_vol <= self._params.vol_threshold, features)
+
+    def _passes_filter(self, security_id: str, as_of_time: datetime, data: AsOfDataView) -> bool:
+        # Kept as a plain bool predicate -- `signal_ic.bucket_return_analysis`
+        # and its tests call this directly as a `FilterFn`, outside this
+        # class, and use the return value as a truth value (ADR-0161).
+        return self._evaluate(security_id, as_of_time, data).passed
 
     def generate_orders(
         self, as_of_time: datetime, data: AsOfDataView, portfolio: PortfolioView
@@ -113,13 +136,20 @@ class TrendVolatilityStrategy:
             return []
         self._next_rebalance_time = add_months(as_of_time, self._params.rebalance_months)
 
-        qualifying = [sid for sid in self._security_ids if self._passes_filter(sid, as_of_time, data)]
+        evaluations = {sid: self._evaluate(sid, as_of_time, data) for sid in self._security_ids}
+        qualifying = [sid for sid in self._security_ids if evaluations[sid].passed]
         target = set(qualifying)
 
         intents: list[OrderIntent] = []
         for security_id, position in portfolio.positions.items():
             if security_id not in target and position.quantity > 0:
-                intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET))
+                # A held position not in `self._security_ids` was never
+                # evaluated this call -- no real, actually-computed-this-call
+                # value exists for it, so `features` stays `None` rather than
+                # reusing a stale value from a prior cycle (ADR-0161).
+                evaluation = evaluations.get(security_id)
+                features = evaluation.features if evaluation is not None else None
+                intents.append(OrderIntent(security_id, OrderSide.SELL, position.quantity, OrderType.MARKET, features=features))
 
         to_buy = [sid for sid in target if portfolio.quantity_of(sid) == 0]
         if to_buy:
@@ -133,5 +163,9 @@ class TrendVolatilityStrategy:
                     continue
                 quantity = float(int(per_symbol_cash / price))
                 if quantity > 0:
-                    intents.append(OrderIntent(security_id, OrderSide.BUY, quantity, OrderType.MARKET))
+                    intents.append(
+                        OrderIntent(
+                            security_id, OrderSide.BUY, quantity, OrderType.MARKET, features=evaluations[security_id].features
+                        )
+                    )
         return intents
