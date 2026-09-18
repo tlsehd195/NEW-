@@ -168,6 +168,16 @@ jobs:
       - name: Ingest latest market data
         env:
           MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
+          # ADR-0164: Twelve Data / Alpha Vantage now extend the
+          # Tiingo->Stooq fallback chain into Tiingo->Twelve
+          # Data->Alpha Vantage (Stooq removed, confirmed permanent
+          # dead end, ADR-0160). Absent secrets resolve to an empty
+          # string, which TwelveDataDataProvider/AlphaVantageDataProvider
+          # already reject with a clear PermanentProviderError
+          # ("missing credentials") rather than a confusing auth
+          # failure from the provider's own API.
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
         run: |
           python3 scripts/ingest_real_market_data.py \
             --universe "$UNIVERSE" \

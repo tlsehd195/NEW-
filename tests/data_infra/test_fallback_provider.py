@@ -201,3 +201,67 @@ class TestMetadataDisclosesComposition:
         meta = fallback.metadata()
         assert meta["primary_provider_id"] == "tiingo"
         assert meta["secondary_provider_id"] == "stooq"
+
+
+class TestThreeTierChain:
+    """ADR-0164: nesting two FallbackDataProvider instances to reach a
+    3rd tier was tried first and found to corrupt _answered_by
+    provenance (overwritten with the constant "fallback") and then
+    crash normalize() entirely (PermanentProviderError: no recognized
+    _answered_by, because the outer layer strips the key before
+    delegating to the nested instance) -- reproduced directly against
+    MockDataProvider before this was fixed by widening
+    FallbackDataProvider itself to take an ordered N-provider chain."""
+
+    def test_falls_through_to_the_third_tier_when_the_first_two_fail(self, monkeypatch) -> None:
+        tiingo, stooq = _providers(
+            monkeypatch, tiingo_raise=PermanentProviderError("tiingo down"), stooq_raise=PermanentProviderError("stooq down"),
+        )
+        third = StooqDataProvider(
+            StooqConfig(provider_id="third_tier"),
+            _StooqStub(raw_text=_STOOQ_CSV),
+        )
+        fallback = FallbackDataProvider(tiingo, stooq, third)
+        raw = fallback.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        assert all(r["_answered_by"] == "third_tier" for r in raw)  # the real fix under test: grouping/routing by the true 3rd-tier id
+        bars = fallback.normalize("AAPL", raw)
+        # StooqDataProvider.normalize() hardcodes provenance.source="stooq"
+        # regardless of provider_id (a detail of reusing it as this
+        # test's 3rd-tier stand-in, unrelated to the fix under test) --
+        # the point being verified is that it is "stooq", never the
+        # nesting bug's "fallback" or an earlier tier's name.
+        assert bars[0].provenance.source == "stooq"
+
+    def test_all_three_tiers_failing_names_all_three_in_the_error(self, monkeypatch) -> None:
+        tiingo, stooq = _providers(
+            monkeypatch, tiingo_raise=PermanentProviderError("tiingo down"), stooq_raise=PermanentProviderError("stooq down"),
+        )
+        third = StooqDataProvider(
+            StooqConfig(provider_id="third_tier"),
+            _StooqStub(raise_error=PermanentProviderError("third down")),
+        )
+        fallback = FallbackDataProvider(tiingo, stooq, third)
+        with pytest.raises(PermanentProviderError) as exc_info:
+            fallback.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        assert "tiingo" in str(exc_info.value)
+        assert "stooq" in str(exc_info.value)
+        assert "third_tier" in str(exc_info.value)
+
+    def test_metadata_names_all_three_provider_ids_in_order(self, monkeypatch) -> None:
+        tiingo, stooq = _providers(monkeypatch)
+        third = StooqDataProvider(StooqConfig(provider_id="third_tier"), _StooqStub(raw_text=_STOOQ_CSV))
+        fallback = FallbackDataProvider(tiingo, stooq, third)
+        meta = fallback.metadata()
+        assert meta["provider_ids"] == ("tiingo", "stooq", "third_tier")
+
+    def test_ingestion_runner_end_to_end_through_all_three_tiers(self, monkeypatch) -> None:
+        tiingo, stooq = _providers(
+            monkeypatch, tiingo_raise=PermanentProviderError("tiingo down"), stooq_raise=PermanentProviderError("stooq down"),
+        )
+        third = StooqDataProvider(StooqConfig(provider_id="third_tier"), _StooqStub(raw_text=_STOOQ_CSV))
+        fallback = FallbackDataProvider(tiingo, stooq, third)
+        repo = InMemoryDataRepository()
+        runner = IngestionRunner(fallback, repo)
+        result = runner.run(["AAPL"], utc(2024, 1, 1), utc(2024, 1, 3))
+        assert result.status.value == "SUCCESS"
+        assert repo.all_bars()[0].provenance.source == "stooq"  # see comment above -- StooqDataProvider's own hardcoded value
