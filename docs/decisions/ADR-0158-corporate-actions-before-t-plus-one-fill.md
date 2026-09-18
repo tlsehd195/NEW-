@@ -78,10 +78,19 @@ fill land at the same `as_of_time` — previously it would have used the
 stale pre-split average_cost in that overlap case.
 
 No change to `PaperTradingSession.apply_corporate_actions`'s own
-persisted-ledger idempotency (ADR-0155) or to `PaperTradingSession.
-restore()`'s chronological replay merge — both are timing-agnostic
-within a single call to `run_cycle`; only the ORDER of two calls
-within one cycle changed.
+persisted-ledger idempotency (ADR-0155). No change to
+`PaperTradingSession.restore()`'s chronological replay merge either —
+**correction (2026-09-18, ADR-0159, a fifth independent verification
+report): the claim that follows was WRONG and is retracted.** This ADR
+originally stated here that `restore()`'s merge was "timing-agnostic,"
+i.e. unaffected by this reorder. It is not: `restore()` sorted fills
+and corporate actions by timestamp alone, and on an EXACT tie (which
+this ADR's own live-path fix produces whenever a fill and an action
+share the identical `as_of_time` — precisely the overlap case this ADR
+exists to fix) Python's stable sort replayed the fill first, the
+OPPOSITE of this ADR's new live order. See ADR-0159 for the fix (an
+explicit tie-break) — retracted here rather than silently left wrong
+for a future session to inherit.
 
 ## Consequences
 
@@ -97,9 +106,12 @@ within one cycle changed.
 
 ### Negative / Trade-offs
 
-- None identified — this is a pure reorder of two independent calls
-  within one function, with no new state, no new persisted schema, and
-  no change to either call's own internal correctness contract.
+- **Retracted (ADR-0159): this section originally said "None
+  identified."** That was wrong — see the Decision section's
+  correction above. The restart-replay path (`PaperTradingSession.
+  restore()`) needed its own fix, separate from this ADR's live-path
+  reorder, because the two paths determine same-timestamp order
+  differently (a live `run_cycle` call vs. a stored-timestamp sort).
 
 ## Tests
 

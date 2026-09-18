@@ -360,6 +360,58 @@ class TestCorporateActionReplayOrdering:
         assert after.cash == config.initial_cash  # untouched
         engine2.close()
 
+    def test_a_fill_and_an_action_sharing_the_exact_same_timestamp_replay_in_live_order(self, tmp_path) -> None:
+        """ADR-0159 (external review, 5th verification report): sorting
+        replay items by timestamp ALONE left an exact tie --
+        `fill.execution_time == action.applied_at`, precisely the
+        same-cycle overlap ADR-0158's live-path fix produces whenever
+        `orchestration.paper_runner.run_cycle` applies a corporate
+        action and that same cycle's own T+1 fill against the identical
+        `as_of_time` -- to `sorted()`'s own stability, which replayed
+        the fill first (opposite of ADR-0158's live order: action, then
+        fill). There is no PRIOR holding for the split to legitimately
+        act on here (this is the position's very first fill), so
+        replaying the fill first would double it too, exactly like the
+        live-path bug ADR-0158 fixed."""
+        engine = new_engine(tmp_path)
+        order_repo = DuckDBPaperOrderRepository(engine)
+        fill_repo = DuckDBPaperFillRepository(engine)
+        status_repo = DuckDBOrderStatusEventRepository(engine)
+        corp_repo = DuckDBPaperCorporateActionRepository(engine)
+
+        config = make_paper_config(max_participation=1.0)
+        tie_time = utc(2024, 1, 3)
+        mds = InMemoryPaperMarketDataSource([make_bar(available_time=tie_time, volume=1_000_000.0)])
+        session = PaperTradingSession(
+            config, mds, order_repository=order_repo, fill_repository=fill_repo,
+            status_repository=status_repo, corporate_action_repository=corp_repo,
+        )
+
+        # Live order (ADR-0158): the action is applied, then the fill
+        # lands, both at the exact same instant.
+        split = make_corporate_action(action_type=CorporateActionType.SPLIT, available_time=tie_time)
+        session.apply_corporate_actions([split], tie_time)
+        buy = make_validated_order(client_order_id="CID-BUY", quantity=10.0, as_of_time=tie_time)
+        session.submit(buy, requested_at=tie_time)
+        session.advance(tie_time)
+        assert session.account_summary(as_of=tie_time).positions["AAA"].quantity == 10.0
+        engine.close()
+
+        engine2 = new_engine(tmp_path)
+        order_repo2 = DuckDBPaperOrderRepository(engine2)
+        fill_repo2 = DuckDBPaperFillRepository(engine2)
+        status_repo2 = DuckDBOrderStatusEventRepository(engine2)
+        corp_repo2 = DuckDBPaperCorporateActionRepository(engine2)
+        mds2 = InMemoryPaperMarketDataSource([make_bar(available_time=tie_time, volume=1_000_000.0)])
+        restored = PaperTradingSession.restore(
+            config, mds2, order_repository=order_repo2, fill_repository=fill_repo2,
+            status_repository=status_repo2, corporate_action_repository=corp_repo2, as_of=tie_time,
+        )
+        # The bug this guards against: replaying the fill before the
+        # tied action would give 10 * 2 == 20, not 10.
+        assert restored.account_summary(as_of=tie_time).positions["AAA"].quantity == 10.0
+        engine2.close()
+
     def test_the_same_action_is_never_applied_twice_across_two_separate_processes(self, tmp_path) -> None:
         """The core bug this task exists to prevent: two different daily
         cycle processes (each its own fresh `PaperBrokerAdapter`/

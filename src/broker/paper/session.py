@@ -215,7 +215,23 @@ class PaperTradingSession:
         -- one call per record, at its own real historical timestamp,
         never batched with a collapsed restore-time timestamp (so a
         replayed dividend's `CashFlowRecord.as_of_time` stays the real
-        historical moment, not this restore call's own `as_of`)."""
+        historical moment, not this restore call's own `as_of`).
+
+        **Exact-timestamp tie-break (ADR-0159, external review): an
+        action always replays before a fill sharing its exact
+        timestamp.** `orchestration.paper_runner.run_cycle` (ADR-0158)
+        applies a cycle's corporate actions and that SAME cycle's T+1
+        fill against the identical `as_of_time` -- the real overlap
+        case ADR-0158 fixed live produces exactly this tie
+        (`fill.execution_time == action.applied_at`), not just a
+        theoretical one. Sorting by timestamp alone and relying on
+        Python's `sorted` stability would replay the fill first (fills
+        are built into this list before actions), the OPPOSITE of
+        ADR-0158's live order -- silently reintroducing the same
+        double-adjustment/wrong-dividend/missed-dividend corruption
+        ADR-0158 closed, but only on the restart-replay path. The
+        explicit `(timestamp, 0 if action else 1)` sort key below makes
+        replay order match live order exactly, including on a tie."""
         session = cls(
             config, market_data_source, order_repository=order_repository,
             fill_repository=fill_repository, status_repository=status_repository,
@@ -226,10 +242,21 @@ class PaperTradingSession:
 
         fill_records = fill_repository.list_all()
         action_records = corporate_action_repository.list_all()
+        # ADR-0159 (external review, 5th verification report): sorting
+        # by timestamp alone left an exact tie (fill.execution_time ==
+        # action.applied_at -- the precise same-cycle overlap ADR-0158
+        # fixed on the LIVE path) to Python's `sorted`'s own stability,
+        # which replayed the fill first (it appears first in this list)
+        # -- the opposite of ADR-0158's live order (action, then fill).
+        # A real overlap cycle produces exactly this tie, since run_cycle
+        # passes the SAME as_of_time to both `apply_corporate_actions`
+        # and `session.advance`'s fill. The explicit tie-break below
+        # matches the live order exactly: on equal timestamps, an action
+        # always replays before a fill.
         replay_items = sorted(
             [("fill", r.fill.execution_time, r) for r in fill_records]
             + [("action", r.applied_at, r) for r in action_records],
-            key=lambda item: item[1],
+            key=lambda item: (item[1], 0 if item[0] == "action" else 1),
         )
         for kind, _, record in replay_items:
             if kind == "fill":
