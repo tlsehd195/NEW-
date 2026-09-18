@@ -8,7 +8,7 @@ cd "${CLAUDE_PROJECT_DIR:-.}"
 # by a previous one and silently skip those gates.
 HOOK_STATE_DIR="$(pwd)/.claude/hooks/state"
 mkdir -p "$HOOK_STATE_DIR"
-rm -f "$HOOK_STATE_DIR/task-observer-active" "$HOOK_STATE_DIR/validation-guard-active"
+rm -f "$HOOK_STATE_DIR/task-observer-active" "$HOOK_STATE_DIR/validation-guard-active" "$HOOK_STATE_DIR/backtest-integrity-active"
 
 STATUS_EXCERPT=""
 if [ -f docs/PROJECT_STATUS.md ]; then

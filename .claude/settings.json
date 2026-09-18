@@ -54,6 +54,15 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/enforce-validation-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/enforce-backtest-integrity.sh"
+          }
+        ]
       }
     ]
   }
