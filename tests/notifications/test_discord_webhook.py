@@ -162,6 +162,22 @@ class TestSendDiscordMessage:
         assert captured["body"] == {"content": "hello"}
         assert captured["content_type"] == "application/json"
 
+    def test_sends_a_real_browser_user_agent_not_the_default_urllib_one(self, monkeypatch) -> None:
+        """ADR-0166: a real production run got HTTP 403 straight from
+        Discord's own infrastructure with no User-Agent header at all --
+        same root cause class this project already found for Stooq
+        (ADR-0157)."""
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["user_agent"] = req.get_header("User-agent")
+            return _FakeHTTPResponse(204)
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        send_discord_message("https://discord.com/api/webhooks/real", "hello")
+        assert captured["user_agent"] is not None
+        assert "python-urllib" not in captured["user_agent"].lower()
+
     def test_unexpected_success_status_raises(self, monkeypatch) -> None:
         monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: _FakeHTTPResponse(202))
         with pytest.raises(RuntimeError):

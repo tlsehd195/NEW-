@@ -148,6 +148,28 @@ def truncate_for_discord(content: str, *, limit: int = _DISCORD_CONTENT_LIMIT) -
     return "".join(kept) + _TRUNCATION_SUFFIX
 
 
+# ADR-0166 (external review, real production failure): the first real
+# scheduled/workflow_dispatch run to actually exercise this call (the
+# account owner's webhook secret was only registered 2026-09-18) got a
+# real HTTP 403 straight back from Discord's own infrastructure --
+# connection succeeded, Discord itself rejected the request. No
+# `User-Agent` header was ever sent, leaving Python's default
+# `Python-urllib/x.y` string, a well-known bot signature -- the same
+# root cause this project already found and fixed for Stooq (ADR-0157)
+# and already worked around for SEC EDGAR (a required descriptive UA by
+# policy). A real, current desktop-browser User-Agent is the same
+# category of fix, applied here for the same reason. This is a
+# best-effort fix against a plausible but not independently confirmed
+# cause (this session's own egress blocks discord.com entirely, so it
+# cannot be verified here) -- needs re-verification against a real
+# scheduled/workflow_dispatch run, not assumed fixed from this reasoning
+# alone.
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
 def send_discord_message(webhook_url: str, content: str, *, timeout: float = 10.0) -> None:
     """The one real network call this module makes: a POST to a real
     Discord webhook URL (the account owner's own, created via Discord's
@@ -158,7 +180,10 @@ def send_discord_message(webhook_url: str, content: str, *, timeout: float = 10.
     never silently dropped."""
     body = json.dumps({"content": truncate_for_discord(content)}).encode("utf-8")
     req = urllib.request.Request(
-        webhook_url, data=body, method="POST", headers={"Content-Type": "application/json"}
+        webhook_url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": _USER_AGENT},
     )
     with urllib.request.urlopen(req, timeout=timeout) as response:
         if response.status not in (200, 204):
