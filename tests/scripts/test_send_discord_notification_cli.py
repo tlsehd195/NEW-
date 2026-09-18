@@ -41,8 +41,34 @@ class TestMissingInputs:
         exit_code = module.main(["--report", str(report_path), "--report-type", "paper_trading_cycle"])
         assert exit_code == 1
 
-    def test_missing_report_file_fails(self, tmp_path) -> None:
+    def test_missing_report_file_fails_but_still_sends_a_discord_failure_notice(self, tmp_path, monkeypatch) -> None:
+        """ADR-0164: a missing report (e.g. an earlier workflow step
+        failed and this one was skipped) must not leave Discord
+        completely silent -- the whole point of this script."""
         module = _load_script()
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeHTTPResponse(204)
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        missing = tmp_path / "does_not_exist.json"
+        exit_code = module.main(
+            ["--report", str(missing), "--report-type", "paper_trading_cycle", "--webhook-url", "https://discord.com/api/webhooks/x"]
+        )
+        assert exit_code == 1
+        assert "report not generated" in captured["body"]["content"]
+
+    def test_missing_report_file_and_a_failing_discord_send_both_report_failure(self, tmp_path, monkeypatch) -> None:
+        import urllib.error
+
+        module = _load_script()
+
+        def fake_urlopen(req, timeout):
+            raise urllib.error.URLError("connection refused")
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
         missing = tmp_path / "does_not_exist.json"
         exit_code = module.main(
             ["--report", str(missing), "--report-type", "paper_trading_cycle", "--webhook-url", "https://discord.com/api/webhooks/x"]
