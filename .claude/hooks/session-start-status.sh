@@ -3,6 +3,13 @@ set -euo pipefail
 
 cd "${CLAUDE_PROJECT_DIR:-.}"
 
+# Reset the enforce-task-observer.sh / enforce-validation-guard.sh
+# per-session markers -- a fresh session must not inherit a marker left
+# by a previous one and silently skip those gates.
+HOOK_STATE_DIR="$(pwd)/.claude/hooks/state"
+mkdir -p "$HOOK_STATE_DIR"
+rm -f "$HOOK_STATE_DIR/task-observer-active" "$HOOK_STATE_DIR/validation-guard-active"
+
 STATUS_EXCERPT=""
 if [ -f docs/PROJECT_STATUS.md ]; then
   STATUS_EXCERPT=$(head -c 4000 docs/PROJECT_STATUS.md)

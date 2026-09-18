@@ -36,6 +36,24 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-safety-files.sh"
           }
         ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/enforce-task-observer.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/enforce-validation-guard.sh"
+          }
+        ]
       }
     ]
   }

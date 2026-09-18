@@ -48,3 +48,8 @@ logs/*
 
 # Local overrides
 *.local
+
+# Per-session hook enforcement markers (enforce-task-observer.sh /
+# enforce-validation-guard.sh) -- ephemeral, reset every SessionStart,
+# never meaningful across sessions or worth tracking.
+.claude/hooks/state/
