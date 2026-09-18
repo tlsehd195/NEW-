@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from paper_helpers import make_bar, make_paper_config, make_validated_order, utc
+from paper_helpers import make_bar, make_corporate_action, make_paper_config, make_validated_order, utc
 
 from broker.enums import BrokerOrderStatus
 from broker.errors import BrokerAuthError, BrokerRateLimitError, BrokerTimeoutError, BrokerTransportError
@@ -23,6 +23,8 @@ from broker.paper.adapter import PaperBrokerAdapter
 from broker.paper.market_data import InMemoryPaperMarketDataSource
 
 from backtest.enums import OrderSide
+
+from data_infra.enums import CorporateActionType
 
 
 def _adapter(config=None, bars=()):
@@ -383,3 +385,55 @@ class TestCapabilities:
 
         assert capabilities.status_of(BrokerCapability.LIMIT_ORDER) == CapabilityStatus.UNSUPPORTED
         assert capabilities.is_enabled(BrokerCapability.MARKET_ORDER)
+
+
+class TestApplyCorporateActions:
+    """ADR-0155: `PaperBrokerAdapter.apply_corporate_actions` is a thin
+    wrapper around `backtest.corporate_actions.CorporateActionApplier`
+    applied to this adapter's own `self._accounting` -- these tests
+    cover the wrapper itself (dispatch to the real portfolio, warnings
+    surfaced, in-process idempotency), not `CorporateActionApplier`'s
+    own dispatch/parsing logic (already covered by
+    `tests/backtest/test_corporate_actions.py`)."""
+
+    def test_split_adjusts_an_existing_position(self) -> None:
+        adapter, mds = _adapter(bars=[make_bar(available_time=utc(2024, 1, 2), volume=1_000_000.0)], config=make_paper_config(max_participation=1.0))
+        order = make_validated_order(quantity=10.0)
+        adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))
+        position_before = adapter.get_positions(as_of=utc(2024, 1, 2))[0]
+
+        action = make_corporate_action(action_type=CorporateActionType.SPLIT, available_time=utc(2024, 1, 3))
+        warnings = adapter.apply_corporate_actions([action], utc(2024, 1, 3))
+        assert warnings == []
+
+        position_after = adapter.get_positions(as_of=utc(2024, 1, 3))[0]
+        assert position_after.quantity == position_before.quantity * 2.0
+        assert position_after.average_cost == pytest.approx(position_before.average_cost / 2.0)
+
+    def test_unhandled_action_type_produces_a_warning_not_a_crash(self) -> None:
+        adapter, _ = _adapter()
+        action = make_corporate_action(action_type=CorporateActionType.MERGER, available_time=utc(2024, 1, 2))
+        warnings = adapter.apply_corporate_actions([action], utc(2024, 1, 2))
+        assert len(warnings) == 1
+        assert "MERGER" in warnings[0]
+
+    def test_calling_twice_within_one_process_does_not_double_apply(self) -> None:
+        """The adapter's own `CorporateActionApplier._applied` set makes
+        a same-process double-call a no-op -- this is NOT the restart
+        idempotency this task centers on (that lives in `broker.paper.
+        session.PaperTradingSession.apply_corporate_actions`, tested
+        separately), just the pre-existing in-process guarantee this
+        wrapper inherits for free."""
+        adapter, mds = _adapter(bars=[make_bar(available_time=utc(2024, 1, 2), volume=1_000_000.0)], config=make_paper_config(max_participation=1.0))
+        order = make_validated_order(quantity=10.0)
+        adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))
+
+        action = make_corporate_action(action_type=CorporateActionType.SPLIT, available_time=utc(2024, 1, 3))
+        adapter.apply_corporate_actions([action], utc(2024, 1, 3))
+        quantity_after_first = adapter.get_positions(as_of=utc(2024, 1, 3))[0].quantity
+
+        adapter.apply_corporate_actions([action], utc(2024, 1, 3))
+        quantity_after_second = adapter.get_positions(as_of=utc(2024, 1, 3))[0].quantity
+        assert quantity_after_second == quantity_after_first  # not double-split

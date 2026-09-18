@@ -21,14 +21,16 @@ from storage.engine import StorageEngine
 from storage.serialization import (
     json_dumps,
     json_loads,
+    paper_applied_corporate_action_record_to_payload,
     paper_fill_record_to_payload,
     paper_order_record_to_payload,
+    payload_to_paper_applied_corporate_action_record,
     payload_to_paper_fill_record,
     payload_to_paper_order_record,
     to_utc_naive,
 )
 
-from broker.paper.models import PaperFillRecord, PaperOrderRecord
+from broker.paper.models import PaperAppliedCorporateActionRecord, PaperFillRecord, PaperOrderRecord
 
 
 class DuckDBPaperOrderRepository:
@@ -101,3 +103,47 @@ class DuckDBPaperFillRepository:
     def list_all(self) -> list[PaperFillRecord]:
         cur = self._engine.connection.execute("SELECT payload_json FROM paper_fills ORDER BY seq")
         return [payload_to_paper_fill_record(json_loads(r[0])) for r in cur.fetchall()]
+
+
+class DuckDBPaperCorporateActionRepository:
+    """Persisted, cross-restart idempotency ledger for `broker.paper.
+    adapter.PaperBrokerAdapter.apply_corporate_actions` -- see ADR-0155.
+    `record()` dedupes on `source_record_id` (the primary key), never
+    twice, mirroring `paper_orders`' own idempotent-on-natural-key
+    pattern rather than `paper_fills`' append-only one."""
+
+    def __init__(self, engine: StorageEngine) -> None:
+        self._engine = engine
+
+    def record(self, record: PaperAppliedCorporateActionRecord) -> PaperAppliedCorporateActionRecord:
+        conn = self._engine.connection
+        existing = conn.execute(
+            "SELECT payload_json FROM paper_applied_corporate_actions WHERE source_record_id = ?",
+            [record.source_record_id],
+        ).fetchone()
+        if existing is not None:
+            return payload_to_paper_applied_corporate_action_record(json_loads(existing[0]))
+
+        payload = paper_applied_corporate_action_record_to_payload(record)
+        conn.execute(
+            "INSERT INTO paper_applied_corporate_actions "
+            "(source_record_id, security_id, action_type, applied_at, payload_json) VALUES (?, ?, ?, ?, ?)",
+            [
+                record.source_record_id, record.action.security_id, record.action.action_type.value,
+                to_utc_naive(record.applied_at), json_dumps(payload),
+            ],
+        )
+        return record
+
+    def get(self, source_record_id: str) -> Optional[PaperAppliedCorporateActionRecord]:
+        row = self._engine.connection.execute(
+            "SELECT payload_json FROM paper_applied_corporate_actions WHERE source_record_id = ?",
+            [source_record_id],
+        ).fetchone()
+        return payload_to_paper_applied_corporate_action_record(json_loads(row[0])) if row is not None else None
+
+    def list_all(self) -> list[PaperAppliedCorporateActionRecord]:
+        cur = self._engine.connection.execute(
+            "SELECT payload_json FROM paper_applied_corporate_actions ORDER BY applied_at"
+        )
+        return [payload_to_paper_applied_corporate_action_record(json_loads(r[0])) for r in cur.fetchall()]

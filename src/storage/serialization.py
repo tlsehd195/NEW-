@@ -105,7 +105,7 @@ from monitoring.enums import AlertSeverity, ComponentHealthStatus, DriftStatus, 
 from monitoring.models import Alert, ComponentHealth, DriftResult, MonitoringEvent
 
 from broker.models import ValidatedOrder
-from broker.paper.models import PaperFillRecord, PaperOrderRecord
+from broker.paper.models import PaperAppliedCorporateActionRecord, PaperFillRecord, PaperOrderRecord
 
 from broker.live.enums import ReconciliationStatus
 from broker.live.kill_switch import KillSwitchEvent
@@ -2081,6 +2081,79 @@ def payload_to_paper_fill_record(data: dict) -> PaperFillRecord:
         fill=payload_to_fill(data["fill"]),
         configuration_version=data["configuration_version"],
         recorded_at=_dt_from_iso(data["recorded_at"]),
+    )
+
+
+def provenance_to_payload(p: Provenance) -> dict:
+    """JSON-payload-style sibling of `provenance_to_row` (flat DuckDB
+    columns) above -- used wherever a `Provenance` is embedded inside a
+    nested `payload_json` blob (e.g. `corporate_action_to_payload`)
+    rather than spread across a row's own columns."""
+    return {
+        "source": p.source,
+        "source_dataset": p.source_dataset,
+        "source_record_id": p.source_record_id,
+        "retrieved_at": _dt_iso(p.retrieved_at),
+        "data_version": p.data_version,
+        "schema_version": p.schema_version,
+    }
+
+
+def payload_to_provenance(data: dict) -> Provenance:
+    return Provenance(
+        source=data["source"],
+        source_dataset=data["source_dataset"],
+        source_record_id=data["source_record_id"],
+        retrieved_at=_dt_from_iso(data["retrieved_at"]),
+        data_version=data["data_version"],
+        schema_version=data["schema_version"],
+    )
+
+
+def corporate_action_to_payload(action: CorporateAction) -> dict:
+    """JSON-payload-style sibling of `corporate_action_to_row` above --
+    used to embed a full `CorporateAction` inside a Paper Trading
+    applied-corporate-action ledger row's own `payload_json` blob,
+    exactly as `paper_fill_record_to_payload` embeds a `Fill` via
+    `fill_to_payload`."""
+    return {
+        "security_id": action.security_id,
+        "action_type": action.action_type.value,
+        "available_time": _dt_iso(action.available_time),
+        "ingestion_time": _dt_iso(action.ingestion_time),
+        "provenance": provenance_to_payload(action.provenance),
+        "event_time": _dt_iso(action.event_time),
+        "announcement_time": _dt_iso(action.announcement_time),
+        "effective_time": _dt_iso(action.effective_time),
+        "details": action.details,
+    }
+
+
+def payload_to_corporate_action(data: dict) -> CorporateAction:
+    return CorporateAction(
+        security_id=data["security_id"],
+        action_type=CorporateActionType(data["action_type"]),
+        available_time=_dt_from_iso(data["available_time"]),
+        ingestion_time=_dt_from_iso(data["ingestion_time"]),
+        provenance=payload_to_provenance(data["provenance"]),
+        event_time=_dt_from_iso(data.get("event_time")),
+        announcement_time=_dt_from_iso(data.get("announcement_time")),
+        effective_time=_dt_from_iso(data.get("effective_time")),
+        details=data.get("details") or {},
+    )
+
+
+def paper_applied_corporate_action_record_to_payload(record: PaperAppliedCorporateActionRecord) -> dict:
+    return {
+        "action": corporate_action_to_payload(record.action),
+        "applied_at": _dt_iso(record.applied_at),
+    }
+
+
+def payload_to_paper_applied_corporate_action_record(data: dict) -> PaperAppliedCorporateActionRecord:
+    return PaperAppliedCorporateActionRecord(
+        action=payload_to_corporate_action(data["action"]),
+        applied_at=_dt_from_iso(data["applied_at"]),
     )
 
 

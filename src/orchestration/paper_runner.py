@@ -161,6 +161,8 @@ from backtest.asof import AsOfDataView
 from backtest.enums import OrderSide
 from backtest.portfolio import PortfolioView, PositionView
 
+from data_infra.models import CorporateAction
+
 from broker.models import BrokerOrderResponse, OrderValidationResult
 from broker.paper.models import PaperFillRecord
 from broker.paper.session import AccountSummary, PaperTradingSession
@@ -189,6 +191,13 @@ from trade_journal.models import DecisionSnapshot, TradeRecord
 # weekend/holiday plus one missed provider update) -- still only ever
 # returns the latest *available* bar, never interpolates or guesses.
 _PRICE_LOOKBACK_DAYS = 5
+
+# ADR-0155: the EXACT same 400-day corporate-action lookback window
+# `backtest.engine.BacktestEngine.run()` uses (src/backtest/engine.py,
+# ~line 116) -- deliberately not a different number, so Paper Trading
+# and Backtest never diverge on how far back a split/dividend can still
+# be discovered.
+_CORPORATE_ACTION_LOOKBACK_DAYS = 400
 
 # Session 37 (ADR-0113): tags every DecisionSnapshot this module writes
 # to the Trade Journal -- distinct from any Phase 7 DecisionOutput
@@ -269,6 +278,17 @@ class PaperRunnerState:
 
     value_history: list[float] = field(default_factory=list)
     mark_to_market_missing: list[tuple[datetime, tuple[str, ...]]] = field(default_factory=list)
+
+    # ADR-0155: same "recorded here, one entry per cycle where the list
+    # was non-empty, so a caller can surface it" treatment
+    # `mark_to_market_missing` above already established -- each
+    # cycle's own `session.apply_corporate_actions(...)` call returns
+    # whatever warnings `backtest.corporate_actions.CorporateActionApplier.
+    # apply()` produced for this cycle's newly-applied actions (an
+    # unparseable split ratio, a missing dividend amount, or an
+    # unhandled action type such as MERGER) -- never raised, never
+    # silently discarded.
+    corporate_action_warnings: list[tuple[datetime, tuple[str, ...]]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -406,6 +426,17 @@ def _portfolio_view(account, view: AsOfDataView, as_of_time: datetime) -> Portfo
         as_of_time=as_of_time, cash=account.cash, positions=positions,
         portfolio_value=account.cash + market_value,
     )
+
+
+def _tracked_security_ids(security_ids: Sequence[str], session: PaperTradingSession) -> list[str]:
+    """`security_ids` plus any currently-held position not already in
+    that list -- mirrors `backtest.engine.BacktestEngine.run()`'s own
+    `tracked_ids = universe_today | set(portfolio.positions.keys())`
+    (engine.py ~line 112) exactly: a corporate action on a security this
+    account still HOLDS but no longer actively trades must still be
+    applied, or that position would silently drift un-split-adjusted/
+    un-paid forever, with no error."""
+    return sorted(set(security_ids) | set(session.adapter.accounting.positions.keys()))
 
 
 def _last_exit_time_by_security(
@@ -747,11 +778,62 @@ def run_cycle(
     `TradeRecord` for it -- see that helper's own docstring. A decision
     that was never recorded (e.g. `trade_journal_repository` was absent
     during the original submission) is skipped silently, never
-    fabricated."""
+    fabricated.
+
+    **Corporate actions (ADR-0155): always applied, right after the
+    stuck-order retry above and before this cycle's own `account`/
+    `portfolio` snapshot.** Closes the gap Paper Trading had before this:
+    `broker/paper/*` had zero corporate-action handling at all, so a
+    real split/dividend on a held position would silently corrupt
+    `PaperBrokerAdapter.accounting`'s `quantity`/`average_cost` forever.
+    `session.apply_corporate_actions(...)` is called with every
+    corporate action `view.get_corporate_actions` returns for
+    `security_ids` plus any currently-held position not in that list
+    (`_tracked_security_ids`, mirroring `backtest.engine.BacktestEngine.
+    run()`'s own `tracked_ids`), over the SAME 400-day lookback window
+    that engine uses. Safe to call every cycle with a full lookback
+    window's worth of actions, including across a restart between
+    cycles, because `PaperTradingSession.apply_corporate_actions` checks
+    a real PERSISTED ledger (not `CorporateActionApplier`'s own
+    in-process `_applied` set, which is empty again every fresh
+    process) before applying anything -- see that method's own
+    docstring and ADR-0155 for why a naive per-cycle `.apply()` call
+    would otherwise re-apply the same action forever. Any warning
+    (an unparseable ratio, a missing dividend amount, or an unhandled
+    type such as MERGER) is recorded on `state.corporate_action_warnings`
+    when `state` is supplied, the same opt-in surfacing
+    `mark_to_market_missing` already gets below -- never raised, never
+    silently discarded."""
     pre_advance_account = session.account_summary(as_of=as_of_time)
     advance_updates, advance_fills = session.advance(as_of_time)
     if trade_journal_repository is not None and advance_fills:
         _record_delayed_advance_fills(trade_journal_repository, session, pre_advance_account, advance_fills, as_of_time)
+
+    # ADR-0155: always attempted, unconditional (same "on by default"
+    # treatment mark_to_market already gets below) -- applied BEFORE
+    # this cycle's own `account`/`portfolio` snapshot a few lines down,
+    # so a real split/dividend that just became available is already
+    # reflected in the very same portfolio state the Prediction/
+    # Decision/Sizing/Risk chain evaluates THIS cycle, not one cycle
+    # late. `_tracked_security_ids`/the 400-day lookback both mirror
+    # `backtest.engine.BacktestEngine.run()`'s own corporate-action block
+    # exactly (see that function's own comments for why). `session.
+    # apply_corporate_actions` itself is the persisted-ledger-checked
+    # entry point (`broker.paper.session.PaperTradingSession.
+    # apply_corporate_actions`) -- safe to call every cycle with a full
+    # lookback window's worth of actions without ever double-applying
+    # one, even across a restart between cycles (ADR-0155).
+    all_corporate_actions: list[CorporateAction] = []
+    for security_id in _tracked_security_ids(security_ids, session):
+        all_corporate_actions.extend(
+            view.get_corporate_actions(
+                security_id, as_of_time - timedelta(days=_CORPORATE_ACTION_LOOKBACK_DAYS), as_of_time,
+            )
+        )
+    if all_corporate_actions:
+        corporate_action_warnings = session.apply_corporate_actions(all_corporate_actions, as_of_time)
+        if corporate_action_warnings and state is not None:
+            state.corporate_action_warnings.append((as_of_time, tuple(corporate_action_warnings)))
 
     account = session.account_summary(as_of=as_of_time)
     portfolio = _portfolio_view(account, view, as_of_time)

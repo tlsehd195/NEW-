@@ -18,6 +18,8 @@ from broker.models import ValidatedOrder
 
 from backtest.fills import Fill
 
+from data_infra.models import CorporateAction
+
 
 def _require_aware(name: str, value: datetime) -> None:
     if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
@@ -62,3 +64,38 @@ class PaperFillRecord:
         if not self.fill_id or not self.client_order_id:
             raise ValueError("PaperFillRecord requires non-empty fill_id/client_order_id")
         _require_aware("PaperFillRecord.recorded_at", self.recorded_at)
+
+
+@dataclass(frozen=True)
+class PaperAppliedCorporateActionRecord:
+    """One corporate action already applied to a Paper Trading account's
+    `backtest.portfolio.PortfolioAccounting` -- wraps the original
+    `data_infra.models.CorporateAction` directly (same reasoning as
+    `PaperFillRecord` wrapping `backtest.fills.Fill`: the original object
+    already carries every field a replay needs -- security_id,
+    action_type, details, provenance -- so re-deriving an equivalent
+    shape would only risk drifting out of sync with it), plus the real
+    `applied_at` timestamp this record was actually applied at during a
+    live cycle (the `as_of_time` `PaperTradingSession.apply_corporate_
+    actions` was called with). `applied_at` is what a restart's merge-
+    sort-by-time replay (`PaperTradingSession.restore`) orders this
+    record against `PaperFillRecord.fill.execution_time`, and what a
+    replayed `apply()` call passes back through as its own `as_of_time`
+    argument -- so `backtest.portfolio.CashFlowRecord.as_of_time` (for a
+    dividend) stays the real historical moment rather than collapsing to
+    a restore-time batch timestamp.
+
+    `source_record_id` (== `action.provenance.source_record_id`) is the
+    dedup key -- the SAME field `backtest.corporate_actions.
+    CorporateActionApplier` already uses for its own in-process
+    idempotency set, kept consistent here for the persisted ledger."""
+
+    action: CorporateAction
+    applied_at: datetime
+
+    def __post_init__(self) -> None:
+        _require_aware("PaperAppliedCorporateActionRecord.applied_at", self.applied_at)
+
+    @property
+    def source_record_id(self) -> str:
+        return self.action.provenance.source_record_id

@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from backtest_helpers import build_repository, make_bars, make_security, trading_days
+from backtest_helpers import build_repository, checkpoint, make_bars, make_provenance, make_security, make_split, trading_days
 from journal_helpers import make_fill, make_order
 from paper_helpers import make_paper_config
 from predict_helpers import drifting_prices
@@ -28,6 +28,9 @@ from broker.enums import OrderValidationStatus
 from broker.models import ValidatedOrder
 from broker.paper.market_data import InMemoryPaperMarketDataSource
 from broker.paper.session import PaperTradingSession
+
+from data_infra.enums import CorporateActionType
+from data_infra.models import CorporateAction
 
 from decision.agent import BaselineRuleDecisionAgent
 from decision.config import DecisionConfig
@@ -1102,3 +1105,66 @@ class TestDeferredFillDecisionJournalLink:
         expected_pnl = (sell_fill.price - buy_fill.price) * sell_fill.quantity - sell_fill.commission
         assert sell_trade.realized_pnl == pytest.approx(expected_pnl)
         assert sell_trade.holding_period == sell_fill.execution_time - buy_fill.execution_time
+
+
+class TestCorporateActionsAppliedEachCycle:
+    """ADR-0155: `run_cycle` now applies every real corporate action
+    `view.get_corporate_actions` returns for the tracked securities each
+    cycle, via `session.apply_corporate_actions` -- before this,
+    `broker/paper/*` had zero corporate-action handling at all."""
+
+    def test_an_unhandled_action_type_surfaces_a_warning_and_does_not_crash(self) -> None:
+        days = trading_days(date(2024, 1, 2), date(2024, 8, 30))
+        target_day = days[100]
+        merger = CorporateAction(
+            security_id="AAA", action_type=CorporateActionType.MERGER,
+            available_time=checkpoint(target_day), ingestion_time=checkpoint(target_day),
+            provenance=make_provenance("AAA-merger-test", target_day, "corp_actions"),
+        )
+        prices = drifting_prices(days, daily_return=0.006)
+        bars = make_bars("AAA", days, prices)
+        securities = [make_security("AAA", "AAA")]
+        repo = build_repository(bars=bars, securities=securities, corporate_actions=[merger])
+        config = BacktestConfig(
+            market="US_EQUITY", start_date=days[0], end_date=days[-1], initial_capital=100_000.0,
+            security_ids=("AAA",), code_version="paper-runner-corporate-action-merger-test",
+        )
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        state = PaperRunnerState()
+
+        outcomes = run_cycle(["AAA"], view.current_time, view, session, state=state, **_components())
+
+        assert len(outcomes) == 1  # a real chain outcome -- never crashed
+        assert len(state.corporate_action_warnings) == 1
+        as_of, warnings = state.corporate_action_warnings[0]
+        assert as_of == view.current_time
+        assert any("MERGER" in w for w in warnings)
+
+    def test_a_split_on_a_held_position_is_applied_before_this_cycles_decision(self) -> None:
+        days = trading_days(date(2024, 1, 2), date(2024, 8, 30))
+        split = make_split("AAA", days[102], ratio="2:1")
+        prices = drifting_prices(days, daily_return=0.006)
+        bars = make_bars("AAA", days, prices)
+        securities = [make_security("AAA", "AAA")]
+        repo = build_repository(bars=bars, securities=securities, corporate_actions=[split])
+        config = BacktestConfig(
+            market="US_EQUITY", start_date=days[0], end_date=days[-1], initial_capital=100_000.0,
+            security_ids=("AAA",), code_version="paper-runner-corporate-action-split-test",
+        )
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+
+        outcome = run_cycle(["AAA"], view.current_time, view, session, **components)[0]
+        assert outcome.submission is not None and outcome.submission.status == BrokerOrderStatus.PENDING
+
+        clock.index = 101
+        run_cycle([], view.current_time, view, session, **components)  # ADR-0154: delayed fill lands here
+        quantity_before_split = session.account_summary(as_of=view.current_time).positions["AAA"].quantity
+        assert quantity_before_split > 0
+
+        clock.index = 102  # the split's own available_time
+        run_cycle([], view.current_time, view, session, **components)
+        quantity_after_split = session.account_summary(as_of=view.current_time).positions["AAA"].quantity
+        assert quantity_after_split == pytest.approx(quantity_before_split * 2.0)
