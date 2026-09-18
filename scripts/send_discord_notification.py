@@ -52,7 +52,29 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if not args.report.is_file():
-        print(f"FATAL: {args.report} does not exist", file=sys.stderr)
+        # ADR-0164: an earlier upstream step (e.g. "Ingest latest market
+        # data") can fail and cause the report-producing step to be
+        # skipped, so `--report` never gets written -- this is not a
+        # rare edge case, it already happened in production (run #33,
+        # 2026-09-18). Previously this branch only printed to stderr and
+        # exited, so the one channel this whole feature exists for
+        # (Discord -- see this module's own docstring) stayed completely
+        # silent on exactly the days something went wrong. Best-effort
+        # notify Discord of the failure itself before still returning 1
+        # -- the workflow step's own red X (already caused by the
+        # earlier failed step) is not duplicated or hidden by this,
+        # just no longer the ONLY place the account owner would see it.
+        failure_note = (
+            f"**⚠️ {args.report_type} report not generated** "
+            "-- an earlier step in the workflow run failed or was skipped. "
+            "Check the GitHub Actions run for details."
+        )
+        try:
+            send_discord_message(webhook_url, failure_note)
+        except (urllib.error.URLError, RuntimeError) as exc:
+            print(f"FATAL: {args.report} does not exist, and the Discord failure notification also failed to send: {exc}", file=sys.stderr)
+            return 1
+        print(f"FATAL: {args.report} does not exist -- sent a failure notification to Discord instead", file=sys.stderr)
         return 1
 
     report = json.loads(args.report.read_text())
