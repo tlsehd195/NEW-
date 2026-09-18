@@ -19,7 +19,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Optional
 
-from data_infra.provider import PermanentProviderError, TransientProviderError
+from data_infra.provider import PermanentProviderError, TransientProviderError, parse_retry_after_seconds
 
 _SAFE_RESPONSE_HEADERS = {"content-type", "retry-after", "x-request-id"}
 
@@ -70,9 +70,15 @@ class SecEdgarHttpTransport:
             raise TransientProviderError(f"connection failure calling {path}: {exc.reason}") from exc
 
         if status_code >= 500:
-            raise TransientProviderError(f"provider error: HTTP {status_code} calling {path}")
+            raise TransientProviderError(
+                f"provider error: HTTP {status_code} calling {path}",
+                retry_after_seconds=parse_retry_after_seconds(response_headers.get("retry-after")),
+            )
         if status_code == 429:
-            raise TransientProviderError(f"rate limited calling {path}")
+            raise TransientProviderError(
+                f"rate limited calling {path}",
+                retry_after_seconds=parse_retry_after_seconds(response_headers.get("retry-after")),
+            )
         if status_code in (401, 403):
             raise PermanentProviderError(f"authentication/authorization failed calling {path}: HTTP {status_code}")
         if status_code == 404:

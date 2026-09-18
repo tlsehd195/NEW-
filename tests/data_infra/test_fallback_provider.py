@@ -112,6 +112,33 @@ class TestBothFail:
         with pytest.raises(TransientProviderError):
             fallback.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
 
+    def test_a_real_retry_after_from_either_side_is_never_dropped(self, monkeypatch) -> None:
+        """ADR-0157: re-wrapping primary+secondary failures into one
+        TransientProviderError must not silently discard a real
+        Retry-After either side actually told us -- IngestionRunner's
+        own preference for it over guessed backoff only matters if it
+        survives this repackaging."""
+        tiingo, stooq = _providers(
+            monkeypatch,
+            tiingo_raise=TransientProviderError("tiingo rate limited", retry_after_seconds=42.0),
+            stooq_raise=TransientProviderError("stooq down"),
+        )
+        fallback = FallbackDataProvider(tiingo, stooq)
+        with pytest.raises(TransientProviderError) as exc_info:
+            fallback.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        assert exc_info.value.retry_after_seconds == 42.0
+
+    def test_secondarys_retry_after_used_when_primary_has_none(self, monkeypatch) -> None:
+        tiingo, stooq = _providers(
+            monkeypatch,
+            tiingo_raise=TransientProviderError("tiingo down"),  # no retry_after_seconds
+            stooq_raise=TransientProviderError("stooq rate limited", retry_after_seconds=17.0),
+        )
+        fallback = FallbackDataProvider(tiingo, stooq)
+        with pytest.raises(TransientProviderError) as exc_info:
+            fallback.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        assert exc_info.value.retry_after_seconds == 17.0
+
     def test_both_permanent_raises_permanent_error_naming_both(self, monkeypatch) -> None:
         tiingo, stooq = _providers(
             monkeypatch, tiingo_raise=PermanentProviderError("tiingo unknown symbol"),

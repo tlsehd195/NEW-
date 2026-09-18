@@ -10,9 +10,10 @@ exercised only against MockDataProvider).
 
 from __future__ import annotations
 
+import email.utils
 import time as time_module
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional, Protocol, Sequence
 
 from data_infra.enums import IngestionStatus
@@ -108,11 +109,47 @@ class ProviderError(Exception):
 
 class TransientProviderError(ProviderError):
     """A retryable failure (e.g. rate limit, timeout, transient network
-    error)."""
+    error). `retry_after_seconds` (external review, real production
+    failure: `IngestionRunner`'s fixed 2s/4s/8s backoff cannot recover
+    from a real rate-limit window, which typically needs much longer)
+    carries the exact wait time a 429/503 response's own `Retry-After`
+    header told us, when one was present -- `IngestionRunner._ingest_one`
+    prefers this real, server-stated value over its own guessed
+    exponential backoff. `None` (never a fabricated guess) when the
+    failing response carried no such header, or this error was never
+    associated with one (e.g. a timeout)."""
+
+    def __init__(self, message: str, *, retry_after_seconds: Optional[float] = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class PermanentProviderError(ProviderError):
     """A non-retryable failure (e.g. unknown symbol, auth failure)."""
+
+
+def parse_retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    """Parses an HTTP `Retry-After` header value into seconds -- either
+    of the two real forms a server actually sends (RFC 9110 section
+    10.2.3): a plain integer/float number of seconds, or an HTTP-date to
+    wait until. Returns `None` (never a guessed fallback) when `value`
+    is absent, negative, or parses as neither form."""
+    if value is None:
+        return None
+    text = value.strip()
+    try:
+        seconds = float(text)
+        return seconds if seconds >= 0 else None
+    except ValueError:
+        pass
+    try:
+        target = email.utils.parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        return None
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+    delta_seconds = (target - datetime.now(timezone.utc)).total_seconds()
+    return delta_seconds if delta_seconds >= 0 else None
 
 
 class DataProvider(Protocol):
@@ -261,6 +298,18 @@ def default_backoff_seconds(attempt: int) -> float:
     return float(min(2**attempt, 30))
 
 
+# External review, real production failure (2026-09-18): a real Tiingo
+# 429 kept failing through every one of this runner's default 3
+# retries (2s/4s/8s = 14s total) because that fixed backoff has no
+# relationship to the server's own actual rate-limit window. When a
+# TransientProviderError carries a real `retry_after_seconds` (a
+# 429/503's own `Retry-After` header), `_ingest_one` waits that instead
+# of guessing -- capped here so one unusually large server-stated value
+# cannot stall a run that still has many other symbols left to process
+# in the same CI job.
+_MAX_RETRY_AFTER_SECONDS = 60.0
+
+
 class IngestionRunner:
     """Drives DataProvider.fetch/normalize into a DataRepository with
     retry+backoff, idempotency, partial-failure reporting, and checkpoint
@@ -327,7 +376,11 @@ class IngestionRunner:
             except TransientProviderError as exc:
                 last_error = str(exc)
                 if attempt <= self._max_retries:
-                    self._sleep_fn(self._backoff_fn(attempt))
+                    if exc.retry_after_seconds is not None:
+                        wait_seconds = min(exc.retry_after_seconds, _MAX_RETRY_AFTER_SECONDS)
+                    else:
+                        wait_seconds = self._backoff_fn(attempt)
+                    self._sleep_fn(wait_seconds)
                     continue
                 return IngestionRecordResult(security_id, IngestionStatus.FAILED, 0, last_error)
             except PermanentProviderError as exc:

@@ -84,6 +84,55 @@ class TestHttpErrorMapping:
             transport.get("/q/d/l/", params={}, timeout=5.0)
 
 
+class TestUserAgent:
+    """ADR-0157: a real production run found every Stooq request 404ing,
+    including several highly liquid large-cap tickers unlikely to
+    genuinely be absent all at once -- with no User-Agent header at
+    all, Python's default urllib signature is a well-known bot
+    fingerprint many sites filter. A descriptive User-Agent is now
+    always sent."""
+
+    def test_a_real_user_agent_header_is_always_sent(self, monkeypatch) -> None:
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["user_agent"] = req.get_header("User-agent")
+            return _FakeHTTPResponse(200, "Date,Open,High,Low,Close,Volume\n", {})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = StooqHttpTransport("https://stooq.com")
+        transport.get("/q/d/l/", params={"s": "aapl.us"}, timeout=5.0)
+
+        assert captured["user_agent"]  # present and non-empty
+        assert "python-urllib" not in captured["user_agent"].lower()  # not the default bot signature
+
+
+class TestRetryAfterHeader:
+    def test_a_real_retry_after_header_is_parsed_onto_the_exception(self, monkeypatch) -> None:
+        def fake_urlopen(req, timeout):
+            raise urllib.error.HTTPError(
+                "https://stooq.com/x", 503, "Service Unavailable", {"retry-after": "45"}, None
+            )
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = StooqHttpTransport("https://stooq.com")
+        with pytest.raises(TransientProviderError) as excinfo:
+            transport.get("/q/d/l/", params={}, timeout=5.0)
+
+        assert excinfo.value.retry_after_seconds == 45.0
+
+    def test_no_retry_after_header_leaves_it_none_never_guessed(self, monkeypatch) -> None:
+        def fake_urlopen(req, timeout):
+            raise urllib.error.HTTPError("https://stooq.com/x", 500, "Internal Server Error", {}, None)
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = StooqHttpTransport("https://stooq.com")
+        with pytest.raises(TransientProviderError) as excinfo:
+            transport.get("/q/d/l/", params={}, timeout=5.0)
+
+        assert excinfo.value.retry_after_seconds is None
+
+
 class TestNoSecretInRequest:
     def test_no_credential_is_ever_sent_stooq_requires_none(self, monkeypatch) -> None:
         captured = {}

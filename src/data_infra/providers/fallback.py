@@ -77,7 +77,17 @@ class FallbackDataProvider:
                 # raises TransientProviderError so the Runner gives this
                 # call the fresh chance the docstring already describes.
                 if isinstance(primary_exc, TransientProviderError) or isinstance(secondary_exc, TransientProviderError):
-                    raise TransientProviderError(message) from secondary_exc
+                    # ADR-0157: prefer whichever side actually told us a
+                    # real Retry-After -- never invent one, and never
+                    # silently drop a real server-stated wait time just
+                    # because it came from re-wrapping two exceptions
+                    # into one.
+                    retry_after = None
+                    if isinstance(primary_exc, TransientProviderError):
+                        retry_after = primary_exc.retry_after_seconds
+                    if retry_after is None and isinstance(secondary_exc, TransientProviderError):
+                        retry_after = secondary_exc.retry_after_seconds
+                    raise TransientProviderError(message, retry_after_seconds=retry_after) from secondary_exc
                 raise PermanentProviderError(message) from secondary_exc
 
     def _group_by_provider(self, raw_records: Sequence[dict]) -> dict[str, list[dict]]:

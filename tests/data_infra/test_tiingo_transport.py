@@ -92,6 +92,34 @@ class TestHttpErrorMapping:
         with pytest.raises(TransientProviderError):
             transport.get("/tiingo/daily/AAPL/prices", params={}, timeout=5.0)
 
+    def test_429_with_a_real_retry_after_header_carries_it_on_the_exception(self, monkeypatch) -> None:
+        """ADR-0157: a real production 429 kept exhausting IngestionRunner's
+        fixed 2s/4s/8s backoff, which has no relationship to the
+        server's own actual rate-limit window -- when Tiingo tells us
+        exactly how long via Retry-After, that must be preserved."""
+        def fake_urlopen(req, timeout):
+            raise urllib.error.HTTPError(
+                "https://api.tiingo.com/x", 429, "Too Many Requests", {"retry-after": "60"}, None
+            )
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = TiingoHttpTransport("https://api.tiingo.com")
+        with pytest.raises(TransientProviderError) as excinfo:
+            transport.get("/tiingo/daily/AAPL/prices", params={}, timeout=5.0)
+
+        assert excinfo.value.retry_after_seconds == 60.0
+
+    def test_429_with_no_retry_after_header_leaves_it_none(self, monkeypatch) -> None:
+        def fake_urlopen(req, timeout):
+            raise urllib.error.HTTPError("https://api.tiingo.com/x", 429, "Too Many Requests", {}, None)
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = TiingoHttpTransport("https://api.tiingo.com")
+        with pytest.raises(TransientProviderError) as excinfo:
+            transport.get("/tiingo/daily/AAPL/prices", params={}, timeout=5.0)
+
+        assert excinfo.value.retry_after_seconds is None
+
     def test_500_raises_transient_provider_error(self, monkeypatch) -> None:
         def fake_urlopen(req, timeout):
             raise urllib.error.HTTPError("https://api.tiingo.com/x", 500, "Internal Server Error", {}, None)
