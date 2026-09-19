@@ -1,0 +1,70 @@
+# Real ingestion of Kenneth French Data Library 3-factor (Mkt-RF, SMB,
+# HML, RF) return series -- see scripts/ingest_fama_french_factors.py's
+# own module docstring for the full real recon history
+# (recon_kenneth_french_library.yml/recon_kenneth_french_csv_format.py
+# confirmed for real that a GitHub Actions runner reaches
+# mba.tuck.dartmouth.edu with real HTTP 200s and confirmed the exact
+# CSV layout inside both the daily and monthly 3-factor zips) and the
+# concrete real motivation (idiosyncratic_volatility_score's own
+# documented SMB/HML gap).
+#
+# This ingests the data and stores it as BenchmarkPoint series for a
+# future consumer to read -- it does NOT wire any existing factor score
+# to use it (RULE 0.8, see the script's own docstring).
+#
+# workflow_dispatch-only -- a real but small, cheap, single-job run
+# (one CSV file, no per-symbol fan-out needed).
+name: Ingest Kenneth French 3-Factor Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      frequency:
+        description: "Which real Kenneth French 3-factor file to ingest"
+        type: choice
+        options:
+          - daily
+          - monthly
+        default: daily
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Ingest real Fama-French factor data
+        run: |
+          python3 scripts/ingest_fama_french_factors.py \
+            --frequency "${{ inputs.frequency }}" \
+            --as-of "$(date -u +%F)" \
+            --db-path ./data/fama_french_factors \
+            --manifest-out fama_french_ingestion_manifest.json
+
+      - name: Upload the factor catalog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fama-french-factors-${{ inputs.frequency }}
+          path: ./data/fama_french_factors
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Upload the manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fama-french-factors-${{ inputs.frequency }}-manifest
+          path: fama_french_ingestion_manifest.json
+          retention-days: 90
+          if-no-files-found: ignore
