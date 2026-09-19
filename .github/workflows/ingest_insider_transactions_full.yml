@@ -1,0 +1,132 @@
+# Real, full-universe SEC Form 4 insider-transaction collection
+# (backlog item from docs/PROJECT_STATUS.md, Session 37 -- resumed
+# re-collecting 78 of 87 symbols via Colab with no completion ever
+# recorded). ADR-0132/the two progress-logging fixes in this session
+# confirmed this pipeline works correctly end to end -- a real JPM run
+# took ~2 hours for one, unusually prolific symbol. Running all 87
+# symbols sequentially in one job could take many hours; this instead
+# shards the universe across parallel matrix jobs (each writing to its
+# OWN isolated --db-path -- DuckDB allows only one read/write
+# connection to a given file at a time, so concurrent jobs must never
+# share one), then a single sequential job merges the resulting shard
+# catalogs into one combined catalog via
+# scripts/merge_insider_transaction_catalogs.py.
+#
+# `shard_count: 10` is a fixed, deliberate choice, not user-configurable
+# here -- balances real wall-clock speedup against being a considerate,
+# identified caller of a real government service (this project's own
+# --user-agent carries a real, reachable contact per SEC's fair-access
+# policy).
+#
+# workflow_dispatch-only -- this is a real, potentially multi-hour,
+# real-money-free-but-real-compute collection run, never scheduled.
+name: Ingest Insider Transactions (Full Universe, Sharded)
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_agent:
+        description: "SEC fair-access contact string, e.g. 'ProjectName you@example.com' (SEC requires a real, reachable identifier here)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  SHARD_COUNT: "10"
+
+jobs:
+  ingest:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Select this shard's symbols
+        id: shard_symbols
+        run: |
+          echo "symbols=$(python3 scripts/select_universe_shard.py --universe RESEARCH_UNIVERSE --shard-index ${{ matrix.shard }} --shard-count "$SHARD_COUNT")" >> "$GITHUB_OUTPUT"
+
+      - name: Ingest this shard's Form 4 filings
+        run: |
+          python3 scripts/ingest_insider_transactions.py \
+            --symbols ${{ steps.shard_symbols.outputs.symbols }} \
+            --user-agent "${{ inputs.user_agent }}" \
+            --as-of "$(date -u +%F)" \
+            --db-path "./data/insider_shard_${{ matrix.shard }}" \
+            --manifest-out "insider_shard_${{ matrix.shard }}_manifest.json"
+
+      - name: Upload this shard's catalog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: insider-transactions-shard-${{ matrix.shard }}
+          path: "./data/insider_shard_${{ matrix.shard }}"
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Upload this shard's manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: insider-transactions-shard-${{ matrix.shard }}-manifest
+          path: "insider_shard_${{ matrix.shard }}_manifest.json"
+          retention-days: 90
+          if-no-files-found: ignore
+
+  merge:
+    needs: ingest
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Download every shard's catalog
+        uses: actions/download-artifact@v4
+        with:
+          pattern: insider-transactions-shard-*
+          path: ./data/shards
+          merge-multiple: false
+
+      - name: Merge all shard catalogs into one
+        run: |
+          set -euo pipefail
+          ARGS=()
+          for shard_dir in ./data/shards/insider-transactions-shard-*; do
+            # Skip the *-manifest artifact directories -- only real
+            # catalog directories (containing catalog.duckdb) are
+            # valid --shard-db-path arguments.
+            if [ -f "$shard_dir/catalog.duckdb" ]; then
+              ARGS+=(--shard-db-path "$shard_dir")
+            fi
+          done
+          python3 scripts/merge_insider_transaction_catalogs.py \
+            --target-db-path ./data/insider_combined \
+            "${ARGS[@]}"
+
+      - name: Upload combined catalog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: insider-transactions-catalog
+          path: ./data/insider_combined
+          retention-days: 90
+          if-no-files-found: ignore
