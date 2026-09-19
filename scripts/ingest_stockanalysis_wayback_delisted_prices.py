@@ -208,7 +208,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  [{i}/{len(args.symbols)}] {ticker}: fetching Wayback snapshot list...", flush=True)
             try:
                 snapshots = fetch_snapshot_list(ticker)
-            except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+            # Real incident (2026-09-19, first real AVB verification run):
+            # a slow archive.org response raised a bare TimeoutError that
+            # urllib does NOT always wrap into URLError -- it crashed the
+            # whole run (no manifest written at all) before this was added.
+            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
                 per_symbol_results.append({"security_id": ticker, "snapshots_seen": 0, "bars_persisted": 0, "parse_failures": 0, "error": str(exc)})
                 print(f"      -> FAILED to fetch snapshot list: {exc}", flush=True)
                 continue
@@ -223,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(_REQUEST_DELAY_SECONDS)
                 try:
                     html = fetch_snapshot_html(timestamp, original_url)
-                except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+                except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
                     parse_failures.append({"timestamp": timestamp, "error": str(exc)})
                     continue
                 price = extract_price(html)

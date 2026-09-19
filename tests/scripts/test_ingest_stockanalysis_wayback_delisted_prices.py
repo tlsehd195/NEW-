@@ -220,6 +220,49 @@ class TestMainEndToEnd:
         manifest = json.loads((db_path / "wayback_ingestion_manifest.json").read_text())
         assert manifest["per_symbol_results"][0]["error"] is not None
 
+    def test_a_bare_timeout_error_fetching_the_snapshot_list_does_not_crash_the_whole_run(self, tmp_path, monkeypatch) -> None:
+        """Real incident, 2026-09-19: archive.org's own real response was
+        slow enough that urllib raised a bare TimeoutError (NOT wrapped
+        in URLError) -- the first real verification run crashed with no
+        manifest written at all before this handling was added."""
+        module = _load_module()
+
+        def fake_urlopen(request, timeout):
+            raise TimeoutError("The read operation timed out")
+
+        monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(module.time, "sleep", lambda s: None)
+
+        db_path = tmp_path / "wayback_catalog"
+        exit_code = module.main(["--symbols", "AVB", "--as-of", "2026-09-19", "--db-path", str(db_path)])
+        assert exit_code == 1  # a real failure, but a REPORTED one -- manifest must still exist
+
+        manifest = json.loads((db_path / "wayback_ingestion_manifest.json").read_text())
+        assert "timed out" in manifest["per_symbol_results"][0]["error"]
+
+    def test_a_bare_timeout_error_fetching_one_snapshot_is_a_parse_failure_not_a_crash(self, tmp_path, monkeypatch) -> None:
+        module = _load_module()
+        cdx_body = json.dumps(_REAL_CDX_RESPONSE).encode()
+
+        def fake_urlopen(request, timeout):
+            url = request.full_url if hasattr(request, "full_url") else request
+            if "cdx/search" in url:
+                return _FakeResponse(cdx_body)
+            raise TimeoutError("The read operation timed out")
+
+        monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(module.time, "sleep", lambda s: None)
+
+        db_path = tmp_path / "wayback_catalog"
+        exit_code = module.main(["--symbols", "AVB", "--as-of", "2026-09-19", "--db-path", str(db_path)])
+        assert exit_code == 0  # the symbol itself still succeeds overall
+
+        manifest = json.loads((db_path / "wayback_ingestion_manifest.json").read_text())
+        result = manifest["per_symbol_results"][0]
+        assert result["bars_persisted"] == 0
+        assert result["parse_failures"] == 2  # both real 200/text-html snapshots timed out
+        assert "timed out" in result["parse_failure_detail"][0]["error"]
+
     def test_running_twice_is_idempotent(self, tmp_path, monkeypatch) -> None:
         module = _load_module()
         cdx_body = json.dumps(_REAL_CDX_RESPONSE).encode()
