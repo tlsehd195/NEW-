@@ -249,6 +249,46 @@ def main() -> int:
                 corporate_action_results.append({"security_id": symbol, "count": 0, "error": str(exc)})
 
         quality = DataQualityFramework()
+        # ADR-0167 identified this bug but deliberately deferred fixing it
+        # (an independent audit later confirmed it was still present, and
+        # this session found its full real impact is larger than ADR-0167
+        # itself realized -- see below): a daily EOD bar's `available_time`
+        # is `that calendar date + END_OF_SESSION_OFFSET` = 20:00 UTC
+        # (`data_infra.provider.bar_available_time`), but `args.end` itself
+        # parses to MIDNIGHT UTC of that same date (`_parse_date`) -- always
+        # BEFORE 20:00 UTC. `--end`'s own documented meaning (argparse help
+        # above: "also used as the ingestion's available_time/as_of
+        # reference") is "as of the END of this requested day," not its
+        # first instant, so `reporting_as_of_time` below is `args.end`
+        # shifted forward exactly one day to express that correctly
+        # (matching `scripts/rescan_data_quality.py`'s own sibling fix,
+        # `as_of_now = max(bar.available_time ...)`, which sidesteps this
+        # same class of bug by construction).
+        #
+        # **The real, larger impact this session found, empirically
+        # verified (not assumed)**: `get_bars(..., as_of_time=args.end,
+        # ...)` below ALSO used the unshifted midnight boundary -- which
+        # means the bar dated exactly on `--end`'s own date (the single
+        # most common real case for a daily cron run) was ALREADY excluded
+        # from `all_bars` by THIS filter, before `quality.run()` ever saw
+        # it. That, in turn, made `_check_future_dated`'s comparison
+        # structurally UNREACHABLE for that bar (a bar `get_bars` already
+        # excluded can never reach `_check_future_dated` to be flagged) --
+        # so the audit's literal claim ("future_dated same-day bug still
+        # produces false failures") does not currently manifest as an
+        # observable false ERROR in this script's own output. What DOES
+        # silently happen instead is arguably worse for a reproducibility
+        # manifest: `total_bars_persisted`/`actual_data_end`/`checksum`/
+        # `missing_symbols` (all derived from `all_bars`) permanently
+        # under-report by excluding the most recently requested day's own
+        # real, already-persisted bar -- every single run, for every
+        # symbol, regardless of whether that day's provider fetch actually
+        # succeeded. Using the SAME shifted `reporting_as_of_time` for both
+        # `get_bars` calls below and `quality.run()` fixes both: the
+        # manifest now honestly reflects the last requested day's own bar
+        # when one was actually ingested, and `_check_future_dated` (now
+        # actually reachable) correctly does not flag it.
+        reporting_as_of_time = args.end + timedelta(days=1)
         all_bars = []
         for symbol in symbols:
             # include_quality_rejected=True: this manifest's own bar
@@ -260,12 +300,16 @@ def main() -> int:
             # see DuckDBDataRepository.get_bars's own docstring).
             all_bars.extend(
                 repository.get_bars(
-                    symbol, args.start, args.end, as_of_time=args.end, include_quality_rejected=True
+                    symbol, args.start, args.end, as_of_time=reporting_as_of_time, include_quality_rejected=True
                 )
             )
+        # `_check_future_dated`/`_check_stale_data` are the only checks
+        # that read `as_of_now` -- the latter becoming one day more
+        # lenient is the correct, intended side effect of the same
+        # semantic fix, not a separate regression.
         quality_run = quality.run(
             all_bars, dataset="phase24_real_ingestion", data_version="real-run",
-            known_security_ids=set(symbols), as_of_now=args.end, corporate_actions=all_actions,
+            known_security_ids=set(symbols), as_of_now=reporting_as_of_time, corporate_actions=all_actions,
         )
         # Session 37 (real-data DQ gap): previously this run's own DQ
         # findings were written to the manifest and then never consulted

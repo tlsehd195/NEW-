@@ -48,7 +48,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -119,6 +119,21 @@ def main(argv: list[str] | None = None) -> int:
         result = runner.run(symbols, args.start, args.end)
 
         quality = DataQualityFramework()
+        # ADR-0167's own identified-but-deferred bug, fixed here identically
+        # to scripts/ingest_real_market_data.py's own sibling fix (see that
+        # script's own comment for the full explanation): `args.end` parses
+        # to MIDNIGHT UTC, but a same-day bar's `available_time` (data_infra.
+        # provider.bar_available_time) is that date at 20:00 UTC. Using the
+        # unshifted `args.end` as BOTH `get_bars`'s own `as_of_time` below
+        # AND `quality.run()`'s `as_of_now` meant the bar dated exactly on
+        # `--end` was already excluded from `all_bars` by `get_bars` itself
+        # -- silently under-reporting `total_bars_persisted`/
+        # `actual_data_end`/`checksum` by one real, already-persisted day,
+        # every run. `reporting_as_of_time` (shifted forward one day) fixes
+        # both call sites at once: the manifest now honestly reflects the
+        # last requested day's own bar, and `_check_future_dated` (now
+        # actually reachable) correctly does not flag it.
+        reporting_as_of_time = args.end + timedelta(days=1)
         all_bars = []
         for symbol in symbols:
             # include_quality_rejected=True: see the identical comment in
@@ -128,12 +143,12 @@ def main(argv: list[str] | None = None) -> int:
             # earlier run's CRITICAL flag falls inside this run's window.
             all_bars.extend(
                 repository.get_bars(
-                    symbol, args.start, args.end, as_of_time=args.end, include_quality_rejected=True
+                    symbol, args.start, args.end, as_of_time=reporting_as_of_time, include_quality_rejected=True
                 )
             )
         quality_run = quality.run(
             all_bars, dataset="phase31_external_import", data_version="external-import-run",
-            known_security_ids=set(symbols), as_of_now=args.end,
+            known_security_ids=set(symbols), as_of_now=reporting_as_of_time,
         )
         # Session 37 (real-data DQ gap, ADR-0143): see the identical
         # comment in scripts/ingest_real_market_data.py -- implements
