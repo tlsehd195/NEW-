@@ -29,3 +29,6 @@ jobs:
 
       - name: Run reconnaissance (no parsing, just real status/content-type observation)
         run: python3 scripts/recon_kenneth_french_library.py
+
+      - name: Inspect the real CSV format inside the zip (2026-09-19 follow-up)
+        run: python3 scripts/recon_kenneth_french_csv_format.py
