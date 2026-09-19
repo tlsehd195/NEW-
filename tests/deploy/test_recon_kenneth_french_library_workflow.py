@@ -31,3 +31,13 @@ def test_runs_the_real_recon_script():
     steps = _load()["jobs"]["recon"]["steps"]
     run_text = "\n".join(s.get("run", "") for s in steps)
     assert "recon_kenneth_french_library.py" in run_text
+
+
+def test_also_runs_the_csv_format_follow_up_script():
+    """2026-09-19 follow-up: the index page/zip download recon above
+    already came back real HTTP 200s from a GitHub Actions runner --
+    this second script looks INSIDE the zip so a real parser can be
+    written from the real CSV layout instead of an assumption."""
+    steps = _load()["jobs"]["recon"]["steps"]
+    run_text = "\n".join(s.get("run", "") for s in steps)
+    assert "recon_kenneth_french_csv_format.py" in run_text
