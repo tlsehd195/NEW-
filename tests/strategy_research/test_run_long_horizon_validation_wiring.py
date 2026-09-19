@@ -657,3 +657,87 @@ class TestAdr0051CandidateLoopsGatedCorrectly:
         assert "from strategy_research.factor_strategy import" in source
         for name in ("PriceFactorStrategy", "FundamentalsFactorStrategy", "HybridFactorStrategy", "UniverseFactorStrategy"):
             assert name in source
+
+
+class TestPointInTimeUniverseOptIn:
+    """ADR-0176 (independent audit P1-2, limited/opt-in fix):
+    PILOT_UNIVERSE_V1/RESEARCH_UNIVERSE_STAGE4 only ever contain TODAY's
+    current holdings (both definitions' own docstrings already disclose
+    this) -- a backtest across a historical window using either one
+    implicitly and silently excludes every real S&P 500 constituent
+    removed from the index since. `--point-in-time-universe-as-of`/
+    `--point-in-time-universe-csv` are a new, OPT-IN pair of flags that
+    override `security_ids` with the real, historical constituent set
+    for one date, reusing this project's own already-existing
+    `constituents_as_of`/`parse_ticker_intervals` -- never a new
+    selection logic, and never changing the default (both flags unset)
+    behavior at all."""
+
+    def test_reuses_the_existing_point_in_time_membership_functions(self) -> None:
+        source = _source()
+        assert "from data_infra.providers.sp500_index_constituent_history import" in source
+        assert "constituents_as_of" in source
+        assert "parse_ticker_intervals" in source
+
+    def test_both_new_flags_default_to_none_so_default_behavior_is_unchanged(self) -> None:
+        tree = _tree()
+        add_argument_calls = _find_calls(tree, "add_argument")
+        for flag in ("--point-in-time-universe-as-of", "--point-in-time-universe-csv"):
+            calls = [
+                c for c in add_argument_calls
+                if c.args and isinstance(c.args[0], ast.Constant) and c.args[0].value == flag
+            ]
+            assert len(calls) == 1, f"expected exactly one {flag} argparse argument"
+            kwargs = {kw.arg: kw.value for kw in calls[0].keywords}
+            assert "default" in kwargs
+            assert isinstance(kwargs["default"], ast.Constant) and kwargs["default"].value is None
+
+    def test_giving_only_one_of_the_pair_is_rejected(self) -> None:
+        source = _source()
+        assert "bool(args.point_in_time_universe_as_of) != bool(args.point_in_time_universe_csv)" in source
+
+    def test_security_ids_is_only_overridden_when_the_flag_is_used(self) -> None:
+        source = _source()
+        assign_idx = source.index("point_in_time_universe_used = args.point_in_time_universe_as_of is not None")
+        block = source[assign_idx:source.index("report_path = args.report_out", assign_idx)]
+        assert "if point_in_time_universe_used:" in block
+        assert "constituents_as_of(intervals, args.point_in_time_universe_as_of)" in block
+        assert "security_ids = list(universe.symbol_ids)" in block
+
+    def test_universe_object_itself_is_never_reassigned_by_the_override(self) -> None:
+        # `universe.name`/`universe.version` must keep reporting the
+        # --universe argument's own named definition for provenance,
+        # even when security_ids has been overridden -- only ONE
+        # assignment to the `universe` variable should exist in the
+        # whole script.
+        tree = _tree()
+        assigns = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "universe"
+        ]
+        assert len(assigns) == 1
+
+    def test_report_dict_carries_point_in_time_universe_fields(self) -> None:
+        source = _source()
+        assert '"point_in_time_universe_used": point_in_time_universe_used,' in source
+        assert '"point_in_time_universe_as_of": (' in source
+
+    def test_experiment_id_hash_input_includes_point_in_time_as_of(self) -> None:
+        """A point-in-time-universe run must never collide with an
+        ordinary run of the same --universe/date-range into the same
+        experiment_id -- same collision-prevention discipline
+        TestExperimentIdReflectsFundamentalsInclusion already enforces
+        for --fundamentals-db-path."""
+        tree = _tree()
+        compute_calls = _find_calls(tree, "compute_data_version")
+        found = False
+        for call in compute_calls:
+            if not call.args or not isinstance(call.args[0], ast.Dict):
+                continue
+            for key in call.args[0].keys:
+                if isinstance(key, ast.Constant) and key.value == "point_in_time_universe_as_of":
+                    found = True
+        assert found, "compute_data_version's experiment_id payload must include point_in_time_universe_as_of"
