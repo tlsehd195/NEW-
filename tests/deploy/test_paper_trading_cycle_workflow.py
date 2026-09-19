@@ -147,6 +147,15 @@ def test_cycle_step_uses_resume_and_ratified_risk_limits():
     # ADR-0080 ratified values (#5/#10).
     assert "--max-sector-weight 0.25" in text
     assert "--max-order-notional 1000" in text
+    # ADR-0177 continuation (independent audit P1-3, account owner's own
+    # explicit choice, 2026-09-19): drawdown/volatility limits were
+    # previously left disabled (None) in production even though the
+    # script has supported them since Session 36 and --resume already
+    # reconstructs real value_history for them. 0.20/0.30 are
+    # risk.config.RiskConfig's own existing dataclass defaults, not new
+    # numbers invented for this workflow.
+    assert "--max-drawdown 0.20" in text
+    assert "--max-portfolio-volatility 0.30" in text
 
 
 def test_performance_tearsheet_is_generated_and_never_fails_the_job():

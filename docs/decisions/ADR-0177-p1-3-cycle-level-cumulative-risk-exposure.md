@@ -152,12 +152,41 @@ for both; any difference in the RISK-CHECKED result can only come from
 
 Full suite re-run (this session): 3483 -> 3486 passed.
 
+## Addendum: production workflow wiring (2026-09-19, same day)
+
+The account owner was asked directly whether to enable `--max-drawdown`/
+`--max-portfolio-volatility` in production now, given the code fully
+supports it and `--resume` already reconstructs real `value_history`
+from this cron's own persisted risk records (continuous since
+2024-05-23, so real history already exceeds `RiskConfig.
+min_history_for_volatility`'s default of 5 checkpoints well before the
+very first run these flags are passed). They chose to enable it now,
+with conservative default values.
+
+Rather than inventing new threshold numbers, `.github/workflows/
+paper_trading_cycle.yml`'s `run_paper_trading_cycle.py` invocation now
+passes `--max-drawdown 0.20 --max-portfolio-volatility 0.30` -- this
+project's OWN existing `risk.config.RiskConfig` dataclass defaults
+(`max_drawdown: Optional[float] = 0.20`, `max_portfolio_volatility:
+Optional[float] = 0.30`), already used everywhere else a caller does
+not override them. This enables the project's own already-ratified
+risk tolerance in its one remaining unwired spot, rather than choosing
+a new one unilaterally. `scripts/run_paper_trading_cycle.py`'s own
+module docstring is updated to reflect this (the CLI flags' own
+defaults are unchanged -- still `None`/disabled for any OTHER caller
+that does not pass them, e.g. a genuinely brand-new `--paper-store`
+with no history yet, where both checks simply have no effect until
+enough real checkpoints accumulate).
+
+`tests/deploy/test_paper_trading_cycle_workflow.py`'s existing
+`test_cycle_step_uses_resume_and_ratified_risk_limits` gained two new
+assertions for the new flags/values.
+
 ## Status of Implementation at Time of This ADR
 
-Code and tests complete for the cumulative-gross-exposure half of
-P1-3. The production-workflow `--max-drawdown`/`--max-portfolio-
-volatility` half is tracked separately (see "Negative / Trade-offs"
-above) pending the account owner's own threshold-value decision. This
-is the third and last of the three P1 findings from the independent
-audit report, fixed in the order the account owner specified
-("순서대로 고쳐"): P1-1 (ADR-0175), P1-2 (ADR-0176), P1-3 (this ADR).
+Both halves of P1-3 are now complete: the cumulative-gross-exposure
+code fix, and the production workflow's `--max-drawdown`/
+`--max-portfolio-volatility` wiring (this addendum). This is the third
+and last of the three P1 findings from the independent audit report,
+fixed in the order the account owner specified ("순서대로 고쳐"): P1-1
+(ADR-0175), P1-2 (ADR-0176), P1-3 (this ADR).

@@ -58,8 +58,22 @@ A `PaperRunnerState` is carried across the whole run, so
 `--max-drawdown`/`--max-portfolio-volatility` become real, evaluable
 checks once enough checkpoints have accumulated (`RiskConfig.
 min_history_for_volatility`, default 5) -- both default to `None`
-(disabled) here, since a fresh run has no prior history to seed from
-and this script does not fabricate one.
+(disabled) at the CLI level here, since a fresh, brand-new
+`--paper-store` genuinely has no prior history to seed from and this
+script does not fabricate one. **Session 39 (ADR-0177 continuation,
+independent audit P1-3, account owner's own explicit choice,
+2026-09-19)**: the production daily cron (`.github/workflows/
+paper_trading_cycle.yml`) now passes both explicitly
+(`--max-drawdown 0.20 --max-portfolio-volatility 0.30`, `risk.config.
+RiskConfig`'s own existing dataclass defaults) -- safe specifically
+because that cron always runs with `--resume` against a `--paper-store`
+that has run continuously since 2024-05-23, so real history is already
+reconstructed (`_reconstruct_value_history` below) well past
+`min_history_for_volatility` on the very first invocation carrying
+these flags. A genuinely brand-new `--paper-store` still starts with
+zero history regardless of what these flags are set to -- both checks
+simply have no effect until enough real checkpoints accumulate, never
+a fabricated pass.
 
 **Trade Journal (Session 36 continued, ADR-0096): always populated.**
 Every real fill this run produces is now also recorded as a real
