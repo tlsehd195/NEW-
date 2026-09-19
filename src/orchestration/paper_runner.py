@@ -1010,6 +1010,70 @@ def run_cycle(
                     opened_at=opened_at, provenance=provenance, experiment_id=experiment_id,
                 )
 
+            # ADR-0177 (independent audit P1-3): `portfolio` was previously
+            # captured ONCE before this loop (line ~887) and never updated
+            # for the rest of the cycle -- every LATER security in
+            # `security_ids` this same cycle would then have its
+            # `decision_agent.decide`/`position_sizer.size`/`risk_engine.
+            # assess` calls see the exact same stale snapshot, so N BUY
+            # decisions in one cycle could each individually pass
+            # `risk_engine.assess`'s gross-exposure check against that one
+            # stale snapshot while their real, combined effect breaches
+            # `RiskConfig.max_gross_exposure` -- a TOCTOU gap `risk.engine`
+            # itself cannot close on its own (it is a stateless function of
+            # whatever `PortfolioView` it is handed, `src/risk/engine.py`'s
+            # own module docstring).
+            #
+            # **Re-reading `session.account_summary()` here would NOT
+            # actually fix this** -- ADR-0154 deliberately makes every
+            # submission PENDING, never filled synchronously ("T+1
+            # discipline": a decision and its fill must never share the
+            # same reference bar). The real broker/account state is
+            # correctly untouched until the NEXT cycle's own `advance()`
+            # call, so re-querying it here would silently return the exact
+            # same pre-loop snapshot -- appearing to fix this bug while
+            # actually changing nothing. Real broker state must stay
+            # exactly as ADR-0154 left it; this fix does not touch it.
+            #
+            # Instead, `portfolio` is updated in-memory (this cycle's own
+            # local variable only, never persisted, never fed back into
+            # `session`/`account`) to reflect this security's own
+            # just-submitted, still-PENDING order as if it had already
+            # filled at `current_price` -- a same-cycle risk-check
+            # ESTIMATE, not a claim that a real fill happened. This makes
+            # every LATER security in this cycle's own risk check see the
+            # cumulative effect of this cycle's own already-submitted
+            # orders, closing the exact TOCTOU gap the audit found,
+            # without weakening ADR-0154's own same-bar-leak protection at
+            # all (real fills/cash/positions in `session`'s own accounting
+            # are never touched here).
+            if current_price is not None:
+                order = validation.validated_order
+                signed_quantity = order.quantity if order.side == OrderSide.BUY else -order.quantity
+                existing_position = portfolio.positions.get(security_id)
+                existing_quantity = existing_position.quantity if existing_position is not None else 0.0
+                new_quantity = existing_quantity + signed_quantity
+                new_market_value = new_quantity * current_price
+                notional_delta = order.quantity * current_price
+                cash_delta = -notional_delta if order.side == OrderSide.BUY else notional_delta
+                new_positions = dict(portfolio.positions)
+                if new_quantity != 0:
+                    new_positions[security_id] = PositionView(
+                        security_id, new_quantity,
+                        average_cost=(existing_position.average_cost if existing_position is not None else current_price),
+                        market_value=new_market_value,
+                    )
+                else:
+                    new_positions.pop(security_id, None)
+                # portfolio_value is deliberately left unchanged: a BUY/SELL
+                # trades cash for position value (or back) at current_price,
+                # a wash by construction here (no slippage/cost modeled in
+                # this same-cycle estimate).
+                portfolio = PortfolioView(
+                    as_of_time=portfolio.as_of_time, cash=portfolio.cash + cash_delta,
+                    positions=new_positions, portfolio_value=portfolio.portfolio_value,
+                )
+
         outcomes.append(CycleOutcome(
             security_id=security_id, prediction=prediction, regime=regime, decision=decision,
             sizing=sizing, risk_checked=risk_checked, validation=validation, submission=submission,

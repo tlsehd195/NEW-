@@ -77,6 +77,26 @@ def _scenario():
     return repo, config, bars
 
 
+def _two_security_scenario():
+    """ADR-0177 (independent audit P1-3): identical to `_scenario()`
+    except for a SECOND security (BBB) with the exact same rising-price
+    shape, so both independently produce a real BUY at the same
+    checkpoint -- the minimal real setup needed to prove
+    `run_cycle` refreshes its own cumulative gross-exposure state
+    between securities within one cycle, rather than checking every
+    security against the same pre-cycle snapshot."""
+    days = trading_days(date(2024, 1, 2), date(2024, 8, 30))
+    prices = drifting_prices(days, daily_return=0.006)
+    bars = make_bars("AAA", days, prices) + make_bars("BBB", days, prices)
+    securities = [make_security("AAA", "AAA"), make_security("BBB", "BBB")]
+    repo = build_repository(bars=bars, securities=securities)
+    config = BacktestConfig(
+        market="US_EQUITY", start_date=days[0], end_date=days[-1], initial_capital=100_000.0,
+        security_ids=("AAA", "BBB"), code_version="paper-runner-cumulative-exposure-test",
+    )
+    return repo, config, bars
+
+
 def _reversal_scenario():
     """Session 37 (ADR-0113) -- `_scenario`'s steady upward drift never
     produces a real SELL (`BaselineRuleDecisionAgent` only exits on a
@@ -292,6 +312,83 @@ class TestMaxOrderNotionalPropagatesThroughTheWholeChain:
             tight_outcome.submission.request_client_order_id, as_of=view.current_time,
         )
         assert tight_status.filled_quantity < loose_status.filled_quantity
+
+
+class TestCumulativeGrossExposureEnforcedWithinOneCycle:
+    """ADR-0177 (independent audit P1-3): `portfolio` used to be
+    captured once per cycle and never updated, even after a real
+    submission -- a SECOND security in the same cycle would have its
+    `risk_engine.assess` gross-exposure check run against the exact same
+    stale snapshot the FIRST security was checked against, so both could
+    individually pass while their combined effect breaches
+    `RiskConfig.max_gross_exposure`. Note ADR-0154 makes every real
+    submission PENDING (never filled synchronously, by design) -- the
+    fix must therefore track this cycle's own pending exposure in
+    memory, never by re-reading `session.account_summary()` (which would
+    see no change at all until the NEXT cycle's own `advance()`)."""
+
+    def test_second_securitys_risk_check_reflects_the_firsts_already_submitted_order(self) -> None:
+        repo, config, bars = _two_security_scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        # DeterministicPositionSizer's own PositionSizingConfig.max_position_weight
+        # default (0.10) means a single full-size BUY proposes roughly 10% of
+        # the portfolio -- comfortably below 0.15 alone, comfortably above it
+        # combined with a second, identical ~10% BUY.
+        risk_config = RiskConfig(max_gross_exposure=0.15, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+
+        aaa_outcome, bbb_outcome = run_cycle(
+            ["AAA", "BBB"], view.current_time, view, session, **_components(risk_config),
+        )
+
+        # AAA and BBB have identical price/volatility inputs, so
+        # PositionSizer (which has no cross-security visibility at all)
+        # proposes the identical raw target weight for both -- any
+        # difference in the RISK-CHECKED result below can only come from
+        # risk_engine.assess seeing AAA's already-submitted order.
+        assert aaa_outcome.sizing.proposed_target_weight == bbb_outcome.sizing.proposed_target_weight
+        assert aaa_outcome.submission is not None
+
+        assert "gross_exposure" in bbb_outcome.risk_checked.breached_limits
+        assert bbb_outcome.risk_checked.final_target_weight is not None
+        assert aaa_outcome.risk_checked.final_target_weight is not None
+        assert bbb_outcome.risk_checked.final_target_weight < aaa_outcome.risk_checked.final_target_weight
+
+    def test_a_generous_gross_exposure_limit_lets_both_submit_at_full_size(self) -> None:
+        repo, config, bars = _two_security_scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_gross_exposure=1.0, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+
+        aaa_outcome, bbb_outcome = run_cycle(
+            ["AAA", "BBB"], view.current_time, view, session, **_components(risk_config),
+        )
+
+        assert "gross_exposure" not in aaa_outcome.risk_checked.breached_limits
+        assert "gross_exposure" not in bbb_outcome.risk_checked.breached_limits
+        assert aaa_outcome.risk_checked.final_target_weight == bbb_outcome.risk_checked.final_target_weight
+        assert aaa_outcome.submission is not None
+        assert bbb_outcome.submission is not None
+
+    def test_real_broker_account_state_is_untouched_by_the_in_memory_estimate(self) -> None:
+        """The fix must never call `session.account_summary()` again or
+        otherwise mutate real broker state mid-cycle -- ADR-0154's T+1
+        discipline (no synchronous fills) must remain completely intact."""
+        repo, config, bars = _two_security_scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_gross_exposure=0.15, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+        cash_before = session.account_summary(as_of=view.current_time).cash
+
+        run_cycle(["AAA", "BBB"], view.current_time, view, session, **_components(risk_config))
+
+        real_account = session.account_summary(as_of=view.current_time)
+        assert "AAA" not in real_account.positions
+        assert "BBB" not in real_account.positions
+        # No real fill can happen this cycle (ADR-0154) -- real cash must
+        # be exactly unchanged, never reflecting this fix's own in-memory
+        # cash_delta estimate.
+        assert real_account.cash == cash_before
 
 
 class TestReentryCooldownPropagatesThroughTheWholeChain:
