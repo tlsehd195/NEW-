@@ -121,6 +121,11 @@ _KNOWN_CIK_OVERRIDES = {"XOM": "0000034088"}
 
 _WWW_HOST = "https://www.sec.gov"
 _REQUEST_DELAY_SECONDS = 0.3
+# How often (in filings) main() prints per-filing progress -- purely a
+# stdout-legibility choice, not a correctness knob (real incident,
+# 2026-09-18: a 1863-filing real JPM run printed nothing at all for
+# this whole loop, indistinguishable from a hang).
+_FILING_PROGRESS_INTERVAL = 25
 # Margin before this project's standard 2010-01-01 raw-IC-screening
 # start date -- insider_buying_score looks back a trailing 6 months
 # from its own as_of_time, so history must reach a bit earlier than
@@ -318,9 +323,19 @@ def main(argv=None) -> int:
                 print(f"      -> FAILED to fetch filing list: {exc}", flush=True)
                 continue
 
-            for filing in filings:
+            print(f"      -> {len(filings)} filing(s) found, fetching each filing's own document(s)...", flush=True)
+            for j, filing in enumerate(filings, start=1):
                 accession_number = filing["accession_number"]
                 filing_date = filing["filing_date"]
+                # Real incident (2026-09-18): a real JPM run's OWN filing
+                # list finished (progress_callback above showed it
+                # reaching min_filing_date), then went silent again for
+                # a long time here -- 1863 individual filings each need
+                # 2 real requests (index.json + XML), so this loop alone
+                # can take as long as the filing-list pagination did.
+                # Same "print every N items" fix, applied to this loop.
+                if j == 1 or j % _FILING_PROGRESS_INTERVAL == 0 or j == len(filings):
+                    print(f"      ...fetching filing {j}/{len(filings)} ({accession_number}, {filing_date.date()}, {symbol_transactions} transaction(s) persisted so far)", flush=True)
                 time.sleep(_REQUEST_DELAY_SECONDS)
                 try:
                     index_json = provider.fetch_form4_index(cik, accession_number, www_transport)
