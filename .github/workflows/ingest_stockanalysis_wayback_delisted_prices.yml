@@ -1,0 +1,88 @@
+# Real ingestion of sparse, point-in-time delisted-stock prices
+# recovered from Wayback Machine snapshots of stockanalysis.com -- see
+# scripts/ingest_stockanalysis_wayback_delisted_prices.py's own module
+# docstring for the full real recon history (2026-09-19: confirmed
+# real prices recoverable across 3 real site layouts spanning
+# 2020-2026, confirmed the technique only applies to tickers removed
+# from the S&P 500 in 2020 or later -- 142 of 623 real candidates,
+# stockanalysis.com itself did not exist before ~2020).
+#
+# Fetches the real, live fja05680/sp500 interval CSV
+# (raw.githubusercontent.com, confirmed reachable) to select candidates
+# at run time rather than committing a generated list (this project's
+# own "never commit a data file, regenerate from the live real source"
+# convention, ADR-0120).
+#
+# `symbols` input: leave empty to auto-select the full real candidate
+# set (~142 tickers, a real, moderate, rate-limited multi-hour run
+# against a free shared archival service -- see the ingestion script's
+# own rate-limiting comment); pass an explicit space-separated list
+# (e.g. "AVB") for a small real verification run first.
+#
+# workflow_dispatch-only -- a real, potentially long, real-network run.
+name: Ingest Stockanalysis.com Delisted Prices (via Wayback Machine)
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Space-separated tickers, or leave empty to auto-select the full real 2020+-delisted candidate set"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Fetch the real, live S&P 500 constituent-interval CSV
+        if: inputs.symbols == ''
+        run: |
+          curl -sS -o sp500_ticker_start_end.csv \
+            "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv"
+
+      - name: Select this run's real candidate symbols
+        id: symbols
+        run: |
+          if [ -n "${{ inputs.symbols }}" ]; then
+            echo "symbols=${{ inputs.symbols }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "symbols=$(python3 scripts/select_delisted_candidates_since.py --sp500-intervals-csv sp500_ticker_start_end.csv --since 2020-01-01)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ingest real Wayback-recovered prices
+        run: |
+          python3 scripts/ingest_stockanalysis_wayback_delisted_prices.py \
+            --symbols ${{ steps.symbols.outputs.symbols }} \
+            --as-of "$(date -u +%F)" \
+            --db-path ./data/wayback_delisted_prices \
+            --manifest-out wayback_ingestion_manifest.json
+
+      - name: Upload the recovered-price catalog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayback-delisted-prices-catalog
+          path: ./data/wayback_delisted_prices
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Upload the manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayback-delisted-prices-manifest
+          path: wayback_ingestion_manifest.json
+          retention-days: 90
+          if-no-files-found: ignore
