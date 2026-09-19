@@ -1,0 +1,94 @@
+# Fills a real, specific gap in an already-combined insider-transaction
+# catalog without re-running the full 87-symbol sharded collection
+# (ingest_insider_transactions_full.yml, ADR-0171). Concrete motivation:
+# shard 8 of that run failed only on AVB (a real corporate-action
+# ticker-map miss, fixed in ingest_insider_transactions.py's
+# _KNOWN_CIK_OVERRIDES, ADR-0172) -- its other 7 symbols already
+# succeeded and are already in the combined catalog. Re-running the
+# whole sharded workflow again just to pick up one symbol would waste
+# ~5 hours of real SEC EDGAR requests for data already collected.
+#
+# Generalized (not AVB-specific) so the identical situation -- a
+# shard/run failing on a handful of symbols after a fix lands -- can be
+# resolved the same way without a new workflow each time.
+#
+# workflow_dispatch-only, real network calls (SEC EDGAR) -- same
+# reasoning as every other real ingestion workflow in this repository.
+name: Append Symbols to Insider Transactions Catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Space-separated symbols to ingest and append, e.g. 'AVB'"
+        type: string
+        required: true
+      user_agent:
+        description: "SEC fair-access contact string, e.g. 'ProjectName you@example.com'"
+        type: string
+        required: true
+      source_run_id:
+        description: "Workflow run ID whose combined catalog artifact to append onto"
+        type: string
+        required: true
+      source_artifact_name:
+        description: "Name of that run's combined catalog artifact"
+        type: string
+        default: "insider-transactions-catalog"
+
+permissions:
+  contents: read
+
+jobs:
+  append:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Download the existing combined catalog
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.source_artifact_name }}
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: ./data/insider_final
+
+      - name: Ingest the new symbol(s)
+        run: |
+          python3 scripts/ingest_insider_transactions.py \
+            --symbols ${{ inputs.symbols }} \
+            --user-agent "${{ inputs.user_agent }}" \
+            --as-of "$(date -u +%F)" \
+            --db-path ./data/insider_new_symbols \
+            --manifest-out insider_new_symbols_manifest.json
+
+      - name: Merge the new symbol(s) into the combined catalog
+        run: |
+          python3 scripts/merge_insider_transaction_catalogs.py \
+            --target-db-path ./data/insider_final \
+            --shard-db-path ./data/insider_new_symbols
+
+      - name: Upload the updated combined catalog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: insider-transactions-catalog-updated
+          path: ./data/insider_final
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Upload the new-symbols manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: insider-transactions-new-symbols-manifest
+          path: insider_new_symbols_manifest.json
+          retention-days: 90
+          if-no-files-found: ignore
