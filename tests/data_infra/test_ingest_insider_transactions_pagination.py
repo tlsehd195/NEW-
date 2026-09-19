@@ -168,6 +168,63 @@ class TestFallsBackToOlderHistoryFiles:
         assert {f["accession_number"] for f in filings} == {"0001-26-000001", "0001-25-000001"}
 
 
+class TestProgressCallback:
+    """Real incident (2026-09-18): a real workflow_dispatch run against
+    JPM ran 40+ minutes with this function's own older-history loop
+    printing nothing, indistinguishable from a hang even though it was
+    very likely making real progress. `progress_callback` closes that
+    observability gap."""
+
+    def test_called_once_per_older_file_with_running_count_and_oldest_date(self) -> None:
+        module = _load_script()
+        main = _submissions(
+            [("0001-26-000001", "2023-06-01", "4")],
+            files=["file-001.json", "file-002.json"],
+        )
+        file1 = _older_file([("0001-25-000001", "2015-01-01", "4")])
+        file2 = _older_file([("0001-24-000001", "2005-01-01", "4")])
+        provider = _StubProvider(main, files={"file-001.json": file1, "file-002.json": file2})
+        calls = []
+
+        module._fetch_paginated_filing_list(
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
+            progress_callback=lambda file_name, count, oldest: calls.append((file_name, count, oldest)),
+        )
+
+        assert calls == [
+            ("file-001.json", 2, utc(2015, 1, 1)),
+            ("file-002.json", 3, utc(2005, 1, 1)),
+        ]
+
+    def test_never_called_when_no_older_files_are_needed(self) -> None:
+        module = _load_script()
+        main = _submissions([("0001-26-000001", "2023-06-01", "4")])
+        provider = _StubProvider(main)
+        calls = []
+
+        module._fetch_paginated_filing_list(
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
+            progress_callback=lambda *args: calls.append(args),
+        )
+
+        assert calls == []
+
+    def test_defaults_to_none_and_stays_silent(self) -> None:
+        """No progress_callback given -- must not raise."""
+        module = _load_script()
+        main = _submissions(
+            [("0001-26-000001", "2023-06-01", "4")],
+            files=["file-001.json"],
+        )
+        file1 = _older_file([("0001-25-000001", "2005-01-01", "4")])
+        provider = _StubProvider(main, files={"file-001.json": file1})
+
+        filings = module._fetch_paginated_filing_list(
+            provider, "0000320193", min_filing_date=utc(2010, 1, 1), max_filings=100,
+        )
+        assert len(filings) == 2
+
+
 class TestDeduplicatesByAccessionNumber:
     def test_an_accession_repeated_in_an_older_file_is_not_duplicated(self) -> None:
         module = _load_script()

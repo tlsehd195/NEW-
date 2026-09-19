@@ -140,6 +140,7 @@ def _parse_date(value: str) -> datetime:
 
 def _fetch_paginated_filing_list(
     data_provider, cik: str, *, min_filing_date: datetime, max_filings: int,
+    progress_callback=None,
 ) -> list[dict]:
     """Session 37 continued -- rewritten to fetch the filing LIST from
     `data.sec.gov/submissions/CIK##########.json` (`data_provider`'s
@@ -156,7 +157,20 @@ def _fetch_paginated_filing_list(
     reached, the files are exhausted, or `max_filings` is hit --
     mirroring the old function's exact same three stopping conditions.
     Deduplicates by `accession_number` regardless, the same defensive
-    measure the old function applied to CGI-bin pages."""
+    measure the old function applied to CGI-bin pages.
+
+    **Real incident (2026-09-18)**: a real `workflow_dispatch` run
+    against JPM (CIK 0000019617 -- one of the most prolific SEC filers
+    that exists) ran for 40+ minutes with this function's own inner
+    loop printing nothing at all, indistinguishable from a genuine hang
+    even though every individual request has a 10s timeout
+    (`SecEdgarConfig.timeout_seconds`) and was very likely succeeding
+    -- JPM's own `filings.files` older-history list is simply long
+    enough that fetching it one file at a time, silently, looks stuck.
+    `progress_callback`, when given, is invoked once per older-history
+    file fetched with the file name, running filing count, and the
+    oldest filing date reached so far, so a real run's own stdout shows
+    genuine progress instead of a multi-minute silence."""
     all_filings: list[dict] = []
     seen_accessions: set[str] = set()
 
@@ -175,6 +189,8 @@ def _fetch_paginated_filing_list(
             older_raw = data_provider.fetch_submissions_file(file_name)
             _add(form4_filings_from_submissions(older_raw))
             oldest = min((f["filing_date"] for f in all_filings), default=None)
+            if progress_callback is not None:
+                progress_callback(file_name, len(all_filings), oldest)
             if len(all_filings) >= max_filings:
                 break
             if oldest is not None and oldest <= min_filing_date:
@@ -284,10 +300,15 @@ def main(argv=None) -> int:
             print(f"  [{i}/{len(symbols)}] {symbol} (CIK {cik}, source={cik_source}): fetching Form 4 filing list (paginating back to {args.min_filing_date.date()})...", flush=True)
             symbol_transactions = 0
             filing_errors = []
+            def _log_older_file_progress(file_name: str, filings_so_far: int, oldest_reached) -> None:
+                oldest_str = oldest_reached.date().isoformat() if oldest_reached is not None else "unknown"
+                print(f"      ...fetched older-history file {file_name} ({filings_so_far} filing(s) seen so far, oldest reached: {oldest_str})", flush=True)
+
             try:
                 filings = _fetch_paginated_filing_list(
                     data_provider, cik,
                     min_filing_date=args.min_filing_date, max_filings=args.max_filings_per_symbol,
+                    progress_callback=_log_older_file_progress,
                 )
             except (TransientProviderError, PermanentProviderError) as exc:
                 per_symbol_results.append({
