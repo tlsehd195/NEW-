@@ -46,7 +46,7 @@ def _fake_zip(csv_name: str, csv_text: str) -> bytes:
     return buffer.getvalue()
 
 
-class TestMain:
+class TestInspect:
     def test_prints_zip_contents_and_first_last_lines(self, monkeypatch, capsys) -> None:
         module = _load_module()
         csv_text = "\n".join([f"header line {i}" for i in range(20)] + [f"tail line {i}" for i in range(15)])
@@ -55,9 +55,9 @@ class TestMain:
             module.urllib.request, "urlopen",
             lambda request, timeout: _FakeResponse(zip_bytes),
         )
-        exit_code = module.main()
-        assert exit_code == 0
+        module._inspect("https://example.com/factors.zip")
         out = capsys.readouterr().out
+        assert "https://example.com/factors.zip" in out
         assert "F-F_Research_Data_Factors.CSV" in out
         assert "'header line 0'" in out
         assert "'tail line 14'" in out
@@ -70,8 +70,7 @@ class TestMain:
             module.urllib.request, "urlopen",
             lambda request, timeout: _FakeResponse(zip_bytes),
         )
-        exit_code = module.main()
-        assert exit_code == 0
+        module._inspect("https://example.com/factors.zip")
         out = capsys.readouterr().out
         assert "blank line indices (first 5): [2]" in out
         assert "'annual line 1'" in out
@@ -84,7 +83,22 @@ class TestMain:
             module.urllib.request, "urlopen",
             lambda request, timeout: _FakeResponse(zip_bytes),
         )
+        module._inspect("https://example.com/factors.zip")
+        out = capsys.readouterr().out
+        assert "blank line indices (first 5): []" in out
+
+
+class TestMain:
+    def test_inspects_both_monthly_and_daily_candidate_urls(self, monkeypatch, capsys) -> None:
+        module = _load_module()
+        zip_bytes = _fake_zip("data.CSV", "line 1\nline 2")
+        monkeypatch.setattr(
+            module.urllib.request, "urlopen",
+            lambda request, timeout: _FakeResponse(zip_bytes),
+        )
         exit_code = module.main()
         assert exit_code == 0
         out = capsys.readouterr().out
-        assert "blank line indices (first 5): []" in out
+        for url in module._CANDIDATE_URLS:
+            assert url in out
+        assert "daily" in out.lower()
