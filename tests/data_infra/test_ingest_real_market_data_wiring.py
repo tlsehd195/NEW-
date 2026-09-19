@@ -230,11 +230,10 @@ class TestCriticalDataQualityFindingsGateExitCode:
 
     def test_return_statement_also_checks_quality_run_status(self) -> None:
         source = _source()
-        return_line = next(
-            line for line in source.splitlines() if line.strip().startswith("return 0 if result.status.value")
-        )
-        assert "quality_run.status" in return_line
-        assert "CRITICAL_FAILURE" in return_line
+        return_start = source.index("        return (\n            0\n")
+        return_block = source[return_start:source.index("\n        )", return_start)]
+        assert "quality_run.status" in return_block
+        assert "CRITICAL_FAILURE" in return_block
 
     def test_a_fatal_message_is_printed_on_critical_failure(self) -> None:
         source = _source()
@@ -248,7 +247,7 @@ class TestCriticalDataQualityFindingsGateExitCode:
         exits -- not just get recorded in the JSON manifest."""
         source = _source()
         record_call_index = source.index("repository.record_quality_issues(")
-        return_index = source.index('return 0 if result.status.value == "SUCCESS"')
+        return_index = source.index("        return (\n            0\n")
         assert record_call_index < return_index
 
 
@@ -293,6 +292,51 @@ class TestManifestReportsActiveCountAndSurvivorshipMitigationStatus:
         assert isinstance(survivorship_node, ast.Name)
         assert isinstance(membership_node, ast.Name)
         assert survivorship_node.id == membership_node.id
+
+
+class TestUnexplainedZeroBarSymbolsGateExitCode:
+    """Independent audit finding P1-1 (2026-09-19): `missing_symbols` was
+    previously reported but never actually evaluated -- a run could exit
+    0 ("SUCCESS") even when every provider tier silently returned
+    nothing for a symbol on a real, open NYSE trading day, indistinguishable
+    from a run that legitimately saw zero bars because the whole range
+    was a market holiday. Fixed by cross-checking `missing_symbols`
+    against the real, production-grade `US_EQUITY_NYSE` calendar (never
+    the toy Phase-1-scope `US_EQUITY` sample, whose own module docstring
+    explicitly disclaims production accuracy)."""
+
+    def test_uses_the_production_grade_nyse_calendar_not_the_toy_sample(self) -> None:
+        source = _source()
+        assert "from data_infra.calendar import US_EQUITY_NYSE" in source
+        # Never the toy Phase-1-scope calendars this script must not
+        # silently start relying on for a real trading-day computation.
+        assert "US_EQUITY_NYSE.is_trading_day(" in source
+
+    def test_manifest_has_expected_trading_days_and_unexplained_zero_bar_keys(self) -> None:
+        keys = _manifest_keys(_tree())
+        assert {"expected_trading_days_in_range", "unexplained_zero_bar_symbols"} <= keys
+
+    def test_unexplained_zero_bar_symbols_is_empty_when_no_trading_days_expected(self) -> None:
+        # A holiday-only requested range (expected_trading_days_in_range
+        # == 0) must never populate this list -- that would resurrect
+        # the exact false-failure regression a naive "any empty response
+        # is a failure" fix was rejected for during design.
+        source = _source()
+        assign_line_start = source.index("unexplained_zero_bar_symbols = ")
+        assign_line = source[assign_line_start:source.index("\n", assign_line_start)]
+        assert "missing_symbols" in assign_line
+        assert "expected_trading_days_in_range > 0" in assign_line
+
+    def test_a_fatal_message_is_printed_for_unexplained_zero_bar_symbols(self) -> None:
+        source = _source()
+        assert "unexplained_zero_bar_symbols" in source
+        assert "silently returned nothing for a day the market was actually open" in source
+
+    def test_return_statement_also_checks_unexplained_zero_bar_symbols(self) -> None:
+        source = _source()
+        return_start = source.index("        return (\n            0\n")
+        return_block = source[return_start:source.index("\n        )", return_start)]
+        assert "unexplained_zero_bar_symbols" in return_block
 
 
 class TestTiingoRequestBudgetSharedAcrossBothCallPaths:

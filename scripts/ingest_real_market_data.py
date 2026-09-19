@@ -105,6 +105,23 @@ assumed), `missing_symbols`, `active_count`, and
 `survivorship_mitigation_applied` (both derived from whether any
 `SymbolMetadata` in the run's universe actually had a confirmed
 `listed_from`/`listed_to`).
+
+**Phase 32 fix (ADR-0175, independent audit P1-1)**: `missing_symbols`
+(a zero-bar symbol) was previously reported but never actually
+evaluated -- a run could exit 0 ("SUCCESS") with every provider tier
+having silently returned nothing for a symbol on a real, open trading
+day, indistinguishable in this script's own exit code from a run that
+legitimately saw no bars because the whole requested range was a market
+holiday. `expected_trading_days_in_range` (computed from the real,
+production-grade `US_EQUITY_NYSE` calendar, never the toy Phase-1-scope
+`US_EQUITY` sample) and `unexplained_zero_bar_symbols` now distinguish
+the two: this script now exits non-zero, and prints a FATAL line, only
+when at least one requested symbol has zero persisted bars AND the
+requested range contains at least one real NYSE trading day. A
+holiday-only range (`expected_trading_days_in_range == 0`) never trips
+this, by design -- see ADR-0175 for why the alternative (making
+`FallbackDataProvider`/`IngestionRunner` themselves treat any empty,
+non-exception response as a failure) was considered and rejected.
 """
 
 from __future__ import annotations
@@ -112,11 +129,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
 from data_infra.provider import IngestionRunner, PermanentProviderError, TransientProviderError  # noqa: E402
 from data_infra.providers.alphavantage import AlphaVantageDataProvider  # noqa: E402
 from data_infra.providers.alphavantage_config import DEFAULT_ALPHAVANTAGE_CONFIG  # noqa: E402
@@ -327,6 +345,33 @@ def main() -> int:
         for b in all_bars:
             bar_counts_by_symbol[b.security_id] = bar_counts_by_symbol.get(b.security_id, 0) + 1
         missing_symbols = sorted(symbol for symbol, count in bar_counts_by_symbol.items() if count == 0)
+
+        # Independent audit finding P1-1 (2026-09-19): IngestionRunner.run()
+        # and FallbackDataProvider.fetch() both intentionally report
+        # SUCCESS for a real, legitimate empty response -- e.g. every
+        # provider tier correctly and honestly reporting zero bars because
+        # the market was actually closed that whole range, or because a
+        # symbol legitimately has no data yet. Making either of those
+        # shared, well-tested classes treat "connected without error, zero
+        # records" as a hard failure would itself be a regression: it would
+        # falsely flag every ordinary market-holiday-only run (see
+        # FallbackDataProvider's own module docstring and
+        # tests/data_infra/test_quality_real_data.py's existing
+        # min_expected_bars/WARNING-severity coverage, neither of which
+        # this fix touches). What WAS a real, silent gap: this flagship
+        # script never checked whether a `missing_symbols` entry was
+        # actually explainable by the market being closed. Cross-checking
+        # against the real, production-grade NYSE calendar
+        # (`US_EQUITY_NYSE`, not the toy Phase-1-scope `US_EQUITY`/
+        # `KR_EQUITY` samples -- see calendar.py's own docstring) closes
+        # that gap here, at the script layer only.
+        expected_trading_days_in_range = sum(
+            1
+            for offset in range((args.end.date() - args.start.date()).days + 1)
+            if US_EQUITY_NYSE.is_trading_day(args.start.date() + timedelta(days=offset))
+        )
+        unexplained_zero_bar_symbols = list(missing_symbols) if expected_trading_days_in_range > 0 else []
+
         historical_universe_membership_available = (
             any(s.listed_from is not None or s.listed_to is not None for s in universe.symbols)
             if universe is not None
@@ -349,6 +394,8 @@ def main() -> int:
             "active_count": active_count,
             "delisted_count": delisted_count,
             "missing_symbols": missing_symbols,
+            "expected_trading_days_in_range": expected_trading_days_in_range,
+            "unexplained_zero_bar_symbols": unexplained_zero_bar_symbols,
             "providers_used": providers_used,
             "historical_universe_membership_available": historical_universe_membership_available,
             "survivorship_mitigation_applied": historical_universe_membership_available,
@@ -388,6 +435,15 @@ def main() -> int:
         print(f"Active securities: {active_count}")
         print(f"Delisted securities in universe: {delisted_count}")
         print(f"Missing symbols (zero bars): {missing_symbols}")
+        print(f"Expected real NYSE trading days in [--start, --end]: {expected_trading_days_in_range}")
+        if unexplained_zero_bar_symbols:
+            print(
+                f"FATAL: {len(unexplained_zero_bar_symbols)} symbol(s) have ZERO persisted bars despite "
+                f"{expected_trading_days_in_range} real NYSE trading day(s) in the requested range -- "
+                f"every provider tier silently returned nothing for a day the market was actually open: "
+                f"{unexplained_zero_bar_symbols}",
+                file=sys.stderr,
+            )
         # Session 37 (real-data ingestion gap): a symbol can have a
         # non-SUCCESS per-symbol IngestionResult (e.g. a transient
         # provider error partway through) while still ending up with
@@ -430,7 +486,13 @@ def main() -> int:
                 "still be treated as failed so it is never silently mistaken for a clean ingestion.",
                 file=sys.stderr,
             )
-        return 0 if result.status.value == "SUCCESS" and quality_run.status != DataQualityRunStatus.CRITICAL_FAILURE else 1
+        return (
+            0
+            if result.status.value == "SUCCESS"
+            and quality_run.status != DataQualityRunStatus.CRITICAL_FAILURE
+            and not unexplained_zero_bar_symbols
+            else 1
+        )
     finally:
         engine.close()
 
