@@ -174,6 +174,34 @@ class TestCikOverrides:
         assert found, "expected a _KNOWN_CIK_OVERRIDES = {...} dict literal"
 
 
+class TestPerFilingProgressIsLogged:
+    """Real incident (2026-09-18): a real JPM run's filing-list
+    pagination finished (confirmed via its own progress_callback
+    output), then this per-filing loop went silent for a long time --
+    1863 individual filings each needing 2 real requests can take as
+    long as the filing-list pagination itself, with zero visibility.
+    Mirrors `_fetch_paginated_filing_list`'s own progress_callback fix,
+    applied here as a periodic print (every `_FILING_PROGRESS_INTERVAL`
+    filings, always on the first and last) rather than a callback,
+    since this loop is inline in `main()` rather than a separably
+    testable helper."""
+
+    def test_progress_is_printed_at_a_regular_interval_inside_the_per_filing_loop(self) -> None:
+        source = _source()
+        loop_start = source.index("for j, filing in enumerate(filings, start=1):")
+        loop_region = source[loop_start:loop_start + 1200]
+        assert "_FILING_PROGRESS_INTERVAL" in loop_region
+        assert "fetching filing {j}/{len(filings)}" in loop_region
+        assert "flush=True" in loop_region
+
+    def test_progress_print_happens_before_the_real_network_calls_for_that_filing(self) -> None:
+        source = _source()
+        loop_start = source.index("for j, filing in enumerate(filings, start=1):")
+        progress_print_index = source.index("fetching filing {j}/{len(filings)}", loop_start)
+        first_network_call_index = source.index("fetch_form4_index(", loop_start)
+        assert progress_print_index < first_network_call_index
+
+
 class TestPerFilingLoopSurvivesAValueErrorNotJustProviderErrors:
     """Same class of regression guard ingest_fundamentals_data.py's own
     per-symbol loop already carries, applied here at the per-FILING
@@ -183,7 +211,7 @@ class TestPerFilingLoopSurvivesAValueErrorNotJustProviderErrors:
 
     def test_the_per_filing_except_clause_also_catches_value_error(self) -> None:
         source = _source()
-        per_filing_loop_start = source.index("for filing in filings:")
+        per_filing_loop_start = source.index("for j, filing in enumerate(filings, start=1):")
         except_index = source.index("except (", per_filing_loop_start)
         line_end = source.index("\n", except_index)
         except_line = source[except_index:line_end]
