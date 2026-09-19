@@ -98,7 +98,14 @@ class TestPartialAndFullFillAndCancelledThroughFullResponseParsing:
             attempt_count=1, responded_at=utc(2024, 1, 2),
         )
         assert result.status == BrokerOrderStatus.PARTIAL_FILLED
-        assert result.filled_quantity == "3"
+        # Independent audit finding (Step 7, P3): a string quantity used
+        # to pass through unconverted here -- BrokerOrderResponse.
+        # filled_quantity is declared Optional[float], and a raw string
+        # reaching Fill.quantity would crash the first time a SELL fill
+        # tries to negate it. Must be a real float, matching
+        # parse_order_detail_response's own existing coercion.
+        assert result.filled_quantity == 3.0
+        assert isinstance(result.filled_quantity, float)
 
     def test_filled_response(self) -> None:
         response = TransportResponse(200, {"status": "FILLED", "orderId": "TOSS-1", "filledQuantity": "10"}, None, {})
@@ -107,6 +114,28 @@ class TestPartialAndFullFillAndCancelledThroughFullResponseParsing:
             attempt_count=1, responded_at=utc(2024, 1, 2),
         )
         assert result.status == BrokerOrderStatus.FILLED
+
+    def test_string_avg_fill_price_is_coerced_to_float(self) -> None:
+        response = TransportResponse(
+            200, {"status": "FILLED", "orderId": "TOSS-1", "filledQuantity": "10", "avgFillPrice": "185.5"}, None, {},
+        )
+        result = parse_order_response(
+            response, response_id="R1", client_order_id="CID-1", broker_id="toss", operation="submit_order",
+            attempt_count=1, responded_at=utc(2024, 1, 2),
+        )
+        assert result.avg_fill_price == 185.5
+        assert isinstance(result.avg_fill_price, float)
+
+    def test_a_negative_sell_quantity_no_longer_crashes_on_a_string(self) -> None:
+        """The exact real crash the audit named: a string filled_quantity
+        reaching Fill.quantity would raise TypeError the first time a
+        SELL fill tries to negate it (`-fill.quantity`)."""
+        response = TransportResponse(200, {"status": "FILLED", "orderId": "TOSS-1", "filledQuantity": "5"}, None, {})
+        result = parse_order_response(
+            response, response_id="R1", client_order_id="CID-1", broker_id="toss", operation="submit_order",
+            attempt_count=1, responded_at=utc(2024, 1, 2),
+        )
+        assert -result.filled_quantity == -5.0  # would raise TypeError on a str before this fix
 
     def test_cancelled_response(self) -> None:
         response = TransportResponse(200, {"status": "CANCELED", "orderId": "TOSS-1"}, None, {})
