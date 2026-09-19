@@ -117,7 +117,18 @@ _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH
 # Same real, verified CIK-orphaning fix `ingest_fundamentals_data.py`
 # already applies (ADR-0042) -- Form 4 filings are indexed by the same
 # CIK company-facts uses, so the identical override is needed here.
-_KNOWN_CIK_OVERRIDES = {"XOM": "0000034088"}
+# AVB: real incident, 2026-09-19 sharded full-universe run (shard 8) --
+# AvalonBay Communities merged with Equity Residential on 2026-08-17,
+# forming "Vivmark Residential" under a new ticker (VMRK) from
+# 2026-08-18 (src/data_infra/universe.py's own `_SP500_PIT_CONFIRMED_LISTED_TO`,
+# independently cross-verified there via WebSearch against real news
+# coverage). SEC EDGAR's LIVE company_tickers.json no longer lists the
+# now-delisted `AVB` ticker at all, so `resolve_cik` returns None --
+# not a data-quality bug, a real corporate action. The CIK itself
+# (0000915912) is already a real, provider-confirmed value in this
+# same repository (universe.py's own sector/exchange backfill used the
+# identical override after the identical original ticker-map miss).
+_KNOWN_CIK_OVERRIDES = {"XOM": "0000034088", "AVB": "0000915912"}
 
 _WWW_HOST = "https://www.sec.gov"
 _REQUEST_DELAY_SECONDS = 0.3

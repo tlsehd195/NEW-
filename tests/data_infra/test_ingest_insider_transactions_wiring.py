@@ -173,6 +173,29 @@ class TestCikOverrides:
                 assert pairs.get("XOM") == "0000034088"
         assert found, "expected a _KNOWN_CIK_OVERRIDES = {...} dict literal"
 
+    def test_known_cik_overrides_dict_has_avb(self) -> None:
+        """Real incident, 2026-09-19 sharded full-universe run (shard
+        8): AVB genuinely dropped out of SEC EDGAR's live
+        company_tickers.json after AvalonBay's 2026-08-17 merger into
+        Vivmark Residential (new ticker VMRK) -- resolve_cik legitimately
+        returned None, not a bug. The real CIK (0000915912) is the same
+        one universe.py's own sector/exchange backfill already verified
+        after hitting the identical ticker-map miss."""
+        tree = _tree()
+        found = False
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "_KNOWN_CIK_OVERRIDES"
+                and isinstance(node.value, ast.Dict)
+            ):
+                found = True
+                pairs = {k.value: v.value for k, v in zip(node.value.keys, node.value.values)}
+                assert pairs.get("AVB") == "0000915912"
+        assert found, "expected a _KNOWN_CIK_OVERRIDES = {...} dict literal"
+
 
 class TestPerFilingProgressIsLogged:
     """Real incident (2026-09-18): a real JPM run's filing-list
