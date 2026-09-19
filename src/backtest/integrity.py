@@ -165,6 +165,42 @@ class BacktestIntegrityChecker:
                 as_of_time, security_id,
             )
 
+    def check_delisted_position_marked_at_cost(
+        self, delisted_security_ids: Sequence[str], as_of_time: datetime
+    ) -> None:
+        """Independent audit finding (Step 2, P2): a position in a
+        CONFIRMED-delisted security (`SecurityMaster.status ==
+        SecurityStatus.DELISTED`, real provider-sourced data, never
+        guessed) that is still open when its price disappears gets
+        marked to its own average cost by `PortfolioAccounting.
+        mark_to_market` -- a fallback that is honest and reasonable for
+        an ORDINARY temporary price gap (a data outage, a stale
+        provider), but not for a real delisting: `average_cost` is
+        never a plausible estimate of what a delisted, likely-bankrupt
+        security is actually worth, and treating it as one can
+        systematically overstate a strategy's real performance for as
+        long as the backtest holds the position afterward. Reported at
+        ERROR severity specifically so `BacktestResult.is_valid_
+        performance` becomes `False` for such a run (unlike the generic
+        `missing_data`/WARNING case, which correctly stays a legitimate,
+        valid result) -- this project's own gating rule already states
+        "a result with any ERROR/CRITICAL issue must not be treated as
+        a legitimate performance outcome" (this module's own docstring).
+        This does NOT attempt to estimate a real recovery value (a
+        merger/acquisition often pays real, non-zero consideration,
+        which this project has no real data source for -- see
+        `CorporateActionApplier`'s own Phase 2 spec section 8.4 scope
+        limit) -- it only makes the resulting performance number
+        honestly untrustworthy instead of silently valid."""
+        for security_id in delisted_security_ids:
+            self.record(
+                "delisted_position_marked_at_cost", IntegritySeverity.ERROR,
+                f"held position {security_id} is CONFIRMED DELISTED (SecurityMaster.status) "
+                f"but still valued at average cost at {as_of_time} -- this backtest's own "
+                "performance number cannot be trusted for as long as this position remains open",
+                as_of_time, security_id,
+            )
+
     def note_discarded_end_of_backtest(self, intents: Sequence[OrderIntent], as_of_time: datetime) -> None:
         for intent in intents:
             self.record(

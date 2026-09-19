@@ -159,16 +159,41 @@ class TestEvidenceLevelWithActualPboDsrValues:
         )
         assert assessment.level == EvidenceLevel.ROBUSTNESS_PENDING
 
-    def test_omitting_pbo_dsr_values_preserves_old_trust_the_flag_behavior(self) -> None:
+    def test_omitting_pbo_dsr_values_preserves_old_candidate_classification(self) -> None:
         """Backward compatibility: a caller that only sets
-        pbo_dsr_applied=True (never supplying the actual numbers) gets
-        exactly the pre-existing behavior -- this is what every
-        pre-existing caller in this test file and
-        scripts/run_long_horizon_validation.py's prior behavior does."""
+        pbo_dsr_applied=True (never supplying the actual numbers) still
+        reaches CANDIDATE -- the classification logic itself is
+        unchanged by the honesty fix below."""
         assessment = classify_evidence_level(
             self._fold_consistent_agg(), is_real_data=True, pbo_dsr_applied=True,
         )
         assert assessment.level == EvidenceLevel.CANDIDATE
+
+    def test_omitting_pbo_dsr_values_reports_pbo_dsr_applied_as_false(self) -> None:
+        """Independent audit finding (Step 2, P2): the OLD behavior
+        reported `pbo_dsr_applied=True` on the returned EvidenceAssessment
+        even when no real PBO/DSR numbers were ever supplied or checked --
+        a verification-passed masquerade a consumer reading only the
+        structured field (not the full prose `reason`) could be misled
+        by. The returned field must now honestly reflect that real
+        numbers were never actually supplied, independent of what the
+        caller claimed via the `pbo_dsr_applied` argument."""
+        assessment = classify_evidence_level(
+            self._fold_consistent_agg(), is_real_data=True, pbo_dsr_applied=True,
+        )
+        assert assessment.level == EvidenceLevel.CANDIDATE  # classification logic unchanged
+        assert assessment.pbo_dsr_applied is False  # but the reported field is now honest
+
+    def test_supplying_real_pbo_dsr_values_reports_pbo_dsr_applied_as_true(self) -> None:
+        """The positive case: when real numbers ARE supplied and DO
+        clear the bar, the reported field must still say True -- this
+        fix must not make it permanently False."""
+        assessment = classify_evidence_level(
+            self._fold_consistent_agg(), is_real_data=True, pbo_dsr_applied=True,
+            pbo_probability=0.1, deflated_sharpe_ratio=0.99,
+        )
+        assert assessment.level == EvidenceLevel.CANDIDATE
+        assert assessment.pbo_dsr_applied is True
 
 
 class TestPboDsrApplicability:

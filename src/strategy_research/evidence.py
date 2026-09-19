@@ -167,7 +167,24 @@ def classify_evidence_level(
                 + ". Still not VALIDATED: that requires explicit human review this function does not perform."
             ),
             fold_count=aggregate.fold_count, positive_fold_ratio=positive_ratio,
-            distinct_known_regimes=len(known_regimes), is_real_data=True, pbo_dsr_applied=True,
+            # Independent audit finding (Step 2, P2): this used to hardcode
+            # `pbo_dsr_applied=True` here regardless of `pbo_dsr_values_
+            # supplied` -- a caller that set `pbo_dsr_applied=True` without
+            # ever supplying `pbo_probability`/`deflated_sharpe_ratio` (this
+            # function's own docstring explicitly permits that, "trusted at
+            # face value") could reach CANDIDATE with a reported `pbo_dsr_
+            # applied=True` that FALSELY implies real PBO/DSR screening
+            # happened and passed, when it was never actually run at all --
+            # a verification-passed masquerade a future consumer reading
+            # only the structured field (not the full prose `reason`) could
+            # be misled by. Reporting `pbo_dsr_values_supplied` here instead
+            # makes the field mean exactly what it says: real numbers were
+            # actually supplied and checked, not merely claimed. The
+            # CANDIDATE classification logic itself is UNCHANGED -- a caller
+            # can still reach CANDIDATE via `pbo_dsr_applied=True` alone
+            # (that broader policy question is unrelated to this field's
+            # own honesty and is not decided here).
+            distinct_known_regimes=len(known_regimes), is_real_data=True, pbo_dsr_applied=pbo_dsr_values_supplied,
         )
 
     return EvidenceAssessment(

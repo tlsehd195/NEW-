@@ -18,6 +18,7 @@ from backtest.fills import Fill
 from backtest.integrity import BacktestIntegrityChecker
 from backtest.portfolio import PortfolioAccounting
 from backtest.strategy import OrderIntent
+from data_infra.enums import SecurityStatus
 
 
 class TestDuplicateOrder:
@@ -76,6 +77,52 @@ class TestDuplicateOrder:
         assert any(i.check == "duplicate_trades" for i in result.integrity.issues)
         assert result.is_valid_performance is False
 
+    def test_engine_level_confirmed_delisted_held_position_invalidates_the_result(self) -> None:
+        """Independent audit finding (Step 2, P2), proven end to end
+        through the real BacktestEngine, not just the checker in
+        isolation: a strategy that buys AAA on day 1 and never sells,
+        while AAA's real SecurityMaster confirms DELISTED and its price
+        history simply stops (a real, common shape for a stock that
+        actually got delisted), must have its performance result marked
+        invalid -- not silently PASSED_WITH_WARNINGS like an ordinary,
+        temporary missing-price gap would be."""
+        days = trading_days(date(2024, 1, 2), date(2024, 1, 10))
+        # AAA has real price data for the first 3 days only -- day 4
+        # onward, no bars exist at all (the real shape of an actual
+        # delisting, not merely a temporary provider outage).
+        bars = make_bars("AAA", days[:3], [100.0, 101.0, 102.0])
+        repo = build_repository(
+            bars=bars,
+            securities=[make_security("AAA", "AAA", status=SecurityStatus.DELISTED)],
+        )
+
+        class _BuyOnceAndHoldStrategy:
+            version = "buy_once_and_hold_v1"
+
+            def __init__(self) -> None:
+                self._bought = False
+
+            def generate_orders(self, as_of_time, data, portfolio):
+                if self._bought:
+                    return []
+                self._bought = True
+                return [OrderIntent("AAA", OrderSide.BUY, 1.0)]
+
+        config = BacktestConfig(
+            market="US_EQUITY", start_date=days[0], end_date=days[-1],
+            initial_capital=10_000.0, security_ids=("AAA",),
+        )
+        result = BacktestEngine(repo, config, _BuyOnceAndHoldStrategy()).run()
+        delisted_issues = [i for i in result.integrity.issues if i.check == "delisted_position_marked_at_cost"]
+        assert delisted_issues, "expected at least one delisted_position_marked_at_cost issue"
+        assert all(i.severity == IntegritySeverity.ERROR for i in delisted_issues)
+        assert not any(i.check == "missing_data" for i in result.integrity.issues), (
+            "a CONFIRMED delisted position must never also be reported as an ordinary "
+            "missing_data WARNING -- that would let it count toward a merely-PASSED_WITH_"
+            "WARNINGS status instead"
+        )
+        assert result.is_valid_performance is False
+
 
 class TestIntegrityFailureGating:
     def test_negative_cash_triggers_critical_failure_and_invalid_result(self) -> None:
@@ -129,3 +176,21 @@ class TestIntegrityFailureGating:
         report = checker.finalize()
         assert report.status == IntegrityStatus.PASSED_WITH_WARNINGS
         assert report.is_valid_performance is True
+
+    def test_a_confirmed_delisted_position_marked_at_cost_invalidates_the_result(self) -> None:
+        """Independent audit finding (Step 2, P2): unlike an ordinary
+        temporary missing-price gap (still a legitimate, valid result,
+        the test above), a position in a CONFIRMED-delisted security
+        that is still valued at its own average cost is a real,
+        systematic overstatement risk -- this must gate is_valid_
+        performance to False, the same way any other ERROR-severity
+        issue already does."""
+        checker = BacktestIntegrityChecker()
+        checker.check_delisted_position_marked_at_cost(["AAA"], utc(2024, 1, 2, 20))
+        report = checker.finalize()
+        assert report.status == IntegrityStatus.FAILED
+        assert report.is_valid_performance is False
+        issue = report.errors[0]
+        assert issue.check == "delisted_position_marked_at_cost"
+        assert issue.severity == IntegritySeverity.ERROR
+        assert issue.security_id == "AAA"
