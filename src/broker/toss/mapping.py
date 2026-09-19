@@ -130,8 +130,19 @@ def parse_order_response(
     raw_status = response.body.get("status")
     status = map_order_status(raw_status)
     broker_order_id = response.body.get("orderId") or response.body.get("id")
-    filled_quantity = response.body.get("filledQuantity")
-    avg_fill_price = response.body.get("avgFillPrice")
+    # Independent audit finding (Step 7, P3): unlike `parse_order_detail_
+    # response` a few lines below (which already coerces via `_to_float_
+    # or_none`), this raw extraction previously passed the JSON value
+    # straight through -- `BrokerOrderResponse.filled_quantity`/
+    # `avg_fill_price` are declared `Optional[float]`, but a Toss response
+    # stringifying a quantity (a real, plausible JSON shape) would silently
+    # violate that type. A string `filled_quantity` reaching `Fill.quantity`
+    # would crash the first time a SELL fill's own quantity is negated
+    # (`-fill.quantity` on a `str` raises `TypeError`), the exact real
+    # crash risk the audit named -- fixed by applying the same coercion
+    # `parse_order_detail_response` already uses.
+    filled_quantity = _to_float_or_none(response.body.get("filledQuantity"))
+    avg_fill_price = _to_float_or_none(response.body.get("avgFillPrice"))
 
     return BrokerOrderResponse(
         response_id=response_id, request_client_order_id=client_order_id, broker_id=broker_id,

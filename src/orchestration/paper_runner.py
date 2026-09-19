@@ -929,6 +929,19 @@ def run_cycle(
             security_id, as_of_time, sizing, portfolio, current_price=current_price,
             sector_by_security=sector_by_security, value_history=value_history,
             last_exit_time_by_security=last_exit_time_by_security,
+            # Independent audit finding (Step 4/9, P2): `risk.config.
+            # RiskConfig.max_turnover`, when configured, REQUIRES a real
+            # `turnover` value to be passed here or `DeterministicPortfolio
+            # RiskEngine.assess` fail-closed REJECTs every BUY as
+            # "turnover_unknown" (a required-but-unknown limit) --
+            # this call never passed one at all before this fix, so
+            # configuring `max_turnover` here would have silently blocked
+            # every real BUY. `session.adapter.accounting.turnover()`
+            # already exists and is real (cumulative trade notional over
+            # average historical portfolio value, `backtest.portfolio.
+            # PortfolioAccounting.turnover`) -- simply never threaded
+            # through to this call before now.
+            turnover=session.adapter.accounting.turnover(),
             provenance=provenance, experiment_id=experiment_id,
         )
         if risk_repository is not None:

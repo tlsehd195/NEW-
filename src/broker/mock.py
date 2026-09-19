@@ -107,6 +107,26 @@ class MockBrokerAdapter:
             self._record_status(order, response, observed_at=requested_at)
             return response
 
+        if self._failure_mode == "submit_status_unknown":
+            # A real, non-raising ambiguous response (e.g. an
+            # unrecognized/malformed status code `broker.toss.mapping`
+            # maps to UNKNOWN without raising) -- distinct from
+            # `_check_available`'s own `BrokerTransportError` path, which
+            # this mode never touches. Exists specifically so the session
+            # layer's own handling of a non-raising UNKNOWN response is
+            # testable (LiveTradingSession.submit must treat this
+            # identically to a raised BrokerError, never as success).
+            response = BrokerOrderResponse(
+                response_id=self._response_ids.allocate(), request_client_order_id=order.client_order_id,
+                broker_id=self.broker_id, operation="submit_order", status=BrokerOrderStatus.UNKNOWN,
+                broker_order_id=None, filled_quantity=None, avg_fill_price=None,
+                error_code=None, error_message=None, attempt_count=1, latency_ms=0.0,
+                responded_at=requested_at, provenance=order.provenance, experiment_id=order.experiment_id,
+            )
+            self._orders[order.client_order_id] = response
+            self._record_status(order, response, observed_at=requested_at)
+            return response
+
         if self._failure_mode == "partial_fill":
             filled = order.quantity / 2.0
             response = BrokerOrderResponse(

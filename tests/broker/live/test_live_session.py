@@ -319,6 +319,53 @@ class TestScenario14MalformedResponse:
             assert outcome.status == "UNKNOWN"
 
 
+class TestNonRaisingUnknownResponseIsNeverTreatedAsSuccess:
+    """Independent audit finding (Step 7/9, P2, "최상위" per the audit's
+    own Step 9 framing): a response that returns NORMALLY (no BrokerError
+    raised) but with `status == BrokerOrderStatus.UNKNOWN` (e.g. a real,
+    non-raising `broker.toss.mapping` path for an unrecognized/malformed
+    status code) used to fall through to the exact same success handling
+    as a real FILLED/PENDING response -- `submitted=True`,
+    `_operational_state=ACTIVE`, `consecutive_failure_count` reset to 0.
+    This is the identical class of ambiguity `except BrokerError` above
+    already treats as a real failure; a genuinely UNKNOWN broker-
+    confirmed status must not be any more trustworthy than a raised
+    exception. `MockBrokerAdapter`'s own `submit_status_unknown` failure
+    mode was added specifically to make this non-raising path testable
+    (there was previously no way to reach it without a real, malformed
+    network response)."""
+
+    def test_a_non_raising_unknown_status_is_not_reported_as_submitted(self) -> None:
+        session = _session(failure_mode="submit_status_unknown")
+        ctx = _gate_ctx(session)
+        outcome = session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert outcome.status == "UNKNOWN"
+        assert outcome.submitted is False
+
+    def test_a_non_raising_unknown_status_increments_the_failure_count(self) -> None:
+        session = _session(failure_mode="submit_status_unknown")
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.consecutive_failure_count == 1
+
+    def test_a_non_raising_unknown_status_triggers_reconciliation_required_at_default_threshold(self) -> None:
+        # Default max_consecutive_failures=None -> threshold 1 (halt on
+        # the very first ambiguous outcome), identical to the raised-
+        # BrokerError path's own default behavior.
+        session = _session(failure_mode="submit_status_unknown")
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+
+    def test_a_subsequent_submission_is_then_blocked_pending_reconciliation(self) -> None:
+        session = _session(failure_mode="submit_status_unknown")
+        ctx = _gate_ctx(session)
+        session.submit(_order(client_order_id="CID-1"), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        second = session.submit(_order(client_order_id="CID-2"), requested_at=utc(2024, 1, 3), gate_context=ctx)
+        assert second.status == "BLOCKED"
+        assert second.submitted is False
+
+
 class TestScenario17And18PartialAndCompleteFill:
     def test_partial_fill_reflected_in_outcome(self) -> None:
         session = _session(failure_mode="partial_fill")

@@ -391,6 +391,27 @@ class TestCumulativeGrossExposureEnforcedWithinOneCycle:
         assert real_account.cash == cash_before
 
 
+class TestMaxTurnoverPropagatesThroughTheWholeChain:
+    """Independent audit finding (Step 4/9, P2): `risk.engine.
+    DeterministicPortfolioRiskEngine.assess` fail-closed REJECTs every
+    BUY as "turnover_unknown" whenever `RiskConfig.max_turnover` is
+    configured but no real `turnover` value is passed -- `run_cycle`
+    never passed one at all before this fix. A real, already-existing
+    `session.adapter.accounting.turnover()` is now threaded through."""
+
+    def test_a_configured_max_turnover_no_longer_rejects_every_buy_as_unknown(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_turnover=10.0, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+
+        outcomes = run_cycle(["AAA"], view.current_time, view, session, **_components(risk_config))
+        outcome = outcomes[0]
+
+        assert "turnover_unknown" not in outcome.risk_checked.breached_limits
+        assert outcome.submission is not None
+
+
 class TestReentryCooldownPropagatesThroughTheWholeChain:
     """Session 36 continued -- ADR-0093/ADR-0095/ADR-0096:
     `last_exit_time_by_security` is now sourced from a REAL

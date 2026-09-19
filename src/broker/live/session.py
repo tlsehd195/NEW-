@@ -243,6 +243,31 @@ class LiveTradingSession:
             )
 
         self._internal_status[order.client_order_id] = response.status
+        # Independent audit finding (Step 7/9, P2, "최상위" per Step 9's
+        # own framing): a response that returns NORMALLY (no BrokerError
+        # raised) but with `status == BrokerOrderStatus.UNKNOWN` (a real,
+        # non-raising path in `broker.toss.mapping` -- e.g. an
+        # unrecognized/malformed status code) previously fell through to
+        # exactly the same success path as a real FILLED/PENDING/etc.
+        # response: `_operational_state` set to ACTIVE, the consecutive-
+        # failure counter reset to 0, `submitted=True`. This is the
+        # identical class of ambiguity the `except BrokerError` branch
+        # above already treats as a real failure (this module's own
+        # docstring: "API 응답을 받지 못했다는 주문이 실행되지 않았다는
+        # 뜻이 아니다") -- a genuinely UNKNOWN broker-confirmed status is
+        # no more trustworthy than a raised exception, and must not reset
+        # the failure count or let the session keep accepting new orders
+        # as if nothing were wrong. Mirrors the exception branch's own
+        # counting/escalation exactly, rather than inventing new policy.
+        if response.status == BrokerOrderStatus.UNKNOWN:
+            self._consecutive_failure_count += 1
+            threshold = self.config.max_consecutive_failures or 1
+            if self._consecutive_failure_count >= threshold:
+                self._operational_state = OperationalState.RECONCILIATION_REQUIRED
+            return LiveSubmissionOutcome(
+                submitted=False, status=response.status.value, gate_result=gate_result, response=response,
+                error="broker_returned_unknown_status",
+            )
         self._operational_state = OperationalState.ACTIVE
         self._consecutive_failure_count = 0
         return LiveSubmissionOutcome(submitted=True, status=response.status.value, gate_result=gate_result, response=response)
