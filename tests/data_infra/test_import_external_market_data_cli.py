@@ -171,6 +171,55 @@ class TestImportExternalMarketDataCli:
         assert [b.timestamp.day for b in visible] == [4]
         engine.close()
 
+    def test_a_bar_dated_exactly_on_end_is_no_longer_silently_excluded_or_flagged(self, tmp_path) -> None:
+        """ADR-0167 identified a related bug but deliberately deferred
+        fixing it (an independent audit later confirmed it was still
+        present). `data_infra.provider.bar_available_time` stamps a
+        bar's `available_time` at 20:00 UTC of its own calendar date,
+        but `--end` parses to MIDNIGHT UTC. Before this fix, BOTH
+        `get_bars`'s own `as_of_time` AND `quality.run()`'s `as_of_now`
+        used the unshifted `args.end` -- which meant a bar dated exactly
+        on `--end` (the single most common, entirely legitimate case for
+        a daily ingestion run) was ALREADY excluded from `all_bars` by
+        `get_bars` itself, silently under-reporting `total_bars_
+        persisted`/`actual_data_end` by one real, already-persisted day,
+        every run (verified directly against this exact scenario before
+        the fix: `total_bars_persisted` was 1, not 2, and `actual_data_
+        end` was one day behind the CSV's own real last row). Fixed by
+        using `args.end + 1 day` for both call sites. This test's `--end`
+        is deliberately the SAME calendar date as the CSV's last real
+        row -- the exact case that previously always under-reported."""
+        module = _load_script()
+
+        data_dir = tmp_path / "external_csvs"
+        data_dir.mkdir()
+        _write_csv(
+            data_dir / "AAPL.csv",
+            [
+                {"date": "2010-01-04", "open": "10", "high": "11", "low": "9.5", "close": "10.5", "volume": "1000", "adj_close": "10.5"},
+                {"date": "2010-01-05", "open": "10.5", "high": "11.5", "low": "10", "close": "11", "volume": "1100", "adj_close": "11"},
+            ],
+        )
+        db_path = tmp_path / "db"
+        exit_code = module.main(
+            [
+                "--source-name", "test_external_source",
+                "--data-dir", str(data_dir),
+                "--symbols", "AAPL",
+                "--start", "2010-01-01",
+                "--end", "2010-01-05",  # exactly the last real bar's own date
+                "--db-path", str(db_path),
+            ]
+        )
+        assert exit_code == 0
+
+        manifest = json.loads((db_path / "import_manifest.json").read_text())
+        assert manifest["total_bars_persisted"] == 2  # was 1 before this fix
+        assert manifest["actual_data_end"] == "2010-01-05T00:00:00+00:00"  # was 2010-01-04 before this fix
+        assert manifest["data_quality_status"] == "PASSED"
+        assert manifest["data_quality_issue_count"] == 0
+        assert not any(i["check"] == "future_dated" for i in manifest["data_quality_issues"])
+
     def test_no_network_module_is_imported_by_this_script(self) -> None:
         source = _SCRIPT_PATH.read_text()
         for forbidden in ("import requests", "urllib.request", "http.client", "TiingoHttpTransport", "StooqHttpTransport"):
