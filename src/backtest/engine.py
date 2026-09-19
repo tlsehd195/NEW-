@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 
+from data_infra.enums import SecurityStatus
 from data_infra.repository import DataRepository
 from data_infra.versioning import compute_data_version
 
@@ -131,7 +132,21 @@ class BacktestEngine:
                     data_versions_used.add(bars[-1].provenance.data_version)
 
             _, missing = portfolio.mark_to_market(todays_prices, checkpoint)
-            integrity.check_missing_data(missing, checkpoint)
+            # Independent audit finding (Step 2, P2): a held position
+            # whose security is CONFIRMED delisted (real SecurityMaster
+            # status, never guessed) gets a dedicated, ERROR-severity
+            # check (see BacktestIntegrityChecker.check_delisted_
+            # position_marked_at_cost's own docstring for why) -- every
+            # OTHER missing-price case (an ordinary temporary data gap)
+            # keeps its existing WARNING-severity treatment, unchanged.
+            missing_delisted = [
+                sid for sid in missing
+                if (sm := self._repository.get_security(sid, checkpoint)) is not None
+                and sm.status == SecurityStatus.DELISTED
+            ]
+            missing_other = [sid for sid in missing if sid not in missing_delisted]
+            integrity.check_missing_data(missing_other, checkpoint)
+            integrity.check_delisted_position_marked_at_cost(missing_delisted, checkpoint)
 
             portfolio_view = portfolio.snapshot_view(checkpoint)
             intents = self._strategy.generate_orders(checkpoint, data_view, portfolio_view)
