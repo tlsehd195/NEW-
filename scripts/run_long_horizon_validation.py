@@ -117,6 +117,10 @@ from backtest.contribution import compute_contribution_report_from_fills  # noqa
 from backtest.strategy import BuyAndHoldStrategy  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
 from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
+from data_infra.providers.sp500_index_constituent_history import (  # noqa: E402
+    constituents_as_of,
+    parse_ticker_intervals,
+)
 from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
@@ -527,6 +531,29 @@ def _aggregate_dict(aggregate) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="PILOT_UNIVERSE")
+    parser.add_argument(
+        "--point-in-time-universe-as-of", type=_parse_date, default=None,
+        help=(
+            "ADR-0176 (independent audit P1-2, limited/opt-in fix): when given together "
+            "with --point-in-time-universe-csv, OVERRIDES --universe's security_ids with "
+            "the REAL, historical S&P 500 constituent set as of this exact date (YYYY-MM-DD) "
+            "-- including tickers no longer in today's index, unlike --universe's "
+            "PILOT_UNIVERSE/RESEARCH_UNIVERSE (both current-membership-only). Only affects "
+            "which symbols this run evaluates; --universe's own name/version are still "
+            "reported unchanged elsewhere in this report for provenance. Default: unset, "
+            "meaning this run's universe is exactly --universe's own static membership, "
+            "identical to every run before this flag existed."
+        ),
+    )
+    parser.add_argument(
+        "--point-in-time-universe-csv", type=Path, default=None,
+        help=(
+            "Path to a real, already-fetched fja05680/sp500 sp500_ticker_start_end.csv "
+            "(scripts/fetch_sp500_index_history.py's --save-csv, or "
+            "scripts/select_point_in_time_universe.py's own input). Required together with "
+            "--point-in-time-universe-as-of; providing only one of the pair is an error."
+        ),
+    )
     parser.add_argument("--start", required=True, type=_parse_date)
     parser.add_argument("--end", required=True, type=_parse_date)
     parser.add_argument("--db-path", required=True, type=Path, help="Path to the DuckDB catalog scripts/ingest_real_market_data.py already populated")
@@ -593,6 +620,17 @@ def main() -> int:
     args = parser.parse_args()
     is_real_data = args.data_status == "REAL"
 
+    # ADR-0176: the pair must be given together or not at all -- a lone
+    # --point-in-time-universe-as-of with no CSV (or vice versa) is
+    # always a caller mistake, never a valid partial configuration.
+    if bool(args.point_in_time_universe_as_of) != bool(args.point_in_time_universe_csv):
+        print(
+            "ERROR: --point-in-time-universe-as-of and --point-in-time-universe-csv "
+            "must be given together, or not at all.",
+            file=sys.stderr,
+        )
+        return 1
+
     # TEST-1 protection, not a suggestion (mirrors compute_signal_ic_
     # from_catalog.py / compute_fundamentals_ic_from_catalog.py /
     # compute_filter_bucket_returns_from_catalog.py's identical,
@@ -619,7 +657,36 @@ def main() -> int:
         return 1
 
     universe = _UNIVERSES[args.universe]
-    security_ids = list(universe.symbol_ids)
+    # ADR-0176 (independent audit P1-2, limited/opt-in fix): --universe's
+    # own PILOT_UNIVERSE_V1/RESEARCH_UNIVERSE_STAGE4 only ever contain
+    # TODAY's current holdings (both definitions' own docstrings already
+    # disclose this) -- a backtest across a historical window using
+    # either one implicitly and silently excludes every real S&P 500
+    # constituent that has since been removed from the index, a genuine
+    # survivorship-bias exposure. When both point-in-time flags are
+    # given, security_ids is overridden with the REAL historical
+    # constituent set as of that one date (reusing this project's own
+    # already-existing, already-tested `constituents_as_of`/
+    # `parse_ticker_intervals` -- no new selection logic, mirrors
+    # scripts/select_point_in_time_universe.py exactly). `universe`
+    # itself is deliberately left unchanged so its own name/version
+    # continue to be reported for provenance below -- this only ever
+    # overrides WHICH symbols are evaluated, never the report's record
+    # of which named universe was requested.
+    point_in_time_universe_used = args.point_in_time_universe_as_of is not None
+    if point_in_time_universe_used:
+        intervals = parse_ticker_intervals(args.point_in_time_universe_csv)
+        security_ids = sorted(constituents_as_of(intervals, args.point_in_time_universe_as_of))
+        if not security_ids:
+            print(
+                f"ERROR: no real S&P 500 constituents found for "
+                f"{args.point_in_time_universe_as_of} in {args.point_in_time_universe_csv} "
+                "-- refusing to run against an empty universe.",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        security_ids = list(universe.symbol_ids)
     report_path = args.report_out or (args.db_path / "long_horizon_validation.json")
 
     split = build_chronological_split(
@@ -923,6 +990,14 @@ def main() -> int:
                 # otherwise-identical configuration must never collide into the
                 # same experiment_id (section 27's namespace-separation requirement).
                 "universe_name": universe.name, "universe_version": universe.version,
+                # ADR-0176: a point-in-time-universe run must never collide
+                # with an ordinary run of the same --universe/date-range --
+                # the actual security_ids differ, which data_version already
+                # captures, but experiment_id must too (it is computed from
+                # config only, before any repository read).
+                "point_in_time_universe_as_of": (
+                    args.point_in_time_universe_as_of.isoformat() if point_in_time_universe_used else None
+                ),
                 "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
                 "train_fraction": args.train_fraction, "validation_fraction": args.validation_fraction,
                 "train_window_months": args.train_window_months, "test_window_months": args.test_window_months,
@@ -981,6 +1056,15 @@ def main() -> int:
             "data_version": data_version,
             "universe": universe.name,
             "universe_version": universe.version,
+            # ADR-0176: True only when --point-in-time-universe-as-of/-csv
+            # were both given -- makes it unambiguous, from the report
+            # alone, whether `security_ids` below is --universe's own
+            # static current-membership list or the real, historical,
+            # point-in-time-correct constituent set for one specific date.
+            "point_in_time_universe_used": point_in_time_universe_used,
+            "point_in_time_universe_as_of": (
+                args.point_in_time_universe_as_of.isoformat() if point_in_time_universe_used else None
+            ),
             "security_ids": security_ids,
             "overall_start": args.start.isoformat(),
             "overall_end": args.end.isoformat(),
