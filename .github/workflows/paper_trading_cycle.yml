@@ -185,6 +185,20 @@ jobs:
             --db-path "$MARKET_DATA_DIR" \
             --manifest-out "$MARKET_DATA_DIR/ingestion_manifest.json"
 
+      # ADR-0177 continuation (independent audit P1-3, account owner's
+      # own explicit choice of conservative defaults, 2026-09-19):
+      # --max-drawdown/--max-portfolio-volatility were never passed here
+      # before, leaving both disabled (None) in production even though
+      # run_paper_trading_cycle.py has supported them since Session 36
+      # and --resume already reconstructs real value_history from this
+      # run's own persisted risk records (this cron has run continuously
+      # since 2024-05-23, so real history already exists on the very
+      # first run these flags are passed). 0.20/0.30 are this project's
+      # OWN existing risk.config.RiskConfig dataclass defaults (used
+      # everywhere a caller does not override them) -- not new numbers
+      # invented for this workflow, so this is enabling the project's
+      # already-ratified risk tolerance in its one remaining unwired
+      # spot, not choosing a new one.
       - name: Run paper trading cycle (--resume)
         run: |
           python3 scripts/run_paper_trading_cycle.py \
@@ -192,6 +206,7 @@ jobs:
             --paper-store "$PAPER_STORE_DIR" --resume \
             --start "$START_DATE" --end "$(date -u +%F)" \
             --max-sector-weight 0.25 --max-order-notional 1000 \
+            --max-drawdown 0.20 --max-portfolio-volatility 0.30 \
             --out paper_trading_cycle_report.json
 
       # Account owner's own request (2026-09-18): automate the
