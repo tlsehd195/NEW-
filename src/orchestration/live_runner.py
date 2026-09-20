@@ -160,6 +160,7 @@ from backtest.portfolio import PortfolioView, PositionView
 
 from broker.enums import BrokerOrderStatus
 from broker.live.journal import build_fill_from_broker_response
+from broker.live.kill_switch import KillSwitchTriggerContext, evaluate_kill_switch_triggers
 from broker.live.safety_gate import SafetyGateContext
 from broker.live.session import LiveSubmissionOutcome, LiveTradingSession
 from broker.models import OrderValidationResult
@@ -373,6 +374,7 @@ def run_cycle(
     model_status_repository: Optional[ModelStatusTransitionRepository] = None,
     pinned_configuration_version: Optional[str] = None,
     experiment_id: Optional[str] = None,
+    kill_switch_context: Optional[KillSwitchTriggerContext] = None,
 ) -> tuple[LiveCycleOutcome, ...]:
     """Runs the full chain once for each of `security_ids`, in order,
     sharing ONE `PortfolioView` snapshot (read from the broker once at
@@ -403,7 +405,34 @@ def run_cycle(
     `sector_by_security`/`state`/the five `*_repository` parameters all
     match `paper_runner.run_cycle`'s own contract exactly (ADR-0062,
     ADR-0068) -- opt-in, `None`/absent preserves the same fail-closed or
-    skip-persistence behavior described there."""
+    skip-persistence behavior described there.
+
+    **`kill_switch_context` (independent audit finding, Step 9, P2):
+    `broker.live.kill_switch.evaluate_kill_switch_triggers`/`Live
+    TradingSession.engage_kill_switch` were both real, deterministic,
+    and already tested -- but had ZERO production callers anywhere in
+    this repository, meaning the documented "automatic circuit
+    breaker" (PROJECT_MASTER_PLAN.md section 12.1) never actually ran.**
+    Optional, `None` by default -- omitting it preserves this
+    function's exact pre-existing behavior (no auto-engage attempt at
+    all, same as before this parameter existed). When supplied, it is
+    the BASE `KillSwitchTriggerContext` this cycle uses -- `as_of_time`,
+    `config`, `account_state_known`, `position_state_known` are ALWAYS
+    overridden by this function itself first (identical reasoning to
+    `gate_context`'s own four always-overridden fields above: reaching
+    this point already means `_live_portfolio_view` obtained a real
+    account/positions snapshot). `broker_health`/`risk_health`/
+    `monitoring_pipeline_health`/`data_health`/`daily_loss`/
+    `orders_in_last_hour` remain entirely the caller's responsibility --
+    this module still performs no Monitoring/broker query itself. If
+    `evaluate_kill_switch_triggers` returns a trigger reason and the
+    kill switch is not already engaged, `session.engage_kill_switch` is
+    called BEFORE this cycle's own `security_ids` loop runs -- the loop
+    itself needs no other change, since `kill_switch_engaged` (read
+    immediately below, already used to override every order's own gate
+    context) is re-read AFTER the auto-engage attempt, so every order
+    this cycle is correctly gated exactly as if the kill switch had
+    already been engaged before this call started."""
     portfolio = _live_portfolio_view(session, view, as_of_time)
     # Reaching this line at all means `_live_portfolio_view` obtained a
     # real, available account snapshot AND a real positions read (it
@@ -417,6 +446,31 @@ def run_cycle(
     # derives them itself, same as `order_validation_status`/`as_of_time`.
     broker_capabilities = session.adapter.get_capabilities(as_of=as_of_time)
     kill_switch_engaged = session.is_kill_switch_engaged()
+
+    # Independent audit finding (Step 9, P2): the automatic kill-switch
+    # engage this cycle is documented to perform (PROJECT_MASTER_PLAN.md
+    # section 12.1) previously had no caller anywhere in this codebase --
+    # `evaluate_kill_switch_triggers`/`session.engage_kill_switch` were
+    # both real and tested, just never invoked from here. Opt-in (`None`
+    # default, see this function's own docstring) so every existing
+    # caller/test is completely unaffected. Evaluated BEFORE the
+    # `security_ids` loop below, using `as_of_time`/`config`/
+    # `account_state_known`/`position_state_known` this function already
+    # knows for certain (identical overrides to `gate_context`'s own,
+    # for the identical reason) -- if a trigger fires and the kill
+    # switch is not already engaged, engaging it here, before the loop,
+    # means `kill_switch_engaged` below already reflects it, so every
+    # order this cycle is gated exactly as if it had already been
+    # engaged when this call started.
+    if kill_switch_context is not None and not kill_switch_engaged:
+        effective_kill_switch_context = replace(
+            kill_switch_context, as_of_time=as_of_time, config=session.config,
+            account_state_known=True, position_state_known=True,
+        )
+        trigger_reason = evaluate_kill_switch_triggers(effective_kill_switch_context)
+        if trigger_reason is not None:
+            session.engage_kill_switch(trigger_reason, occurred_at=as_of_time)
+            kill_switch_engaged = True
 
     value_history: Optional[tuple[float, ...]] = None
     if state is not None:

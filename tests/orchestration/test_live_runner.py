@@ -24,6 +24,7 @@ from backtest.enums import OrderSide
 
 from broker.config import BrokerConfig
 from broker.enums import BrokerCapability, BrokerOrderStatus, OrderValidationStatus
+from broker.live.kill_switch import KillSwitchTriggerContext
 from broker.live.safety_gate import SafetyGateContext
 from broker.live.session import LiveTradingSession
 from broker.mock import MockBrokerAdapter
@@ -271,6 +272,97 @@ class TestGateContextDerivedFieldsOverrideCallerPlaceholders:
         assert outcome.submission.submitted is False
         assert outcome.submission.status == "BLOCKED"
         assert "kill_switch_engaged" in outcome.submission.gate_result.failed_conditions
+
+
+class TestKillSwitchAutoEngage:
+    """Independent audit finding (Step 9, P2): `evaluate_kill_switch_
+    triggers`/`session.engage_kill_switch` were both real and tested,
+    but had ZERO production callers -- the documented "automatic
+    circuit breaker" never actually ran. `run_cycle`'s new, opt-in
+    `kill_switch_context` parameter closes that gap."""
+
+    def _kill_switch_context(self, session, as_of_time, **overrides):
+        defaults = dict(
+            as_of_time=as_of_time, broker_health=ComponentHealthStatus.HEALTHY,
+            risk_health=ComponentHealthStatus.HEALTHY, monitoring_pipeline_health=ComponentHealthStatus.HEALTHY,
+            account_state_known=True, position_state_known=True, daily_loss=0.0, orders_in_last_hour=0,
+            config=session.config,
+        )
+        defaults.update(overrides)
+        return KillSwitchTriggerContext(**defaults)
+
+    def test_omitting_kill_switch_context_never_auto_engages(self) -> None:
+        """Backward compatibility: the default (`None`) must leave
+        every pre-existing caller's behavior exactly as it was before
+        this parameter existed."""
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        gate_context = _gate_context(session, view.current_time)
+
+        run_cycle(["AAA"], view.current_time, view, session, gate_context=gate_context, **_components())
+
+        assert session.is_kill_switch_engaged() is False
+
+    def test_a_healthy_context_does_not_auto_engage(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        gate_context = _gate_context(session, view.current_time)
+        ks_context = self._kill_switch_context(session, view.current_time)
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, gate_context=gate_context,
+            kill_switch_context=ks_context, **_components(),
+        )[0]
+
+        assert session.is_kill_switch_engaged() is False
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is True
+
+    def test_a_critical_broker_health_auto_engages_before_the_cycles_own_orders(self) -> None:
+        """The real fix: a real trigger condition (here, UNAVAILABLE
+        broker health) must engage the kill switch BEFORE this same
+        cycle's own order for "AAA" is submitted -- proving the
+        auto-engage runs first, not after the fact."""
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        gate_context = _gate_context(session, view.current_time)
+        ks_context = self._kill_switch_context(
+            session, view.current_time, broker_health=ComponentHealthStatus.UNAVAILABLE,
+        )
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, gate_context=gate_context,
+            kill_switch_context=ks_context, **_components(),
+        )[0]
+
+        assert session.is_kill_switch_engaged() is True
+        assert outcome.submission is not None
+        assert outcome.submission.submitted is False
+        assert outcome.submission.status == "BLOCKED"
+        assert "kill_switch_engaged" in outcome.submission.gate_result.failed_conditions
+
+    def test_an_already_engaged_kill_switch_is_never_re_evaluated(self) -> None:
+        """No redundant engage_kill_switch call (which would allocate a
+        new KillSwitchEvent id and could re-trigger auto-cancel) once
+        already engaged -- evaluate_kill_switch_triggers is only ever
+        consulted when the switch is not already engaged."""
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session()
+        session.engage_kill_switch("already_engaged_before_this_cycle", occurred_at=view.current_time)
+        gate_context = _gate_context(session, view.current_time)
+        gate_context = replace(gate_context, kill_switch_engaged=True)
+        ks_context = self._kill_switch_context(session, view.current_time)
+
+        run_cycle(
+            ["AAA"], view.current_time, view, session, gate_context=gate_context,
+            kill_switch_context=ks_context, **_components(),
+        )
+
+        assert session.is_kill_switch_engaged() is True
 
 
 class TestSectorLimitPropagatesThroughTheWholeChain:
