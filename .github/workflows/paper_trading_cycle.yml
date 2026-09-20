@@ -52,6 +52,10 @@ on:
     - cron: "0 22 * * 1-5"
   workflow_dispatch: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   # ADR-0162 (external review, "잔여 작업" item 3): narrowed from a
   # single workflow-level `contents: write` -- every step of "run-cycle"
@@ -85,6 +89,7 @@ env:
 jobs:
   run-cycle:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -348,6 +353,7 @@ jobs:
     # intent the single-job version's own `if: always()` already had.
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       # To download the artifact "run-cycle" uploaded this same run.
