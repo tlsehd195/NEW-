@@ -271,6 +271,30 @@ class PaperTradingSession:
         for client_order_id in cancelled_ids:
             session.adapter.restore_cancellation(client_order_id)
 
+        # Independent audit finding (Step 8, P3, "R2" -- "restart
+        # amnesia"): an order rejected at FILL time (never at submit
+        # time -- a submit-time rejection's PaperOrderRecord.
+        # initial_status is already REJECTED when first persisted, so
+        # restore_order above already reproduces it correctly) is only
+        # ever recorded that way via an in-memory PaperOrderRecord
+        # mutation this same process made -- order_repository keeps that
+        # order's ORIGINAL, now-stale PENDING record forever (see
+        # PaperBrokerAdapter.restore_rejection's own docstring for the
+        # full mechanism). Computed the same way `cancelled_ids` already
+        # is, from the real, persisted status observations -- the
+        # specific ORIGINAL rejection_reason string (e.g.
+        # "insufficient_cash") is not itself persisted per-observation
+        # anywhere and is honestly not reconstructed here; only
+        # `initial_status` (what actually gates `_attempt_fill`'s own
+        # retry guard) needs to be correct to stop the real "retries
+        # forever" bug this fixes.
+        rejected_ids = {
+            obs.client_order_id for obs in status_repository.list_all()
+            if obs.broker_id == config.broker_id and obs.status.value == "REJECTED"
+        } - cancelled_ids
+        for client_order_id in rejected_ids:
+            session.adapter.restore_rejection(client_order_id, "restored_as_rejected_from_status_history")
+
         # Session 37 (ADR-0115, external review N-6): seeds the
         # adapter's observation_id allocator past every id this prior
         # process already persisted, so `rebuild_status_history` below

@@ -52,6 +52,53 @@ class TestPositionNeverNegativeWithoutShort:
         assert response.error_code == "insufficient_position"
         assert adapter.get_positions(as_of=utc(2024, 1, 2)) == ()
 
+    def test_two_pending_sells_each_individually_valid_at_submit_time_do_not_together_oversell(self) -> None:
+        """Independent audit finding (Step 8, P2, "R1"), reproduced
+        directly: `allow_short` was previously only ever checked at
+        SUBMIT time, against the position quantity known then. BUY 100,
+        then two SELL 60 orders submitted before either fills (T+1,
+        ADR-0154 -- neither has reserved any inventory yet) each
+        individually pass that same submit-time check (60 <= 100 twice)
+        even though their COMBINED quantity (120) exceeds the position --
+        if both later fill on the same `advance_simulation` call, the
+        real position must not go negative (100 - 60 - 60 = -20 would be
+        a real oversell with allow_short=False)."""
+        config = make_paper_config(allow_short=False, max_participation=1.0)
+        mds = InMemoryPaperMarketDataSource([
+            make_bar(available_time=utc(2024, 1, 2), close=100.0, volume=1_000_000.0),
+            make_bar(timestamp=utc(2024, 1, 3), available_time=utc(2024, 1, 3), close=100.0, volume=1_000_000.0),
+        ])
+        adapter = PaperBrokerAdapter(config, mds)
+
+        buy = make_validated_order(client_order_id="BUY-1", side=OrderSide.BUY, quantity=100.0)
+        adapter.submit_order(buy, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 2))  # fills the BUY (T+1 -- attempted now)
+        position = adapter.get_positions(as_of=utc(2024, 1, 2))
+        assert position[0].quantity == 100.0
+
+        # Both SELLs submitted at the SAME as_of, before either has
+        # filled -- both pass the submit-time check against the same
+        # starting quantity of 100, even though 60 + 60 = 120 > 100.
+        sell_1 = make_validated_order(client_order_id="SELL-1", side=OrderSide.SELL, quantity=60.0, as_of_time=utc(2024, 1, 3))
+        sell_2 = make_validated_order(client_order_id="SELL-2", side=OrderSide.SELL, quantity=60.0, as_of_time=utc(2024, 1, 3))
+        response_1 = adapter.submit_order(sell_1, requested_at=utc(2024, 1, 3))
+        response_2 = adapter.submit_order(sell_2, requested_at=utc(2024, 1, 3))
+        assert response_1.status == BrokerOrderStatus.PENDING
+        assert response_2.status == BrokerOrderStatus.PENDING
+
+        adapter.advance_simulation(utc(2024, 1, 3))  # both attempt to fill now
+
+        final_position = adapter.get_positions(as_of=utc(2024, 1, 3))
+        final_quantity = final_position[0].quantity if final_position else 0.0
+        # The critical invariant: never negative, whichever order wins.
+        assert final_quantity >= 0.0
+        assert final_quantity == 40.0  # 100 - 60 = 40 is the only non-negative outcome
+        status_1 = adapter.get_order_status(sell_1.client_order_id, as_of=utc(2024, 1, 3))
+        status_2 = adapter.get_order_status(sell_2.client_order_id, as_of=utc(2024, 1, 3))
+        statuses = {status_1.status, status_2.status}
+        assert BrokerOrderStatus.FILLED in statuses
+        assert BrokerOrderStatus.REJECTED in statuses
+
 
 class TestFilledQuantityNeverExceedsRequested:
     def test_filled_quantity_capped_at_requested(self) -> None:
