@@ -223,3 +223,35 @@ class TestAlertPersistence:
         engine2 = new_engine(tmp_path)
         assert DuckDBAlertRepository(engine2).get(alert.alert_id) == alert
         engine2.close()
+
+
+class TestLatestIsOrderedByAsOfTimeNotInsertionOrder:
+    """Batch F (independent audit, Step 10, P2): `get_latest`/
+    `get_history` previously ordered by insertion `seq` alone, correct
+    only when every record happens to be inserted chronologically. A
+    sweep processing several days in one run, or a future backfill, can
+    insert out of order -- these prove `get_latest` returns the record
+    with the latest `as_of_time`, regardless of insertion order."""
+
+    def test_component_health_get_latest_by_as_of_time_despite_insertion_order(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBComponentHealthRepository(engine)
+        repo.record(ComponentHealth(health_id="H1", component=MonitoringComponent.RISK, status=ComponentHealthStatus.HEALTHY, as_of_time=utc(2024, 1, 2), reason="ok"))
+        repo.record(ComponentHealth(health_id="H2", component=MonitoringComponent.RISK, status=ComponentHealthStatus.HEALTHY, as_of_time=utc(2024, 1, 5), reason="ok"))
+        repo.record(ComponentHealth(health_id="H3", component=MonitoringComponent.RISK, status=ComponentHealthStatus.DEGRADED, as_of_time=utc(2024, 1, 3), reason="degraded"))
+
+        latest = repo.get_latest(MonitoringComponent.RISK)
+        assert latest.health_id == "H2"
+        assert len(repo.get_history(MonitoringComponent.RISK)) == 3
+        engine.close()
+
+    def test_drift_result_get_latest_by_as_of_time_despite_insertion_order(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBDriftResultRepository(engine)
+        repo.record(DriftResult(drift_id="D1", component=MonitoringComponent.PREDICTION, metric_name="expected_return", status=DriftStatus.NO_DRIFT, statistic=0.1, threshold=2.0, as_of_time=utc(2024, 1, 2)))
+        repo.record(DriftResult(drift_id="D2", component=MonitoringComponent.PREDICTION, metric_name="expected_return", status=DriftStatus.DRIFT_DETECTED, statistic=2.5, threshold=2.0, as_of_time=utc(2024, 1, 5)))
+        repo.record(DriftResult(drift_id="D3", component=MonitoringComponent.PREDICTION, metric_name="expected_return", status=DriftStatus.NO_DRIFT, statistic=0.3, threshold=2.0, as_of_time=utc(2024, 1, 3)))
+
+        latest = repo.get_latest(MonitoringComponent.PREDICTION, "expected_return")
+        assert latest.drift_id == "D2"
+        engine.close()

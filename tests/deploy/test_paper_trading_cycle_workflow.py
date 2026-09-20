@@ -187,6 +187,28 @@ def test_performance_tearsheet_is_generated_and_never_fails_the_job():
     assert tearsheet_upload["with"].get("if-no-files-found") == "ignore"
 
 
+def test_monitoring_sweep_step_runs_and_never_fails_the_job():
+    """ADR-0183 (independent audit finding, Step 10, P2): `monitoring.*`
+    was fully built and tested but had zero production callers -- this
+    step is the wiring, run against a 7-day window (not the full
+    $START_DATE..today history -- ADR-0144's own "wasteful, noisy"
+    full-history-rescan precedent applies here too) and never gating
+    the core pipeline, matching the tearsheet step's own established
+    `continue-on-error`/`if: always()` philosophy."""
+    doc = _load()
+    steps = _steps(doc)
+    sweep_step = next(s for s in steps if "run_monitoring_sweep.py" in s.get("run", ""))
+    assert sweep_step.get("if") == "always()"
+    assert sweep_step.get("continue-on-error") is True
+    assert "--paper-store \"$PAPER_STORE_DIR\"" in sweep_step["run"]
+    assert "--representative-security-id" in sweep_step["run"]
+
+    upload_steps = [s for s in steps if s.get("uses", "").startswith("actions/upload-artifact")]
+    sweep_upload = next(s for s in upload_steps if "monitoring-sweep-report" in s["with"]["name"])
+    assert sweep_upload.get("if") == "always()"
+    assert sweep_upload["with"].get("if-no-files-found") == "ignore"
+
+
 def test_signal_ic_alphalens_script_is_deliberately_not_automated():
     """TEST-1 (src/strategy_research/locked_windows.py) spans
     2023-04-28 to 2026-08-27, which covers this project's entire real
