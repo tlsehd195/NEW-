@@ -209,6 +209,38 @@ jobs:
             --max-drawdown 0.20 --max-portfolio-volatility 0.30 \
             --out paper_trading_cycle_report.json
 
+      # Independent audit finding (Step 10, P2, ADR-0183): `monitoring.*`
+      # (Phase 14) was fully built and tested but had zero production
+      # callers -- every real risk/decision/sizing/prediction/account
+      # observation this cron has ever produced was simply never fed
+      # through it. Runs over the last 7 real days only (not this whole
+      # cron's full `$START_DATE`-to-today history) -- a health/failure-
+      # rate signal diluted by years of past history would barely move
+      # day to day, the same "wasteful, noisy" full-history-rescan
+      # problem ADR-0144 already identified for data quality. `continue-
+      # on-error`, matching the tearsheet step's own established
+      # philosophy immediately below: informational, never gates the
+      # core pipeline. A fresh `--paper-store` with no records yet in
+      # the window produces an honest `UNKNOWN`-derived report, not a
+      # crash.
+      - name: Run monitoring sweep (last 7 days)
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/run_monitoring_sweep.py \
+            --paper-store "$PAPER_STORE_DIR" --representative-security-id AAPL \
+            --start "$(date -u -d '7 days ago' +%F)" --end "$(date -u +%F)" \
+            --out monitoring_sweep_report.json
+
+      - name: Upload monitoring sweep report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-sweep-report-${{ github.run_id }}
+          path: monitoring_sweep_report.json
+          retention-days: 90
+          if-no-files-found: ignore
+
       # Account owner's own request (2026-09-18): automate the
       # optional quantstats tearsheet (ADR-0138) so nobody needs a
       # local `pip install -e '.[reporting]'` to see it -- unlike

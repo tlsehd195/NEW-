@@ -1,20 +1,25 @@
-"""DuckDB persistent implementations of Phase 14's four Monitoring
-repository Protocols.
+"""DuckDBMonitoringEventRepository / DuckDBComponentHealthRepository /
+DuckDBDriftResultRepository / DuckDBAlertRepository: persistent
+implementations of Phase 14's four Monitoring repository Protocols
+(`monitoring.repository`).
 
-See docs/specifications/PHASE-14-monitoring.md section 13 and
-ADR-0020. Four new tables in Phase 4's existing catalog file -- the same
-pattern ADR-0010 through ADR-0019 already applied to every other Phase
-5-13 dataset.
+These four classes have existed since Phase 14 -- the real gap the
+independent audit found (Step 10, P2) was never their absence, but that
+a repo-wide grep turned up zero production callers of any of them
+outside their own test file: every real `collectors.py`/`pipeline.py`
+computation this project ever ran was exercised by a test and then
+discarded, never actually persisted by anything resembling a real
+caller. `scripts/run_monitoring_sweep.py` is that first real caller --
+installing the "lab instrument" the independent audit found had never
+been connected to the "factory floor."
 
-`monitoring_events`/`alerts` trust the caller-assigned `event_id`/
-`alert_id` as the record's true identity and dedupe on it directly (the
-same pattern `ai_requests`/`broker_requests` already use, Phase 12/13) --
-two events/alerts with identical content are still two distinct
-observations, not duplicates of one another. `component_health_states`/
-`drift_results` are append-only (seq-ordered), the same
-`provider_quota_states`/`model_status_transitions` pattern (Phase
-11/12): idempotent only on the record's own `health_id`/`drift_id`,
-never deduped by content.
+While tracing that gap, `get_latest`/`get_history`/`list_all` on
+`DuckDBComponentHealthRepository`/`DuckDBDriftResultRepository` were
+found to order by insertion `seq` alone, not by the record's own
+`as_of_time` -- correct only when every record happens to be inserted
+in chronological order. A sweep that processes several days in one run,
+or a future backfill, can insert out of order, so `get_latest` could
+silently return a stale record. Fixed to order by `as_of_time, seq`.
 """
 
 from __future__ import annotations
@@ -67,18 +72,18 @@ class DuckDBMonitoringEventRepository:
         row = self._engine.connection.execute(
             "SELECT payload_json FROM monitoring_events WHERE event_id = ?", [event_id]
         ).fetchone()
-        return payload_to_monitoring_event(json_loads(row[0])) if row is not None else None
+        if row is None:
+            return None
+        return payload_to_monitoring_event(json_loads(row[0]))
 
     def list_all(self, *, component: Optional[MonitoringComponent] = None) -> list[MonitoringEvent]:
+        sql = "SELECT payload_json FROM monitoring_events WHERE 1=1"
+        params: list = []
         if component is not None:
-            cur = self._engine.connection.execute(
-                "SELECT payload_json FROM monitoring_events WHERE component = ? ORDER BY observed_at",
-                [component.value],
-            )
-        else:
-            cur = self._engine.connection.execute(
-                "SELECT payload_json FROM monitoring_events ORDER BY observed_at"
-            )
+            sql += " AND component = ?"
+            params.append(component.value)
+        sql += " ORDER BY observed_at"
+        cur = self._engine.connection.execute(sql, params)
         return [payload_to_monitoring_event(json_loads(r[0])) for r in cur.fetchall()]
 
 
@@ -104,20 +109,25 @@ class DuckDBComponentHealthRepository:
 
     def get_history(self, component: MonitoringComponent) -> tuple[ComponentHealth, ...]:
         cur = self._engine.connection.execute(
-            "SELECT payload_json FROM component_health_states WHERE component = ? ORDER BY seq",
+            "SELECT payload_json FROM component_health_states WHERE component = ? ORDER BY as_of_time, seq",
             [component.value],
         )
         return tuple(payload_to_component_health(json_loads(r[0])) for r in cur.fetchall())
 
     def get_latest(self, component: MonitoringComponent) -> Optional[ComponentHealth]:
         row = self._engine.connection.execute(
-            "SELECT payload_json FROM component_health_states WHERE component = ? ORDER BY seq DESC LIMIT 1",
+            "SELECT payload_json FROM component_health_states WHERE component = ? "
+            "ORDER BY as_of_time DESC, seq DESC LIMIT 1",
             [component.value],
         ).fetchone()
-        return payload_to_component_health(json_loads(row[0])) if row is not None else None
+        if row is None:
+            return None
+        return payload_to_component_health(json_loads(row[0]))
 
     def list_all(self) -> list[ComponentHealth]:
-        cur = self._engine.connection.execute("SELECT payload_json FROM component_health_states ORDER BY seq")
+        cur = self._engine.connection.execute(
+            "SELECT payload_json FROM component_health_states ORDER BY as_of_time, seq"
+        )
         return [payload_to_component_health(json_loads(r[0])) for r in cur.fetchall()]
 
 
@@ -146,7 +156,8 @@ class DuckDBDriftResultRepository:
 
     def get_history(self, component: MonitoringComponent, metric_name: str) -> tuple[DriftResult, ...]:
         cur = self._engine.connection.execute(
-            "SELECT payload_json FROM drift_results WHERE component = ? AND metric_name = ? ORDER BY seq",
+            "SELECT payload_json FROM drift_results WHERE component = ? AND metric_name = ? "
+            "ORDER BY as_of_time, seq",
             [component.value, metric_name],
         )
         return tuple(payload_to_drift_result(json_loads(r[0])) for r in cur.fetchall())
@@ -154,13 +165,15 @@ class DuckDBDriftResultRepository:
     def get_latest(self, component: MonitoringComponent, metric_name: str) -> Optional[DriftResult]:
         row = self._engine.connection.execute(
             "SELECT payload_json FROM drift_results WHERE component = ? AND metric_name = ? "
-            "ORDER BY seq DESC LIMIT 1",
+            "ORDER BY as_of_time DESC, seq DESC LIMIT 1",
             [component.value, metric_name],
         ).fetchone()
-        return payload_to_drift_result(json_loads(row[0])) if row is not None else None
+        if row is None:
+            return None
+        return payload_to_drift_result(json_loads(row[0]))
 
     def list_all(self) -> list[DriftResult]:
-        cur = self._engine.connection.execute("SELECT payload_json FROM drift_results ORDER BY seq")
+        cur = self._engine.connection.execute("SELECT payload_json FROM drift_results ORDER BY as_of_time, seq")
         return [payload_to_drift_result(json_loads(r[0])) for r in cur.fetchall()]
 
 
@@ -187,13 +200,16 @@ class DuckDBAlertRepository:
         row = self._engine.connection.execute(
             "SELECT payload_json FROM alerts WHERE alert_id = ?", [alert_id]
         ).fetchone()
-        return payload_to_alert(json_loads(row[0])) if row is not None else None
+        if row is None:
+            return None
+        return payload_to_alert(json_loads(row[0]))
 
     def list_all(self, *, severity: Optional[str] = None) -> list[Alert]:
+        sql = "SELECT payload_json FROM alerts WHERE 1=1"
+        params: list = []
         if severity is not None:
-            cur = self._engine.connection.execute(
-                "SELECT payload_json FROM alerts WHERE severity = ? ORDER BY raised_at", [severity]
-            )
-        else:
-            cur = self._engine.connection.execute("SELECT payload_json FROM alerts ORDER BY raised_at")
+            sql += " AND severity = ?"
+            params.append(severity)
+        sql += " ORDER BY raised_at"
+        cur = self._engine.connection.execute(sql, params)
         return [payload_to_alert(json_loads(r[0])) for r in cur.fetchall()]
