@@ -125,6 +125,43 @@ class TestRestoreRehydratesFullState:
         assert status_after.status == BrokerOrderStatus.PARTIAL_FILLED
         assert status_after.filled_quantity == 200.0
 
+    def test_restore_does_not_resurrect_a_fill_time_rejection_as_pending(self) -> None:
+        """Independent audit finding (Step 8, P3, "R2" -- "restart
+        amnesia"): an order rejected at FILL time (never at submit
+        time) used to have its ORIGINAL, stale PENDING PaperOrderRecord
+        replayed by `restore()` -- reviving it as PENDING in the fresh
+        process and letting `advance()` retry it forever, since nothing
+        had ever persisted the fill-time REJECTED mutation back to
+        `order_repository` itself (only to `status_repository`, as an
+        observation)."""
+        session, _, order_repo, fill_repo, status_repo, _ = _new_session(
+            bars=[make_bar(available_time=utc(2024, 1, 2), close=100.0)],
+            config=make_paper_config(initial_cash=100.0),  # far below a 10-share, $100/share order's notional
+        )
+        order = make_validated_order(quantity=10.0)
+        session.submit(order, requested_at=utc(2024, 1, 2))
+        session.advance(utc(2024, 1, 2))  # ADR-0154: first (deferred) fill attempt -> insufficient_cash REJECTED
+        assert status_repo.get_latest(order.client_order_id).status == BrokerOrderStatus.REJECTED
+        assert len(fill_repo.list_all()) == 0
+
+        mds2 = InMemoryPaperMarketDataSource([
+            make_bar(available_time=utc(2024, 1, 2), close=100.0),
+            make_bar(timestamp=utc(2024, 1, 3), available_time=utc(2024, 1, 3), close=100.0),
+        ])
+        restored = PaperTradingSession.restore(
+            session.config, mds2, order_repository=order_repo, fill_repository=fill_repo,
+            status_repository=status_repo, corporate_action_repository=InMemoryPaperCorporateActionRepository(),
+            as_of=utc(2024, 1, 2),
+        )
+        status_after_restore = restored.adapter.get_order_status(order.client_order_id, as_of=utc(2024, 1, 2))
+        assert status_after_restore.status == BrokerOrderStatus.REJECTED  # not resurrected as PENDING
+
+        # A later advance() must never retry a genuinely-rejected order.
+        restored.advance(utc(2024, 1, 3))
+        assert len(fill_repo.list_all()) == 0
+        final_status = restored.adapter.get_order_status(order.client_order_id, as_of=utc(2024, 1, 3))
+        assert final_status.status == BrokerOrderStatus.REJECTED
+
     def test_restore_does_not_duplicate_fills(self) -> None:
         session, _, order_repo, fill_repo, status_repo, _ = _new_session(
             bars=[make_bar(available_time=utc(2024, 1, 2), volume=1_000_000.0)],

@@ -166,6 +166,34 @@ class PaperBrokerAdapter:
     def restore_cancellation(self, client_order_id: str) -> None:
         self._cancelled.add(client_order_id)
 
+    def restore_rejection(self, client_order_id: str, rejection_reason: Optional[str]) -> None:
+        """Independent audit finding (Step 8, P3, "R2" -- "restart
+        amnesia"): an order rejected at FILL time (e.g. `_attempt_fill`'s
+        own `insufficient_cash`/`insufficient_position` checks) is only
+        ever recorded that way by mutating `self._orders[...]` in this
+        SAME process's memory and persisting a REJECTED `OrderStatus
+        Observation` -- `PaperTradingSession.capture()` (the only call
+        site that persists `PaperOrderRecord.initial_status` itself to
+        `order_repository`) is never invoked again after submission for
+        an order that only fails later, at fill time. `order_repository`
+        therefore keeps that order's ORIGINAL, now-stale PENDING record
+        forever. Without this method, `PaperTradingSession.restore()`
+        would resurrect that order as PENDING in a fresh process, and
+        `_attempt_fill`'s own guard (`record.initial_status ==
+        BrokerOrderStatus.REJECTED: return`) would never trigger --
+        `advance_simulation` would retry it forever, real money/paper
+        cash notwithstanding. Mirrors `restore_cancellation`'s own
+        established pattern exactly: `PaperTradingSession.restore()`
+        computes which orders were REJECTED the same way it already
+        computes `cancelled_ids`, from the real, persisted
+        `status_repository` observations -- never guessed."""
+        existing = self._orders.get(client_order_id)
+        if existing is None:
+            return
+        self._orders[client_order_id] = replace(
+            existing, initial_status=BrokerOrderStatus.REJECTED, rejection_reason=rejection_reason,
+        )
+
     def restore_observation_id_watermark(self, observation_id: str) -> None:
         """Session 37 (ADR-0115, external review N-6): advances
         `_observation_ids` past an already-persisted `observation_id`
@@ -308,6 +336,32 @@ class PaperBrokerAdapter:
                 if already_filled <= 0:
                     self._orders[client_order_id] = replace(
                         record, initial_status=BrokerOrderStatus.REJECTED, rejection_reason="insufficient_cash",
+                    )
+                    self._record_status(client_order_id, as_of=as_of)
+                return  # fail closed either way -- no fill this attempt
+
+        # Independent audit finding (Step 8, P2, "R1"): `allow_short` was
+        # previously only ever checked at SUBMIT time (`submit_order`
+        # above, against the position quantity known THEN). Two SELL
+        # orders for the same security, each individually valid against
+        # that same starting quantity, can both pass that submit-time
+        # check while still PENDING (T+1, ADR-0154 -- neither has
+        # reserved any inventory yet) -- if both later fill, the real
+        # position can go negative even with `allow_short=False`, a real,
+        # reproduced oversell (confirmed independently: BUY 100, SELL 50
+        # submitted, a SECOND SELL 50 submitted before the first fills,
+        # both fill on a later `advance()` -> position -50). Mirrors the
+        # BUY branch's own fill-time solvency re-check immediately above
+        # -- `allow_short` deserves the identical fail-closed treatment
+        # cash already gets, checked against the REAL position quantity
+        # as of THIS fill attempt (reflecting every other order's fills
+        # that have already landed), not the stale submit-time snapshot.
+        if order.side == OrderSide.SELL and not self._config.allow_short:
+            current_quantity = self._accounting.snapshot_view(as_of).quantity_of(order.security_id)
+            if fill.quantity > current_quantity:
+                if already_filled <= 0:
+                    self._orders[client_order_id] = replace(
+                        record, initial_status=BrokerOrderStatus.REJECTED, rejection_reason="insufficient_position",
                     )
                     self._record_status(client_order_id, as_of=as_of)
                 return  # fail closed either way -- no fill this attempt
