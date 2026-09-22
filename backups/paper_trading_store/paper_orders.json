@@ -17818,5 +17818,77 @@
     "security_id": "ADBE",
     "side": "SELL",
     "sizing_id": "SIZE-061481"
+  },
+  {
+    "client_order_id": "CID-f21f029da91e105fb192f75e",
+    "decision_id": "DEC-OUT-061688",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-09-21T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-09-21T20:00:00+00:00\", \"client_order_id\": \"CID-f21f029da91e105fb192f75e\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-061688\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 2.8171394765754854, \"risk_assessment_id\": \"RISK-061688\", \"security_id\": \"GOOGL\", \"side\": \"BUY\", \"sizing_id\": \"SIZE-061688\"}}",
+    "quantity": 2.8171394765754854,
+    "requested_at": "2026-09-21T20:00:00",
+    "risk_assessment_id": "RISK-061688",
+    "security_id": "GOOGL",
+    "side": "BUY",
+    "sizing_id": "SIZE-061688"
+  },
+  {
+    "client_order_id": "CID-9a1385e4fc52086b86eae67c",
+    "decision_id": "DEC-OUT-061692",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-09-21T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-09-21T20:00:00+00:00\", \"client_order_id\": \"CID-9a1385e4fc52086b86eae67c\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-061692\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 3.117984534796707, \"risk_assessment_id\": \"RISK-061692\", \"security_id\": \"JPM\", \"side\": \"SELL\", \"sizing_id\": \"SIZE-061692\"}}",
+    "quantity": 3.117984534796707,
+    "requested_at": "2026-09-21T20:00:00",
+    "risk_assessment_id": "RISK-061692",
+    "security_id": "JPM",
+    "side": "SELL",
+    "sizing_id": "SIZE-061692"
+  },
+  {
+    "client_order_id": "CID-80ea0529da01d3ad2943017a",
+    "decision_id": "DEC-OUT-061711",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-09-21T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-09-21T20:00:00+00:00\", \"client_order_id\": \"CID-80ea0529da01d3ad2943017a\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-061711\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 7.013606396409034, \"risk_assessment_id\": \"RISK-061711\", \"security_id\": \"PEP\", \"side\": \"SELL\", \"sizing_id\": \"SIZE-061711\"}}",
+    "quantity": 7.013606396409034,
+    "requested_at": "2026-09-21T20:00:00",
+    "risk_assessment_id": "RISK-061711",
+    "security_id": "PEP",
+    "side": "SELL",
+    "sizing_id": "SIZE-061711"
+  },
+  {
+    "client_order_id": "CID-9afd9bbb360eab75b6a45932",
+    "decision_id": "DEC-OUT-061769",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-09-21T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-09-21T20:00:00+00:00\", \"client_order_id\": \"CID-9afd9bbb360eab75b6a45932\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-061769\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 33.50083752093803, \"risk_assessment_id\": \"RISK-061769\", \"security_id\": \"DOW\", \"side\": \"SELL\", \"sizing_id\": \"SIZE-061769\"}}",
+    "quantity": 33.50083752093803,
+    "requested_at": "2026-09-21T20:00:00",
+    "risk_assessment_id": "RISK-061769",
+    "security_id": "DOW",
+    "side": "SELL",
+    "sizing_id": "SIZE-061769"
+  },
+  {
+    "client_order_id": "CID-087fac9d3871bda11194e7e6",
+    "decision_id": "DEC-OUT-061821",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-09-22T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-09-22T20:00:00+00:00\", \"client_order_id\": \"CID-087fac9d3871bda11194e7e6\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-061821\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 18.674136321195146, \"risk_assessment_id\": \"RISK-061821\", \"security_id\": \"SLB\", \"side\": \"SELL\", \"sizing_id\": \"SIZE-061821\"}}",
+    "quantity": 18.674136321195146,
+    "requested_at": "2026-09-22T20:00:00",
+    "risk_assessment_id": "RISK-061821",
+    "security_id": "SLB",
+    "side": "SELL",
+    "sizing_id": "SIZE-061821"
+  },
+  {
+    "client_order_id": "CID-9881e1ec6871c60b8c444187",
+    "decision_id": "DEC-OUT-061837",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-09-22T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-09-22T20:00:00+00:00\", \"client_order_id\": \"CID-9881e1ec6871c60b8c444187\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-061837\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 13.304949441192122, \"risk_assessment_id\": \"RISK-061837\", \"security_id\": \"WMB\", \"side\": \"SELL\", \"sizing_id\": \"SIZE-061837\"}}",
+    "quantity": 13.304949441192122,
+    "requested_at": "2026-09-22T20:00:00",
+    "risk_assessment_id": "RISK-061837",
+    "security_id": "WMB",
+    "side": "SELL",
+    "sizing_id": "SIZE-061837"
   }
 ]
