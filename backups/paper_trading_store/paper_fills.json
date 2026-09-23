@@ -16377,5 +16377,27 @@
     "security_id": "DOW",
     "seq": 1489,
     "side": "SELL"
+  },
+  {
+    "client_order_id": "CID-087fac9d3871bda11194e7e6",
+    "fill_id": "PAPERFILL-001490",
+    "payload_json": "{\"client_order_id\": \"CID-087fac9d3871bda11194e7e6\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.0933706816059758, \"data_version\": \"608d4bc11b8aeed335ff14edb5c0a3f5baea3cdbc358235eee3cf707125d211b\", \"decision_time\": \"2026-09-22T20:00:00+00:00\", \"execution_time\": \"2026-09-23T20:00:00+00:00\", \"order_id\": \"CID-087fac9d3871bda11194e7e6\", \"price\": 52.08872994604712, \"quantity\": 18.674136321195146, \"reference_price\": 52.12, \"security_id\": \"SLB\", \"side\": \"SELL\", \"slippage_cost\": 0.48661165178114474, \"spread_cost\": 0.09732959850607315}, \"fill_id\": \"PAPERFILL-001490\", \"recorded_at\": \"2026-09-23T20:00:00+00:00\"}",
+    "price": 52.08872994604712,
+    "quantity": 18.674136321195146,
+    "recorded_at": "2026-09-23T20:00:00",
+    "security_id": "SLB",
+    "seq": 1490,
+    "side": "SELL"
+  },
+  {
+    "client_order_id": "CID-9881e1ec6871c60b8c444187",
+    "fill_id": "PAPERFILL-001491",
+    "payload_json": "{\"client_order_id\": \"CID-9881e1ec6871c60b8c444187\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.0665247472059607, \"data_version\": \"de272e8581a57fd66d92a350bac9789d7c68108bc5ca440525e4152661299b31\", \"decision_time\": \"2026-09-22T20:00:00+00:00\", \"execution_time\": \"2026-09-23T20:00:00+00:00\", \"order_id\": \"CID-9881e1ec6871c60b8c444187\", \"price\": 70.93741376423382, \"quantity\": 13.304949441192122, \"reference_price\": 70.98, \"security_id\": \"WMB\", \"side\": \"SELL\", \"slippage_cost\": 0.47216918262614105, \"spread_cost\": 0.09443853113357051}, \"fill_id\": \"PAPERFILL-001491\", \"recorded_at\": \"2026-09-23T20:00:00+00:00\"}",
+    "price": 70.93741376423382,
+    "quantity": 13.304949441192122,
+    "recorded_at": "2026-09-23T20:00:00",
+    "security_id": "WMB",
+    "seq": 1491,
+    "side": "SELL"
   }
 ]

@@ -13381,5 +13381,59 @@
     "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-9881e1ec6871c60b8c444187\", \"client_order_id\": \"CID-9881e1ec6871c60b8c444187\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-005925\", \"observed_at\": \"2026-09-22T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
     "seq": 1487,
     "status": "PENDING"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-087fac9d3871bda11194e7e6",
+    "observation_id": "PAPEROSTAT-007417",
+    "observed_at": "2026-09-23T20:00:00",
+    "payload_json": "{\"avg_fill_price\": 52.08872994604712, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-087fac9d3871bda11194e7e6\", \"client_order_id\": \"CID-087fac9d3871bda11194e7e6\", \"filled_quantity\": 18.674136321195146, \"observation_id\": \"PAPEROSTAT-007417\", \"observed_at\": \"2026-09-23T20:00:00+00:00\", \"raw_status_code\": \"FILLED\", \"status\": \"FILLED\"}",
+    "seq": 1488,
+    "status": "FILLED"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-9881e1ec6871c60b8c444187",
+    "observation_id": "PAPEROSTAT-007418",
+    "observed_at": "2026-09-23T20:00:00",
+    "payload_json": "{\"avg_fill_price\": 70.93741376423382, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-9881e1ec6871c60b8c444187\", \"client_order_id\": \"CID-9881e1ec6871c60b8c444187\", \"filled_quantity\": 13.304949441192122, \"observation_id\": \"PAPEROSTAT-007418\", \"observed_at\": \"2026-09-23T20:00:00+00:00\", \"raw_status_code\": \"FILLED\", \"status\": \"FILLED\"}",
+    "seq": 1489,
+    "status": "FILLED"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-7d2fc62283882d41680e8e5f",
+    "observation_id": "PAPEROSTAT-007419",
+    "observed_at": "2026-09-23T20:00:00",
+    "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-7d2fc62283882d41680e8e5f\", \"client_order_id\": \"CID-7d2fc62283882d41680e8e5f\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-007419\", \"observed_at\": \"2026-09-23T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
+    "seq": 1490,
+    "status": "PENDING"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-57764d1237192fbf52b64205",
+    "observation_id": "PAPEROSTAT-007420",
+    "observed_at": "2026-09-23T20:00:00",
+    "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-57764d1237192fbf52b64205\", \"client_order_id\": \"CID-57764d1237192fbf52b64205\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-007420\", \"observed_at\": \"2026-09-23T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
+    "seq": 1491,
+    "status": "PENDING"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-60b62c5503fa01de6dc9ca56",
+    "observation_id": "PAPEROSTAT-007421",
+    "observed_at": "2026-09-23T20:00:00",
+    "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-60b62c5503fa01de6dc9ca56\", \"client_order_id\": \"CID-60b62c5503fa01de6dc9ca56\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-007421\", \"observed_at\": \"2026-09-23T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
+    "seq": 1492,
+    "status": "PENDING"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-e4f9cabf4052b0ce54b207a5",
+    "observation_id": "PAPEROSTAT-007422",
+    "observed_at": "2026-09-23T20:00:00",
+    "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-e4f9cabf4052b0ce54b207a5\", \"client_order_id\": \"CID-e4f9cabf4052b0ce54b207a5\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-007422\", \"observed_at\": \"2026-09-23T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
+    "seq": 1493,
+    "status": "PENDING"
   }
 ]
