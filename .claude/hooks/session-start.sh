@@ -26,3 +26,18 @@ fi
 # Put the venv first on PATH for the rest of this session, so a plain
 # `python3`/`pytest` picks up everything just installed above.
 echo "export PATH=\"$CLAUDE_PROJECT_DIR/.venv/bin:\$PATH\"" >> "$CLAUDE_ENV_FILE"
+
+# llmwiki MCP tool (.mcp.json registers it): cloned+built fresh each
+# session, same reasoning as .venv/ above -- .llmwiki-tool/ is
+# gitignored, so the container that built it does not survive into the
+# next session. Only bothers if .mcp.json actually references it.
+if [ -f .mcp.json ] && grep -q '.llmwiki-tool' .mcp.json; then
+  if [ ! -f .llmwiki-tool/packages/core/dist/mcp/bin.js ]; then
+    rm -rf .llmwiki-tool
+    git clone --quiet --depth 1 https://github.com/microsoft/llmwiki.git .llmwiki-tool
+    (cd .llmwiki-tool && npm install --quiet --workspace=packages/core --no-audit --no-fund && npm run build --workspace=packages/core)
+  fi
+  if [ ! -d .wiki/wiki ]; then
+    node -e "import('$CLAUDE_PROJECT_DIR/.llmwiki-tool/packages/core/dist/init.js').then(m => m.initWiki('$CLAUDE_PROJECT_DIR'))"
+  fi
+fi
