@@ -12,6 +12,32 @@
 - 병합 방식(merge/squash/rebase)은 저장소에 기존 병합 이력이 있으면 그 관례를 따르고, 없으면 `merge`를 기본으로 한다.
 - 이 규칙은 2026-09-13에 사용자가 명시적으로 요청해서 추가됨 — PR을 만들지 않는다는 기존의 일반 원칙보다 이 저장소에서는 이 규칙이 우선한다.
 
+## `docs/PROJECT_STATUS.md`의 알려진 이력 유실 (2026-09-24 확인)
+
+`docs/PROJECT_STATUS.md`는 현재 Session 10(2026-08-25)에서 끝나 있다 —
+그 이후 세션 기록이 없다. `ADR-0185`(batch H)는 이 파일이 "Session 38
+까지 있고 HEAD보다 2일 뒤처졌다"고 적어놨는데, 그 주장 자체가 이미
+당시에도 실제 파일 상태와 안 맞았을 가능성이 높다(재확인 안 하고 예전
+문서 주장을 이어받아 적었을 것으로 추정 — batch H 자체가 "문서 주장이
+실제와 안 맞는 것"을 감사하는 작업이었는데 이 항목은 못 잡아낸 셈).
+
+- **원인으로 추정되는 지점**: `git log --oneline -- docs/PROJECT_STATUS.md`
+  결과 이 파일을 건드린 커밋이 현재 `main` 히스토리에 단 3개뿐이고, 그 중
+  `26f1c0a`("Add real Alpaca paper broker buy/sell verification",
+  2026-09-18)가 `docs/PROJECT_STATUS.md` 7769줄을 포함해 873개 파일/
+  208,573줄을 삭제 없이 한 커밋에 통째로 추가함 — 정상적인 점진적
+  커밋이 아니라 그 시점 로컬 작업 디렉터리 전체를 한 번에 커밋한 흔적.
+  같은 날 발견된 `claude/ruflo-features-review-hqrvqa` 브랜치가 main과
+  공통 조상이 전혀 없던 것과 같은 계열의 사건으로 보임 — 즉 이 지점에서
+  당시 main 히스토리가 사실상 재시작됐고, 그때 쓰인 로컬 스냅샷 자체가
+  이미 낡은 사본(Session 10까지만 있는)이었던 것으로 추정.
+- 원본 복구 방법 없음(그 시점 로컬 스냅샷이 마지막으로 남은 소스로
+  보임) — 유실된 Session 11~38+ 분량을 지어내지 않는다.
+- 이 파일 포맷/컨벤션은 계속 그대로 유지한다(토큰/비용 절약 규칙 참고)
+  — 이 발견은 파일을 고치라는 뜻이 아니라, 이 파일의 git 이력이 왜
+  얕은지, 그리고 다른 문서(ADR 등)에 적힌 "PROJECT_STATUS.md에 뭐가
+  있다"는 서술을 왜 곧이곧대로 믿으면 안 되는지 설명하기 위한 기록.
+
 ## 브랜치 시작 규칙 (동일 브랜치 이름 재사용 시)
 
 세션 시작 시, 같은 브랜치 이름(`claude/autonomous-ai-investment-system-plan-4-ha7y35` 등)을 이어서 쓰기 전에 **반드시** 그 브랜치가 `origin/main`의 최신 병합을 실제로 반영하고 있는지 직접 확인한다.
@@ -119,3 +145,31 @@ Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직
   세션과 주고받지 않는 방법 — `runs-on: self-hosted`로 원격 작업 위임
   가능). 러너 등록되면 colibri ARM 빌드 가능 여부 확인 + 워크플로 작성
   진행.
+  (2026-09-24 세션에서 실제로 프로비저닝 워크플로를 돌려봄 — 인증/
+  네트워킹(VCN/서브넷/보안리스트)/SSH 키 생성/러너 등록 토큰 발급까지
+  전부 성공. 인스턴스 실제 생성(`launch_instance`) 단계에서만
+  `"Out of host capacity."`로 실패 — 오라클 쪽 AP-TOKYO-1 리전의
+  `VM.Standard.A1.Flex` 무료 티어 재고 소진 문제이지 워크플로 버그가
+  아님. 재시도하거나 다른 리전/AD로 바꿔서 다시 `workflow_dispatch`
+  실행해볼 것.)
+
+## Grounding Gate 배선 보류 결정 (2026-09-24)
+
+ADR-0191이 미해결로 남긴 "derived-value 체크를 실제 prompt/schema에
+배선"하는 작업 — **당분간 진행하지 않기로 계정 소유자가 명시적으로
+결정함** (2026-09-24 세션에서 확인).
+
+- 이유: 재확인해보니 `ai_gateway`를 실제로 호출하는 곳이 `src/` 전체에
+  하나도 없음 — `predict`/`decision` 모두 결정론적 알고리즘만 쓰고,
+  유일한 provider도 `MockProviderAdapter`(가짜 응답)뿐. 배선할 실제
+  대상(schema/필드)이 존재하지 않는 상태에서 미리 설계하면 투기적
+  설계가 될 위험이 있다고 판단.
+- `src/ai_gateway/grounding.py`(`evaluate_formula`/
+  `validate_derived_value`)와 `src/decision/entropy.py`
+  (`normalized_entropy`)는 이미 구현·테스트된 채로 대기 중 — ADR-0151의
+  "adopt now, wire in later" 전례를 따름.
+- **재개 조건**: 실제 AI 기반 predictor/decision agent를 새로 만들 때
+  (즉 `response_schema`를 실제로 쓰는 첫 호출부가 생길 때) 이 시점에
+  다시 꺼내서, 그때 (1) 어떤 필드를 "derived"로 취급할지, (2) 검증
+  실패 시 재시도할지 전체 응답을 fail-closed 시킬지 두 가지를 함께
+  결정한다.
