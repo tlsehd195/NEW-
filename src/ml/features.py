@@ -19,10 +19,21 @@ values would not be measuring the real predictive power of the actual
 underlying data (the same "exclude, never fabricate" principle
 `data_infra.quality`'s non-finite-value check and `DataRepository`'s
 `available_time` guard already apply elsewhere in this codebase).
+
+**A missing bar is never a constant, including NaN as a constant.**
+`compute_feature_vector` treats a non-finite score (NaN or +/-inf) the
+same as `None`: excluded, never passed through into `MLSample.features`.
+This is enforced once here, at the point every score function's output
+is assembled, rather than trusted from each individual score function --
+a future score function that returns `float("nan")` instead of `None`
+on some edge case fails closed at this one chokepoint instead of
+silently reaching `LinearRegressionModel.fit()` (or worse, training a
+model on it undetected).
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Sequence
@@ -157,12 +168,12 @@ def compute_feature_vector(
     values: dict[str, float] = {}
     for feature_id, fn in price_score_fns.items():
         value = fn(security_id, as_of_time, price_data_view)
-        if value is None:
+        if value is None or not math.isfinite(value):
             return None
         values[feature_id] = value
     for feature_id, fn in fundamentals_score_fns.items():
         value = fn(security_id, as_of_time, fundamentals_repository)
-        if value is None:
+        if value is None or not math.isfinite(value):
             return None
         values[feature_id] = value
     return values

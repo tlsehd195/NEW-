@@ -6,10 +6,16 @@ realized-return definition, same "queried directly against the
 repository, deliberately bypassing AsOfDataView, because this is an
 after-the-fact predictiveness check reading what actually happened"
 reasoning documented in that module.
+
+Same non-finite-is-excluded contract as `ml.features.compute_feature_
+vector`: `compute_target` treats a NaN/inf result from `forward_return`
+exactly like `None` (excluded) rather than letting it reach a sample's
+`target` field, regardless of which price data anomaly produced it.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -47,4 +53,7 @@ HORIZON_DAYS = 60
 def compute_target(
     price_repository: DataRepository, security_id: str, as_of_time: datetime,
 ) -> Optional[float]:
-    return forward_return(price_repository, security_id, as_of_time, HORIZON_DAYS)
+    result = forward_return(price_repository, security_id, as_of_time, HORIZON_DAYS)
+    if result is None or not math.isfinite(result):
+        return None
+    return result

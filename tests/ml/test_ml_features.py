@@ -78,6 +78,37 @@ class TestFeatureVectorAssembly:
         vector = compute_feature_vector("TRENDUP", as_of_time, price_fns, data_view, fundamentals_fns, empty_fundamentals_repo)
         assert vector is None
 
+    def test_none_when_a_price_feature_returns_nan_instead_of_none(self, tmp_path) -> None:
+        # A future score function might return float("nan") instead of
+        # None on some edge case rather than the two documented
+        # None-triggering paths -- compute_feature_vector must catch
+        # that at this one chokepoint (Batch K, NaN/gap contract)
+        # rather than let a NaN reach MLSample.features.
+        universe = ("TRENDUP",)
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        fundamentals_repo = _fundamentals_repo(tmp_path, "TRENDUP")
+        as_of_time = utc(2020, 6, 1)
+        data_view = AsOfDataView(price_repo, BacktestClock(checkpoints=(as_of_time,)))
+
+        price_fns = {**build_price_feature_fns(universe), "momentum": lambda *a, **k: float("nan")}
+        fundamentals_fns = {"roe": roe_score, "roa": roa_score, "net_margin": net_margin_score, "leverage": leverage_score}
+
+        vector = compute_feature_vector("TRENDUP", as_of_time, price_fns, data_view, fundamentals_fns, fundamentals_repo)
+        assert vector is None
+
+    def test_none_when_a_fundamentals_feature_returns_infinity(self, tmp_path) -> None:
+        universe = ("TRENDUP",)
+        price_repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2023, 1, 3), symbols=universe)
+        fundamentals_repo = _fundamentals_repo(tmp_path, "TRENDUP")
+        as_of_time = utc(2020, 6, 1)
+        data_view = AsOfDataView(price_repo, BacktestClock(checkpoints=(as_of_time,)))
+
+        price_fns = build_price_feature_fns(universe)
+        fundamentals_fns = {"roe": lambda *a, **k: float("inf"), "roa": roa_score, "net_margin": net_margin_score, "leverage": leverage_score}
+
+        vector = compute_feature_vector("TRENDUP", as_of_time, price_fns, data_view, fundamentals_fns, fundamentals_repo)
+        assert vector is None
+
     def test_none_when_a_price_feature_is_missing(self, tmp_path) -> None:
         # Too early in history for a 12-month momentum lookback to have
         # enough bars -- momentum_score must return None, and the whole
