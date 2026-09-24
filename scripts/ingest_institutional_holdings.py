@@ -52,6 +52,17 @@ extra column -- avoids manually splitting into N per-symbol files):
         --combined-csv /path/to/institutional_holdings.csv \\
         --as-of 2026-09-06 \\
         --db-path ./data/institutional_holdings_data
+
+Usage (ADR-0194, per-filer holdings for data_infra.tracked_institutional_
+filers.TRACKED_FILERS -- backs guru_consensus_score, NOT the
+all-filers-aggregate institutional_ownership_change_score above; a
+DIFFERENT --db-path than the two usages above, since these are two
+distinct DuckDB tables the two factors each read independently):
+    python3 scripts/ingest_institutional_holdings.py \\
+        --source-name sec_13f_tracked_filer_positions \\
+        --filer-combined-csv /path/to/institutional_filer_holdings.csv \\
+        --as-of 2026-09-06 \\
+        --db-path ./data/institutional_filer_holdings_data
 """
 
 from __future__ import annotations
@@ -65,6 +76,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data_infra.provider import PermanentProviderError  # noqa: E402
+from data_infra.providers.institutional_filer_holding_file_import import (  # noqa: E402
+    load_combined_institutional_filer_holdings_csv,
+)
 from data_infra.providers.institutional_holding_file_import import (  # noqa: E402
     InstitutionalHoldingFileImportConfig,
     load_combined_institutional_holdings_csv,
@@ -74,6 +88,7 @@ from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # n
 from data_infra.versioning import compute_data_version  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
+from storage.institutional_filer_holding_repository import DuckDBInstitutionalFilerHoldingRepository  # noqa: E402
 from storage.institutional_holding_repository import DuckDBInstitutionalHoldingRepository  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
@@ -90,8 +105,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Honest name of the external source these CSV files actually came from "
         "(e.g. sec_13f_manual_aggregation). Becomes Provenance.source.",
     )
-    parser.add_argument("--data-dir", type=Path, default=None, help="Directory containing one <security_id>.csv per symbol (mutually exclusive with --combined-csv)")
-    parser.add_argument("--combined-csv", type=Path, default=None, help="One CSV covering every symbol, with security_id as an extra column (mutually exclusive with --data-dir)")
+    parser.add_argument("--data-dir", type=Path, default=None, help="Directory containing one <security_id>.csv per symbol (mutually exclusive with --combined-csv/--filer-combined-csv)")
+    parser.add_argument("--combined-csv", type=Path, default=None, help="One CSV covering every symbol, with security_id as an extra column, ALL-FILERS AGGREGATE schema (mutually exclusive with --data-dir/--filer-combined-csv)")
+    parser.add_argument(
+        "--filer-combined-csv", type=Path, default=None,
+        help=(
+            "One CSV covering every symbol AND every tracked filer "
+            "(security_id,filer_cik,quarter_end,shares_held -- see "
+            "data_infra.providers.institutional_filer_holding_file_import), PER-FILER "
+            "schema for guru_consensus_score (ADR-0194), NOT the all-filers-aggregate "
+            "--combined-csv schema. Mutually exclusive with --data-dir/--combined-csv."
+        ),
+    )
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="RESEARCH_UNIVERSE", help="Named universe from src/data_infra/universe.py")
     parser.add_argument("--symbols", nargs="+", default=None, help="Explicit symbol list, overriding --universe entirely")
     parser.add_argument("--as-of", required=True, type=_parse_date, help="YYYY-MM-DD, stands in for this run's real-world timestamp (retrieved_at/ingestion_time) -- never derived from wall-clock time")
@@ -99,9 +124,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest-out", type=Path, default=None, help="Where to write the JSON reproducibility manifest (default: <db-path>/institutional_holdings_ingestion_manifest.json)")
     args = parser.parse_args(argv)
 
-    if (args.data_dir is None) == (args.combined_csv is None):
-        print("FATAL: exactly one of --data-dir or --combined-csv must be given", file=sys.stderr)
+    modes_given = sum(x is not None for x in (args.data_dir, args.combined_csv, args.filer_combined_csv))
+    if modes_given != 1:
+        print("FATAL: exactly one of --data-dir, --combined-csv, or --filer-combined-csv must be given", file=sys.stderr)
         return 1
+    filer_mode = args.filer_combined_csv is not None
 
     manifest_path = args.manifest_out or (args.db_path / "institutional_holdings_ingestion_manifest.json")
 
@@ -111,14 +138,24 @@ def main(argv: list[str] | None = None) -> int:
         symbols = list(_UNIVERSES[args.universe].symbol_ids)
 
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
-    repository = DuckDBInstitutionalHoldingRepository(engine)
+    repository = DuckDBInstitutionalFilerHoldingRepository(engine) if filer_mode else DuckDBInstitutionalHoldingRepository(engine)
 
     try:
         per_symbol_results = []
         missing_symbols = []
         total_records_persisted = 0
 
-        if args.combined_csv is not None:
+        if filer_mode:
+            try:
+                combined_records = load_combined_institutional_filer_holdings_csv(
+                    args.filer_combined_csv, source_name=args.source_name, retrieved_at=args.as_of,
+                )
+            except PermanentProviderError as exc:
+                print(f"FATAL: {exc}", file=sys.stderr)
+                return 1
+            print(f"Parsed {args.filer_combined_csv}: {len(combined_records)} distinct symbol(s) found in the file.", flush=True)
+            config = None
+        elif args.combined_csv is not None:
             try:
                 combined_records = load_combined_institutional_holdings_csv(
                     args.combined_csv, source_name=args.source_name, retrieved_at=args.as_of,
@@ -127,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"FATAL: {exc}", file=sys.stderr)
                 return 1
             print(f"Parsed {args.combined_csv}: {len(combined_records)} distinct symbol(s) found in the file.", flush=True)
+            config = None
         else:
             combined_records = None
             config = InstitutionalHoldingFileImportConfig(source_name=args.source_name, data_dir=args.data_dir)
@@ -135,10 +173,10 @@ def main(argv: list[str] | None = None) -> int:
             if combined_records is not None:
                 records = combined_records.get(symbol)
                 if records is None:
+                    source_desc = args.filer_combined_csv if filer_mode else args.combined_csv
                     exc_message = (
-                        f"symbol={symbol!r} not present in combined CSV {args.combined_csv} "
-                        f"(this module requires a security_id column matching every requested symbol -- "
-                        f"see data_infra.providers.institutional_holding_file_import module docstring)"
+                        f"symbol={symbol!r} not present in combined CSV {source_desc} "
+                        f"(this module requires a security_id column matching every requested symbol)"
                     )
                     print(f"  [{i}/{len(symbols)}] {symbol}: {exc_message}", flush=True)
                     missing_symbols.append(symbol)
@@ -153,7 +191,10 @@ def main(argv: list[str] | None = None) -> int:
                     per_symbol_results.append({"security_id": symbol, "records_persisted": 0, "error": str(exc)})
                     continue
 
-            repository.add_institutional_holdings(records)
+            if filer_mode:
+                repository.add_institutional_filer_holdings(records)
+            else:
+                repository.add_institutional_holdings(records)
             total_records_persisted += len(records)
             per_symbol_results.append({"security_id": symbol, "records_persisted": len(records), "error": None})
             print(f"  [{i}/{len(symbols)}] {symbol}: {len(records)} record(s) persisted", flush=True)
@@ -178,8 +219,10 @@ def main(argv: list[str] | None = None) -> int:
             ),
             "data_status": "REAL",
             "source_name": args.source_name,
+            "filer_mode": filer_mode,
             "data_dir": str(args.data_dir) if args.data_dir is not None else None,
             "combined_csv": str(args.combined_csv) if args.combined_csv is not None else None,
+            "filer_combined_csv": str(args.filer_combined_csv) if args.filer_combined_csv is not None else None,
             "universe_name": args.universe if args.symbols is None else None,
             "symbols": list(symbols),
             "symbol_count": len(symbols),

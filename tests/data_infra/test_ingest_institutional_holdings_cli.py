@@ -190,3 +190,87 @@ class TestIngestInstitutionalHoldingsCliCombinedCsv:
             ]
         )
         assert exit_code == 1
+
+
+class TestIngestInstitutionalHoldingsCliFilerCombinedCsv:
+    """ADR-0194: the third, per-filer mode this same CLI now supports --
+    a DIFFERENT schema and a DIFFERENT DuckDB table than either mode
+    above (backs guru_consensus_score, not institutional_ownership_
+    change_score)."""
+
+    def _write_filer_combined_csv(self, tmp_path: Path, rows: list[str]) -> Path:
+        header = "security_id,filer_cik,quarter_end,shares_held\n"
+        path = tmp_path / "filer_combined.csv"
+        path.write_text(header + "\n".join(rows) + "\n")
+        return path
+
+    def test_filer_combined_csv_runs_end_to_end(self, tmp_path) -> None:
+        module = _load_script()
+        combined_csv = self._write_filer_combined_csv(
+            tmp_path,
+            ["AAA,0001067983,2026-06-30,500000", "BBB,0001067983,2026-06-30,300000"],
+        )
+
+        db_path = tmp_path / "db"
+        exit_code = module.main(
+            [
+                "--source-name", "sec_13f_tracked_filer_positions",
+                "--filer-combined-csv", str(combined_csv),
+                "--symbols", "AAA", "BBB",
+                "--as-of", "2026-09-06",
+                "--db-path", str(db_path),
+            ]
+        )
+        assert exit_code == 0
+
+        manifest = json.loads((db_path / "institutional_holdings_ingestion_manifest.json").read_text())
+        assert manifest["filer_mode"] is True
+        assert manifest["filer_combined_csv"] == str(combined_csv)
+        assert manifest["data_dir"] is None
+        assert manifest["combined_csv"] is None
+        assert manifest["total_records_persisted"] == 2
+        assert manifest["missing_symbols"] == []
+
+        from storage.config import StorageConfig
+        from storage.engine import StorageEngine
+        from storage.institutional_filer_holding_repository import DuckDBInstitutionalFilerHoldingRepository
+        from helpers import utc
+
+        engine = StorageEngine(StorageConfig(root_dir=db_path))
+        repository = DuckDBInstitutionalFilerHoldingRepository(engine)
+        latest = repository.get_latest_institutional_filer_holding("AAA", "0001067983", utc(2026, 12, 31))
+        assert latest is not None
+        assert latest.shares_held == 500000.0
+        engine.close()
+
+    def test_symbol_absent_from_filer_combined_csv_is_reported_as_missing(self, tmp_path) -> None:
+        module = _load_script()
+        combined_csv = self._write_filer_combined_csv(tmp_path, ["AAA,0001067983,2026-06-30,500000"])
+
+        exit_code = module.main(
+            [
+                "--source-name", "sec_13f_tracked_filer_positions",
+                "--filer-combined-csv", str(combined_csv),
+                "--symbols", "AAA", "NOFILE",
+                "--as-of", "2026-09-06",
+                "--db-path", str(tmp_path / "db"),
+            ]
+        )
+        assert exit_code == 1
+
+    def test_all_three_modes_together_is_rejected(self, tmp_path) -> None:
+        module = _load_script()
+        data_dir = tmp_path / "csvs"
+        data_dir.mkdir()
+        combined_csv = self._write_filer_combined_csv(tmp_path, ["AAA,0001067983,2026-06-30,500000"])
+        exit_code = module.main(
+            [
+                "--source-name", "sec_13f_tracked_filer_positions",
+                "--data-dir", str(data_dir),
+                "--filer-combined-csv", str(combined_csv),
+                "--symbols", "AAA",
+                "--as-of", "2026-09-06",
+                "--db-path", str(tmp_path / "db"),
+            ]
+        )
+        assert exit_code == 1

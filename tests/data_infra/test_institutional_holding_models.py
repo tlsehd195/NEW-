@@ -12,6 +12,7 @@ from helpers import utc
 
 from data_infra.institutional_holding_models import (
     THIRTEEN_F_FILING_DEADLINE_DAYS,
+    InstitutionalFilerHoldingRecord,
     InstitutionalHoldingRecord,
     thirteen_f_available_time,
 )
@@ -106,3 +107,64 @@ class TestThirteenFAvailableTime:
     def test_naive_quarter_end_rejected(self) -> None:
         with pytest.raises(ValueError):
             thirteen_f_available_time(datetime(2026, 6, 30))
+
+
+def _filer_provenance() -> Provenance:
+    return Provenance(
+        source="sec_13f_tracked_filer_positions", source_dataset="sec_13f_tracked_filer_positions_AAA_CIK1",
+        source_record_id="AAA:CIK1:2026-06-30", retrieved_at=utc(2026, 9, 3), data_version="v1",
+    )
+
+
+def _filer_record(**overrides) -> InstitutionalFilerHoldingRecord:
+    defaults = dict(
+        security_id="AAA",
+        filer_cik="0001067983",
+        quarter_end=utc(2026, 6, 30),
+        shares_held=500_000.0,
+        available_time=utc(2026, 8, 14),
+        ingestion_time=utc(2026, 8, 14),
+        provenance=_filer_provenance(),
+    )
+    defaults.update(overrides)
+    return InstitutionalFilerHoldingRecord(**defaults)
+
+
+class TestInstitutionalFilerHoldingRecordConstruction:
+    """ADR-0194: the per-filer counterpart to InstitutionalHoldingRecord
+    -- same point-in-time discipline, plus a required filer_cik."""
+
+    def test_valid_record_constructs(self) -> None:
+        record = _filer_record()
+        assert record.shares_held == 500_000.0
+        assert record.filer_cik == "0001067983"
+
+
+class TestInstitutionalFilerHoldingRecordValidation:
+    def test_empty_security_id_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            _filer_record(security_id="")
+
+    def test_empty_filer_cik_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            _filer_record(filer_cik="")
+
+    def test_negative_shares_held_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            _filer_record(shares_held=-1.0)
+
+    def test_nan_shares_held_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            _filer_record(shares_held=float("nan"))
+
+    def test_infinite_shares_held_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            _filer_record(shares_held=float("inf"))
+
+    def test_naive_quarter_end_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            _filer_record(quarter_end=datetime(2026, 6, 30))
+
+    def test_available_time_before_quarter_end_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            _filer_record(quarter_end=utc(2026, 6, 30), available_time=utc(2026, 6, 1))

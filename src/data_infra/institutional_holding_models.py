@@ -141,3 +141,52 @@ class InstitutionalHoldingRecord:
                 "InstitutionalHoldingRecord.available_time must not be earlier than quarter_end "
                 "(a report cannot become public before the date it is as of)"
             )
+
+
+@dataclass(frozen=True)
+class InstitutionalFilerHoldingRecord:
+    """One SPECIFIC 13F filer's reported position in one security for
+    one calendar quarter -- the per-filer counterpart to
+    `InstitutionalHoldingRecord` (which is summed across ALL filers and
+    carries no filer identity at all). Exists for
+    `data_infra.tracked_institutional_filers`/`strategy_research.
+    factor_scores.guru_consensus_score`: a curated, named set of "guru"
+    investors needs each one's OWN reported position, not the
+    aggregate every other consumer of this data already gets from
+    `InstitutionalHoldingRecord`.
+
+    Same `available_time`/`quarter_end` point-in-time discipline as
+    `InstitutionalHoldingRecord` (`thirteen_f_available_time`, SEC Rule
+    13f-1's own 45-calendar-day filing deadline) -- deliberately
+    duplicated rather than shared via inheritance, this project's own
+    established per-record-type convention (see `InstitutionalHoldingRecord`'s
+    own docstring, "mirrors ... rather than to ... abstracts")."""
+
+    security_id: str
+    filer_cik: str
+    quarter_end: datetime
+    shares_held: float
+    available_time: datetime
+    ingestion_time: datetime
+    provenance: Provenance
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("quarter_end", self.quarter_end),
+            ("available_time", self.available_time),
+            ("ingestion_time", self.ingestion_time),
+        ):
+            _require_aware(f"InstitutionalFilerHoldingRecord.{name}", value)
+        if not self.security_id:
+            raise ValueError("InstitutionalFilerHoldingRecord.security_id must not be empty")
+        if not self.filer_cik:
+            raise ValueError("InstitutionalFilerHoldingRecord.filer_cik must not be empty")
+        if not math.isfinite(self.shares_held):
+            raise ValueError(f"InstitutionalFilerHoldingRecord.shares_held must be a finite number, got {self.shares_held!r}")
+        if self.shares_held < 0:
+            raise ValueError("InstitutionalFilerHoldingRecord.shares_held must not be negative")
+        if self.available_time < self.quarter_end:
+            raise ValueError(
+                "InstitutionalFilerHoldingRecord.available_time must not be earlier than quarter_end "
+                "(a report cannot become public before the date it is as of)"
+            )

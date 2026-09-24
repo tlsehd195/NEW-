@@ -874,6 +874,29 @@ DDL_STATEMENTS: tuple[str, ...] = (
         provenance_schema_version INTEGER NOT NULL
     )
     """,
+    # guru_consensus_score's own data -- one SPECIFIC 13F filer's
+    # reported position in one security for one quarter (data_infra.
+    # institutional_holding_models.InstitutionalFilerHoldingRecord),
+    # distinct from institutional_holding_records above (which sums
+    # across ALL filers and carries no filer identity). Natural key
+    # includes filer_cik since the same security/quarter can have one
+    # row per tracked filer.
+    """
+    CREATE TABLE IF NOT EXISTS institutional_filer_holding_records (
+        provenance_source_record_id TEXT PRIMARY KEY,
+        security_id TEXT NOT NULL,
+        filer_cik TEXT NOT NULL,
+        quarter_end TIMESTAMP NOT NULL,
+        shares_held DOUBLE NOT NULL,
+        available_time TIMESTAMP NOT NULL,
+        ingestion_time TIMESTAMP NOT NULL,
+        provenance_source TEXT NOT NULL,
+        provenance_source_dataset TEXT NOT NULL,
+        provenance_retrieved_at TIMESTAMP NOT NULL,
+        provenance_data_version TEXT NOT NULL,
+        provenance_schema_version INTEGER NOT NULL
+    )
+    """,
 )
 
 

@@ -127,6 +127,7 @@ from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa: E402
 from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
+from storage.institutional_filer_holding_repository import DuckDBInstitutionalFilerHoldingRepository  # noqa: E402
 from storage.institutional_holding_repository import DuckDBInstitutionalHoldingRepository  # noqa: E402
 from storage.short_interest_repository import DuckDBShortInterestRepository  # noqa: E402
 
@@ -155,6 +156,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     earnings_yield_score,
     fifty_two_week_high_score,
     gross_profitability_score,
+    guru_consensus_score,
     high_volume_return_premium_score,
     idiosyncratic_skewness_score,
     idiosyncratic_volatility_score,
@@ -460,6 +462,21 @@ _SHORT_INTEREST_FACTOR_CANDIDATES = (
 _INSTITUTIONAL_FACTOR_CANDIDATES = (
     ("institutional_ownership_change", "Chen, Jegadeesh & Wermers 2000 institutional-holdings-change anomaly, institutional-holdings-only", institutional_ownership_change_score),
 )
+# ADR-0194 -- same reasoning as _INSTITUTIONAL_FACTOR_CANDIDATES
+# immediately above, but sourced from a SIXTH, distinct DuckDB catalog
+# (--institutional-filer-db-path, a local per-filer SEC Form 13F-derived
+# CSV via ingest_institutional_holdings.py --filer-combined-csv) rather
+# than the ALL-filers-aggregate --institutional-db-path. The account
+# owner's own follow-up idea this session (13F data also lets specific,
+# named "guru" investors' own positions be tracked, not just the
+# anonymous aggregate -- "거물투자자들이 공통적으로 구매하는 기업 찾아서
+# 구매하는 전략"). guru_consensus_score's own signature is also
+# (security_id, as_of_time, repository), so it reuses
+# _fundamentals_factor_factory unchanged, same as every other
+# alternative-data candidate above.
+_GURU_CONSENSUS_FACTOR_CANDIDATES = (
+    ("guru_consensus", "Account owner's own idea (2026-09-24): curated named-filer 13F agreement, not a published academic citation", guru_consensus_score),
+)
 
 
 def _price_factor_factory(security_ids, score_fn, version):
@@ -597,6 +614,18 @@ def main() -> int:
             "candidate runs exactly as before this flag existed."
         ),
     )
+    parser.add_argument(
+        "--institutional-filer-db-path", type=Path, default=None,
+        help=(
+            "Path to the DuckDB catalog scripts/ingest_institutional_holdings.py already "
+            "populated with --filer-combined-csv (ADR-0194). Distinct from "
+            "--institutional-db-path (that one holds the ALL-filers AGGREGATE; this one "
+            "holds each data_infra.tracked_institutional_filers.TRACKED_FILERS filer's "
+            "OWN position). Optional -- when omitted, the 'guru_consensus' candidate "
+            "(src/strategy_research/factor_scores.py's guru_consensus_score) is skipped "
+            "entirely and every other candidate runs exactly as before this flag existed."
+        ),
+    )
     parser.add_argument("--initial-capital", type=float, default=10_000.0, help="Matches PAPER_CAPITAL_USD (broker.paper.us_longterm_config), not a currency-converted figure")
     parser.add_argument("--train-fraction", type=float, default=0.6, help="Chronological split: fraction of [start,end] reserved for TRAIN (fixed before this script's first real-data run, never tuned against a result)")
     parser.add_argument("--validation-fraction", type=float, default=0.2, help="Chronological split: fraction reserved for VALIDATION; remaining fraction is the held-out TEST window")
@@ -724,6 +753,11 @@ def main() -> int:
     if args.institutional_db_path is not None:
         institutional_engine = StorageEngine(StorageConfig(root_dir=args.institutional_db_path))
         institutional_repository = DuckDBInstitutionalHoldingRepository(institutional_engine)
+    institutional_filer_engine = None
+    institutional_filer_repository = None
+    if args.institutional_filer_db_path is not None:
+        institutional_filer_engine = StorageEngine(StorageConfig(root_dir=args.institutional_filer_db_path))
+        institutional_filer_repository = DuckDBInstitutionalFilerHoldingRepository(institutional_filer_engine)
 
     try:
         # Real SPY TOTAL_RETURN benchmark, same construction as Phase
@@ -983,6 +1017,19 @@ def main() -> int:
                     _fundamentals_factor_factory(security_ids, institutional_repository, score_fn, f"{name}_v1"),
                 ))
 
+        if institutional_filer_repository is not None:
+            # ADR-0194: gated independently of every other --*-db-path
+            # flag, same reasoning as institutional_repository
+            # immediately above -- this candidate needs only the
+            # per-filer institutional-holdings catalog (distinct from
+            # the all-filers-aggregate one --institutional-db-path
+            # gates).
+            for name, hypothesis, score_fn in _GURU_CONSENSUS_FACTOR_CANDIDATES:
+                strategy_specs.append((
+                    name, hypothesis,
+                    _fundamentals_factor_factory(security_ids, institutional_filer_repository, score_fn, f"{name}_v1"),
+                ))
+
         # experiment_id: deterministic from caller-supplied run
         # configuration only (never datetime.now()/utcnow() -- rule
         # 0-11) -- the SAME configuration run twice always yields the
@@ -1034,6 +1081,12 @@ def main() -> int:
                 # Session 36 continued (ADR-0104): identical collision-
                 # prevention reasoning for --institutional-db-path.
                 "institutional_included": institutional_repository is not None,
+                # ADR-0194: identical collision-prevention reasoning for
+                # --institutional-filer-db-path (distinct from
+                # institutional_included above -- that one gates the
+                # ALL-filers aggregate candidate, this one the per-filer
+                # guru_consensus candidate).
+                "institutional_filer_included": institutional_filer_repository is not None,
                 # The actual candidate set evaluated -- catches "a
                 # candidate was added/removed" (e.g. 6 vs 8 candidates
                 # above). NOT a full code-identity/git-commit hash (this
@@ -1269,6 +1322,8 @@ def main() -> int:
             short_interest_engine.close()
         if institutional_engine is not None:
             institutional_engine.close()
+        if institutional_filer_engine is not None:
+            institutional_filer_engine.close()
 
 
 if __name__ == "__main__":
