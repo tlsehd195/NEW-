@@ -57,8 +57,9 @@ explicitly deferred -- see "Reviewed, not done in this batch" below.
    instances found by hand across prior audit rounds) -- this makes
    that drift class a test failure instead of a future manual finding.
    Verified as a real regression guard: a temporary fake citation to a
-   nonexistent `ADR-9999`/`PHASE-99` was staged, confirmed to fail both
-   new tests, then removed before this commit.
+   nonexistent ADR number (9999) and a nonexistent PHASE number (99)
+   was staged, confirmed to fail both new tests, then removed before
+   this commit.
 
 3. **Every GitHub Action pinned to a commit SHA** (colibri/DeerFlow/
    Vibe-Trading's own shared CI hygiene practice, report priority 3;
