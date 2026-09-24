@@ -69,7 +69,25 @@ class WalkForwardAggregate:
     train_window_months: int
     test_window_months: int
     step_months: int
+    # `fold_count` and every statistic below it (positive_net_return_
+    # folds, median/stdev/worst/best, regime_breakdown) count ONLY
+    # folds where `fold.result.net.is_valid_performance` is True (see
+    # `_is_valid_fold` below) -- an ERROR/CRITICAL integrity issue
+    # (e.g. a negative-cash state, a delisting mis-valuation) means
+    # that fold's net.performance numbers are not a legitimate
+    # backtest outcome at all, per `BacktestResult.is_valid_performance`'s
+    # own contract (backtest.integrity), and must not silently count
+    # toward this strategy's evidence. External audit finding
+    # (2026-09-24): `is_valid_performance` had no consumer anywhere in
+    # `strategy_research` before this fix -- every fold's numbers,
+    # integrity-valid or not, were being aggregated, fed into PBO/DSR,
+    # and used for CANDIDATE/evidence-level classification.
+    # `total_fold_count` (raw, unfiltered) and `excluded_integrity_
+    # invalid_fold_count` are kept separately below for transparency --
+    # `folds` itself still holds EVERY fold actually run, valid or not.
     fold_count: int
+    total_fold_count: int
+    excluded_integrity_invalid_fold_count: int
     positive_net_return_folds: int
     median_net_cumulative_return: Optional[float]
     median_net_sharpe: Optional[float]
@@ -134,6 +152,17 @@ def run_walk_forward_evaluation(
     return _aggregate(strategy_name, train_window_months, test_window_months, step_months, folds)
 
 
+def _is_valid_fold(fold: WalkForwardFoldResult) -> bool:
+    """A fold whose real, net BacktestResult has an ERROR/CRITICAL
+    integrity issue (backtest.integrity -- negative cash, a delisting
+    mis-valuation, etc.) is not a legitimate performance outcome at
+    all, per `BacktestResult.is_valid_performance`'s own contract --
+    its numbers must not count toward this strategy's aggregate
+    evidence (see `WalkForwardAggregate`'s own docstring/field
+    comments)."""
+    return fold.result.net.is_valid_performance
+
+
 def _aggregate(
     strategy_name: str, train_window_months: int, test_window_months: int, step_months: int,
     folds: list[WalkForwardFoldResult],
@@ -142,35 +171,60 @@ def _aggregate(
         return WalkForwardAggregate(
             strategy_name=strategy_name, train_window_months=train_window_months,
             test_window_months=test_window_months, step_months=step_months,
-            fold_count=0, positive_net_return_folds=0,
+            fold_count=0, total_fold_count=0, excluded_integrity_invalid_fold_count=0,
+            positive_net_return_folds=0,
             median_net_cumulative_return=None, median_net_sharpe=None, stdev_net_cumulative_return=None,
             worst_max_drawdown=None, worst_fold_index=None, best_net_cumulative_return=None, best_fold_index=None,
             regime_breakdown={}, folds=(),
         )
 
-    net_returns = [f.result.net.performance.cumulative_return for f in folds]
-    net_sharpes = [f.result.net.performance.sharpe_ratio for f in folds]
-    max_drawdowns = [f.result.net.performance.max_drawdown for f in folds]
+    valid_folds = [f for f in folds if _is_valid_fold(f)]
 
-    worst_dd_index = min(range(len(folds)), key=lambda i: max_drawdowns[i])
-    best_return_index = max(range(len(folds)), key=lambda i: net_returns[i])
+    if not valid_folds:
+        # Every fold this strategy produced was integrity-invalid --
+        # the honest answer is "no usable evidence at all", not a
+        # fabricated aggregate over folds that are not legitimate
+        # performance outcomes.
+        return WalkForwardAggregate(
+            strategy_name=strategy_name, train_window_months=train_window_months,
+            test_window_months=test_window_months, step_months=step_months,
+            fold_count=0, total_fold_count=len(folds), excluded_integrity_invalid_fold_count=len(folds),
+            positive_net_return_folds=0,
+            median_net_cumulative_return=None, median_net_sharpe=None, stdev_net_cumulative_return=None,
+            worst_max_drawdown=None, worst_fold_index=None, best_net_cumulative_return=None, best_fold_index=None,
+            regime_breakdown={}, folds=tuple(folds),
+        )
+
+    net_returns = [f.result.net.performance.cumulative_return for f in valid_folds]
+    net_sharpes = [f.result.net.performance.sharpe_ratio for f in valid_folds]
+    max_drawdowns = [f.result.net.performance.max_drawdown for f in valid_folds]
+
+    # Indices reference each fold's own stable `fold_index` (its
+    # position among every window this evaluation generated), not a
+    # position within `valid_folds` -- `aggregate.folds` below still
+    # holds every fold, valid or not, so a raw list position would be
+    # ambiguous about which list it indexes into.
+    worst_dd_pos = min(range(len(valid_folds)), key=lambda i: max_drawdowns[i])
+    best_return_pos = max(range(len(valid_folds)), key=lambda i: net_returns[i])
 
     regime_breakdown: dict = {}
-    for f in folds:
+    for f in valid_folds:
         regime_breakdown[f.regime_trend_state] = regime_breakdown.get(f.regime_trend_state, 0) + 1
 
     return WalkForwardAggregate(
         strategy_name=strategy_name, train_window_months=train_window_months,
         test_window_months=test_window_months, step_months=step_months,
-        fold_count=len(folds),
+        fold_count=len(valid_folds),
+        total_fold_count=len(folds),
+        excluded_integrity_invalid_fold_count=len(folds) - len(valid_folds),
         positive_net_return_folds=sum(1 for r in net_returns if r > 0),
         median_net_cumulative_return=statistics.median(net_returns),
         median_net_sharpe=statistics.median(net_sharpes),
         stdev_net_cumulative_return=statistics.pstdev(net_returns) if len(net_returns) > 1 else 0.0,
-        worst_max_drawdown=max_drawdowns[worst_dd_index],
-        worst_fold_index=worst_dd_index,
-        best_net_cumulative_return=net_returns[best_return_index],
-        best_fold_index=best_return_index,
+        worst_max_drawdown=max_drawdowns[worst_dd_pos],
+        worst_fold_index=valid_folds[worst_dd_pos].fold_index,
+        best_net_cumulative_return=net_returns[best_return_pos],
+        best_fold_index=valid_folds[best_return_pos].fold_index,
         regime_breakdown=regime_breakdown,
         folds=tuple(folds),
     )

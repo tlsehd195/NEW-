@@ -519,6 +519,11 @@ def _fold_dict(fold) -> dict:
         "test_start": fold.test_start.isoformat(),
         "test_end": fold.test_end.isoformat(),
         "regime_trend_state": fold.regime_trend_state,
+        # External audit finding (2026-09-24): callers must be able to
+        # tell which folds were excluded from this candidate's
+        # aggregate/PBO/DSR/evidence -- see WalkForwardAggregate's own
+        # fold_count/total_fold_count/excluded_integrity_invalid_fold_count.
+        "is_valid_performance": fold.result.net.is_valid_performance,
         "gross": _perf_dict(fold.result.gross.performance),
         "net": _perf_dict(fold.result.net.performance),
         "num_trades_net": len(fold.result.net.fills),
@@ -532,6 +537,8 @@ def _aggregate_dict(aggregate) -> dict:
         "test_window_months": aggregate.test_window_months,
         "step_months": aggregate.step_months,
         "fold_count": aggregate.fold_count,
+        "total_fold_count": aggregate.total_fold_count,
+        "excluded_integrity_invalid_fold_count": aggregate.excluded_integrity_invalid_fold_count,
         "positive_net_return_folds": aggregate.positive_net_return_folds,
         "median_net_cumulative_return": aggregate.median_net_cumulative_return,
         "median_net_sharpe": aggregate.median_net_sharpe,
@@ -1205,8 +1212,23 @@ def main() -> int:
                     start_date=split.test_start.date(), end_date=split.test_end.date(),
                     initial_capital=args.initial_capital, benchmark_id=benchmark_id,
                 )
+                # ADR-0194 addendum (external audit, 2026-09-24):
+                # compute_contribution_report_from_fills now REQUIRES the
+                # real corporate actions covering this held-out window --
+                # replaying fills alone silently desynchronized from the
+                # engine's real portfolio state whenever a split occurred
+                # (see that function's own docstring for the confirmed
+                # reproduction). Fetched per security actually filled,
+                # point-in-time-safe as of the window's own end.
+                held_out_corporate_actions = [
+                    action
+                    for security_id in {fill.security_id for fill in held_out_result.net.fills}
+                    for action in repository.get_corporate_actions(
+                        security_id, split.test_start, split.test_end, as_of_time=split.test_end,
+                    )
+                ]
                 concentration = compute_contribution_report_from_fills(
-                    held_out_result.net.fills, args.initial_capital, final_prices
+                    held_out_result.net.fills, args.initial_capital, final_prices, held_out_corporate_actions,
                 )
                 held_out_test = {
                     "gross": _perf_dict(held_out_result.gross.performance),
@@ -1245,9 +1267,49 @@ def main() -> int:
         pbo_result = None
         dsr_by_name: dict = {}
         if applicability.applicable and is_real_data:
-            fold_returns_by_candidate = {
-                name: [fold.result.net.performance.cumulative_return for fold in agg.folds]
+            # External audit finding (2026-09-24): agg.folds holds EVERY
+            # fold this strategy produced, including ones with an
+            # ERROR/CRITICAL integrity issue (backtest.integrity) --
+            # agg.fold_count/median/etc already exclude those (see
+            # strategy_research.walk_forward_evaluation._is_valid_fold),
+            # but this PBO/DSR computation reads agg.folds directly, so
+            # it must apply the same filter itself rather than assume
+            # every fold in the tuple is a legitimate outcome.
+            #
+            # NOT a simple per-candidate filter, though: compute_pbo's
+            # own CSCV algorithm requires every candidate's fold-return
+            # list to have the SAME LENGTH, in the SAME fold order
+            # (pbo_dsr.py's own module docstring -- "true by construction
+            # when every candidate was walk-forward evaluated over the
+            # same overall_start/overall_end/window parameters"), since
+            # position i must mean the SAME time window across every
+            # candidate being compared. Dropping each candidate's own
+            # invalid folds independently would desynchronize that
+            # positional correspondence the moment two candidates differ
+            # in WHICH folds were integrity-invalid. Instead: keep only
+            # fold_index values valid for EVERY candidate (the
+            # intersection), so every candidate's list stays the same
+            # length and still refers to the same underlying windows.
+            fold_index_validity_by_candidate = {
+                name: {fold.fold_index: fold.result.net.is_valid_performance for fold in agg.folds}
                 for name, agg in aggregates_by_name.items()
+            }
+            common_valid_fold_indices = sorted(
+                set.intersection(*[
+                    {idx for idx, valid in validity.items() if valid}
+                    for validity in fold_index_validity_by_candidate.values()
+                ])
+            ) if fold_index_validity_by_candidate else []
+            fold_by_index_by_candidate = {
+                name: {fold.fold_index: fold for fold in agg.folds}
+                for name, agg in aggregates_by_name.items()
+            }
+            fold_returns_by_candidate = {
+                name: [
+                    fold_by_index_by_candidate[name][idx].result.net.performance.cumulative_return
+                    for idx in common_valid_fold_indices
+                ]
+                for name in aggregates_by_name
             }
             try:
                 pbo_result = compute_pbo(fold_returns_by_candidate)

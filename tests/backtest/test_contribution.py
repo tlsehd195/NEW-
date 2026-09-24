@@ -12,6 +12,26 @@ from backtest.enums import OrderSide
 from backtest.fills import Fill
 from backtest.portfolio import PortfolioAccounting
 
+from data_infra.enums import CorporateActionType
+from data_infra.models import CorporateAction, Provenance
+
+
+def _split_action(security_id, ratio, effective_day, available_day=None) -> CorporateAction:
+    effective = utc(2024, 1, effective_day, 0)
+    available = utc(2024, 1, available_day if available_day is not None else effective_day, 0)
+    return CorporateAction(
+        security_id=security_id,
+        action_type=CorporateActionType.SPLIT,
+        available_time=available,
+        ingestion_time=available,
+        effective_time=effective,
+        details={"ratio": ratio},
+        provenance=Provenance(
+            source="test", source_dataset="test", source_record_id=f"{security_id}-split-{effective_day}",
+            retrieved_at=available, data_version="v1",
+        ),
+    )
+
 
 def _fill(security_id, side, quantity, price, decision_day=1, execution_day=2) -> Fill:
     return Fill(
@@ -125,9 +145,112 @@ class TestFromFillsConvenienceWrapper:
             live_portfolio.apply_fill(f)
         expected = compute_contribution_report(live_portfolio, final_prices={"BBB": 220.0})
 
-        actual = compute_contribution_report_from_fills(fills, 10_000.0, final_prices={"BBB": 220.0})
+        actual = compute_contribution_report_from_fills(fills, 10_000.0, final_prices={"BBB": 220.0}, corporate_actions=())
 
         assert actual == expected
+
+
+class TestFromFillsCorporateActionReplay:
+    """External audit finding (2026-09-24, confirmed by direct
+    reproduction): replaying fills alone, without also replaying
+    corporate actions, silently desynchronizes from the engine's real
+    portfolio state the moment a split occurs mid-holding."""
+
+    def test_split_between_buy_and_sell_matches_the_engines_own_realized_pnl(self) -> None:
+        buy = _fill("AAA", OrderSide.BUY, 100, 10.0, decision_day=1, execution_day=1)
+        sell = _fill("AAA", OrderSide.SELL, 200, 6.0, decision_day=10, execution_day=10)
+        split = _split_action("AAA", "2:1", effective_day=5)
+
+        # The real engine's own path: apply_fill -> apply_split -> apply_fill.
+        engine_portfolio = PortfolioAccounting(10_000.0)
+        engine_portfolio.apply_fill(buy)
+        engine_portfolio.apply_split("AAA", 2.0)
+        engine_portfolio.apply_fill(sell)
+
+        report = compute_contribution_report_from_fills(
+            [buy, sell], 10_000.0, final_prices={}, corporate_actions=[split],
+        )
+
+        assert report.total_pnl == pytest.approx(engine_portfolio.realized_pnl)
+        assert report.total_pnl == pytest.approx(200.0)  # (6 - 5) * 200, matches the engine exactly (zero commission in this fixture)
+
+    def test_omitting_a_real_split_reproduces_the_confirmed_pre_fix_wrong_number(self) -> None:
+        """Documents the exact bug the external audit caught -- pinned
+        as a regression test, not just described in a docstring. This
+        is what happens if a caller forgets to pass corporate_actions;
+        it is NOT the correct number, and this test exists so nobody
+        mistakes it for one."""
+        buy = _fill("AAA", OrderSide.BUY, 100, 10.0, decision_day=1, execution_day=1)
+        sell = _fill("AAA", OrderSide.SELL, 200, 6.0, decision_day=10, execution_day=10)
+
+        report = compute_contribution_report_from_fills(
+            [buy, sell], 10_000.0, final_prices={}, corporate_actions=(),
+        )
+
+        # (6 - 10) * 200 -- the sell's real 200sh treated against the
+        # replay's un-split 100sh position (this fixture's zero
+        # commission means the magnitude differs from the audit's own
+        # commission-bearing reproduction, but the mechanism -- and the
+        # sign-flip vs. the engine's real +200.0 -- is the same confirmed bug).
+        assert report.total_pnl == pytest.approx(-800.0)
+
+    def test_dividend_between_fills_matches_the_engines_own_cash_accounting(self) -> None:
+        buy = _fill("AAA", OrderSide.BUY, 100, 10.0, decision_day=1, execution_day=1)
+        sell = _fill("AAA", OrderSide.SELL, 100, 12.0, decision_day=10, execution_day=10)
+        dividend = CorporateAction(
+            security_id="AAA", action_type=CorporateActionType.DIVIDEND,
+            available_time=utc(2024, 1, 5), ingestion_time=utc(2024, 1, 5),
+            effective_time=utc(2024, 1, 5), details={"amount": 0.50},
+            provenance=Provenance(source="test", source_dataset="test", source_record_id="AAA-div-5", retrieved_at=utc(2024, 1, 5), data_version="v1"),
+        )
+
+        engine_portfolio = PortfolioAccounting(10_000.0)
+        engine_portfolio.apply_fill(buy)
+        engine_portfolio.apply_dividend("AAA", 0.50, utc(2024, 1, 5))
+        engine_portfolio.apply_fill(sell)
+
+        report = compute_contribution_report_from_fills(
+            [buy, sell], 10_000.0, final_prices={}, corporate_actions=[dividend],
+        )
+
+        # apply_dividend does not touch realized_pnl (Phase 2 spec) --
+        # this asserts the dividend replay doesn't corrupt the fill-only
+        # realized_pnl the way a mishandled event could.
+        assert report.total_pnl == pytest.approx(engine_portfolio.realized_pnl)
+        assert report.total_pnl == pytest.approx(200.0)  # (12 - 10) * 100
+
+    def test_split_after_the_last_fill_still_corrects_unrealized_pnl(self) -> None:
+        buy = _fill("AAA", OrderSide.BUY, 100, 10.0, decision_day=1, execution_day=1)
+        split = _split_action("AAA", "2:1", effective_day=5)
+
+        engine_portfolio = PortfolioAccounting(10_000.0)
+        engine_portfolio.apply_fill(buy)
+        engine_portfolio.apply_split("AAA", 2.0)
+        expected = compute_contribution_report(engine_portfolio, final_prices={"AAA": 6.0})
+
+        report = compute_contribution_report_from_fills(
+            [buy], 10_000.0, final_prices={"AAA": 6.0}, corporate_actions=[split],
+        )
+
+        assert report == expected
+
+    def test_action_with_no_orderable_timestamp_is_skipped_not_guessed(self) -> None:
+        buy = _fill("AAA", OrderSide.BUY, 100, 10.0, decision_day=1, execution_day=1)
+        sell = _fill("AAA", OrderSide.SELL, 100, 12.0, decision_day=10, execution_day=10)
+        unorderable = CorporateAction(
+            security_id="AAA", action_type=CorporateActionType.SPLIT,
+            available_time=utc(2024, 1, 5), ingestion_time=utc(2024, 1, 5),
+            details={"ratio": "2:1"},  # no event_time/effective_time
+            provenance=Provenance(source="test", source_dataset="test", source_record_id="AAA-unorderable", retrieved_at=utc(2024, 1, 5), data_version="v1"),
+        )
+
+        report = compute_contribution_report_from_fills(
+            [buy, sell], 10_000.0, final_prices={}, corporate_actions=[unorderable],
+        )
+
+        # Skipped, not applied at a guessed time -- matches the plain
+        # fill-only replay (no split effect at all).
+        assert report.total_pnl == pytest.approx(200.0)  # (12 - 10) * 100, split never applied
 
 
 class TestEmptyPortfolio:

@@ -46,6 +46,11 @@ from monitoring.collectors import collect_broker
 from monitoring.config import MonitoringConfig
 from monitoring.enums import ComponentHealthStatus
 
+from orchestration.paper_runner import build_buy_and_hold_risk_check
+
+from risk.config import RiskConfig
+from risk.engine import DeterministicPortfolioRiskEngine
+
 from storage.broker_repository import DuckDBBrokerRequestRepository, DuckDBBrokerResponseRepository, DuckDBOrderStatusEventRepository
 from storage.data_repository import DuckDBDataRepository
 from storage.paper_repository import DuckDBPaperFillRepository, DuckDBPaperOrderRepository
@@ -150,8 +155,21 @@ class TestUSLongTermPaperTradingFullLineage:
         )
         journal_repo = DuckDBTradeJournalRepository(engine)
 
+        # _UNIVERSE_SUBSET has only 3 symbols (~33% equal-weight each) --
+        # well above RiskConfig's own default max_position_weight (0.10,
+        # tuned for real buy_and_hold usage's real 15-87 symbol
+        # universes); a permissive config here isolates this lineage
+        # test's own concern (ID propagation end to end) from the
+        # separate real-limit-enforcement tests in
+        # tests/broker/paper/test_us_longterm_runner.py.
+        risk_check = build_buy_and_hold_risk_check(
+            DeterministicPortfolioRiskEngine(
+                RiskConfig(max_position_weight=1.0, minimum_cash_ratio=0.0, concentration_limit=1.0, max_drawdown=None, max_portfolio_volatility=None)
+            )
+        )
         buy_result = run_buy_and_hold_paper_session(
             _UNIVERSE_SUBSET, mds, session, buy_time=buy_time, configuration_version="cfg-v1",
+            risk_check=risk_check,
             request_repository=request_repo, response_repository=response_repo,
         )
         assert len(buy_result.orders) == 3

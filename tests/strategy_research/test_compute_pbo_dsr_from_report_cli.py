@@ -128,6 +128,65 @@ class TestComputePboDsrFromReportCli:
         exit_code = module.main(["--report", str(report_path)])
         assert exit_code == 1
 
+    def test_integrity_invalid_folds_are_excluded_from_pbo_dsr(self, tmp_path) -> None:
+        """External audit finding (2026-09-24): this script read every
+        fold's cumulative_return unconditionally, including ones with
+        an ERROR/CRITICAL integrity issue -- it must now check each
+        fold's own is_valid_performance flag first (same fix applied to
+        run_long_horizon_validation.py's own PBO/DSR computation)."""
+        module = _load_script()
+        rng = random.Random(42)
+        report = _fake_report(rng)
+        # Poison a handful of "good"'s folds with an extreme return AND
+        # mark them integrity-invalid -- if the script forgot to filter,
+        # these would visibly skew median/PBO/DSR away from the
+        # unpoisoned baseline computed by test_main_computes_and_writes_
+        # pbo_dsr_result above.
+        good_folds = report["results"]["good"]["walk_forward"]["folds"]
+        for fold in good_folds[:5]:
+            fold["net"]["cumulative_return"] = 9.99
+            fold["is_valid_performance"] = False
+        report_path = tmp_path / "report.json"
+        report_path.write_text(json.dumps(report))
+
+        exit_code = module.main(["--report", str(report_path)])
+        assert exit_code == 0
+
+        updated = json.loads(report_path.read_text())
+        # The extreme poisoned value must not have pulled the deflated
+        # Sharpe ratio up the way including 5/40 folds at +999% would.
+        assert updated["pbo_dsr_result"]["deflated_sharpe_by_candidate"]["good"] < 1.0
+
+    def test_different_candidates_with_different_invalid_folds_stay_aligned(self, tmp_path) -> None:
+        """The subtler half of the same audit finding: compute_pbo
+        requires every candidate's fold-return list to be the same
+        length, in the same fold order (position i = the same time
+        window for every candidate). Filtering each candidate's own
+        invalid folds independently would desynchronize that the moment
+        two candidates disagree about WHICH folds are invalid -- this
+        must use the common (intersected) set of valid fold indices
+        instead, and must not raise."""
+        module = _load_script()
+        rng = random.Random(11)
+        report = _fake_report(rng)
+        good_folds = report["results"]["good"]["walk_forward"]["folds"]
+        noise_a_folds = report["results"]["noise_a"]["walk_forward"]["folds"]
+        # Disjoint invalid sets -- "good" loses folds 0-2, "noise_a"
+        # loses folds 3-5. Neither candidate's own valid-fold count
+        # drops below the CLI's 6-fold minimum (40 - 3 = 37).
+        for fold in good_folds[:3]:
+            fold["is_valid_performance"] = False
+        for fold in noise_a_folds[3:6]:
+            fold["is_valid_performance"] = False
+        report_path = tmp_path / "report.json"
+        report_path.write_text(json.dumps(report))
+
+        exit_code = module.main(["--report", str(report_path)])
+        assert exit_code == 0
+
+        updated = json.loads(report_path.read_text())
+        assert set(updated["pbo_dsr_result"]["deflated_sharpe_by_candidate"]) == {"good", "noise_a", "noise_b"}
+
     def test_no_network_module_is_imported_by_this_script(self) -> None:
         source = _SCRIPT_PATH.read_text()
         for forbidden in ("import requests", "urllib.request", "http.client", "TiingoHttpTransport", "StooqHttpTransport"):

@@ -162,10 +162,12 @@ from backtest.enums import OrderSide
 from backtest.portfolio import PortfolioView, PositionView
 
 from data_infra.models import CorporateAction
+from data_infra.versioning import compute_data_version
 
 from broker.models import BrokerOrderResponse, OrderValidationResult
 from broker.paper.models import PaperFillRecord
 from broker.paper.session import AccountSummary, PaperTradingSession
+from broker.paper.us_longterm_runner import RiskCheckCallback
 from broker.validation import build_validated_order
 
 from decision.agent import DecisionAgent
@@ -179,10 +181,11 @@ from regime.enums import AXIS_STATE_ENUM
 from regime.models import CompositeRegimeObservation
 
 from risk.engine import PortfolioRiskEngine
+from risk.enums import RiskCheckStatus
 from risk.models import PositionSizingResult, RiskCheckedPosition
 from risk.sizing import PositionSizer
 
-from trade_journal.enums import TradeProvenance
+from trade_journal.enums import DecisionAction, TradeProvenance
 from trade_journal.models import DecisionSnapshot, TradeRecord
 
 # Mirrors backtest.engine.BacktestEngine's own 1-day reference-price
@@ -691,6 +694,65 @@ def compute_portfolio_snapshot(session: PaperTradingSession, view: AsOfDataView,
     allocation)."""
     account = session.account_summary(as_of=as_of_time)
     return _portfolio_view(account, view, as_of_time)
+
+
+def _buy_and_hold_synthetic_id(prefix: str, *, as_of_time: datetime, security_id: str) -> str:
+    """These sizing/decision ids are never persisted to any table of
+    their own (`PaperStrategyKind.BUY_AND_HOLD`'s whole "lineage" for
+    one allocation is synthetic, folded only into `compute_client_
+    order_id`'s hash, same as `run_cycle`'s own real ids feed it) -- so
+    there is no real sequence to seed a restart-safe counter from.
+    Deriving the id from `(as_of_time, security_id)` makes it naturally
+    unique per real economic event and needs no counter/seeding at all
+    (moved here from `broker.paper.us_longterm_runner`, external audit
+    fix 2026-09-24 -- that module no longer builds a `PositionSizingResult`
+    itself, see `build_buy_and_hold_risk_check` below)."""
+    digest = compute_data_version({"as_of_time": as_of_time.isoformat(), "security_id": security_id})
+    return f"{prefix}-{digest[:12]}"
+
+
+def build_buy_and_hold_risk_check(
+    risk_engine: PortfolioRiskEngine, *, sector_by_security: Optional[dict[str, str]] = None,
+) -> RiskCheckCallback:
+    """Builds the `broker.paper.us_longterm_runner.RiskCheckCallback`
+    that module's `run_buy_and_hold_paper_session` requires (external
+    audit fix, 2026-09-24: that function used to construct a `risk.
+    models.RiskCheckedPosition` directly with a hardcoded `status=PASS`,
+    bypassing every real portfolio-level limit entirely -- see that
+    module's own docstring for the full history).
+
+    This function -- not `broker.paper.us_longterm_runner` -- is where
+    the real `risk.models.PositionSizingResult` (`decision_action=
+    DecisionAction.BUY`) gets built and handed to the real `risk_engine`,
+    because `tests/broker/test_broker_boundary.py` enforces that the
+    Broker layer never imports `risk.engine`/`decision.*` itself;
+    `orchestration` already legitimately does, the same as `run_cycle`
+    already does via its own `PositionSizer`. The returned closure's
+    signature matches exactly what `run_buy_and_hold_paper_session`
+    calls: `(security_id, as_of_time, target_weight, target_quantity,
+    portfolio_state) -> RiskCheckedPosition`."""
+
+    def risk_check(
+        security_id: str, as_of_time: datetime, target_weight: float, target_quantity: float,
+        portfolio_state: PortfolioView,
+    ) -> RiskCheckedPosition:
+        sizing_result = PositionSizingResult(
+            sizing_id=_buy_and_hold_synthetic_id("SIZE-BAH", as_of_time=as_of_time, security_id=security_id),
+            security_id=security_id, as_of_time=as_of_time,
+            status=RiskCheckStatus.PASS, reason="buy_and_hold_initial_allocation",
+            decision_id=_buy_and_hold_synthetic_id("DEC-BAH", as_of_time=as_of_time, security_id=security_id),
+            decision_action=DecisionAction.BUY,
+            proposed_target_weight=target_weight, proposed_target_quantity=target_quantity,
+            current_weight=0.0, current_quantity=0.0,
+            sizing_version="buy_and_hold_reference_runner_v1", feature_version="buy_and_hold_reference_runner_v1",
+            provenance=TradeProvenance.PAPER_TRADING,
+        )
+        return risk_engine.assess(
+            security_id, as_of_time, sizing_result, portfolio_state,
+            sector_by_security=sector_by_security, provenance=TradeProvenance.PAPER_TRADING,
+        )
+
+    return risk_check
 
 
 def equity_history_from_risk_repository(

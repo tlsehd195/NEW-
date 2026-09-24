@@ -37,7 +37,8 @@ from strategy_research.walk_forward_evaluation import WalkForwardAggregate
 def _agg(fold_count: int, positive: int, regimes: dict, median_ret: float = 0.05) -> WalkForwardAggregate:
     return WalkForwardAggregate(
         strategy_name="test_strategy", train_window_months=12, test_window_months=3, step_months=3,
-        fold_count=fold_count, positive_net_return_folds=positive,
+        fold_count=fold_count, total_fold_count=fold_count, excluded_integrity_invalid_fold_count=0,
+        positive_net_return_folds=positive,
         median_net_cumulative_return=median_ret if fold_count else None,
         median_net_sharpe=0.5 if fold_count else None,
         stdev_net_cumulative_return=0.02 if fold_count else None,

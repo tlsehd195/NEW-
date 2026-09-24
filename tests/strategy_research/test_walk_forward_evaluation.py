@@ -274,6 +274,112 @@ class TestStrategyParameterImmutability:
         assert construction_count == aggregate.fold_count * 3 + 1
 
 
+class TestIntegrityInvalidFoldsExcludedFromAggregate:
+    """External audit finding (2026-09-24): `is_valid_performance` had
+    NO consumer anywhere in `strategy_research` -- every fold's numbers,
+    integrity-valid or not, were silently aggregated into
+    fold_count/positive_net_return_folds/median/PBO/DSR/evidence-level.
+    Drives `run_walk_forward_evaluation`'s real, public entry point
+    (not a private helper) -- one fold's real `GrossNetResult` is
+    swapped for a copy carrying a CRITICAL integrity report via
+    `dataclasses.replace` (same technique as `TestAsOfTimeIntegrity`'s
+    own `monkeypatch.setattr` on this module's `run_gross_and_net`
+    import), everything else about that fold's real, unmodified
+    performance numbers stays untouched -- proving the EXCLUSION, not
+    just a fabricated fold."""
+
+    def test_one_critical_integrity_fold_is_excluded_from_every_aggregate_statistic(self, monkeypatch) -> None:
+        import dataclasses
+
+        import strategy_research.walk_forward_evaluation as wf_mod
+        from backtest.engine import IntegrityReport
+        from backtest.enums import IntegrityStatus
+
+        repo = _small_repo()
+        real_run_gross_and_net = wf_mod.run_gross_and_net
+        call_count = 0
+
+        def spy(*args, **kwargs):
+            nonlocal call_count
+            result = real_run_gross_and_net(*args, **kwargs)
+            call_count += 1
+            if call_count == 1:
+                # First fold only: same real performance numbers, but
+                # its integrity report is replaced with a CRITICAL
+                # failure -- exactly what a negative-cash/impossible-
+                # portfolio-state issue produces in a real run.
+                critical_net = dataclasses.replace(
+                    result.net, integrity=IntegrityReport(issues=(), status=IntegrityStatus.CRITICAL_FAILURE)
+                )
+                result = dataclasses.replace(result, net=critical_net)
+            return result
+
+        monkeypatch.setattr(wf_mod, "run_gross_and_net", spy)
+
+        aggregate = run_walk_forward_evaluation(
+            repo, lambda: BuyAndHoldStrategy(list(_UNIVERSE)), _UNIVERSE,
+            overall_start=days_to_utc(date(2020, 1, 2)), overall_end=days_to_utc(date(2022, 6, 1)),
+            train_window_months=6, test_window_months=2, step_months=2, initial_capital=10_000.0,
+        )
+
+        assert aggregate.total_fold_count >= 2, "sanity check: need at least one valid and one invalid fold"
+        assert aggregate.excluded_integrity_invalid_fold_count == 1
+        assert aggregate.fold_count == aggregate.total_fold_count - 1
+
+        # The raw, complete record still holds every fold, including the
+        # excluded one -- transparency, not silent deletion.
+        assert len(aggregate.folds) == aggregate.total_fold_count
+        assert aggregate.folds[0].result.net.is_valid_performance is False
+
+        # The excluded fold's own real (large, since it's a genuine
+        # BuyAndHoldStrategy run) return must not be reachable through
+        # any aggregate statistic.
+        excluded_return = aggregate.folds[0].result.net.performance.cumulative_return
+        valid_returns = [f.result.net.performance.cumulative_return for f in aggregate.folds[1:] if f.result.net.is_valid_performance]
+        import statistics as _statistics
+        assert aggregate.median_net_cumulative_return == pytest.approx(_statistics.median(valid_returns))
+        if excluded_return not in valid_returns:
+            # The strongest possible check when the excluded fold's
+            # return is numerically distinguishable from every kept one.
+            assert aggregate.best_net_cumulative_return != pytest.approx(excluded_return) or aggregate.best_net_cumulative_return in valid_returns
+
+    def test_every_fold_integrity_invalid_returns_a_fully_empty_aggregate_not_a_fabricated_one(self, monkeypatch) -> None:
+        import dataclasses
+
+        import strategy_research.walk_forward_evaluation as wf_mod
+        from backtest.engine import IntegrityReport
+        from backtest.enums import IntegrityStatus
+
+        repo = _small_repo()
+        real_run_gross_and_net = wf_mod.run_gross_and_net
+
+        def spy(*args, **kwargs):
+            result = real_run_gross_and_net(*args, **kwargs)
+            critical_net = dataclasses.replace(
+                result.net, integrity=IntegrityReport(issues=(), status=IntegrityStatus.CRITICAL_FAILURE)
+            )
+            return dataclasses.replace(result, net=critical_net)
+
+        monkeypatch.setattr(wf_mod, "run_gross_and_net", spy)
+
+        aggregate = run_walk_forward_evaluation(
+            repo, lambda: BuyAndHoldStrategy(list(_UNIVERSE)), _UNIVERSE,
+            overall_start=days_to_utc(date(2020, 1, 2)), overall_end=days_to_utc(date(2022, 6, 1)),
+            train_window_months=6, test_window_months=2, step_months=2, initial_capital=10_000.0,
+        )
+
+        assert aggregate.total_fold_count >= 1
+        assert aggregate.fold_count == 0
+        assert aggregate.excluded_integrity_invalid_fold_count == aggregate.total_fold_count
+        assert aggregate.median_net_cumulative_return is None
+        assert aggregate.median_net_sharpe is None
+        assert aggregate.worst_fold_index is None
+        assert aggregate.best_fold_index is None
+        assert aggregate.regime_breakdown == {}
+        # Still the full raw record -- every fold really ran.
+        assert len(aggregate.folds) == aggregate.total_fold_count
+
+
 class TestInsufficientHistory:
     def test_returns_zero_fold_aggregate_not_an_error_when_window_too_short(self) -> None:
         repo = _small_repo(date(2020, 1, 2), date(2020, 4, 1))
