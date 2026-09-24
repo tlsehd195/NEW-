@@ -146,3 +146,35 @@ class TestReproducibleVersioning:
             created_at=utc(2024, 3, 1),
         )
         assert r1.dataset.dataset_version != r2.dataset.dataset_version
+
+    def test_different_features_on_the_same_trades_and_labels_produce_a_different_dataset_version(self) -> None:
+        """External audit finding (2026-09-24, confirmed by direct code
+        reading): dataset_version's own fingerprint used to hash only
+        (trade_id, label_value, sample_as_of_time) -- a retrain of the
+        SAME closed trades with a DIFFERENT feature set (a real, common
+        event: feature engineering changes far more often than the
+        underlying labeled trades) produced the IDENTICAL dataset_version,
+        which storage.learning_repository.DuckDBCandidateModelRepository's
+        own natural_key (dataset_version|trainer_version|seed|provenance)
+        then silently treated as the SAME candidate -- record()'s own
+        idempotency check returned the OLD candidate and the genuinely
+        different, newly-trained one was never persisted, with no error
+        raised anywhere."""
+        journal, records = build_journal_with_closed_trades(6, features_fn=lambda i: {"momentum": 0.01 * i})
+        r1 = build_training_dataset(journal, records, provenance=TradeProvenance.HISTORICAL_SIMULATION, created_at=utc(2024, 3, 1))
+
+        journal2, records2 = build_journal_with_closed_trades(6, features_fn=lambda i: {"momentum": 0.02 * i, "volatility": 0.5})
+        r2 = build_training_dataset(journal2, records2, provenance=TradeProvenance.HISTORICAL_SIMULATION, created_at=utc(2024, 3, 1))
+
+        assert r1.dataset.dataset_version != r2.dataset.dataset_version
+
+    def test_no_features_at_all_still_produces_a_stable_dataset_version(self) -> None:
+        """MeanRewardBaselineTrainer's own real usage: every LabeledSample.
+        features is None (no OrderIntent.features ever set) -- the fix
+        above must not break reproducibility for this, this project's
+        actual current real-data case."""
+        journal, records = build_journal_with_closed_trades(6)
+        r1 = build_training_dataset(journal, records, provenance=TradeProvenance.HISTORICAL_SIMULATION, created_at=utc(2024, 3, 1))
+        r2 = build_training_dataset(journal, records, provenance=TradeProvenance.HISTORICAL_SIMULATION, created_at=utc(2024, 3, 1))
+        assert r1.dataset.dataset_version == r2.dataset.dataset_version
+        assert all(s.features is None for s in r1.labeled_samples)

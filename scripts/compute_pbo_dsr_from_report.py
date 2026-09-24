@@ -62,6 +62,16 @@ def _reconstruct_aggregate(name: str, wf: dict) -> WalkForwardAggregate:
         test_window_months=wf["test_window_months"],
         step_months=wf["step_months"],
         fold_count=wf["fold_count"],
+        # .get() with a fold_count fallback: a report written before
+        # this field existed (pre integrity-fold-exclusion fix) has no
+        # total_fold_count/excluded_integrity_invalid_fold_count keys
+        # at all -- fold_count==total_fold_count, 0 excluded, is the
+        # correct backward-compatible reading for such a report (it
+        # never excluded anything, which is exactly the bug this fix
+        # addresses, but reconstructing it here must not crash on an
+        # older file).
+        total_fold_count=wf.get("total_fold_count", wf["fold_count"]),
+        excluded_integrity_invalid_fold_count=wf.get("excluded_integrity_invalid_fold_count", 0),
         positive_net_return_folds=wf["positive_net_return_folds"],
         median_net_cumulative_return=wf["median_net_cumulative_return"],
         median_net_sharpe=wf["median_net_sharpe"],
@@ -91,13 +101,45 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    fold_returns_by_candidate = {}
+    # External audit finding (2026-09-24): "folds" is EVERY fold a
+    # candidate produced, including ones with an ERROR/CRITICAL
+    # integrity issue -- a fold's own is_valid_performance flag (added
+    # alongside this fix) must be checked before its return counts
+    # toward PBO/DSR. A report written before this field existed has no
+    # "is_valid_performance" key at all; treated as valid (matches that
+    # older report's own un-filtered fold_count, since it never excluded
+    # anything either).
+    #
+    # NOT a simple per-candidate filter: compute_pbo's own CSCV
+    # algorithm requires every candidate's fold-return list to have the
+    # SAME LENGTH, in the SAME fold order -- position i must mean the
+    # SAME time window across every candidate being compared. Candidates
+    # first prequalify on their OWN valid-fold count (unchanged
+    # threshold check), then the folds actually used are the
+    # intersection of valid fold_index values across every prequalified
+    # candidate, so every survivor's list stays the same length and
+    # still refers to the same underlying windows.
+    prequalified: dict[str, dict] = {}
     for name, result in report.get("results", {}).items():
-        folds = result["walk_forward"]["folds"]
-        if len(folds) < _MIN_FOLDS_FOR_PBO_DSR:
-            print(f"Skipping {name!r}: only {len(folds)} fold(s), need >= {_MIN_FOLDS_FOR_PBO_DSR}")
+        folds_by_index = {f["fold_index"]: f for f in result["walk_forward"]["folds"]}
+        valid_indices = {idx for idx, f in folds_by_index.items() if f.get("is_valid_performance", True)}
+        if len(valid_indices) < _MIN_FOLDS_FOR_PBO_DSR:
+            print(f"Skipping {name!r}: only {len(valid_indices)} valid fold(s), need >= {_MIN_FOLDS_FOR_PBO_DSR}")
             continue
-        fold_returns_by_candidate[name] = [f["net"]["cumulative_return"] for f in folds]
+        prequalified[name] = folds_by_index
+
+    common_valid_fold_indices = sorted(
+        set.intersection(*[
+            {idx for idx, f in folds_by_index.items() if f.get("is_valid_performance", True)}
+            for folds_by_index in prequalified.values()
+        ])
+    ) if prequalified else []
+
+    fold_returns_by_candidate = {
+        name: [folds_by_index[idx]["net"]["cumulative_return"] for idx in common_valid_fold_indices]
+        for name, folds_by_index in prequalified.items()
+        if len(common_valid_fold_indices) >= _MIN_FOLDS_FOR_PBO_DSR
+    }
 
     if len(fold_returns_by_candidate) < 2:
         print(

@@ -166,4 +166,3 @@ jobs:
               --notes "Auto-published by ingest_insider_transactions_full.yml on every successful merge. Always the latest combined SEC Form 4 catalog -- see that workflow's own run history for what universe coverage this reflects as of its last update."
           fi
           gh release upload "$TAG" ./data/insider_catalog.zip --repo "${{ github.repository }}" --clobber
-          if-no-files-found: ignore

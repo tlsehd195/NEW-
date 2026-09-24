@@ -31,10 +31,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Mapping, Optional, Sequence
 
+from backtest.corporate_actions import CorporateActionApplier
 from backtest.portfolio import PortfolioAccounting
 
 if TYPE_CHECKING:
     from backtest.fills import Fill
+    from data_infra.models import CorporateAction
 
 
 @dataclass(frozen=True)
@@ -153,7 +155,10 @@ def compute_contribution_report(
 
 
 def compute_contribution_report_from_fills(
-    fills: Sequence["Fill"], initial_capital: float, final_prices: Mapping[str, float]
+    fills: Sequence["Fill"],
+    initial_capital: float,
+    final_prices: Mapping[str, float],
+    corporate_actions: Sequence["CorporateAction"],
 ) -> ConcentrationReport:
     """Convenience entry point for a caller that only has a
     `BacktestResult` (which exposes `.fills` but not the internal
@@ -161,9 +166,58 @@ def compute_contribution_report_from_fills(
     replays `fills` through a fresh `PortfolioAccounting` via the exact
     same `apply_fill` bookkeeping the engine itself used, which
     deterministically reconstructs the same `closed_trades`/`positions`
-    state, then delegates to `compute_contribution_report`. Does not
-    touch `backtest.engine` itself."""
+    state, then delegates to `compute_contribution_report`.
+
+    **`corporate_actions` is required, not optional (an external audit,
+    2026-09-24, caught the bug this parameter fixes)**: `fills` alone
+    are NOT enough to reconstruct the engine's real portfolio state --
+    `BacktestEngine.run()` also applies SPLIT/DIVIDEND events via
+    `CorporateActionApplier` between fills, which changes a position's
+    `quantity`/`average_cost` without producing a `Fill`. Replaying only
+    `fills` silently desynchronizes from the engine's real state the
+    moment a split occurs mid-holding: e.g. buy 100sh@10, a 2:1 split
+    (engine: 200sh@5), then sell 200sh@6 -- the engine's real
+    `realized_pnl` is `+199.0`, but replaying fills alone (pre-fix)
+    computed `-801.0` for that trade (`(6-10)*200`, plus running the
+    position negative since only 100sh were ever "bought" in the
+    fill-only replay) -- a sign-flipped, wrong-by-1000 result, silently
+    reported as the real concentration/contribution breakdown. Passing
+    `()` when the caller has independently confirmed no corporate
+    action occurred across every `fills` security's holding period is
+    fine; passing it by accident/omission is exactly the bug this
+    signature change makes impossible to do unnoticed.
+
+    Corporate actions are applied in chronological order, interleaved
+    with `fills` by comparing each action's `effective_time or
+    event_time` against each fill's `execution_time` -- the same
+    "corporate action before the next portfolio event" ordering
+    `BacktestEngine.run()` itself uses (`backtest.corporate_actions.
+    CorporateActionApplier`). Actions with neither `effective_time` nor
+    `event_time` set are skipped (cannot be ordered; `CorporateAction`
+    guarantees `available_time` but that is a disclosure timestamp, not
+    a real-world effective date -- silently guessing one would risk
+    applying a split on the wrong side of a fill). Does not touch
+    `backtest.engine` itself."""
     portfolio = PortfolioAccounting(initial_capital)
-    for fill in fills:
+    applier = CorporateActionApplier()
+
+    def _action_time(action: "CorporateAction"):
+        return action.effective_time or action.event_time
+
+    orderable_actions = [a for a in corporate_actions if _action_time(a) is not None]
+    orderable_actions.sort(key=_action_time)
+    fills_sorted = sorted(fills, key=lambda f: f.execution_time)
+
+    action_idx = 0
+    for fill in fills_sorted:
+        while action_idx < len(orderable_actions) and _action_time(orderable_actions[action_idx]) <= fill.execution_time:
+            action = orderable_actions[action_idx]
+            applier.apply([action], portfolio, max(action.available_time, _action_time(action)))
+            action_idx += 1
         portfolio.apply_fill(fill)
+    while action_idx < len(orderable_actions):
+        action = orderable_actions[action_idx]
+        applier.apply([action], portfolio, max(action.available_time, _action_time(action)))
+        action_idx += 1
+
     return compute_contribution_report(portfolio, final_prices)

@@ -86,6 +86,34 @@ class TestIdempotency:
         assert len(repo.list_all()) == 1
         engine.close()
 
+    def test_a_retrain_with_different_features_is_not_silently_dropped(self, tmp_path) -> None:
+        """External audit finding (2026-09-24): before dataset_version's
+        own fingerprint included features (learning.dataset fix, same
+        commit), this exact scenario silently lost the second, newly-
+        retrained candidate -- DuckDBCandidateModelRepository.record()'s
+        idempotency check (natural_key = dataset_version|trainer_version|
+        seed|provenance) treated the two runs as the SAME candidate
+        purely because dataset_version happened to match despite
+        genuinely different feature content, and returned the OLD
+        candidate with no error. Real scenario: the same closed trades
+        retrained after a feature-engineering change."""
+        journal1, records1 = build_journal_with_closed_trades(6, features_fn=lambda i: {"momentum": 0.01 * i})
+        result1 = run_learning_pipeline(journal1, records1, provenance=TradeProvenance.HISTORICAL_SIMULATION, run_at=utc(2024, 3, 1))
+
+        journal2, records2 = build_journal_with_closed_trades(6, features_fn=lambda i: {"momentum": 0.02 * i, "volatility": 0.5})
+        result2 = run_learning_pipeline(journal2, records2, provenance=TradeProvenance.HISTORICAL_SIMULATION, run_at=utc(2024, 3, 1))
+
+        assert result1.candidate.dataset_version != result2.candidate.dataset_version
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBCandidateModelRepository(engine)
+        c1 = repo.record(result1.candidate)
+        c2 = repo.record(result2.candidate)
+
+        assert c1.candidate_id != c2.candidate_id, "the second, genuinely different retrain must not be silently dropped"
+        assert len(repo.list_all()) == 2
+        engine.close()
+
     def test_recording_the_same_evaluation_twice_does_not_duplicate(self, tmp_path) -> None:
         result = _pipeline_result()
         engine = new_engine(tmp_path)

@@ -76,7 +76,7 @@ from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
 from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 
 from orchestration.paper_runner import (  # noqa: E402
-    PaperRunnerState, apply_due_corporate_actions, compute_portfolio_snapshot,
+    PaperRunnerState, apply_due_corporate_actions, build_buy_and_hold_risk_check, compute_portfolio_snapshot,
     equity_history_from_risk_repository, run_cycle,
 )
 from orchestration.paper_strategies import (  # noqa: E402
@@ -87,6 +87,7 @@ from orchestration.paper_strategies import (  # noqa: E402
 )
 
 from risk.config import RiskConfig  # noqa: E402
+from risk.engine import DeterministicPortfolioRiskEngine  # noqa: E402
 
 from storage.broker_repository import DuckDBBrokerRequestRepository, DuckDBBrokerResponseRepository, DuckDBOrderStatusEventRepository  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
@@ -227,7 +228,8 @@ def _run_run_cycle_strategy(
 
 
 def _run_buy_and_hold_strategy(
-    *, security_ids, checkpoints, view, clock, market_data_source, session, store_engine, configuration_version,
+    *, security_ids, sector_by_security, checkpoints, view, clock, market_data_source, session, store_engine,
+    configuration_version, risk_config,
 ) -> dict:
     """Runs `PaperStrategyKind.BUY_AND_HOLD`: one equal-weight buy across
     `security_ids` on the FIRST checkpoint only if this store has no
@@ -255,7 +257,15 @@ def _run_buy_and_hold_strategy(
     `session` passed in already has a real `corporate_action_repository`
     wired (identical construction to the RUN_CYCLE path, see `main`
     below) -- this was already feasible before this change, just never
-    called."""
+    called.
+
+    `risk_config` (external audit fix, 2026-09-24): the same
+    `risk.config.RiskConfig` the RUN_CYCLE path already builds from
+    `--max-*` CLI flags, now ALSO applied here via a real
+    `risk.engine.DeterministicPortfolioRiskEngine` -- see
+    `broker.paper.us_longterm_runner.run_buy_and_hold_paper_session`'s
+    own docstring for why this strategy previously bypassed every
+    portfolio-level limit entirely."""
     order_repository = DuckDBPaperOrderRepository(store_engine)
     request_repository = DuckDBBrokerRequestRepository(store_engine)
     response_repository = DuckDBBrokerResponseRepository(store_engine)
@@ -264,9 +274,13 @@ def _run_buy_and_hold_strategy(
     already_bought = len(order_repository.list_all()) > 0
     skipped_symbols: tuple = ()
     if not already_bought and checkpoints:
+        risk_check = build_buy_and_hold_risk_check(
+            DeterministicPortfolioRiskEngine(risk_config), sector_by_security=sector_by_security,
+        )
         result = run_buy_and_hold_paper_session(
             security_ids, market_data_source, session,
             buy_time=checkpoints[0], configuration_version=configuration_version,
+            risk_check=risk_check,
             request_repository=request_repository, response_repository=response_repository,
         )
         skipped_symbols = result.skipped_symbols
@@ -429,9 +443,10 @@ def main(argv=None) -> int:
             )
         else:
             outcome = _run_buy_and_hold_strategy(
-                security_ids=security_ids, checkpoints=checkpoints, view=view, clock=clock,
+                security_ids=security_ids, sector_by_security=sector_by_security if args.max_sector_weight is not None else None,
+                checkpoints=checkpoints, view=view, clock=clock,
                 market_data_source=market_data_source, session=session, store_engine=store_engine,
-                configuration_version=session.config.configuration_version(),
+                configuration_version=session.config.configuration_version(), risk_config=risk_config,
             )
 
         final_account = session.account_summary(as_of=checkpoints[-1])

@@ -20,6 +20,7 @@ added reproduces an identical dataset).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Sequence
@@ -138,13 +139,34 @@ def build_training_dataset(
     # (e.g. two different backtest runs each starting their own id
     # sequence at "TRD-000001") even when their actual sample content
     # differs. Hashing each sample's (trade_id, label_value,
-    # sample_as_of_time) tuple, not just the id list, keeps
-    # `dataset_version` a genuine content hash per this project's own
-    # contract (data_infra.versioning.compute_data_version's docstring,
-    # ADR-0003) -- two datasets are only version-identical when their
-    # actual sample content, not merely their local id labels, matches.
+    # sample_as_of_time, feature_version, features) tuple, not just the
+    # id list, keeps `dataset_version` a genuine content hash per this
+    # project's own contract (data_infra.versioning.compute_data_
+    # version's docstring, ADR-0003) -- two datasets are only version-
+    # identical when their actual sample content, not merely their
+    # local id labels, matches.
+    #
+    # `features` was NOT included here before this fix (external audit,
+    # 2026-09-24): a retrain of the SAME trades/labels with a DIFFERENT
+    # feature set (a real, expected event -- feature engineering
+    # changes far more often than the underlying labeled trades)
+    # produced the IDENTICAL dataset_version, which
+    # `storage.learning_repository.DuckDBCandidateModelRepository.
+    # _natural_key` (dataset_version|trainer_version|seed|provenance)
+    # then treated as the SAME candidate -- the second, genuinely
+    # different model was silently dropped by `record()`'s own
+    # `if existing is not None: return <the OLD one>` idempotency
+    # check, with no error and no indication the new model was never
+    # persisted. `features` is serialized to a canonical (sorted-key)
+    # JSON string first, not embedded as a raw dict, since `sorted()`
+    # below requires every fingerprint tuple to be comparable and Python
+    # dicts are not orderable.
     sample_fingerprint = sorted(
-        (s.trade_id, s.label_value, s.sample_as_of_time.isoformat()) for s in labeled_samples
+        (
+            s.trade_id, s.label_value, s.sample_as_of_time.isoformat(), s.feature_version,
+            json.dumps(s.features, sort_keys=True, default=str) if s.features is not None else None,
+        )
+        for s in labeled_samples
     )
     dataset_version = compute_data_version({
         "sample_fingerprint": sample_fingerprint,
