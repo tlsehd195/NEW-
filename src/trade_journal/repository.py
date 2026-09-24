@@ -167,6 +167,7 @@ class InMemoryTradeJournalRepository:
         exit_reason: Optional[str] = None,
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         recorded_at: Optional[datetime] = None,
+        fill_id: Optional[str] = None,
     ) -> TradeRecord:
         # Phase 17 Production Safety Review bug fix: `fill.order_id` is
         # the client_order_id, identical across every partial fill of
@@ -184,7 +185,18 @@ class InMemoryTradeJournalRepository:
         # tests/trade_journal/test_idempotency.py::
         # test_recording_the_same_fill_twice_does_not_duplicate, which
         # still passes unchanged.
-        key = ("trade", experiment_id, fill.order_id, fill.execution_time)
+        #
+        # Batch I (independent audit, §8 regression list item 9):
+        # `fill.execution_time` alone still collides whenever two
+        # genuinely different partial fills of the same order happen to
+        # share the same timestamp (a broker/simulator filling several
+        # lots at once) -- silently dropping the second exactly like the
+        # order_id-only bug above did. `fill_id` (optional, `None`
+        # preserves the exact prior key/behavior for every caller that
+        # does not supply one) is a real, already-unique-per-fill
+        # identifier (`PaperFillRecord.fill_id`) a caller can pass to
+        # make same-timestamp fills distinguishable too.
+        key = ("trade", experiment_id, fill.order_id, fill.execution_time, fill_id)
         if key in self._trade_natural_keys:
             return self._trades[self._trade_natural_keys[key]]
 
@@ -209,6 +221,7 @@ class InMemoryTradeJournalRepository:
             holding_period=holding_period,
             exit_reason=exit_reason,
             provenance=provenance,
+            fill_id=fill_id,
             experiment_id=experiment_id,
             recorded_at=recorded_at or fill.execution_time,
         )

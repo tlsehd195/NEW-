@@ -584,7 +584,7 @@ def _record_fills_to_journal(
         trade_journal_repository.record_trade(
             decision_id=decision_snapshot.snapshot_id, fill=fill, position_after=running_quantity,
             realized_pnl=realized_pnl, realized_return=realized_return, holding_period=holding_period,
-            provenance=provenance, experiment_id=experiment_id,
+            provenance=provenance, experiment_id=experiment_id, fill_id=fill_record.fill_id,
         )
     return running_quantity
 

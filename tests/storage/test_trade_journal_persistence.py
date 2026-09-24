@@ -152,6 +152,53 @@ class TestIdempotency:
         assert len(journal.list_trades()) == 2
         engine.close()
 
+    def test_two_distinct_partial_fills_sharing_execution_time_need_fill_id_to_survive(self, tmp_path) -> None:
+        """Batch I (independent audit, §8 regression list item 9,
+        DuckDB backend) -- mirrors tests/trade_journal/
+        test_idempotency.py::test_two_distinct_partial_fills_sharing_
+        the_same_execution_time_need_fill_id_to_survive. Also proves the
+        `natural_key` string a caller without `fill_id` computes is
+        byte-identical to the pre-fix format -- a real production
+        `--paper-store` already has rows persisted under that exact
+        string, and must keep matching it or every already-persisted
+        trade would look "new" on the next run."""
+        from dataclasses import replace
+
+        engine = new_engine(tmp_path)
+        journal = DuckDBTradeJournalRepository(engine)
+        order = make_order()
+        decision = journal.record_decision(
+            decision_time=order.decision_time, security_id="AAA", decision=DecisionAction.BUY,
+            order=order, experiment_id="EXP-1",
+        )
+        same_time = utc(2024, 1, 2)
+        first_fill = make_fill(quantity=100.0, execution_time=same_time)
+        second_fill = replace(first_fill, quantity=50.0)
+
+        # No fill_id -- the OLD natural_key format, still collides exactly as before.
+        old_format_key = f"trade|EXP-1|{first_fill.order_id}|{same_time.isoformat()}"
+        t1_no_id = journal.record_trade(decision_id=decision.snapshot_id, fill=first_fill, position_after=100.0, experiment_id="EXP-1")
+        t2_no_id = journal.record_trade(decision_id=decision.snapshot_id, fill=second_fill, position_after=150.0, experiment_id="EXP-1")
+        assert t1_no_id.trade_id == t2_no_id.trade_id
+        assert len(journal.list_trades()) == 1
+        stored_key = engine.connection.execute(
+            "SELECT natural_key FROM trades WHERE trade_id = ?", [t1_no_id.trade_id]
+        ).fetchone()[0]
+        assert stored_key == old_format_key
+
+        # With distinct fill_ids, both real fills survive.
+        decision2 = journal.record_decision(
+            decision_time=order.decision_time, security_id="AAA", decision=DecisionAction.BUY,
+            order=order, experiment_id="EXP-2",
+        )
+        t1 = journal.record_trade(decision_id=decision2.snapshot_id, fill=first_fill, position_after=100.0,
+                                   experiment_id="EXP-2", fill_id="PAPERFILL-000001")
+        t2 = journal.record_trade(decision_id=decision2.snapshot_id, fill=second_fill, position_after=150.0,
+                                   experiment_id="EXP-2", fill_id="PAPERFILL-000002")
+        assert t1.trade_id != t2.trade_id
+        assert len(journal.list_trades()) == 3
+        engine.close()
+
 
 class TestImmutability:
     def test_decision_snapshot_is_frozen(self, tmp_path) -> None:
