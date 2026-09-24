@@ -19,6 +19,11 @@ venv/
 node_modules/
 npm-debug.log*
 
+# llmwiki MCP tool -- cloned + built by .claude/hooks/session-start.sh
+# on every session (like .venv/ for Python), never committed. Its own
+# nested .git is gitignored along with it.
+.llmwiki-tool/
+
 # OS / editor
 .DS_Store
 .idea/
