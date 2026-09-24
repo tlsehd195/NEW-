@@ -34,15 +34,28 @@
 
 `microsoft/llmwiki`를 이 프로젝트의 문서 위키 도구로 등록함
 (`EXTERNAL_REPO_APPLICABILITY_REPORT.md` priority-6 권고). `.mcp.json`이
-`llmwiki` MCP 서버를 등록하고, `.claude/hooks/session-start.sh`가 매
-세션 시작 시 `.llmwiki-tool/`(빌드 산물, gitignore됨)을
-clone+build한다 — `@llmwiki/core`가 npm에 실제로 게시되어 있지 않아
-(README의 `npx -y -p @llmwiki/core` 안내는 작동하지 않음) 소스에서
-직접 빌드하는 방식만 유효하다는 걸 확인한 뒤 채택된 방식.
+`llmwiki` MCP 서버를 등록한다.
 
-- `.wiki/`(raw/사람 소유 원천, wiki/LLM 소유 유도물, AGENTS.md 스키마)는
-  **git에 커밋되는 실제 콘텐츠**다 — `.venv/`/`.llmwiki-tool/`(둘 다
-  gitignore, 매 세션 재생성)과 다르게 취급한다.
+**(2026-09-24 후속 수정) 매 세션 clone+build 방식은 폐기함.**
+원래는 `.claude/hooks/session-start.sh`가 매 세션 시작 시
+`.llmwiki-tool/`(gitignore됨)에 소스를 clone+build했는데 — MCP
+클라이언트의 stdio 연결 타임아웃(~30초)과 clone+npm install+tsc
+빌드 시간이 경쟁하는 구조라 네트워크가 느린 세션에서는 빌드가 늦게
+끝나 `CONNECTION_CLOSED`로 실패했다. 이 레이스는 그 안에서
+빌드 순서를 두 번 바꿔봐도(venv보다 먼저 실행 등) 좁혀지기만 하고
+없어지지 않았음 — 실제로 2026-09-24 세션에서 재현되어 근본 원인으로
+확인됨. 지금은 `esbuild`로 만든 의존성 없는 단일 번들
+(`vendor/llmwiki-mcp/bin.bundle.cjs`, git에 커밋됨 — provenance/갱신
+방법은 `vendor/llmwiki-mcp/NOTICE.md` 참고)을 `.mcp.json`이 바로
+실행한다. 세션 시작 시 clone/npm install/tsc가 전혀 없으므로 레이스
+자체가 사라짐 — `session-start.sh`의 llmwiki 관련 블록은 제거됨.
+번들을 다시 만들어야 할 때(업스트림 갱신 등)만 `NOTICE.md`의 절차를
+따른다.
+
+- `.wiki/`(raw/사람 소유 원천, wiki/LLM 소유 유도물, AGENTS.md 스키마)와
+  `vendor/llmwiki-mcp/`(빌드된 MCP 서버 번들)는 **git에 커밋되는 실제
+  콘텐츠**다 — `.venv/`/`.llmwiki-tool/`(둘 다 gitignore, 매 세션
+  재생성 또는 필요 시에만 임시로 사용)과 다르게 취급한다.
 - 위키에 쓴 내용이 이 프로젝트의 실제 의사결정 경로(decision/risk 등)로
   **역류해서는 안 된다** — DuckDB가 진실 공급원이고 위키는 어디까지나
   2차 뷰. 이건 LLM Wiki 저장소 자체의 3계층 원칙이자 보고서의 경계
@@ -51,7 +64,8 @@ clone+build한다 — `@llmwiki/core`가 npm에 실제로 게시되어 있지 �
   실행"/"신뢰 안 된 코드 통합"으로 각각 별도 분류해서 차단했던 이력이
   있음 — 향후 세션에서 이 훅이 막히면, 사용자가 직접 권한을 허용하거나
   GitHub 웹 UI로 관련 파일을 커밋해줘야 할 수 있다 (2026-09-24 세션의
-  `.mcp.json`/`session-start.sh` 추가가 실제로 이 경로로 처리됨).
+  `.mcp.json`/`session-start.sh` 추가와, 같은 날 후속 수정으로 만든
+  `vendor/llmwiki-mcp/` 번들 빌드/커밋이 실제로 이 경로로 처리됨).
 
 ## 사용자 액션 대기 항목 (2026-09-24)
 
