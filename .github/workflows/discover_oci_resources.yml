@@ -110,3 +110,18 @@ jobs:
           oci compute instance list --compartment-id "$TENANCY_OCID" \
             --query "data[].{name:\"display-name\", shape:shape, state:\"lifecycle-state\"}" --output table
           echo "::endgroup::"
+
+      - name: List region subscriptions (which regions can actually be used)
+        run: |
+          set -euo pipefail
+          echo "::group::Region Subscriptions"
+          # A tenancy's Always Free Ampere A1 quota is shared across every
+          # subscribed region, not per-region -- retrying in a second
+          # subscribed region is a real, commonly-used way to get past one
+          # region's "Out of host capacity" without needing a second
+          # account. A region NOT listed here has no capacity to retry
+          # against at all until the tenancy actually subscribes to it
+          # (a real, separate console action -- this workflow only reads).
+          oci iam region-subscription list --tenancy-id "$TENANCY_OCID" \
+            --query "data[].{region:\"region-name\", status:status, home:\"is-home-region\"}" --output table
+          echo "::endgroup::"
