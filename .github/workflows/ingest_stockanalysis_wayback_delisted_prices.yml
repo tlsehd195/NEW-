@@ -53,9 +53,21 @@ jobs:
 
       - name: Fetch the real, live S&P 500 constituent-interval CSV
         if: inputs.symbols == ''
+        # Batch J (independent audit, R3 P2-1): pinned to a specific
+        # commit SHA, not the mutable `master` branch -- a third-party
+        # repo push (malicious or accidental) can no longer change what
+        # this fetch returns on the next run without this line changing
+        # too. parse_ticker_intervals (src/data_infra/providers/
+        # sp500_index_constituent_history.py) is the real fail-closed
+        # defense against a bad `ticker` value in the content itself;
+        # this pin is defense-in-depth against the content changing at
+        # all between runs. Bump by re-running
+        # `git ls-remote https://github.com/fja05680/sp500
+        # refs/heads/master` and updating this SHA when a newer
+        # constituent history is needed.
         run: |
           curl -sS -o sp500_ticker_start_end.csv \
-            "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv"
+            "https://raw.githubusercontent.com/fja05680/sp500/a2430f2af0c79ddf0748e91de11bdeb1616ab5a7/sp500_ticker_start_end.csv"
 
       - name: Select this run's real candidate symbols
         id: symbols

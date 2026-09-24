@@ -131,6 +131,18 @@ def main(argv=None) -> int:
 
     intervals = parse_ticker_intervals(csv_path)
     print(f"Parsed {len(intervals)} ticker-interval rows.", flush=True)
+    # Batch J (independent audit R3, P2-7): a header-only response (a
+    # truncated proxy, an upstream format change that still keeps the
+    # expected column names) parses successfully as ZERO intervals --
+    # `parse_ticker_intervals`'s own schema check only rejects a WRONG
+    # header, never a right header with no data rows. This script feeds
+    # `UniverseMembership`, the documented P1-2 survivorship-mitigation
+    # data path -- a silent empty membership set here would be invisible
+    # by exit code, mirroring the exact class of bug P1-1 (ADR-0175)
+    # already closed for the real market-data ingestion scripts.
+    if not intervals:
+        print("FATAL: parsed zero ticker-interval rows from a non-empty response", file=sys.stderr)
+        return 1
 
     constituents = sorted(constituents_as_of(intervals, as_of))
     print(f"{len(constituents)} tickers were S&P 500 constituents as of {as_of}.", flush=True)

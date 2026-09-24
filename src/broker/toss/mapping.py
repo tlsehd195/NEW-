@@ -58,6 +58,21 @@ _CANCEL_CONFLICT_STATUS_MAP: dict[str, BrokerOrderStatus] = {
     "already-rejected": BrokerOrderStatus.REJECTED,
 }
 
+# Batch J (independent audit, Step 7 P2, R1/R2/R3 all flagged this):
+# `parse_order_response`'s 4xx branch previously mapped EVERY 4xx code
+# to REJECTED with full certainty, including codes never confirmed to
+# mean the broker made a trading decision to reject the order (a REST
+# 4xx can just as easily mean the request itself was malformed/refused
+# before ever reaching order matching). Mirrors `_CANCEL_CONFLICT_
+# STATUS_MAP`'s own established pattern: only a code this project has
+# actual Tier 2 evidence for (`docs/specifications/PHASE-13-toss-
+# securities-adapter.md`'s own "Example codes" for order creation
+# specifically -- `expired-token` is handled separately via the 401
+# path) maps to a definitive status; anything else stays UNKNOWN.
+_ORDER_REJECT_CODE_SET: frozenset[str] = frozenset({
+    "insufficient-buying-power", "order-hours-closed", "price-out-of-range",
+})
+
 _MAX_ERROR_MESSAGE_LENGTH = 500
 
 
@@ -119,9 +134,10 @@ def parse_order_response(
 
     if response.status_code >= 400:
         code = response.body.get("code")
+        status = BrokerOrderStatus.REJECTED if code in _ORDER_REJECT_CODE_SET else BrokerOrderStatus.UNKNOWN
         return BrokerOrderResponse(
             response_id=response_id, request_client_order_id=client_order_id, broker_id=broker_id,
-            operation=operation, status=BrokerOrderStatus.REJECTED, broker_order_id=None,
+            operation=operation, status=status, broker_order_id=None,
             filled_quantity=None, avg_fill_price=None, error_code=code,
             error_message=_sanitize_message(response.body.get("message")), attempt_count=attempt_count,
             latency_ms=None, responded_at=responded_at, provenance=provenance, experiment_id=experiment_id,

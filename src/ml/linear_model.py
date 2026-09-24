@@ -92,6 +92,21 @@ class LinearRegressionModel:
         # leading 1.0 is the intercept column.
         rows = [[1.0] + [s.features[f] for f in feature_ids] for s in samples]
         targets = [s.target for s in samples]
+        # Batch J (independent audit R3, P2-2): a NaN/inf target does
+        # NOT poison `xtx` (built from features alone) -- only `xty`
+        # (the right-hand side) -- so `_solve_linear_system`'s own
+        # pivot-finiteness guard above, which only inspects `xtx`'s
+        # columns, never saw it. The elimination "succeeded" against a
+        # perfectly well-posed `xtx` while silently carrying NaN through
+        # the appended target column start to finish, returning an
+        # all-NaN intercept/coefficients "fit" instead of raising --
+        # contradicting this module's own "never a fabricated solution"
+        # docstring promise exactly as asymmetrically as a NaN FEATURE
+        # already correctly raises here (a NaN feature poisons `xtx`
+        # itself, which the pivot guard does catch). Checked before the
+        # solve, not after, so a NaN target never even reaches it.
+        if not all(math.isfinite(t) for t in targets):
+            raise ValueError("cannot fit LinearRegressionModel on a non-finite target value")
         m = len(feature_ids) + 1
 
         xtx = [[sum(rows[i][a] * rows[i][b] for i in range(len(rows))) for b in range(m)] for a in range(m)]
@@ -100,6 +115,8 @@ class LinearRegressionModel:
         xty = [sum(rows[i][a] * targets[i] for i in range(len(rows))) for a in range(m)]
 
         solution = _solve_linear_system(xtx, xty)
+        if not all(math.isfinite(v) for v in solution):
+            raise ValueError("cannot fit LinearRegressionModel -- solve produced a non-finite coefficient")
         self._intercept = solution[0]
         self._coefficients = dict(zip(feature_ids, solution[1:]))
 

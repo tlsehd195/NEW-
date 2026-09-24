@@ -113,6 +113,15 @@ directly before deciding whether to fix it now.
    any of the three now would risk a false sense of live-readiness more
    than it would close a real, currently-exploitable gap.
 
+**Correction (Batch J, independent audit R2 process-gap finding)**: this
+list of 6 items originally omitted a real, separately-confirmed P2 --
+`parse_order_response`'s blanket `if response.status_code >= 400: status
+= REJECTED` (`src/broker/toss/mapping.py`), which mapped EVERY 4xx code
+to REJECTED with full certainty, including codes this project has no
+Tier 2 evidence for. It should have been listed here as a 7th
+"reviewed" item at the time; it was not, a process gap in itself. Now
+fixed by `docs/decisions/ADR-0187-batch-j-post-audit-r2-r3-findings.md`.
+
 ## Consequences
 
 ### Positive

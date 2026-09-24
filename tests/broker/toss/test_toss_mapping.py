@@ -101,6 +101,30 @@ class TestParseOrderResponse:
         )
         assert result.status == BrokerOrderStatus.REJECTED
 
+    def test_an_undocumented_4xx_code_is_unknown_not_blindly_rejected(self) -> None:
+        """Batch J (independent audit, Step 7 P2, R1/R2/R3 all flagged
+        this): before this fix, EVERY 4xx code -- documented or not --
+        mapped to REJECTED with false certainty. A 4xx this project has
+        no Tier 2 evidence for (unlike insufficient-buying-power/
+        order-hours-closed/price-out-of-range) more plausibly means the
+        request itself was malformed than that the broker made a real
+        trading decision -- must stay UNKNOWN, error_code preserved."""
+        response = TransportResponse(404, {"code": "some-undocumented-error", "message": "not found"}, None, {})
+        result = parse_order_response(
+            response, response_id="R1", client_order_id="CID-1", broker_id="toss", operation="submit_order",
+            attempt_count=1, responded_at=utc(2024, 1, 2),
+        )
+        assert result.status == BrokerOrderStatus.UNKNOWN
+        assert result.error_code == "some-undocumented-error"
+
+    def test_a_4xx_response_with_no_code_field_is_unknown_not_rejected(self) -> None:
+        response = TransportResponse(400, {"message": "bad request"}, None, {})
+        result = parse_order_response(
+            response, response_id="R1", client_order_id="CID-1", broker_id="toss", operation="submit_order",
+            attempt_count=1, responded_at=utc(2024, 1, 2),
+        )
+        assert result.status == BrokerOrderStatus.UNKNOWN
+
     def test_malformed_body_is_unknown_never_success(self) -> None:
         response = TransportResponse(200, None, "{not valid json", {})
         result = parse_order_response(

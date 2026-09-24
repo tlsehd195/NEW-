@@ -63,6 +63,18 @@ class TestValidation:
         with pytest.raises(ValueError):
             _record(num_institutions=-1)
 
+    def test_nan_institutional_shares_rejected(self) -> None:
+        """Batch J (independent audit R3, P2-5): `nan < 0` is False, so
+        the negativity check alone silently accepted a NaN value before
+        this fix -- a malformed CSV cell that parses as NaN would have
+        persisted as an ordinary REAL record."""
+        with pytest.raises(ValueError):
+            _record(institutional_shares=float("nan"))
+
+    def test_infinite_institutional_shares_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            _record(institutional_shares=float("inf"))
+
     def test_naive_quarter_end_rejected(self) -> None:
         with pytest.raises(ValueError):
             _record(quarter_end=datetime(2026, 6, 30))

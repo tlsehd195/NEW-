@@ -368,9 +368,20 @@ def illiquidity_score(
     if len(bars) < 2:
         return None
     closes = [b.adjusted_close or b.close for b in bars]
-    returns = compute_returns(closes)
+    # Batch J (independent audit R3, P2-4): `backtest.metrics.
+    # compute_returns` SKIPS (not None-pads) an index whose prior close
+    # is 0 -- its own list therefore shortens and shifts relative to
+    # `bars`/`closes` from that point on, so `zip(bars[1:], returns)`
+    # silently re-paired every LATER (bar, return) after a single 0
+    # close with the wrong day's bar. Computed index-aligned here
+    # instead: a 0 prior close skips only that one day's ratio, with no
+    # shift to any other day's pairing.
     ratios = []
-    for bar, r in zip(bars[1:], returns):
+    for i in range(1, len(bars)):
+        if closes[i - 1] == 0:
+            continue
+        r = closes[i] / closes[i - 1] - 1.0
+        bar = bars[i]
         dollar_volume = (bar.close or 0.0) * (bar.volume or 0.0)
         if dollar_volume <= 0:
             continue
@@ -794,23 +805,46 @@ def high_volume_return_premium_score(
 
 def _fy_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:
     """Every annual (`fiscal_period == "FY"`) `FundamentalRecord` for
-    `(security_id, concept)` already knowable `as_of_time`, oldest
-    first. Restricted to `"FY"` rather than using `repository.
-    latest_known_value` directly (which does not distinguish fiscal
-    periods): `NetIncomeLoss` is reported at both quarterly and annual
-    granularity under the same XBRL tag, and mixing a single quarter's
-    net income against a full fiscal year's `StockholdersEquity` would
-    understate ROE by roughly 4x with no warning -- an honest but
-    genuinely mismatched-period bug this restriction avoids entirely, at
-    the cost of these scores only updating once per fiscal year rather
-    than every quarter. `Assets`/`Liabilities`/`StockholdersEquity`
-    (instant/balance-sheet concepts) are also reported at each period's
-    end including `"FY"`, so this same filter anchors both sides of a
-    ratio (or, for `asset_growth_score`, both years of a YoY comparison)
-    on the same fiscal year-end date."""
-    records = [r for r in repository.get_fundamentals(security_id, concept, as_of_time) if r.fiscal_period == "FY"]
-    records.sort(key=lambda r: (r.period_end, r.available_time))
-    return records
+    `(security_id, concept)` already knowable `as_of_time`, ONE PER
+    DISTINCT `period_end` (the latest-filed value when a fiscal year was
+    later restated by a 10-K/A -- see below), oldest first. Restricted
+    to `"FY"` rather than using `repository.latest_known_value` directly
+    (which does not distinguish fiscal periods): `NetIncomeLoss` is
+    reported at both quarterly and annual granularity under the same
+    XBRL tag, and mixing a single quarter's net income against a full
+    fiscal year's `StockholdersEquity` would understate ROE by roughly
+    4x with no warning -- an honest but genuinely mismatched-period bug
+    this restriction avoids entirely, at the cost of these scores only
+    updating once per fiscal year rather than every quarter.
+    `Assets`/`Liabilities`/`StockholdersEquity` (instant/balance-sheet
+    concepts) are also reported at each period's end including `"FY"`,
+    so this same filter anchors both sides of a ratio (or, for
+    `asset_growth_score`, both years of a YoY comparison) on the same
+    fiscal year-end date.
+
+    **Batch J (independent audit R3, P2-3): deduplicated by `period_end`,
+    matching `_quarterly_records`'s own established pattern exactly --
+    this function previously had NO such dedup.** A 10-K/A restatement
+    files a second real `FundamentalRecord` for the SAME `period_end`
+    (this repository's own docstring says both legitimately persist,
+    keyed by natural key including `accn`). Every consumer of this
+    function that indexes positionally by `records[-1]`/`records[-2]`
+    to mean "this fiscal year" / "the previous fiscal year"
+    (`asset_growth_score`, `piotroski_f_score`, `sloan_accruals_score`,
+    `shareholder_yield_score`, `ohlson_o_score`, `dividend_growth_score`,
+    `net_stock_issuance_score`) would otherwise silently compare the
+    original filing against its own restatement of the SAME year as if
+    it were a real year-over-year comparison, whenever both exist --
+    exactly the mismatched-period risk this function's own docstring
+    already warned about for a different reason."""
+    by_period_end: dict = {}
+    for record in repository.get_fundamentals(security_id, concept, as_of_time):
+        if record.fiscal_period != "FY":
+            continue
+        existing = by_period_end.get(record.period_end)
+        if existing is None or record.available_time > existing.available_time:
+            by_period_end[record.period_end] = record
+    return [by_period_end[period_end] for period_end in sorted(by_period_end)]
 
 
 def _latest_fiscal_year_value(repository, security_id: str, concept: str, as_of_time: datetime):

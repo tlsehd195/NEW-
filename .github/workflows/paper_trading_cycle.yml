@@ -225,9 +225,18 @@ jobs:
       # problem ADR-0144 already identified for data quality. `continue-
       # on-error`, matching the tearsheet step's own established
       # philosophy immediately below: informational, never gates the
-      # core pipeline. A fresh `--paper-store` with no records yet in
-      # the window produces an honest `UNKNOWN`-derived report, not a
-      # crash.
+      # core pipeline. **Correction (Batch J, independent audit R2)**:
+      # a fresh `--paper-store` with no records yet in the window does
+      # NOT produce an "UNKNOWN"-derived report as this comment
+      # previously claimed -- `monitoring.health.evaluate_existence_
+      # health` maps a zero count to `ComponentHealthStatus.UNAVAILABLE`
+      # (UNKNOWN is reserved for "no count could be computed at all",
+      # a different case), which the script's own exit-code check
+      # (`observation.pipeline_health.status == UNAVAILABLE`) turns
+      # into a real exit 1 -- never a Python crash, but not the exit-0
+      # "honest empty report" this comment implied either.
+      # `continue-on-error: true` above is exactly what keeps that real
+      # exit 1 from failing this job.
       - name: Run monitoring sweep (last 7 days)
         if: always()
         continue-on-error: true

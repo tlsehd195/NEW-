@@ -79,6 +79,34 @@ class TestNeverFabricatesAFitOnPoisonedInput:
         # must never be left NaN -- assert the model stays unfitted.
         assert model.coefficients is None
 
+    def test_a_nan_target_value_raises_instead_of_producing_nan_coefficients(self) -> None:
+        """Batch J (independent audit R3, P2-2): asymmetric with the
+        NaN-feature case above -- a NaN target does NOT poison `xtx`
+        (built from features alone), only the right-hand side, so the
+        pivot-finiteness guard (which only inspects `xtx`) never saw it.
+        Before this fix, this exact input "successfully" fit a model
+        with intercept=nan and every coefficient nan, rather than
+        raising -- the asymmetry the audit found."""
+        samples = [
+            _Sample(features={"x": 1.0}, target=2.0),
+            _Sample(features={"x": 2.0}, target=float("nan")),
+            _Sample(features={"x": 3.0}, target=4.0),
+        ]
+        model = LinearRegressionModel(feature_ids=["x"])
+        with pytest.raises(ValueError):
+            model.fit(samples)
+        assert model.coefficients is None
+
+    def test_an_infinite_target_value_also_raises(self) -> None:
+        samples = [
+            _Sample(features={"x": 1.0}, target=2.0),
+            _Sample(features={"x": 2.0}, target=float("inf")),
+            _Sample(features={"x": 3.0}, target=4.0),
+        ]
+        model = LinearRegressionModel(feature_ids=["x"])
+        with pytest.raises(ValueError):
+            model.fit(samples)
+
 
 class TestHonestAboutMissingState:
     def test_predict_before_fit_raises(self) -> None:
