@@ -49,7 +49,7 @@ from data_infra.enums import (
 )
 from data_infra.fundamentals_models import FundamentalRecord
 from data_infra.insider_models import InsiderTransaction
-from data_infra.institutional_holding_models import InstitutionalHoldingRecord
+from data_infra.institutional_holding_models import InstitutionalFilerHoldingRecord, InstitutionalHoldingRecord
 from data_infra.short_interest_models import ShortInterestRecord
 from data_infra.models import (
     BenchmarkPoint,
@@ -300,6 +300,31 @@ def row_to_institutional_holding_record(row: dict) -> InstitutionalHoldingRecord
         quarter_end=from_utc_naive(row["quarter_end"]),
         institutional_shares=row["institutional_shares"],
         num_institutions=(int(row["num_institutions"]) if row.get("num_institutions") is not None else None),
+        available_time=from_utc_naive(row["available_time"]),
+        ingestion_time=from_utc_naive(row["ingestion_time"]),
+        provenance=row_to_provenance(row),
+    )
+
+
+def institutional_filer_holding_record_to_row(record: InstitutionalFilerHoldingRecord) -> dict:
+    row = {
+        "security_id": record.security_id,
+        "filer_cik": record.filer_cik,
+        "quarter_end": to_utc_naive(record.quarter_end),
+        "shares_held": record.shares_held,
+        "available_time": to_utc_naive(record.available_time),
+        "ingestion_time": to_utc_naive(record.ingestion_time),
+    }
+    row.update(provenance_to_row(record.provenance))
+    return row
+
+
+def row_to_institutional_filer_holding_record(row: dict) -> InstitutionalFilerHoldingRecord:
+    return InstitutionalFilerHoldingRecord(
+        security_id=row["security_id"],
+        filer_cik=row["filer_cik"],
+        quarter_end=from_utc_naive(row["quarter_end"]),
+        shares_held=row["shares_held"],
         available_time=from_utc_naive(row["available_time"]),
         ingestion_time=from_utc_naive(row["ingestion_time"]),
         provenance=row_to_provenance(row),

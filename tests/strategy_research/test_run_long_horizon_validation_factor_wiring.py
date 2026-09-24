@@ -179,9 +179,12 @@ class TestCandidateTables:
     1974 / Bharath & Shumway 2008, found the same "더 찾아봐" way, the
     first MARKET-based (not accounting-ratio) structural credit-risk
     model in this module, ADR-0109 -- all needing zero new data
-    acquisition) -- 45 total -- no name collisions with each other, or
+    acquisition) -- 46 total including guru_consensus below -- no name collisions with each other, or
     with the 8 pre-existing candidates already in `strategy_specs`
-    before ADR-0051."""
+    before ADR-0051. Plus `guru_consensus` (ADR-0194, added well after
+    ADR-0051 -- a SEVENTH, distinct DuckDB catalog, the account owner's
+    own follow-up idea to institutional_ownership_change: curated
+    named-13F-filer agreement, not a published academic citation)."""
 
     _EXPECTED_NAMES = {
         "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
@@ -198,6 +201,7 @@ class TestCandidateTables:
         "idiosyncratic_skewness", "downside_beta", "share_turnover",
         "high_volume_return_premium", "asset_turnover_change", "industry_momentum",
         "coskewness", "ohlson_o", "merton_dd",
+        "guru_consensus",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
@@ -210,7 +214,7 @@ class TestCandidateTables:
             module._PRICE_FACTOR_CANDIDATES, module._FUNDAMENTALS_FACTOR_CANDIDATES,
             module._HYBRID_FACTOR_CANDIDATES, module._UNIVERSE_FACTOR_CANDIDATES,
             module._INSIDER_FACTOR_CANDIDATES, module._SHORT_INTEREST_FACTOR_CANDIDATES,
-            module._INSTITUTIONAL_FACTOR_CANDIDATES,
+            module._INSTITUTIONAL_FACTOR_CANDIDATES, module._GURU_CONSENSUS_FACTOR_CANDIDATES,
         ):
             names.extend(name for name, _hypothesis, _score_fn in table)
         return names
@@ -232,7 +236,7 @@ class TestCandidateTables:
             module._PRICE_FACTOR_CANDIDATES, module._FUNDAMENTALS_FACTOR_CANDIDATES,
             module._HYBRID_FACTOR_CANDIDATES, module._UNIVERSE_FACTOR_CANDIDATES,
             module._INSIDER_FACTOR_CANDIDATES, module._SHORT_INTEREST_FACTOR_CANDIDATES,
-            module._INSTITUTIONAL_FACTOR_CANDIDATES,
+            module._INSTITUTIONAL_FACTOR_CANDIDATES, module._GURU_CONSENSUS_FACTOR_CANDIDATES,
         ):
             for name, hypothesis, score_fn in table:
                 assert callable(score_fn), f"{name}'s score_fn is not callable"

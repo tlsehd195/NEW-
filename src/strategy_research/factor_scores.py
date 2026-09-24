@@ -24,6 +24,7 @@ from backtest.clock import BacktestClock
 from backtest.metrics import annualized_volatility, compute_returns
 
 from data_infra.enums import CorporateActionType
+from data_infra.tracked_institutional_filers import active_tracked_filers
 from data_infra.universe import BENCHMARK_SYMBOL, get_sector
 
 from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months, trim_to_lookback
@@ -3427,3 +3428,71 @@ def institutional_ownership_change_score(security_id: str, as_of_time: datetime,
     if prior.institutional_shares <= 0 or current.institutional_shares <= 0:
         return None
     return math.log(current.institutional_shares / prior.institutional_shares)
+
+
+def guru_consensus_score(security_id: str, as_of_time: datetime, repository: object) -> Optional[float]:
+    """HYPOTHESIS -- a small, curated set of individually well-known,
+    long-track-record 13F investors ("smart money") holding a position
+    in a security, in AGREEMENT with each other, is a positive signal
+    for that security's subsequent returns -- broader than any one of
+    them being right individually, on the reasoning that independent
+    agreement among investors with different portfolios and different
+    theses is less likely to be coincidental than any single filer's
+    position alone.
+
+    **Origin**: the account owner's own idea this session, directly
+    following `institutional_ownership_change_score` -- noticing that
+    13F data also supports tracking a SPECIFIC, named set of "거물
+    투자자" (major/guru investors) rather than only an anonymous
+    aggregate, and asking whether a "buy what several of them
+    independently hold" strategy exists in this project yet (it did
+    not, before this factor). This is NOT a published academic
+    citation -- unlike `institutional_ownership_change_score`'s Chen/
+    Jegadeesh/Wermers (2000) basis, no specific "N-guru consensus"
+    academic study was identified or claimed here; this factor is this
+    project's own construction, stated plainly rather than attached to
+    an invented source (this project's "never fabricate a citation"
+    discipline, ADR-0047).
+
+    **Data source and identity of "guru"**: `repository` is a
+    `storage.institutional_filer_holding_repository.
+    DuckDBInstitutionalFilerHoldingRepository`, populated from a LOCAL
+    FILE (see `data_infra.providers.institutional_filer_holding_file_
+    import` module docstring for why -- same network/CUSIP-mapping
+    limitations as `institutional_ownership_change_score`'s own data
+    source). "Guru" is defined ENTIRELY by `data_infra.
+    tracked_institutional_filers.TRACKED_FILERS`, a small, curated,
+    point-in-time-aware registry (not a size- or AUM-based ranking --
+    see that module's own docstring for the selection criteria and why
+    a registry, not a hardcoded list here, exists at all: a tracked
+    investor retiring or closing their fund must not require editing
+    this function). `active_tracked_filers(as_of_time)` -- never the
+    raw `TRACKED_FILERS` constant -- is read here specifically so a
+    registry edit made TODAY (e.g. marking a filer's `tracked_until`)
+    never changes what this factor would have returned for an
+    `as_of_time` before that edit.
+
+    **Construction, decided BEFORE any result exists (RULE 0.8)**: the
+    RAW COUNT of currently-tracked filers with a known, positive
+    reported position in `security_id` as of their own most recent
+    available quarter -- not weighted by position size or AUM (this
+    project has no independently-verified basis for how to weight
+    across funds of very different sizes, and an unweighted count is
+    the simplest construction that matches the "agreement, not any one
+    position's size" hypothesis above), NOT negated, since more
+    agreement is hypothesized to predict HIGHER returns (matches this
+    module's convention that a higher score always ranks a security as
+    more attractive). Returns `0.0`, not `None`, when tracked filers
+    exist for `as_of_time` but none of them has a known position in
+    `security_id` yet -- a real, meaningful "no consensus" result, not
+    a missing-data gap; returns `None` only when NO filer is tracked at
+    all as of `as_of_time` (an empty registry, or an `as_of_time`
+    before `TRACKED_FILERS`' own earliest `tracked_from`), since there
+    is then nothing this factor could possibly have measured."""
+    filers = active_tracked_filers(as_of_time)
+    if not filers:
+        return None
+    holdings = repository.get_latest_holdings_for_security(
+        security_id, [filer.cik for filer in filers], as_of_time,
+    )
+    return float(sum(1 for record in holdings.values() if record.shares_held > 0))
