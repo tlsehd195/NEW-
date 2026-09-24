@@ -19,12 +19,26 @@
 # immediately before launch -- GH_RUNNER_PAT itself is never sent to
 # or stored on the instance, only that ephemeral token is.
 #
-# `workflow_dispatch`-only -- provisioning a billable-adjacent (Always
-# Free tier) cloud resource must never be on a recurring schedule.
+# Runs on both workflow_dispatch and a schedule (account owner's own
+# request, 2026-09-24): this tenancy's Ampere A1 Always Free capacity
+# is exhausted in its only subscribed region (ap-tokyo-1, confirmed by
+# two real launch attempts returning "Out of host capacity") and this
+# tenancy has already hit its region-subscription limit (confirmed by
+# a real "maximum number of regions... exceeded" error when trying to
+# add a second region), so retrying periodically in the same region is
+# the only available path -- a real, commonly-used strategy for this
+# exact Always Free capacity problem. Every scheduled run first checks
+# whether an instance already exists and, if so, does nothing (skips
+# straight to reporting its IP) and disables its own schedule via the
+# GitHub API -- this does not run forever once it succeeds.
 name: Provision OCI Colibri Runner
 
 on:
   workflow_dispatch: {}
+  schedule:
+    # Every 15 minutes, offset from :00/:15/:30/:45 to avoid the
+    # top-of-quarter-hour pile-up every other scheduled workflow hits.
+    - cron: "6,21,36,51 * * * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,6 +46,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   provision:
@@ -164,12 +179,29 @@ jobs:
           fi
           echo "SUBNET_ID=$SUBNET_ID" >> "$GITHUB_ENV"
 
+      - name: Check whether the instance already exists
+        run: |
+          set -euo pipefail
+          EXISTING_ID=$(oci compute instance list --compartment-id "$TENANCY_OCID" \
+            --query "data[?\"display-name\"=='colibri-runner' && \"lifecycle-state\"!='TERMINATED' && \"lifecycle-state\"!='TERMINATING'] | [0].id" \
+            --raw-output)
+          if [ "$EXISTING_ID" = "null" ] || [ -z "$EXISTING_ID" ]; then
+            echo "SKIP_LAUNCH=false" >> "$GITHUB_ENV"
+            echo "No existing instance -- will attempt a launch."
+          else
+            echo "SKIP_LAUNCH=true" >> "$GITHUB_ENV"
+            echo "INSTANCE_ID=$EXISTING_ID" >> "$GITHUB_ENV"
+            echo "Instance already exists ($EXISTING_ID) -- skipping launch this run."
+          fi
+
       - name: Generate a fresh SSH key pair for this instance
+        if: env.SKIP_LAUNCH != 'true'
         run: |
           set -euo pipefail
           ssh-keygen -t ed25519 -N "" -f colibri_key -C "colibri-oci-$(date -u +%Y%m%d)"
 
       - name: Upload the private key (download once, then delete this artifact)
+        if: env.SKIP_LAUNCH != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: colibri-ssh-private-key
@@ -177,6 +209,7 @@ jobs:
           retention-days: 1
 
       - name: Fetch a short-lived runner registration token
+        if: env.SKIP_LAUNCH != 'true'
         env:
           GH_RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
         run: |
@@ -194,6 +227,7 @@ jobs:
           echo "RUNNER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       - name: Render the cloud-init bootstrap script
+        if: env.SKIP_LAUNCH != 'true'
         run: |
           set -euo pipefail
           sed \
@@ -202,6 +236,7 @@ jobs:
             scripts/deploy/oci_colibri_runner_bootstrap.sh.template > bootstrap_filled.sh
 
       - name: Launch the instance
+        if: env.SKIP_LAUNCH != 'true'
         run: |
           set -euo pipefail
           INSTANCE_ID=$(oci compute instance launch \
@@ -230,5 +265,18 @@ jobs:
           echo "SSH once cloud-init finishes (a minute or two): ssh -i colibri_key ubuntu@$PUBLIC_IP"
           echo "### Colibri runner instance" >> "$GITHUB_STEP_SUMMARY"
           echo "- Public IP: \`$PUBLIC_IP\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SKIP_LAUNCH" != "true" ]; then
+            echo "- Private key: download the \`colibri-ssh-private-key\` artifact from this run (expires in 1 day)" >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "- SSH: \`ssh -i colibri_key ubuntu@$PUBLIC_IP\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Private key: download the \`colibri-ssh-private-key\` artifact from this run (expires in 1 day)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Disable this schedule now that the instance exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -X PUT \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/provision_oci_colibri_runner.yml/disable"
+          echo "Scheduled retries disabled -- the instance exists, nothing left to retry for."
