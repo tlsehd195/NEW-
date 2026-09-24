@@ -52,3 +52,24 @@ clone+build한다 — `@llmwiki/core`가 npm에 실제로 게시되어 있지 �
   있음 — 향후 세션에서 이 훅이 막히면, 사용자가 직접 권한을 허용하거나
   GitHub 웹 UI로 관련 파일을 커밋해줘야 할 수 있다 (2026-09-24 세션의
   `.mcp.json`/`session-start.sh` 추가가 실제로 이 경로로 처리됨).
+
+## 사용자 액션 대기 항목 (2026-09-24)
+
+Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직접 해야
+하는 항목들. 완료되면 세션에 알려주면 이어서 코드 작업 진행.
+
+- **KIS(한국투자증권) 모의투자 커넥터** (`EXTERNAL_REPO_APPLICABILITY_
+  REPORT.md` priority 8, `ADR-0191`에서도 참조): 실계좌 개설 + KIS
+  Developers 포털(`apiportal.koreainvestment.com`)에서 모의투자 전용
+  APP KEY/APP SECRET 발급 필요. 발급받은 키는 채팅에 붙여넣지 말고
+  GitHub 저장소 Settings → Secrets and variables → Actions에
+  `KIS_APP_KEY`/`KIS_APP_SECRET`로 직접 등록 — `ADR-0082`의
+  `MARKET_DATA_API_KEY`와 동일한 패턴. 등록 완료되면 `src/broker/kis/`
+  어댑터 작성 + 실제 모의투자 API 검증 진행.
+- **colibri 실행용 Oracle Cloud 서버** (`EXTERNAL_REPO_APPLICABILITY_
+  REPORT.md` priority 10): Oracle Cloud Always Free 계정 생성(완료,
+  2026-09-24) → `VM.Standard.A1.Flex`(ARM, 4 OCPU/24GB RAM) 인스턴스
+  생성 → 그 VM에 GitHub Actions self-hosted runner 설치·등록(SSH 키를
+  세션과 주고받지 않는 방법 — `runs-on: self-hosted`로 원격 작업 위임
+  가능). 러너 등록되면 colibri ARM 빌드 가능 여부 확인 + 워크플로 작성
+  진행.
