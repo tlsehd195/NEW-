@@ -1,0 +1,72 @@
+# One-time/on-demand verification that the OCI (Oracle Cloud
+# Infrastructure) API credentials registered as repository secrets
+# actually authenticate -- account owner's own request, 2026-09-24,
+# ahead of provisioning an Always Free Ampere A1 (ARM) VM to run
+# colibri (EXTERNAL_REPO_APPLICABILITY_REPORT.md priority 10).
+#
+# Read-only: `oci iam region list` requires nothing beyond a valid
+# identity and never mutates any tenancy resource. No secret value is
+# ever echoed to the log -- the private key is written to a file with
+# 600 permissions inside the ephemeral runner and never `cat`'d or
+# otherwise printed.
+#
+# `workflow_dispatch`-only, like `verify_alpaca_paper_broker.yml` -- a
+# one-off check, never a recurring schedule.
+name: Verify OCI Authentication
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install OCI CLI
+        run: pip install --quiet oci-cli
+
+      - name: Write OCI config from secrets (never echoed)
+        env:
+          OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          chmod 700 "$HOME/.oci"
+          printf '%s\n' "$OCI_API_KEY" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+
+      - name: Verify authentication (read-only region list)
+        run: |
+          set -euo pipefail
+          if oci iam region list --output table; then
+            echo "OCI authentication succeeded."
+          else
+            echo "OCI authentication FAILED -- check the 5 OCI_* secrets." >&2
+            exit 1
+          fi
