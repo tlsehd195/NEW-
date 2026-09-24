@@ -11,6 +11,31 @@ fi
 
 cd "$CLAUDE_PROJECT_DIR"
 
+# llmwiki MCP tool (.mcp.json registers it) goes FIRST, before the (much
+# slower) venv/pip setup below. The MCP client only waits ~30s for this
+# server's stdio connection to come up, and this block (git clone --depth 1
+# of a small repo + npm install of one workspace + tsc build) reliably
+# finishes in well under that; the venv/pip block does not. Running venv
+# first pushed llmwiki's build past the MCP client's timeout every time
+# (observed directly: connection attempted at T+0s and failing with
+# MODULE_NOT_FOUND because the clone+build hadn't even started yet, only
+# landing around T+50s) -- reordering is the actual fix, not the path
+# syntax inside .mcp.json's args, which was misdiagnosed twice before this.
+# cloned+built fresh each session, same reasoning as .venv/ below --
+# .llmwiki-tool/ is gitignored, so the container that built it does not
+# survive into the next session. Only bothers if .mcp.json actually
+# references it.
+if [ -f .mcp.json ] && grep -q '.llmwiki-tool' .mcp.json; then
+  if [ ! -f .llmwiki-tool/packages/core/dist/mcp/bin.js ]; then
+    rm -rf .llmwiki-tool
+    git clone --quiet --depth 1 https://github.com/microsoft/llmwiki.git .llmwiki-tool
+    (cd .llmwiki-tool && npm install --quiet --workspace=packages/core --no-audit --no-fund && npm run build --workspace=packages/core)
+  fi
+  if [ ! -d .wiki/wiki ]; then
+    node -e "import('$CLAUDE_PROJECT_DIR/.llmwiki-tool/packages/core/dist/init.js').then(m => m.initWiki('$CLAUDE_PROJECT_DIR'))"
+  fi
+fi
+
 # A venv, not a system-wide install: this container's system Python has
 # apt-managed packages (e.g. PyYAML) with no pip RECORD, which breaks a
 # system-wide `pip install` outright when a version in requirements-dev.txt
@@ -26,18 +51,3 @@ fi
 # Put the venv first on PATH for the rest of this session, so a plain
 # `python3`/`pytest` picks up everything just installed above.
 echo "export PATH=\"$CLAUDE_PROJECT_DIR/.venv/bin:\$PATH\"" >> "$CLAUDE_ENV_FILE"
-
-# llmwiki MCP tool (.mcp.json registers it): cloned+built fresh each
-# session, same reasoning as .venv/ above -- .llmwiki-tool/ is
-# gitignored, so the container that built it does not survive into the
-# next session. Only bothers if .mcp.json actually references it.
-if [ -f .mcp.json ] && grep -q '.llmwiki-tool' .mcp.json; then
-  if [ ! -f .llmwiki-tool/packages/core/dist/mcp/bin.js ]; then
-    rm -rf .llmwiki-tool
-    git clone --quiet --depth 1 https://github.com/microsoft/llmwiki.git .llmwiki-tool
-    (cd .llmwiki-tool && npm install --quiet --workspace=packages/core --no-audit --no-fund && npm run build --workspace=packages/core)
-  fi
-  if [ ! -d .wiki/wiki ]; then
-    node -e "import('$CLAUDE_PROJECT_DIR/.llmwiki-tool/packages/core/dist/init.js').then(m => m.initWiki('$CLAUDE_PROJECT_DIR'))"
-  fi
-fi
