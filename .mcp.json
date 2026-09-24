@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "llmwiki": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${CLAUDE_PROJECT_DIR}/.llmwiki-tool/packages/core/dist/mcp/bin.js",
+        "${CLAUDE_PROJECT_DIR}/.wiki"
+      ]
+    }
+  }
+}
