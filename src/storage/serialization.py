@@ -758,6 +758,7 @@ def trade_record_to_payload(trade: TradeRecord) -> dict:
         "provenance": trade.provenance.value,
         "experiment_id": trade.experiment_id,
         "recorded_at": _dt_iso(trade.recorded_at),
+        "fill_id": trade.fill_id,
     }
 
 
@@ -783,6 +784,7 @@ def payload_to_trade_record(data: dict) -> TradeRecord:
         provenance=TradeProvenance(data["provenance"]),
         experiment_id=data.get("experiment_id"),
         recorded_at=_dt_from_iso(data.get("recorded_at")),
+        fill_id=data.get("fill_id"),
     )
 
 

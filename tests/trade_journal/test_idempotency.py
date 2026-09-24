@@ -62,6 +62,56 @@ class TestIdempotency:
         assert t1.trade_id != t2.trade_id
         assert len(journal.list_trades()) == 2
 
+    def test_two_distinct_partial_fills_sharing_the_same_execution_time_need_fill_id_to_survive(self) -> None:
+        """Batch I (independent audit, §8 regression list item 9): the
+        Phase 17 fix above (keying on fill.execution_time) still
+        collides whenever two GENUINELY DIFFERENT partial fills of the
+        same order happen to share the same execution_time (a
+        broker/simulator filling several lots at one identical
+        timestamp is a real, reachable case, not a contrived one) --
+        the second is silently dropped exactly like the pre-Phase-17
+        order_id-only bug did. Passing the real, already-unique
+        `PaperFillRecord.fill_id` for each fill (optional -- omitting it
+        preserves the exact prior collision behavior, proven directly
+        below) is what actually distinguishes them."""
+        from dataclasses import replace
+
+        journal = InMemoryTradeJournalRepository()
+        order = make_order()
+        decision = journal.record_decision(decision_time=order.decision_time, security_id="AAA",
+                                             decision=DecisionAction.BUY, order=order, experiment_id="BT-000001")
+        same_time = utc(2024, 1, 2)
+        first_fill = make_fill(quantity=100.0, execution_time=same_time)
+        second_fill = replace(first_fill, quantity=50.0)
+        assert first_fill.execution_time == second_fill.execution_time  # same order, same instant
+
+        # Without fill_id, this IS the pre-existing collision -- proves
+        # the fix is additive/opt-in, not a silent behavior change for
+        # every existing caller.
+        t1_no_id = journal.record_trade(decision_id=decision.snapshot_id, fill=first_fill, position_after=100.0,
+                                         experiment_id="BT-000001")
+        t2_no_id = journal.record_trade(decision_id=decision.snapshot_id, fill=second_fill, position_after=150.0,
+                                         experiment_id="BT-000001")
+        assert t1_no_id.trade_id == t2_no_id.trade_id
+        assert len(journal.list_trades()) == 1
+
+        # With distinct fill_ids, both real fills survive.
+        journal2 = InMemoryTradeJournalRepository()
+        decision2 = journal2.record_decision(decision_time=order.decision_time, security_id="AAA",
+                                              decision=DecisionAction.BUY, order=order, experiment_id="BT-000002")
+        t1 = journal2.record_trade(decision_id=decision2.snapshot_id, fill=first_fill, position_after=100.0,
+                                    experiment_id="BT-000002", fill_id="PAPERFILL-000001")
+        t2 = journal2.record_trade(decision_id=decision2.snapshot_id, fill=second_fill, position_after=150.0,
+                                    experiment_id="BT-000002", fill_id="PAPERFILL-000002")
+        assert t1.trade_id != t2.trade_id
+        assert len(journal2.list_trades()) == 2
+
+        # A real retry of the SAME fill_id still dedupes correctly.
+        t1_retry = journal2.record_trade(decision_id=decision2.snapshot_id, fill=first_fill, position_after=100.0,
+                                          experiment_id="BT-000002", fill_id="PAPERFILL-000001")
+        assert t1_retry.trade_id == t1.trade_id
+        assert len(journal2.list_trades()) == 2
+
     def test_different_experiment_ids_are_not_deduplicated_against_each_other(self) -> None:
         # The natural key includes experiment_id — the same order_id
         # from two different backtest runs must not collide.

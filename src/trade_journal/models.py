@@ -91,6 +91,19 @@ class TradeRecord:
     provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION
     experiment_id: Optional[str] = None
     recorded_at: Optional[datetime] = None
+    # Batch I (independent audit, §8 regression list item 9): the
+    # natural key `record_trade` dedupes on -- (experiment_id,
+    # fill.order_id, fill.execution_time) -- silently collapsed two
+    # genuinely different partial fills of the same order into one
+    # TradeRecord whenever both happened to share the same
+    # execution_time (plausible for a broker/simulator that fills
+    # several lots at one identical timestamp). `PaperFillRecord.
+    # fill_id` (broker.paper.models) is a real, already-unique-per-fill
+    # identifier this project already allocates -- optional here
+    # (`None` preserves every existing caller's exact prior dedup
+    # behavior) so a caller that has one can make the natural key
+    # distinguish same-timestamp fills correctly.
+    fill_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.trade_id or not self.decision_id or not self.order_id:

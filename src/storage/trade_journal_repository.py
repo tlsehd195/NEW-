@@ -174,6 +174,7 @@ class DuckDBTradeJournalRepository:
         exit_reason: Optional[str] = None,
         provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
         recorded_at: Optional[datetime] = None,
+        fill_id: Optional[str] = None,
     ) -> TradeRecord:
         # Phase 17 Production Safety Review bug fix -- see the identical
         # fix and full explanation in
@@ -181,7 +182,22 @@ class DuckDBTradeJournalRepository:
         # fill.order_id alone collides across every partial fill of one
         # order, silently dropping all but the first from the Trade
         # Journal.
+        #
+        # Batch I (independent audit, §8 regression list item 9): two
+        # genuinely different partial fills of the same order sharing
+        # the same execution_time still collided on this key alone.
+        # `fill_id`, when a caller supplies one (`PaperFillRecord.
+        # fill_id`, a real, already-unique-per-fill identifier), is
+        # appended to distinguish them. The suffix is appended ONLY when
+        # `fill_id` is not `None` -- a real production `--paper-store`
+        # already has `natural_key` values persisted in the OLD format
+        # (no fill_id suffix) from before this fix, so a caller that
+        # still passes no `fill_id` must keep computing that exact same
+        # string, or it would treat every already-persisted trade as
+        # "new" on the next run and silently duplicate it.
         key_str = f"trade|{experiment_id}|{fill.order_id}|{fill.execution_time.isoformat()}"
+        if fill_id is not None:
+            key_str += f"|{fill_id}"
         conn = self._engine.connection
         existing = conn.execute(
             "SELECT payload_json FROM trades WHERE natural_key = ?", [key_str]
@@ -209,6 +225,7 @@ class DuckDBTradeJournalRepository:
             holding_period=holding_period,
             exit_reason=exit_reason,
             provenance=provenance,
+            fill_id=fill_id,
             experiment_id=experiment_id,
             recorded_at=recorded_at or fill.execution_time,
         )
