@@ -92,6 +92,7 @@ from ml.dataset import MLSample
 from ml.features import FEATURE_IDS, FUNDAMENTALS_FEATURE_FNS, build_price_feature_fns, compute_feature_vector
 from ml.linear_model import LinearRegressionModel, select_ridge_via_expanding_window_cv
 from ml.target import HORIZON_DAYS
+from ml.tree_model import BaggedTreeModel
 from strategy_research._dates import add_months
 
 REBALANCE_MONTHS_RANGE = (1, 3)
@@ -172,6 +173,22 @@ def ridge_cv_builder(samples: Sequence[MLSample]) -> Optional[LinearRegressionMo
     version="ml_ridge_cv_v1")`."""
     ridge = select_ridge_via_expanding_window_cv(samples, FEATURE_IDS)
     model = LinearRegressionModel(feature_ids=list(FEATURE_IDS), ridge=ridge)
+    try:
+        model.fit(samples)
+    except ValueError:
+        return None
+    return model
+
+
+def bagged_tree_builder(samples: Sequence[MLSample]) -> Optional[BaggedTreeModel]:
+    """The third model family (ADR-0192): a small bagged ensemble of
+    shallow CART regression trees over the same 6 features, the first
+    NONLINEAR family this project has tried (`_default_ols_builder`/
+    `ridge_cv_builder` both fit a linear combination). Hyperparameters
+    are fixed, not CV-searched -- see `ml.tree_model`'s own module
+    docstring for why. Pass as `MLStrategy(..., model_builder=
+    bagged_tree_builder, version="ml_tree_v1")`."""
+    model = BaggedTreeModel(feature_ids=list(FEATURE_IDS))
     try:
         model.fit(samples)
     except ValueError:

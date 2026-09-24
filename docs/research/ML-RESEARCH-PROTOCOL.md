@@ -294,10 +294,26 @@ discipline was not trusted on its own -- `MLStrategy` (`src/ml/
 ml_strategy.py`) now puts it through the same walk-forward + PBO/DSR
 pipeline `leverage_score`'s own raw IC lead went through (ADR-0043
 Decision 3), including a real per-fold-refit performance problem found
-and fixed along the way. Not yet run against the real catalog through
-that full pipeline -- that real run is the immediate next step. Still
-not built: any feature/target/model registry PERSISTENCE layer
-(schemas exist, no `MLExperimentRepository`), a second candidate model
-family (so no model-selection multiple-comparisons procedure has been
-exercised yet), any TEST-region evaluation, and any risk-control
-implementation (section 10).
+and fixed along the way.
+
+**2026-09-24 update -- this section had gone stale (frozen at a
+pre-history-reset snapshot, see CLAUDE.md's "docs/PROJECT_STATUS.md의
+알려진 이력 유실" note for the same class of issue); corrected against
+the actively-maintained `docs/research/STRATEGY-VALIDATION-REPORT.md`,
+which is the current source of truth for real ML results, not this
+paragraph.** `ml_ols` HAS since been run against the real catalog
+through the full walk-forward/PBO/DSR pipeline (multiple times --
+`STRATEGY-VALIDATION-REPORT.md`'s "Phase 33 Addendum" and later
+addenda) and does NOT clear the `CANDIDATE` fold-consistency bar (53%,
+later 55%, vs. the required 60%). A second model family, `ml_ridge`
+(CV-regularized OLS, ADR-0043 Decision 5), was also built and run for
+real and also does not clear the bar (58%, later 53%) -- so the
+"second candidate model family" and "model-selection multiple-
+comparisons procedure" both mentioned as not-yet-built below are in
+fact done. A third, nonlinear family, `ml_tree` (bagged shallow CART
+regression trees, ADR-0192), was added 2026-09-24; not yet run against
+real data (this session's network egress is blocked to every
+provider, verified directly). Still not built: any feature/target/
+model registry PERSISTENCE layer (schemas exist, no
+`MLExperimentRepository`), any TEST-region evaluation, and any
+risk-control implementation (section 10).

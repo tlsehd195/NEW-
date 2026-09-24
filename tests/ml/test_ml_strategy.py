@@ -205,6 +205,28 @@ class TestPluggableModelBuilder:
         # in tests/ml/test_linear_model.py.
         assert len(result.fills) > 0
 
+    def test_bagged_tree_builder_produces_a_usable_model(self, tmp_path) -> None:
+        """ADR-0192: the first nonlinear model family, run through the
+        identical MLStrategy plumbing as ml_ols/ml_ridge."""
+        from ml.ml_strategy import bagged_tree_builder
+
+        universe = ("TRENDUP", "TRENDDOWN", "CYCLICAL")
+        start, end = date(2022, 1, 3), date(2022, 9, 1)
+        price_repo = synthetic_multi_year_repository(*_LONG_HISTORY, symbols=universe)
+        fundamentals_repo = _fundamentals_repo(tmp_path, universe)
+
+        strategy = MLStrategy(
+            list(universe), fundamentals_repo, MLStrategyParameters(top_n=1, train_window_months=24),
+            model_builder=bagged_tree_builder, version="ml_tree_v1",
+        )
+        result = BacktestEngine(price_repo, _config(start, end, universe), strategy).run()
+
+        assert strategy.version == "ml_tree_v1"
+        # No crash, and the fit actually succeeded (some orders placed) --
+        # correctness of the tree/ensemble itself is covered directly in
+        # tests/ml/test_tree_model.py.
+        assert len(result.fills) > 0
+
 
 class TestSharedFeatureCache:
     """ADR-0043 Decision 5: an injected shared cache must not change
