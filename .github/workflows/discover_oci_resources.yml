@@ -1,0 +1,112 @@
+# One-time/on-demand discovery of the tenancy's existing OCI resources
+# (compartments, availability domains, VCNs/subnets, ARM-compatible
+# images) -- account owner's own request, 2026-09-24, needed before
+# provisioning an Always Free Ampere A1 (VM.Standard.A1.Flex) instance
+# for colibri (EXTERNAL_REPO_APPLICABILITY_REPORT.md priority 10).
+# Every account's compartment/network/image IDs are its own -- this
+# reads them rather than guessing or hardcoding a value from a
+# different tenancy.
+#
+# Read-only: every `oci` call here is a `list`/`get`, never a `create`/
+# `update`/`delete` -- no tenancy resource is mutated. Output is
+# resource names/OCIDs/shapes only, never a secret value.
+#
+# `workflow_dispatch`-only, matching `verify_oci_authentication.yml`.
+name: Discover OCI Resources
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install OCI CLI
+        run: pip install --quiet oci-cli
+
+      - name: Write OCI config from secrets (never echoed)
+        env:
+          OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          chmod 700 "$HOME/.oci"
+          printf '%s\n' "$OCI_API_KEY" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          # Only the root compartment (the tenancy OCID itself) needs
+          # to be known ahead of time -- every other step below reads
+          # its own real answer instead of assuming a value.
+          echo "TENANCY_OCID=$OCI_TENANCY_OCID" >> "$GITHUB_ENV"
+
+      - name: List compartments (root + any sub-compartments)
+        run: |
+          set -euo pipefail
+          echo "::group::Compartments"
+          oci iam compartment list --compartment-id "$TENANCY_OCID" --compartment-id-in-subtree true \
+            --all --query "data[].{name:name, id:id, state:\"lifecycle-state\"}" --output table
+          echo "::endgroup::"
+
+      - name: List availability domains for the configured region
+        run: |
+          set -euo pipefail
+          echo "::group::Availability Domains"
+          oci iam availability-domain list --compartment-id "$TENANCY_OCID" --output table
+          echo "::endgroup::"
+
+      - name: List VCNs and subnets in the root compartment
+        run: |
+          set -euo pipefail
+          echo "::group::VCNs"
+          oci network vcn list --compartment-id "$TENANCY_OCID" \
+            --query "data[].{name:\"display-name\", id:id, state:\"lifecycle-state\"}" --output table
+          echo "::endgroup::"
+          echo "::group::Subnets"
+          oci network subnet list --compartment-id "$TENANCY_OCID" \
+            --query "data[].{name:\"display-name\", id:id, cidr:\"cidr-block\", public:\"prohibit-public-ip-on-vnic\"}" \
+            --output table
+          echo "::endgroup::"
+
+      - name: Find an ARM-compatible (aarch64) Ubuntu image
+        run: |
+          set -euo pipefail
+          echo "::group::Ubuntu ARM images (Canonical Ubuntu, aarch64)"
+          oci compute image list --compartment-id "$TENANCY_OCID" \
+            --operating-system "Canonical Ubuntu" \
+            --query "data[?contains(\"display-name\", 'aarch64') || contains(\"display-name\", 'ARM')].{name:\"display-name\", id:id}" \
+            --output table
+          echo "::endgroup::"
+
+      - name: List existing compute instances (so we don't double-provision)
+        run: |
+          set -euo pipefail
+          echo "::group::Existing compute instances"
+          oci compute instance list --compartment-id "$TENANCY_OCID" \
+            --query "data[].{name:\"display-name\", shape:shape, state:\"lifecycle-state\"}" --output table
+          echo "::endgroup::"
