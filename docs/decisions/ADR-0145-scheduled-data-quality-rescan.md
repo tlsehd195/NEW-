@@ -57,10 +57,26 @@ schedule (`0 5 * * 6` -- Saturday 05:00 UTC), in addition to keeping
 `workflow_dispatch` for an immediate, on-demand run. The timing is
 deliberate: after the week's last weekday Paper Trading run (Friday
 22:00 UTC) has finished and uploaded its own updated
-`market-data-catalog`, and *before* the Learning Cycle's own Saturday
-06:00 UTC run reads that same catalog to build Experience -- so a
-CRITICAL bar this rescan finds is already excluded from `get_bars()`
-before that week's retraining ever sees it, not after.
+`market-data-catalog`, and before the Learning Cycle's own Saturday
+06:00 UTC run.
+
+**Correction (Batch H, independent audit item 11)**: the sentence
+originally here claimed this ordering protects "that week's
+retraining" because a CRITICAL bar found by this rescan would already
+be excluded from `get_bars()` before the Learning Cycle read the same
+catalog. That is false -- `scripts/run_learning_cycle.py` never reads
+the market-data catalog at all (only `--paper-store`, confirmed by its
+own `--db-path`-less argument parser) and never calls `get_bars()`, so
+this rescan's ordering relative to the Learning Cycle has no effect on
+it whatsoever. The real, still-valid reason for scheduling before
+Saturday 06:00 (rather than, say, right after it) is unrelated to the
+Learning Cycle: it simply keeps this rescan from racing the following
+week's Monday Paper Trading run for the same reason any two workflows
+that mutate the same `market-data-catalog` artifact must not overlap
+(see ADR-0184's concurrency-group fix for the general version of this
+concern) -- a CRITICAL bar this rescan finds is excluded from
+`get_bars()` before the NEXT WEEK's Paper Trading cycles make real
+trading decisions from that catalog, not before any Learning Cycle run.
 
 `tests/deploy/test_data_quality_rescan_workflow.py`'s
 `test_workflow_is_valid_yaml_with_manual_dispatch_only_no_schedule` is

@@ -9,9 +9,10 @@ single `get_positions()` covering both cash and holdings via
 See docs/specifications/PHASE-13-toss-securities-adapter.md section 8.
 
 Every implementation (`broker.mock.MockBrokerAdapter`,
-`broker.toss.adapter.TossBrokerAdapter`) is interchangeable behind this
-Protocol -- PROJECT_MASTER_PLAN.md section 9.3: "Toss Adapter 대신
-Paper Broker Adapter로 즉시 교체 가능해야 한다."
+`broker.toss.adapter.TossBrokerAdapter`, `broker.paper.adapter.
+PaperBrokerAdapter`) is interchangeable behind this Protocol --
+PROJECT_MASTER_PLAN.md section 9.3: "Toss Adapter 대신 Paper Broker
+Adapter로 즉시 교체 가능해야 한다."
 """
 
 from __future__ import annotations

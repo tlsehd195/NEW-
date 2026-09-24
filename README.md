@@ -765,9 +765,12 @@ loop는 실 시세 데이터 provider가 없어(ADR-0005 미해결과 동일한 
 - Phase 16 — Live Trading: 완료 (`src/broker/live/`, 137 tests) —
   Master Plan §9.4/§1.5/§12/§14.4를 구현하는 Live Trading 안전 계층.
   `evaluate_safety_gate`가 environment/live_trading_enabled/사람 승인/
-  broker capability/risk health/order validator/kill switch/계좌·
-  포지션 상태/model 상태/configuration integrity 11개 조건을 모두
-  독립적으로 검사하는 순수 함수이며, 단 하나라도 실패하면 제출을 차단.
+  broker capability(요구 capability별 개별 검사 포함)/risk limit 3종
+  미설정/risk health/order validator/kill switch/계좌·포지션 상태/model
+  상태/configuration integrity — 총 15개(`src/broker/live/safety_gate.py`
+  `failed.append(...)` 호출 지점 기준, 독립 감사가 실측 확인 — 이전에
+  "11개"로 적었던 것은 stale) 독립 조건을 모두 검사하는 순수 함수이며,
+  단 하나라도 실패하면 제출을 차단.
   **핵심 발견**: 이 게이트를 실제 `TossBrokerAdapter.get_capabilities()`
   (Phase 13이 `ACCOUNT_BALANCE`/`POSITIONS`/`ORDER_STATUS`/
   `CANCEL_ORDER`를 이미 정직하게 `UNKNOWN`으로 보고하도록 구현해 둔

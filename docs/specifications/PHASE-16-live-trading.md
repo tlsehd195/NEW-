@@ -346,7 +346,7 @@ financial policy decision this phase does not make unilaterally (handoff
 | Category | File |
 |---|---|
 | Config / activation model | `tests/broker/live/test_live_config.py` |
-| Safety gate (all 11 conditions, individually and combined) | `tests/broker/live/test_live_safety_gate.py` |
+| Safety gate (all 15 conditions -- corrected count, Batch H, independent audit item 4; see `src/broker/live/safety_gate.py`'s `failed.append(...)` call sites -- individually and combined) | `tests/broker/live/test_live_safety_gate.py` |
 | Kill switch (trigger evaluation, engage, release-requires-approval) | `tests/broker/live/test_live_kill_switch.py` |
 | Reconciliation (account/position/order comparisons) | `tests/broker/live/test_live_reconciliation.py` |
 | Session (submit/idempotency/UNKNOWN/no-blind-retry/startup/shutdown) | `tests/broker/live/test_live_session.py` |

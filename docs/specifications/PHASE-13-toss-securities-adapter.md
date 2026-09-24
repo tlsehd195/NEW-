@@ -170,6 +170,22 @@ call defaults to `UNKNOWN` (never silently `ENABLED`).
 `broker.errors.BrokerCapabilityError` if called -- there is no fallback
 behavior for them.
 
+**Stale as of Phase 21 (Batch H correction, independent audit item 7)**:
+the paragraph above described this phase's own original state, when
+`cancel_order`/`get_order_status`/`get_account`/`get_positions` were
+genuinely unimplemented stubs. Phase 21 (`docs/decisions/ADR-0027`)
+implemented all four for real against Toss's official Tier 1 endpoints
+-- calling them today executes a real HTTP request and returns a real
+`BrokerOrderResponse`/`BrokerAccountSnapshot`/etc.; none of them raise
+`BrokerCapabilityError` any more. `get_capabilities()` still reports
+these four `CapabilityStatus.UNKNOWN`, but that status now means
+"implemented, not yet operationally verified against a real account,"
+not "not implemented" -- see `src/broker/toss/adapter.py`'s own module
+docstring and `docs/operations/TOSS-API-GAP-ANALYSIS.md` for the
+current, accurate state. `BrokerCapabilityError` itself remains defined
+(`src/broker/errors.py`) but is not raised anywhere in this adapter
+today.
+
 ## 6. Live Execution Safety
 
 `BrokerExecutionMode.OFFLINE` is `BrokerConfig`'s only default.

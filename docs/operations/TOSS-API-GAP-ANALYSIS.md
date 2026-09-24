@@ -235,6 +235,33 @@ code change this phase.
 | `MARKET_ORDER` / order creation | `POST /api/v1/orders` | Tier 2 | `tests/broker/toss/test_toss_mapping.py`, `test_toss_adapter.py`, `test_toss_production_safety_contract.py` (Phase 17 additions: 5xx -> `BrokerProviderError`, PARTIAL_FILLED/CANCELED through the full response path) |
 | Transport-level failure handling | n/a (applies to any endpoint) | n/a | `tests/broker/toss/test_toss_transport.py` |
 
+**DECISION REQUIRED, not made unilaterally here (Batch H, independent
+audit item 12)**: `TossBrokerAdapter.get_capabilities()`
+(`src/broker/toss/adapter.py`) reports `MARKET_ORDER`/`LIMIT_ORDER`/
+`IDEMPOTENT_CLIENT_ORDER_ID` as `ENABLED` on Tier 2 evidence alone, with
+no real Toss account ever having operationally verified any of them
+(no automated test calls the real Toss API, confirmed elsewhere in this
+document) -- while Phase 21's own newer capabilities
+(`ACCOUNT_BALANCE`/`POSITIONS`/`ORDER_STATUS`/`CANCEL_ORDER`) stay
+`UNKNOWN` despite having the STRONGER Tier 1 evidence, precisely
+because "implemented against documented endpoints" is deliberately not
+treated as sufficient for `ENABLED` (see `adapter.py`'s own module
+docstring: "`ENABLED` is reserved for a future phase's real,
+human-supervised operational verification"). This is a real,
+long-standing inconsistency, not a Phase 21 regression: `MARKET_ORDER`
+was marked `ENABLED` back in Phase 13, before this stricter bar for
+`ENABLED` existed, and has never been revisited under it.
+Reclassifying `MARKET_ORDER` to `UNKNOWN` would make Live activation
+strictly harder to reach (a safety-tightening change, not a
+safety-loosening one) via `evaluate_safety_gate`'s per-capability check
+whenever a real caller's `required_capabilities` includes it -- but
+changing what a safety-gate input reports is exactly the kind of
+production-safety judgment call this project's own convention (e.g.
+`docs/operations/LIVE-RISK-POLICY.md`'s "DECISION REQUIRED" risk-limit
+items) reserves for the account owner to rule on, not something to
+flip unilaterally while fixing documentation. Flagged here, not
+changed.
+
 ## Phase 17 code change arising from this review
 
 While building the contract tests above, this review found that
