@@ -29,8 +29,17 @@
 - [Walk Forward PBO Deflated Sharpe 검증 프로토콜](concepts/walk-forward-pbo-deflated-sharpe.md) — #architecture #validation #research
 - [프로덕션 안전 및 Kill Switch](concepts/kill-switch.md) — #architecture #safety #kill-switch #production
 - [Broker Adapter 중립성 패턴](concepts/broker-adapter.md) — #architecture #broker
+- [2026-09 Independent Audit 배치 시리즈](concepts/2026-09-independent-audit.md) — #architecture #audit #safety #batch
 
 ## Sources
 
 - [PROJECT_MASTER_PLAN.md](sources/project-master-plan-summary.md) — Source file (.md)
 - [data-catalog.md](sources/data-catalog-summary.md) — Source file (.md)
+- [GITHUB-ACTIONS-DEPLOYMENT.md](sources/github-actions-deployment-summary.md) — Source file (.md)
+- [ORACLE-CLOUD-DEPLOYMENT.md](sources/oracle-cloud-deployment-summary.md) — Source file (.md)
+- [PRODUCTION-READINESS-MATRIX.md](sources/production-readiness-matrix-summary.md) — Source file (.md)
+- [LIVE-RISK-POLICY.md](sources/live-risk-policy-summary.md) — Source file (.md)
+- [LIVE-TRADING-RUNBOOK.md](sources/live-trading-runbook-summary.md) — Source file (.md)
+- [TOSS-API-GAP-ANALYSIS.md](sources/toss-api-gap-analysis-summary.md) — Source file (.md)
+- [MARKET-DATA-PROVIDER.md](sources/market-data-provider-summary.md) — Source file (.md)
+- [MARKET-DATA-FX-REFERENCE.md](sources/market-data-fx-reference-summary.md) — Source file (.md)
