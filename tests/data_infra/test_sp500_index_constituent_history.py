@@ -84,6 +84,24 @@ class TestParseTickerIntervals:
         intervals = parse_ticker_intervals(path)
         assert len(intervals) == 2
 
+    def test_rejects_a_ticker_value_containing_shell_metacharacters(self, tmp_path) -> None:
+        """Batch J (independent audit R3, P2-1): this CSV is an unpinned
+        third-party download, and its `ticker` column reaches a shell
+        command unquoted downstream (scripts/select_delisted_candidates_
+        since.py's stdout is spliced into
+        ingest_stockanalysis_wayback_delisted_prices.yml's --symbols
+        argument). A row shaped like the audit's own reproduction --
+        a real ticker followed by a shell command -- must be rejected
+        here, fail-closed, rather than silently reaching the shell."""
+        path = _write_csv(tmp_path, [("X;touch /tmp/PWNED", "2015-01-01", "2021-06-30")])
+        with pytest.raises(ValueError, match="implausible ticker"):
+            parse_ticker_intervals(path)
+
+    def test_accepts_a_real_dotted_share_class_ticker(self, tmp_path) -> None:
+        path = _write_csv(tmp_path, [("BRK.B", "1996-01-02", "")])
+        intervals = parse_ticker_intervals(path)
+        assert intervals[0].ticker == "BRK.B"
+
 
 class TestTickerMembershipIntervalValidation:
     def test_rejects_empty_ticker(self) -> None:

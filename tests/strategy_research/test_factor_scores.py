@@ -746,6 +746,60 @@ class TestIlliquidityScore:
 
         assert illiquidity_score("NONEXISTENT", as_of_time, data) is None
 
+    def test_a_zero_close_day_does_not_shift_every_later_days_return_pairing(self) -> None:
+        """Batch J (independent audit R3, P2-4): `backtest.metrics.
+        compute_returns` SKIPS an index whose PRIOR close is 0 rather
+        than None-padding it, so its own returned list shortens by one
+        from that point on. `zip(bars[1:], returns)` does not know that
+        happened -- every (bar, return) pair AFTER the 0-close day was
+        silently re-paired one day early, corrupting every later ratio.
+        Reproduces the audit's own repro shape: a real
+        `negative_or_zero_price` bar (ERROR severity, not gated by the
+        default `get_bars()` view) early in the window."""
+        days = trading_days(date(2020, 1, 2), date(2020, 2, 15))
+        assert len(days) >= 25
+        closes = [10.0, 0.0] + [20.0 * (1.05**i) for i in range(len(days) - 2)]
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, closes, volume=1.0)))
+        as_of_time = checkpoint(days[-1])
+        data = _view(repo, as_of_time)
+
+        score = illiquidity_score("AAA", as_of_time, data, lookback_days=len(days) - 1)
+
+        # Correct, index-aligned expectation: only the ratio at index 1
+        # (whose prior close, index 0, is 0) is skipped; every other
+        # ratio pairs day i's bar with closes[i]/closes[i-1]-1 for that
+        # same i -- no shift.
+        expected_ratios = []
+        for i in range(1, len(closes)):
+            if closes[i - 1] == 0:
+                continue
+            r = closes[i] / closes[i - 1] - 1.0
+            dollar_volume = closes[i] * 1.0
+            if dollar_volume <= 0:
+                continue
+            expected_ratios.append(abs(r) / dollar_volume)
+        expected = sum(expected_ratios) / len(expected_ratios)
+        assert score == pytest.approx(expected)
+
+        # The pre-fix (buggy) computation paired bars[1:] positionally
+        # against compute_returns's own list, which SHORTENS by one at
+        # the 0-close index -- every ratio from that point on used the
+        # wrong day's bar for dollar_volume. Reproduced directly here
+        # from the same `closes` list, not re-derived through the view,
+        # to isolate exactly the zip-alignment bug from any other
+        # behavior: it must differ from the correct value above.
+        from backtest.metrics import compute_returns
+
+        buggy_returns = compute_returns(closes)
+        buggy_ratios = []
+        for close_at_bar, r in zip(closes[1:], buggy_returns):
+            dv = close_at_bar * 1.0
+            if dv <= 0:
+                continue
+            buggy_ratios.append(abs(r) / dv)
+        buggy_score = sum(buggy_ratios) / len(buggy_ratios)
+        assert score != pytest.approx(buggy_score)
+
 
 class TestFiftyTwoWeekHighScore:
     """Session 36 -- ADR-0043 Decision 16: George & Hwang (2004)'s
@@ -1234,6 +1288,43 @@ class TestAssetGrowthScore:
 
         score = asset_growth_score("AAA", _utc(2023, 6, 1), repo)
         assert score == pytest.approx(-0.20)  # still 2021 vs 2022 -- 2023's figure is not yet filed
+
+    def test_a_10ka_restatement_of_the_same_fiscal_year_is_not_mistaken_for_the_prior_year(self, tmp_path) -> None:
+        """Batch J (independent audit R3, P2-3): `_fy_records` previously
+        had no dedup by `period_end` (unlike `_quarterly_records`'s own
+        established pattern) -- a real 10-K/A restatement persists as a
+        SECOND real record for the SAME fiscal year (this repository's
+        own docstring says both legitimately coexist). Before the fix,
+        FY2022's original (Assets=200) and its 10-K/A restatement
+        (Assets=205, filed later) both survived `_fy_records`, and
+        `asset_growth_score`'s `records[-1]`/`records[-2]` positional
+        indexing silently compared the restatement against the ORIGINAL
+        FILING OF THE SAME YEAR (205/200) instead of a real YoY change
+        against FY2021 (100) -- and even a single fiscal year with only
+        a restatement (no real prior year at all) passed the `len(records)
+        < 2` guard, since it counted as two records. Now: exactly one
+        record per period_end (the latest-filed), so the real FY2021 vs
+        FY2022 growth is used, and a lone restated year with no prior
+        year correctly returns None."""
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "assets_2021", concept="Assets", value=100.0, period_end=_utc(2021, 12, 31), available_time=_utc(2022, 2, 1)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022_original", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31), available_time=_utc(2023, 2, 1)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022_10ka_restated", concept="Assets", value=205.0, period_end=_utc(2022, 12, 31), available_time=_utc(2023, 6, 1)))
+
+        # Real YoY: 205 (latest-filed FY2022) / 100 (FY2021) - 1 = 1.05 growth -> score -1.05.
+        # NOT the pre-fix result of comparing the restatement against the
+        # original filing of the same year (205/200 - 1 = 0.025).
+        score = asset_growth_score("AAA", _utc(2023, 12, 1), repo)
+        assert score == pytest.approx(-1.05)
+
+    def test_only_a_restated_fiscal_year_with_no_prior_year_returns_none(self, tmp_path) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBFundamentalsRepository(engine)
+        repo.add_fundamental(_fy_record("AAA", "assets_2022_original", concept="Assets", value=200.0, period_end=_utc(2022, 12, 31), available_time=_utc(2023, 2, 1)))
+        repo.add_fundamental(_fy_record("AAA", "assets_2022_10ka_restated", concept="Assets", value=205.0, period_end=_utc(2022, 12, 31), available_time=_utc(2023, 6, 1)))
+
+        assert asset_growth_score("AAA", _utc(2023, 12, 1), repo) is None
 
 
 class TestNetStockIssuanceScore:

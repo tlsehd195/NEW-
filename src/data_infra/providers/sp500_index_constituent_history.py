@@ -75,6 +75,7 @@ third-party sources now agree on the same date for the same event.
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -114,12 +115,26 @@ class TickerMembershipInterval:
         return True
 
 
+_TICKER_RE = re.compile(r"^[A-Z]{1,10}(\.[A-Z])?$")
+
+
 def parse_ticker_intervals(csv_path: Path) -> tuple[TickerMembershipInterval, ...]:
     """Parses `sp500_ticker_start_end.csv` (header `ticker,start_date,
     end_date`). Raises `ValueError` on a header mismatch -- never
     silently guesses a different schema (this project's
     never-fabricate-provider-shape discipline, same as
-    `data_infra.providers.file_import`/`sp500_pit_membership`)."""
+    `data_infra.providers.file_import`/`sp500_pit_membership`).
+
+    Batch J (independent audit, R3 P2-1): `ticker` is a real ticker
+    symbol from a third-party, unpinned CSV consumed downstream by
+    `scripts/select_delisted_candidates_since.py`, whose stdout is
+    spliced unquoted into a shell command
+    (`ingest_stockanalysis_wayback_delisted_prices.yml`). A row whose
+    `ticker` field is not a plausible ticker (shell metacharacters,
+    whitespace, anything outside `[A-Z]` plus one optional
+    `.`-share-class suffix) is rejected here -- fail-closed at the one
+    place this file's content is actually parsed, rather than trusting
+    every downstream consumer to quote correctly."""
     rows: list[TickerMembershipInterval] = []
     with csv_path.open(newline="") as f:
         reader = csv.DictReader(f)
@@ -128,6 +143,8 @@ def parse_ticker_intervals(csv_path: Path) -> tuple[TickerMembershipInterval, ..
             raise ValueError(f"expected columns {_REQUIRED_COLUMNS}, got {sorted(fieldnames)}")
         for row in reader:
             ticker = row["ticker"].strip()
+            if not _TICKER_RE.match(ticker):
+                raise ValueError(f"rejecting implausible ticker value (fail-closed): {ticker!r}")
             start_date = datetime.strptime(row["start_date"].strip(), "%Y-%m-%d").date()
             end_raw = row["end_date"].strip()
             end_date = datetime.strptime(end_raw, "%Y-%m-%d").date() if end_raw else None

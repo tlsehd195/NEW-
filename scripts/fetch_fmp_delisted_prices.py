@@ -191,6 +191,19 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Not covered: {len(not_covered)}")
     print(f"Report written to: {args.report_out}")
     print(f"Per-symbol CSVs (genuine only) written to: {args.out_dir}")
+    # Batch J (independent audit R3, P2-6): an invalid API key (or a
+    # dead FMP endpoint) makes every single candidate fail with the
+    # SAME "FETCH ERROR"/"no real rows" outcome, which this loop already
+    # treats identically to "this specific ticker has no real FMP data"
+    # (`not_covered`) -- a real, honest ambiguity this script does not
+    # try to resolve per-ticker. But `covered_report` being EMPTY after
+    # checking real candidates means not one of them produced real
+    # data -- structurally the same "0 records persisted" failure
+    # signal `ingest_fundamentals_data.py`'s own exit code already
+    # treats as fatal, not a quiet, misleading exit 0.
+    if not covered_report:
+        print("FATAL: zero candidates were covered by FMP -- check the API key/endpoint", file=sys.stderr)
+        return 1
     return 0
 
 

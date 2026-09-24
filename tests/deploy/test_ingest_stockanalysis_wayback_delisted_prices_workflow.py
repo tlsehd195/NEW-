@@ -44,6 +44,25 @@ def test_fetches_the_live_sp500_csv_only_when_no_explicit_symbols_given():
     assert "raw.githubusercontent.com" in fetch_step.get("run", "")
 
 
+def test_the_third_party_csv_fetch_is_pinned_to_a_commit_not_a_mutable_branch():
+    """Batch J (independent audit R3, P2-1): a fetch against
+    `/master/...` re-reads whatever the third-party repo currently has,
+    not what was reviewed -- a push there (malicious or accidental)
+    changes this workflow's input on its very next run with no
+    corresponding change here. Pinned to a 40-character commit SHA
+    instead; the real fail-closed defense against a bad ticker value is
+    parse_ticker_intervals's own charset validation, this pin is
+    defense-in-depth against the content changing at all."""
+    import re
+
+    fetch_step = next(s for s in _steps() if "S&P 500" in s.get("name", ""))
+    run_text = fetch_step.get("run", "")
+    assert "/fja05680/sp500/master/" not in run_text
+    assert re.search(r"/fja05680/sp500/[0-9a-f]{40}/", run_text), (
+        "expected the CSV fetch URL to be pinned to a 40-character commit SHA"
+    )
+
+
 def test_selects_candidates_with_the_real_2020_cutoff():
     run_text = "\n".join(s.get("run", "") for s in _steps())
     assert "select_delisted_candidates_since.py" in run_text

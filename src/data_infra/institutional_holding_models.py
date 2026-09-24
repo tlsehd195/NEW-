@@ -58,6 +58,7 @@ established."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
@@ -117,6 +118,17 @@ class InstitutionalHoldingRecord:
             _require_aware(f"InstitutionalHoldingRecord.{name}", value)
         if not self.security_id:
             raise ValueError("InstitutionalHoldingRecord.security_id must not be empty")
+        # Batch J (independent audit R3, P2-5): `x < 0` is silently
+        # False for a NaN `x` (every comparison against NaN is False in
+        # Python) -- a malformed CSV cell that parses as NaN (or +/-inf)
+        # sailed straight through this guard and persisted as an
+        # ordinary REAL record, contaminating
+        # `institutional_ownership_change_score`, with the manifest
+        # reporting success. Checked before the negativity check, not
+        # instead of it, since `math.isfinite` alone would still accept
+        # a negative value.
+        if not math.isfinite(self.institutional_shares):
+            raise ValueError(f"InstitutionalHoldingRecord.institutional_shares must be a finite number, got {self.institutional_shares!r}")
         if self.institutional_shares < 0:
             raise ValueError("InstitutionalHoldingRecord.institutional_shares must not be negative")
         if self.num_institutions is not None and self.num_institutions < 0:

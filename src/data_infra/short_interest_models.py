@@ -37,6 +37,7 @@ established for real market-data acquisition."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
@@ -106,6 +107,21 @@ class ShortInterestRecord:
             _require_aware(f"ShortInterestRecord.{name}", value)
         if not self.security_id:
             raise ValueError("ShortInterestRecord.security_id must not be empty")
+        # Batch J (independent audit R3, P2-5): `x < 0` is silently
+        # False for a NaN `x` (every comparison against NaN is False in
+        # Python) -- a malformed CSV cell that parses as NaN (or +/-inf)
+        # sailed straight through this guard and persisted as an
+        # ordinary REAL record, contaminating every score that reads it
+        # (`short_interest_score`), with the manifest reporting success.
+        # Checked before the negativity check, not instead of it, since
+        # `math.isfinite` alone would still accept a negative value.
+        for name, value in (
+            ("short_interest_quantity", self.short_interest_quantity),
+            ("average_daily_volume", self.average_daily_volume),
+            ("days_to_cover", self.days_to_cover),
+        ):
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"ShortInterestRecord.{name} must be a finite number, got {value!r}")
         if self.short_interest_quantity < 0:
             raise ValueError("ShortInterestRecord.short_interest_quantity must not be negative")
         if self.average_daily_volume is not None and self.average_daily_volume < 0:

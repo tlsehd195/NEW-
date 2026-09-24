@@ -754,14 +754,27 @@ def run_cycle(
     provenance: TradeProvenance = TradeProvenance.PAPER_TRADING,
     experiment_id: Optional[str] = None,
 ) -> tuple[CycleOutcome, ...]:
-    """Runs the full chain once for each of `security_ids`, in order,
-    sharing ONE `PortfolioView` snapshot across all of them (taken
-    once at the start of this call, from `session.account_summary`) --
-    the same "one snapshot per checkpoint" discipline
-    `backtest.engine.BacktestEngine.run()` already uses, so a decision
-    for the second security in the list is not evaluated against a
-    portfolio state that already reflects the first security's
-    not-yet-filled order from this same cycle.
+    """Runs the full chain once for each of `security_ids`, in order.
+
+    **Stale as of ADR-0177 (Batch J correction, independent audit R2)**:
+    this docstring used to say the `PortfolioView` is a single snapshot
+    shared unchanged across every security in `security_ids` (taken
+    once at the start of this call, from `session.account_summary`).
+    That was true before ADR-0177 (independent audit P1-3): each real
+    submission (`validation.validated_order is not None`) now updates
+    the LOCAL `portfolio` variable in memory, as if that order had
+    already filled at `current_price` -- never touching `session`'s
+    real broker/accounting state, and never claiming a real fill
+    happened (`session.account_summary()` itself is still read only
+    once, at the top of this call). So a decision for the SECOND
+    security in the list now correctly sees the FIRST security's own
+    already-submitted order's cumulative effect on cash/positions/gross
+    exposure within this same cycle -- closing the exact TOCTOU gap the
+    audit found -- while `ADR-0154`'s real same-bar-fill-leak
+    protection is untouched: the real fill for every one of this
+    cycle's orders still only lands on the NEXT cycle's own `advance()`
+    call. See ADR-0177 for the full mechanism and what is deliberately
+    NOT updated mid-cycle (`value_history`).
 
     `sector_by_security` is passed straight through to `risk_engine.
     assess` (ADR-0062) -- `None` here means the same as `None` there:
