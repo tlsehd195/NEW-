@@ -293,6 +293,20 @@ class PaperRunnerState:
     # silently discarded.
     corporate_action_warnings: list[tuple[datetime, tuple[str, ...]]] = field(default_factory=list)
 
+    # Independent audit finding (2026-09-24): `_record_delayed_advance_
+    # fills` correctly, deliberately skips a T+1 fill whose originating
+    # `DecisionSnapshot` cannot be re-located (e.g. `trade_journal_
+    # repository` was absent during the original submission, or the
+    # order record itself is structurally missing) -- fabricating a
+    # link would be worse, so skipping is the right call. But the skip
+    # itself was entirely silent: no counter, no log, nothing a caller
+    # could ever notice a real trade's economic outcome had permanently
+    # dropped out of the Trade Journal. Same "recorded here, one entry
+    # per cycle where the list was non-empty, so a caller can surface
+    # it" treatment as `mark_to_market_missing`/`corporate_action_
+    # warnings` above.
+    skipped_delayed_fills: list[tuple[datetime, tuple[str, ...]]] = field(default_factory=list)
+
 
 @dataclass(frozen=True)
 class CycleOutcome:
@@ -598,8 +612,14 @@ def _record_delayed_advance_fills(
     pre_advance_account: AccountSummary,
     advance_fills: Sequence[PaperFillRecord],
     as_of_time: datetime,
-) -> None:
-    """ADR-0154: mirrors the same-cycle Trade Journal write below, but
+) -> tuple[str, ...]:
+    """Returns the `security_id`s (one entry per skipped fill, may
+    repeat) whose delayed fill was skipped this call because its
+    originating decision could not be re-located -- empty when nothing
+    was skipped. See `PaperRunnerState.skipped_delayed_fills`'s own
+    docstring for why this is surfaced rather than left silent.
+
+    ADR-0154: mirrors the same-cycle Trade Journal write below, but
     for fills `session.advance(as_of_time)` produces for an OLDER
     order (the T+1 fill this order's own submission cycle deferred --
     see `PaperBrokerAdapter.submit_order`'s own docstring). Closes the
@@ -638,11 +658,17 @@ def _record_delayed_advance_fills(
     position_average_cost_by_security: dict[str, Optional[float]] = {}
     opened_at_by_security: dict[str, Optional[datetime]] = {}
     decision_cache: dict[tuple, Optional[DecisionSnapshot]] = {}
+    skipped: list[str] = []
 
     for client_order_id in order_sequence:
         order_record = session.adapter.get_order_record(client_order_id)
         if order_record is None:
-            continue  # structurally should not happen -- never fabricate a link
+            # structurally should not happen -- never fabricate a link.
+            # No security_id is knowable here (the order record itself
+            # is missing), so the client_order_id is the most specific
+            # identifier available to surface.
+            skipped.append(client_order_id)
+            continue
         validated_order = order_record.validated_order
         security_id = validated_order.security_id
         experiment_id = validated_order.experiment_id
@@ -653,7 +679,10 @@ def _record_delayed_advance_fills(
             decision_cache[natural_key] = trade_journal_repository.get_decision_by_natural_key(natural_key)
         decision_snapshot = decision_cache[natural_key]
         if decision_snapshot is None:
-            continue  # this order's decision was never recorded -- skip, never fabricate
+            # this order's decision was never recorded -- skip, never
+            # fabricate a link, but the caller must be able to notice.
+            skipped.append(security_id)
+            continue
 
         if security_id not in running_quantity_by_security:
             account_position = pre_advance_account.positions.get(security_id)
@@ -678,6 +707,8 @@ def _record_delayed_advance_fills(
             opened_at=opened_at_by_security[security_id],
             provenance=provenance, experiment_id=experiment_id,
         )
+
+    return tuple(skipped)
 
 
 def compute_portfolio_snapshot(session: PaperTradingSession, view: AsOfDataView, as_of_time: datetime) -> PortfolioView:
@@ -956,7 +987,11 @@ def run_cycle(
     pre_advance_account = session.account_summary(as_of=as_of_time)
     advance_updates, advance_fills = session.advance(as_of_time)
     if trade_journal_repository is not None and advance_fills:
-        _record_delayed_advance_fills(trade_journal_repository, session, pre_advance_account, advance_fills, as_of_time)
+        skipped = _record_delayed_advance_fills(
+            trade_journal_repository, session, pre_advance_account, advance_fills, as_of_time,
+        )
+        if skipped and state is not None:
+            state.skipped_delayed_fills.append((as_of_time, skipped))
 
     account = session.account_summary(as_of=as_of_time)
     portfolio = _portfolio_view(account, view, as_of_time)

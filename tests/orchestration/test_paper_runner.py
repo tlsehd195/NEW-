@@ -1225,6 +1225,36 @@ class TestDeferredFillDecisionJournalLink:
 
         assert journal.list_trades() == []  # skipped, not fabricated
 
+    def test_a_skipped_delayed_fill_is_surfaced_on_state_not_left_silent(self) -> None:
+        """Independent audit finding (2026-09-24): the skip in the
+        sibling test above was previously entirely silent -- no counter,
+        no log, nothing a caller supplying `state` could ever notice a
+        real trade's economic outcome had permanently dropped out of the
+        Trade Journal. `PaperRunnerState.skipped_delayed_fills` closes
+        that, mirroring `mark_to_market_missing`/
+        `corporate_action_warnings`'s own established surfacing pattern."""
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        components = _components()
+
+        # Cycle 1: no journal supplied at all -- the decision is never recorded.
+        run_cycle(["AAA"], view.current_time, view, session, **components)
+
+        journal = InMemoryTradeJournalRepository()
+        clock.index = 101
+        state = PaperRunnerState()
+        run_cycle(
+            [], view.current_time, view, session, **components,
+            trade_journal_repository=journal, state=state,
+        )
+
+        assert journal.list_trades() == []  # unchanged: still skipped, not fabricated
+        assert len(state.skipped_delayed_fills) == 1
+        as_of, skipped_security_ids = state.skipped_delayed_fills[0]
+        assert as_of == view.current_time
+        assert skipped_security_ids == ("AAA",)
+
     def test_delayed_fill_closing_sell_computes_real_realized_pnl_and_holding_period(self) -> None:
         """The same realized_pnl/holding_period invariant `TestTradeJournalWriteSide::
         test_a_closing_sell_records_real_realized_pnl_return_and_holding_period`

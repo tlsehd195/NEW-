@@ -376,11 +376,22 @@ def run_cycle(
     experiment_id: Optional[str] = None,
     kill_switch_context: Optional[KillSwitchTriggerContext] = None,
 ) -> tuple[LiveCycleOutcome, ...]:
-    """Runs the full chain once for each of `security_ids`, in order,
-    sharing ONE `PortfolioView` snapshot (read from the broker once at
-    the start of this call) across all of them -- same "one snapshot per
-    checkpoint" discipline `paper_runner.run_cycle`/`backtest.engine.
-    BacktestEngine.run()` already use.
+    """Runs the full chain once for each of `security_ids`, in order.
+
+    **Stale as of this fix (independent audit finding, 2026-09-24,
+    backporting ADR-0177 from `paper_runner.run_cycle`)**: this
+    docstring used to say a single `PortfolioView` snapshot (read from
+    the broker once at the start of this call) is shared unchanged
+    across every security in `security_ids`. That is no longer true:
+    each real submission (`validation.validated_order is not None`) now
+    updates the LOCAL `portfolio` variable in memory, as if that order
+    had already filled at `current_price` -- never touching `session`'s
+    real broker/accounting state, and never claiming a real fill
+    happened. So a decision for the SECOND security in the list now
+    correctly sees the FIRST security's own already-submitted order's
+    cumulative effect on cash/positions/gross exposure within this same
+    cycle -- closing the exact same-cycle TOCTOU gap ADR-0177 already
+    closed for Paper Trading, now for real Live orders too.
 
     `gate_context` is REQUIRED and is the BASE context this cycle uses.
     Seven fields are ALWAYS overridden by this function itself before
@@ -561,6 +572,50 @@ def run_cycle(
                 trade_journal_repository.record_trade(
                     decision_id=decision.decision_id, fill=fill, position_after=current_quantity + signed,
                     provenance=TradeProvenance.LIVE_TRADING, experiment_id=experiment_id,
+                )
+
+            # Independent audit finding (2026-09-24): ADR-0177 fixed this
+            # exact same-cycle TOCTOU gap in `paper_runner.run_cycle` but
+            # it was never backported here -- `portfolio` (built once,
+            # above, before this `security_ids` loop) was never updated
+            # for the rest of the cycle, so a LATER security's own
+            # `decision_agent.decide`/`position_sizer.size`/`risk_engine.
+            # assess` calls still saw the exact same pre-loop snapshot,
+            # letting N BUY decisions in one real LIVE cycle each
+            # individually pass `risk_engine.assess`'s gross-exposure
+            # check while their real, combined effect breaches
+            # `RiskConfig.max_gross_exposure` -- a real-money version of
+            # the paper-trading gap ADR-0177 already closed. Applies the
+            # identical in-memory, "as if already filled at
+            # current_price" ESTIMATE technique ADR-0177 validated
+            # (never touches `session`'s real broker/accounting state,
+            # never claims a real fill happened) -- deliberately applied
+            # to every real submission regardless of whether the broker's
+            # own response was already FILLED/PARTIAL_FILLED or is still
+            # PENDING, since an outstanding live order can still fill
+            # later and must count against this cycle's own risk budget
+            # either way.
+            if current_price is not None:
+                order = validation.validated_order
+                signed_quantity = order.quantity if order.side == OrderSide.BUY else -order.quantity
+                existing_position = portfolio.positions.get(security_id)
+                existing_quantity = existing_position.quantity if existing_position is not None else 0.0
+                new_quantity = existing_quantity + signed_quantity
+                new_market_value = new_quantity * current_price
+                notional_delta = order.quantity * current_price
+                cash_delta = -notional_delta if order.side == OrderSide.BUY else notional_delta
+                new_positions = dict(portfolio.positions)
+                if new_quantity != 0:
+                    new_positions[security_id] = PositionView(
+                        security_id, new_quantity,
+                        average_cost=(existing_position.average_cost if existing_position is not None else current_price),
+                        market_value=new_market_value,
+                    )
+                else:
+                    new_positions.pop(security_id, None)
+                portfolio = PortfolioView(
+                    as_of_time=portfolio.as_of_time, cash=portfolio.cash + cash_delta,
+                    positions=new_positions, portfolio_value=portfolio.portfolio_value,
                 )
 
         outcomes.append(LiveCycleOutcome(
