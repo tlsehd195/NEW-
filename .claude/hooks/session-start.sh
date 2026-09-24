@@ -11,30 +11,16 @@ fi
 
 cd "$CLAUDE_PROJECT_DIR"
 
-# llmwiki MCP tool (.mcp.json registers it) goes FIRST, before the (much
-# slower) venv/pip setup below. The MCP client only waits ~30s for this
-# server's stdio connection to come up, and this block (git clone --depth 1
-# of a small repo + npm install of one workspace + tsc build) reliably
-# finishes in well under that; the venv/pip block does not. Running venv
-# first pushed llmwiki's build past the MCP client's timeout every time
-# (observed directly: connection attempted at T+0s and failing with
-# MODULE_NOT_FOUND because the clone+build hadn't even started yet, only
-# landing around T+50s) -- reordering is the actual fix, not the path
-# syntax inside .mcp.json's args, which was misdiagnosed twice before this.
-# cloned+built fresh each session, same reasoning as .venv/ below --
-# .llmwiki-tool/ is gitignored, so the container that built it does not
-# survive into the next session. Only bothers if .mcp.json actually
-# references it.
-if [ -f .mcp.json ] && grep -q '.llmwiki-tool' .mcp.json; then
-  if [ ! -f .llmwiki-tool/packages/core/dist/mcp/bin.js ]; then
-    rm -rf .llmwiki-tool
-    git clone --quiet --depth 1 https://github.com/microsoft/llmwiki.git .llmwiki-tool
-    (cd .llmwiki-tool && npm install --quiet --workspace=packages/core --no-audit --no-fund && npm run build --workspace=packages/core)
-  fi
-  if [ ! -d .wiki/wiki ]; then
-    node -e "import('$CLAUDE_PROJECT_DIR/.llmwiki-tool/packages/core/dist/init.js').then(m => m.initWiki('$CLAUDE_PROJECT_DIR'))"
-  fi
-fi
+# llmwiki MCP tool (.mcp.json registers it) used to be cloned + built by
+# this hook on every session start, racing the MCP client's ~30s stdio
+# connection timeout against a git clone + npm install + tsc build.
+# Reordering this block ahead of venv/pip setup (see git history) only
+# narrowed that race, it didn't close it -- on a slow network the build
+# still lost, giving CONNECTION_CLOSED. Fixed by vendoring a prebuilt,
+# dependency-free bundle at vendor/llmwiki-mcp/bin.bundle.cjs (committed,
+# not gitignored -- see vendor/llmwiki-mcp/NOTICE.md for provenance and
+# how to refresh it) that .mcp.json now runs directly. Nothing to build
+# here anymore.
 
 # A venv, not a system-wide install: this container's system Python has
 # apt-managed packages (e.g. PyYAML) with no pip RECORD, which breaks a

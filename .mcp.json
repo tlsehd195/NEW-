@@ -4,7 +4,7 @@
       "type": "stdio",
       "command": "node",
       "args": [
-        ".llmwiki-tool/packages/core/dist/mcp/bin.js",
+        "vendor/llmwiki-mcp/bin.bundle.cjs",
         ".wiki"
       ]
     }
