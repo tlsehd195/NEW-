@@ -339,6 +339,53 @@ class TestUnexplainedZeroBarSymbolsGateExitCode:
         assert "unexplained_zero_bar_symbols" in return_block
 
 
+class TestCorporateActionFailureGatesExitCode:
+    """Independent audit finding F-2 (2026-09-24): the corporate-action
+    collection loop already caught and recorded per-symbol failures into
+    `corporate_action_results`, but nothing ever read that list back --
+    a run where every single requested symbol's corporate-action fetch
+    raised (e.g. the endpoint is down, or budget/auth is broken) could
+    still exit 0, silently shipping price bars that were never split/
+    dividend-adjusted (mirrors the pre-existing `unexplained_zero_bar_
+    symbols` pattern for price bars, which was never extended to cover
+    corporate actions)."""
+
+    def test_manifest_has_corporate_action_failed_symbols_key(self) -> None:
+        assert "corporate_action_failed_symbols" in _manifest_keys(_tree())
+
+    def test_corporate_action_failed_symbols_is_derived_from_actual_per_symbol_errors(self) -> None:
+        source = _source()
+        assign_line = next(
+            line for line in source.splitlines()
+            if line.strip().startswith("corporate_action_failed_symbols = ")
+        )
+        assert "corporate_action_results" in assign_line
+        assert "error" in assign_line
+
+    def test_corporate_actions_entirely_failed_only_trips_when_every_symbol_failed(self) -> None:
+        # Mirrors F-1's conservative "entire run got nothing" severity
+        # threshold -- a partial corporate-action failure (some symbols
+        # okay, others not) must not fail the whole run, only a total
+        # wipeout should.
+        source = _source()
+        assign_line = next(
+            line for line in source.splitlines()
+            if line.strip().startswith("corporate_actions_entirely_failed = ")
+        )
+        assert "corporate_action_failed_symbols" in assign_line
+        assert "len(corporate_action_failed_symbols) == len(symbols)" in assign_line
+
+    def test_a_fatal_message_is_printed_when_corporate_actions_entirely_fail(self) -> None:
+        source = _source()
+        assert "corporate-action collection failed for every requested symbol" in source
+
+    def test_return_statement_also_checks_corporate_actions_entirely_failed(self) -> None:
+        source = _source()
+        return_start = source.index("        return (\n            0\n")
+        return_block = source[return_start:source.index("\n        )", return_start)]
+        assert "corporate_actions_entirely_failed" in return_block
+
+
 class TestTiingoRequestBudgetSharedAcrossBothCallPaths:
     """ADR-0160: `TiingoDataProvider.fetch()` (via `FallbackDataProvider`/
     `IngestionRunner`) and the direct `fetch_corporate_actions` loop

@@ -270,6 +270,19 @@ class BacktestEngine:
                 "benchmark_id": config.benchmark_id,
                 "cost_model": asdict(config.cost_model),
                 "max_participation": config.max_participation,
+                # Independent audit finding (2026-09-24): two runs
+                # differing ONLY in slippage_model/risk_free_rate/
+                # periods_per_year previously hashed to the identical
+                # configuration_version despite genuinely different
+                # results (slippage_model already feeds real fills via
+                # order_simulator above; risk_free_rate/periods_per_year
+                # already feed compute_performance_report above) -- the
+                # same "content hash must include every field that is
+                # actually content" gap ADR-0195/P1-4 fixed for
+                # learning.dataset's sample_fingerprint.
+                "slippage_model": asdict(config.slippage_model) if hasattr(config.slippage_model, "__dataclass_fields__") else str(config.slippage_model),
+                "risk_free_rate": config.risk_free_rate,
+                "periods_per_year": config.periods_per_year,
             }
         )
         experiment = self._experiment_tracker.record(

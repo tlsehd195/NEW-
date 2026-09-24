@@ -1043,6 +1043,8 @@ def run_cycle(
                     natural_key=("paper_decision", experiment_id, security_id, as_of_time),
                     portfolio_state=portfolio, market_state={}, confidence=decision.confidence,
                     features=_decision_features(prediction, regime),
+                    decision_output_id=decision.decision_id,
+                    prediction_id=decision.prediction_id,
                     decision_reason=decision.decision_reason, model_version=decision.model_version,
                     strategy_version=decision.strategy_version or "unknown",
                     feature_version=decision.feature_version, data_version=decision.data_version,

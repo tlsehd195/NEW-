@@ -36,6 +36,18 @@ class DecisionSnapshot:
     market_state: dict = field(default_factory=dict)
     features: Optional[dict] = None
     prediction: Optional[dict] = None
+    # Independent audit finding (2026-09-24): ADR-0113 made
+    # `DecisionSnapshot.snapshot_id` the real, joinable `TradeRecord.
+    # decision_id` link, but the snapshot itself carried no explicit
+    # back-reference to the Phase 7 `DecisionOutput.decision_id`/
+    # `PredictionOutput.prediction_id` records that actually produced
+    # it -- the only way to find them was `decision_repository`,
+    # separately, with no stored key connecting the two. These two
+    # fields close that gap without touching the DuckDB schema (this
+    # dataclass round-trips through a single `payload_json` column via
+    # storage.serialization, so an added field needs no migration).
+    decision_output_id: Optional[str] = None
+    prediction_id: Optional[str] = None
     confidence: Optional[float] = None
     decision_reason: Optional[str] = None
     expected_return: Optional[float] = None

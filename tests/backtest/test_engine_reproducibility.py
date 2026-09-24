@@ -13,6 +13,7 @@ from datetime import date
 
 from backtest_helpers import build_repository, make_bars, make_benchmark, make_security, trading_days
 
+from backtest.costs import FixedBpsSlippageModel
 from backtest.engine import BacktestConfig, BacktestEngine
 from backtest.strategy import BuyAndHoldStrategy, SimpleMomentumStrategy
 
@@ -90,6 +91,37 @@ class TestReproducibility:
         from dataclasses import replace
 
         config2 = replace(config, initial_capital=75_000.0)
+        result2 = BacktestEngine(repo, config2, BuyAndHoldStrategy(["AAA", "BBB"])).run()
+
+        assert result1.experiment.configuration_version != result2.experiment.configuration_version
+
+    def test_different_slippage_model_yields_different_configuration_version(self) -> None:
+        """Independent audit finding (2026-09-24): configuration_version's
+        content hash previously omitted slippage_model/risk_free_rate/
+        periods_per_year entirely, even though slippage_model already
+        feeds real fills (order_simulator) and risk_free_rate/
+        periods_per_year already feed compute_performance_report -- two
+        runs differing ONLY in slippage_model produced genuinely
+        different fills/performance but the identical
+        configuration_version, silently claiming they were run under the
+        same configuration."""
+        repo, config = _build_scenario()
+        result1 = BacktestEngine(repo, config, BuyAndHoldStrategy(["AAA", "BBB"])).run()
+
+        from dataclasses import replace
+
+        config2 = replace(config, slippage_model=FixedBpsSlippageModel(bps=50.0))
+        result2 = BacktestEngine(repo, config2, BuyAndHoldStrategy(["AAA", "BBB"])).run()
+
+        assert result1.experiment.configuration_version != result2.experiment.configuration_version
+
+    def test_different_risk_free_rate_yields_different_configuration_version(self) -> None:
+        repo, config = _build_scenario()
+        result1 = BacktestEngine(repo, config, BuyAndHoldStrategy(["AAA", "BBB"])).run()
+
+        from dataclasses import replace
+
+        config2 = replace(config, risk_free_rate=0.05)
         result2 = BacktestEngine(repo, config2, BuyAndHoldStrategy(["AAA", "BBB"])).run()
 
         assert result1.experiment.configuration_version != result2.experiment.configuration_version

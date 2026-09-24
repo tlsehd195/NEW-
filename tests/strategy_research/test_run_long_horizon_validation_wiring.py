@@ -224,6 +224,15 @@ class TestRealProvenancePlausibilityCheck:
     against the identical catalog."""
 
     def test_known_real_provider_sources_matches_actual_provider_implementations(self) -> None:
+        """Independent audit finding F-6 (2026-09-24): ADR-0164 replaced
+        stooq with a flat `FallbackDataProvider(tiingo, twelvedata,
+        alphavantage)` chain, but this allowlist was never updated to
+        add "twelvedata"/"alphavantage" -- a real run using genuine
+        ADR-0164-era data from either provider would have been wrongly
+        refused as "unexpected sources" (this exact test, before the
+        fix, asserted `sources == {"tiingo", "stooq"}` and passed,
+        because it only ever checked the allowlist against itself, never
+        against every provider module that actually exists)."""
         tree = _tree()
         assignments = [
             node for node in ast.walk(tree)
@@ -234,14 +243,23 @@ class TestRealProvenancePlausibilityCheck:
         value = assignments[0].value
         assert isinstance(value, ast.Set)
         sources = {elt.value for elt in value.elts if isinstance(elt, ast.Constant)}
-        # Must match the exact Provenance.source strings the real
-        # provider implementations actually stamp -- verified directly
-        # against their source rather than assumed.
-        tiingo_source = (Path(__file__).resolve().parents[2] / "src" / "data_infra" / "providers" / "tiingo.py").read_text()
-        stooq_source = (Path(__file__).resolve().parents[2] / "src" / "data_infra" / "providers" / "stooq.py").read_text()
-        assert 'source="tiingo"' in tiingo_source
-        assert 'source="stooq"' in stooq_source
-        assert sources == {"tiingo", "stooq"}
+        # Must match the exact Provenance.source strings EVERY real
+        # provider implementation in this package actually stamps --
+        # verified directly against each provider's own source, not
+        # just the two this allowlist happened to already contain.
+        providers_dir = Path(__file__).resolve().parents[2] / "src" / "data_infra" / "providers"
+        for filename, expected_source in (
+            ("tiingo.py", "tiingo"),
+            ("stooq.py", "stooq"),
+            ("twelvedata.py", "twelvedata"),
+            ("alphavantage.py", "alphavantage"),
+        ):
+            provider_source = (providers_dir / filename).read_text()
+            assert f'source="{expected_source}"' in provider_source
+            assert expected_source in sources, (
+                f"{expected_source!r} (stamped by {filename}) is missing from "
+                f"_KNOWN_REAL_PROVIDER_SOURCES={sorted(sources)!r}"
+            )
 
     def test_unexpected_provenance_source_under_real_status_refuses_not_warns(self) -> None:
         """The check must actually stop execution (return a non-zero

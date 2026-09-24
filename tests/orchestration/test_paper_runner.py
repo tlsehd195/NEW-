@@ -748,6 +748,34 @@ class TestDecisionSnapshotFeatures:
         assert decision_snapshot.features["expected_return"] == outcome.prediction.expected_return
         assert decision_snapshot.features["confidence"] == outcome.prediction.confidence
 
+    def test_decision_snapshot_carries_a_real_joinable_prediction_and_decision_output_id(self) -> None:
+        """Independent audit finding (2026-09-24): ADR-0113 made
+        `DecisionSnapshot.snapshot_id` a real, joinable `TradeRecord.
+        decision_id`, but the snapshot itself carried no stored
+        back-reference to the Phase 7 `DecisionOutput.decision_id`/
+        `PredictionOutput.prediction_id` records that actually produced
+        it -- the only way to find them was `decision_repository`,
+        separately, with no key connecting the two. Before this fix,
+        `decision_snapshot.decision_output_id`/`.prediction_id` did not
+        exist at all on `DecisionSnapshot`."""
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        session = _session(bars)
+        journal = InMemoryTradeJournalRepository()
+
+        cycle_time = view.current_time
+        outcome = run_cycle(
+            ["AAA"], cycle_time, view, session, **_components(),
+            trade_journal_repository=journal,
+        )[0]
+
+        decision_snapshot = journal.get_decision_by_natural_key(("paper_decision", None, "AAA", cycle_time))
+        assert decision_snapshot is not None
+        assert decision_snapshot.decision_output_id == outcome.decision.decision_id
+        assert decision_snapshot.prediction_id == outcome.prediction.prediction_id
+        assert decision_snapshot.decision_output_id
+        assert decision_snapshot.prediction_id
+
     def test_a_none_valued_prediction_field_is_omitted_not_written_as_none(self) -> None:
         """`LinearRegressionTrainer._samples_with_required_features`
         only checks KEY PRESENCE (`required <= set(s.features)`) --
