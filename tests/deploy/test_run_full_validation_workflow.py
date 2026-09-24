@@ -31,13 +31,17 @@ def _dispatch_inputs() -> dict:
     return triggers["workflow_dispatch"]["inputs"]
 
 
-def test_workflow_is_valid_yaml_manual_dispatch_only_and_read_only():
+def test_workflow_is_valid_yaml_manual_dispatch_only():
     doc = _load()
     triggers = doc.get(True, doc.get("on"))
     assert triggers is not None
     assert "workflow_dispatch" in triggers
     assert "schedule" not in triggers
-    assert doc["permissions"]["contents"] == "read"
+    # write, not read: this job commits the validation report straight
+    # into the repo (see test_commits_the_report_into_the_repo_durably
+    # below) -- a Claude session or the account owner coming back within
+    # the 90-day artifact window is not a real safeguard.
+    assert doc["permissions"]["contents"] == "write"
 
 
 def test_has_concurrency_group_and_a_job_timeout():
@@ -77,10 +81,20 @@ def test_insider_catalog_download_is_optional_and_does_not_fail_the_job():
     assert "insider_catalog.zip" in run_text
     assert "INSIDER_FLAG" in run_text
     # The optional-download step must not use `set -e` semantics that
-    # would kill the job when the release simply has no insider catalog
-    # yet -- it branches on the download's own success instead.
+    # would kill the job when neither release has an insider catalog
+    # yet -- it branches on each download's own success instead.
     insider_step = next(s for s in _steps() if "insider_catalog.zip" in s.get("run", "") and "gh release download" in s.get("run", ""))
     assert "if gh release download" in insider_step["run"]
+
+
+def test_insider_catalog_falls_back_to_the_auto_published_release():
+    """ingest_insider_transactions_full.yml publishes its own catalog
+    to a fixed 'insider-transactions-catalog' release automatically, on
+    every successful merge -- this workflow must try that tag when the
+    account owner's own --release-tag doesn't carry one, so
+    insider_buying works without a manual upload step at all."""
+    insider_step = next(s for s in _steps() if "insider_catalog.zip" in s.get("run", "") and "gh release download" in s.get("run", ""))
+    assert "insider-transactions-catalog" in insider_step["run"]
 
 
 def test_runs_the_real_validation_script_with_both_required_db_paths_and_the_insider_flag_variable():
@@ -102,3 +116,17 @@ def test_uploads_the_report_with_always_and_warn_on_missing():
     assert step.get("if") == "always()"
     assert step["with"]["if-no-files-found"] == "warn"
     assert step["with"]["path"] == "./validation_report.json"
+
+
+def test_commits_the_report_into_the_repo_durably():
+    """The 90-day artifact above is a quick-access convenience, not the
+    durable copy -- this step must exist and actually push, so the raw
+    result survives regardless of whether any human or Claude session
+    ever revisits this run within 90 days."""
+    commit_step = next(s for s in _steps() if "git commit" in s.get("run", ""))
+    assert commit_step.get("if") == "always()"
+    run_text = commit_step["run"]
+    assert "docs/research/reports" in run_text
+    assert "git push" in run_text
+    # Guards against committing a stale/missing report from a failed run.
+    assert "if [ ! -f ./validation_report.json ]" in run_text

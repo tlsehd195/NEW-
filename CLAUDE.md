@@ -166,13 +166,21 @@ Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직
     감싸지 않기). GitHub 저장소 → Releases → "Draft a new release" →
     태그 지정(예: `research-catalogs-v1`) → 두 zip 파일을 Assets로 첨부
     → Publish.
-  - `insider_catalog.zip`(내부자거래, `ingest_insider_transactions_full.yml`
-    결과물)도 준비되면 같은 Release에 같은 방식으로 추가 — 없어도
-    워크플로는 정상 동작(insider_buying 후보만 생략됨).
+  - `insider_catalog.zip`은 **수동으로 안 올려도 됨** (2026-09-24
+    후속 수정) — `ingest_insider_transactions_full.yml`의 `merge` job이
+    성공할 때마다 고정 Release 태그(`insider-transactions-catalog`)에
+    자동 업로드하고, `run_full_validation.yml`이 그 태그를 자동
+    fallback으로 시도함. 가격/재무제표 두 개만 위 절차로 수동 업로드
+    하면 됨.
   - 업로드 끝나면 `run_full_validation.yml`을 `workflow_dispatch`로
     실행하면서 `release_tag`에 방금 만든 태그명을 입력 — 나머지 입력
     (`universe`/`start`/`end`)은 기본값이 이미 Stage 4 실행 전례와
     동일하게 맞춰져 있어 그대로 둬도 됨.
+  - **결과 저장 방식(2026-09-24 후속 수정)**: `run_full_validation.yml`
+    결과(JSON)는 90일 아티팩트뿐 아니라 `docs/research/reports/`에
+    워크플로 자신이 직접 커밋해서 영구 보존함(Claude 세션이 90일 안에
+    돌아와서 옮겨줘야 하는 구조가 아님) — 이유는 `ADR-0193`의
+    "2026-09-24 후속 수정" 절 참고.
 
 ## Grounding Gate 배선 보류 결정 (2026-09-24)
 
