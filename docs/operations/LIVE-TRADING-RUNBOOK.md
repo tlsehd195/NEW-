@@ -172,9 +172,26 @@ satisfied on its own; there is no override.
 
 ## Emergency Halt / Kill Switch
 
-- `broker.live.kill_switch.engage_kill_switch(...)` can be, and in
-  several conditions automatically is, called by `LiveTradingSession`
-  itself — this requires no human action to take effect.
+- `broker.live.kill_switch.engage_kill_switch(...)` can be, and — since
+  Batch E (ADR-0182, independent audit item 1) — is automatically
+  called by `orchestration.live_runner.run_cycle` itself whenever a
+  caller supplies a `KillSwitchTriggerContext` and
+  `evaluate_kill_switch_triggers` finds a real trigger condition (a
+  broker/risk/monitoring-pipeline/data health failure, a daily-loss or
+  order-frequency breach). **Correction (this line previously claimed
+  this "requires no human action to take effect" unconditionally — that
+  overstated the real state before ADR-0182, when zero callers of
+  `evaluate_kill_switch_triggers` existed anywhere outside its own test
+  file, so nothing was ever automatically engaged in practice.** Even
+  with the wiring now real, it still requires a caller to construct and
+  supply the `KillSwitchTriggerContext` with real
+  `broker_health`/`risk_health`/`monitoring_pipeline_health`/
+  `data_health`/`daily_loss`/`orders_in_last_hour` values — and no real
+  Live driver exists anywhere in `src/`/`scripts/` today to be that
+  caller (Live has zero production callers, confirmed structurally
+  multiple times this session). The mechanism is real and tested; it
+  has no observable effect in production yet because nothing currently
+  invokes `live_runner.run_cycle` at all.
 - **Session 36 (ADR-0045): `LiveTradingSession.engage_kill_switch(...)`
   now automatically attempts to cancel every order this session does
   not already know to be closed** (`LiveTradingConfig.

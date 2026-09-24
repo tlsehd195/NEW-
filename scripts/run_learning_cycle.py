@@ -25,14 +25,29 @@ Read-only with respect to the Trade Journal -- this script never calls
 run_cycle` (via `scripts/run_paper_trading_cycle.py`) remains the only
 writer.
 
-**Honest current limitation, not hidden**: no `Strategy`/`DecisionAgent`
-in this codebase sets `OrderIntent.features` yet (ADR-0048's own
-documented gap), so every real `DecisionSnapshot`/`LabeledSample.features`
-this script reads is `None` today -- `--trainer linear_regression`
-would therefore always report `fitted=False, train_sample_count=0`
-against real data right now, an honest "no real feature-based learning
-is possible yet" result, not a bug in this script. The default trainer
-is `mean_reward_baseline` for exactly this reason: it needs only
+**Stale as of ADR-0141 (Batch H correction, independent audit item 8)**:
+the paragraph below described a real gap at the time it was written --
+`orchestration.paper_runner.run_cycle`'s `record_decision(...)` call
+never passed a `features=` argument at all, so every real
+`DecisionSnapshot`/`LabeledSample.features` was genuinely `None`. ADR-0141
+closed this (a different, more direct mechanism than the also-real but
+separate `OrderIntent.features`/backtest-`Strategy` gap ADR-0048
+originally flagged, which ADR-0153/ADR-0161 later closed for the
+research/backtest side only, and which `orchestration.paper_runner`'s
+real production decision path -- `decision.agent.DecisionAgent`, not an
+`OrderIntent`-producing `Strategy` -- never goes through at all): a new
+`_decision_features(prediction, regime)` helper in `paper_runner.py`
+now builds a real dict from the real `PredictionOutput`/regime inputs
+already available at the `record_decision` call site, so
+`--trainer linear_regression` can now produce a real, non-trivial fit
+against real Paper Trading data, not the unconditional `fitted=False`
+this paragraph used to promise (see
+`tests/orchestration/test_run_learning_cycle_cli.py::
+test_linear_regression_against_real_data_honestly_reports_unfitted`'s
+own docstring, which already documents this fix -- a real result can
+still be `INSUFFICIENT_SAMPLES` for the unrelated reason that fixture
+gives, not because features are missing). The default trainer remains
+`mean_reward_baseline` regardless (see below), since it needs only
 `LabeledSample.label_value` (`realized_return`, real as of ADR-0113's
 fix to `orchestration.paper_runner.run_cycle` -- before that fix, EVERY
 real Paper Trading `TradeRecord` had `realized_return=None` regardless

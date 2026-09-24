@@ -33,7 +33,7 @@ claim of financial optimality.
 | 2 | Max drawdown | `RiskConfig.max_drawdown` | `0.20` | **INHERITED** | Phase 8, pre-trade only (blocks new BUYs via `PortfolioRiskEngine.assess`, `docs/decisions/ADR-0014`); not Live-specific, never independently re-approved for real capital. |
 | 3 | Max single-position exposure | `PositionSizingConfig.max_position_weight` / `RiskConfig.max_position_weight` | `0.10` / `0.10` | **INHERITED** | Two independent checks (sizing-time and portfolio-risk-time), same Phase 8 default in both. |
 | 4 | Total portfolio exposure | `RiskConfig.max_gross_exposure` | `1.0` | **INHERITED** | `1.0` = no leverage permitted by default; Phase 8. |
-| 5 | Sector exposure | `RiskConfig.max_sector_weight` | `None` (RATIFIED value: **0.25**, not yet code-applied) | **UNDEFINED, RATIFIED (Session 36 continued, ADR-0062/ADR-0080)** | `data_infra.models.SecurityMaster` still has no sector field, but `PortfolioRiskEngine.assess` now accepts an opt-in `sector_by_security: Optional[dict[str, str]]` parameter the caller supplies per call (e.g. sourced from `data_infra.universe`'s own real, provider-confirmed sector data, ADR-0058) -- enforcement path exists and is active whenever BOTH `max_sector_weight` is set AND the caller supplies the mapping; either without the other REJECTs `sector_unknown` (fail-closed, mirroring `max_turnover`'s own pattern). `orchestration.paper_runner`/`orchestration.live_runner` now both wire this parameter through (ADR-0067/ADR-0070) whenever a caller passes `--max-sector-weight` (Paper CLI) or the equivalent. The account owner ratified the proposed 25% value -- same "ratified but not baked into the default config" treatment as #1/#6/#7/#11 (ADR-0060/ADR-0065): a human passes `max_sector_weight=0.25` explicitly whenever a real Live `RiskConfig` is constructed. |
+| 5 | Sector exposure | `RiskConfig.max_sector_weight` | `None` in the bare default config (RATIFIED value: **0.25**, not baked into that default) | **UNDEFINED-BY-DEFAULT, RATIFIED (Session 36 continued, ADR-0062/ADR-0080); ACTUALLY APPLIED DAILY IN PAPER PRODUCTION (Batch H correction, independent audit item 6)** | `data_infra.models.SecurityMaster` still has no sector field, but `PortfolioRiskEngine.assess` now accepts an opt-in `sector_by_security: Optional[dict[str, str]]` parameter the caller supplies per call (e.g. sourced from `data_infra.universe`'s own real, provider-confirmed sector data, ADR-0058) -- enforcement path exists and is active whenever BOTH `max_sector_weight` is set AND the caller supplies the mapping; either without the other REJECTs `sector_unknown` (fail-closed, mirroring `max_turnover`'s own pattern). `orchestration.paper_runner`/`orchestration.live_runner` now both wire this parameter through (ADR-0067/ADR-0070) whenever a caller passes `--max-sector-weight` (Paper CLI) or the equivalent. **Correction**: this row previously read "not yet code-applied," which understated real Paper production -- `.github/workflows/paper_trading_cycle.yml`'s daily `run_paper_trading_cycle.py` invocation has passed `--max-sector-weight 0.25` on every real run since ADR-0080, so the ratified value is not merely proposed, it is actively enforced today in Paper. Only a real Live `RiskConfig` still needs a human to pass `max_sector_weight=0.25` explicitly (same "ratified but not baked into the default config" treatment as #1/#6/#7/#11, ADR-0060/ADR-0065). |
 | 6 | Turnover limit | `RiskConfig.max_turnover` | `None` | **UNDEFINED** | Enforcement path exists and is active (`src/risk/engine.py` lines 304-310 -- `PortfolioRiskEngine` rejects when computed turnover exceeds `max_turnover`, whenever it is set); only the number itself is unset. **TBD — HUMAN DECISION REQUIRED.** |
 | 7 | Order frequency limit | `LiveTradingConfig.max_order_frequency_per_hour` | `None` | **UNDEFINED** | Feeds `evaluate_kill_switch_triggers`'s `abnormal_order_frequency` check only when set. **TBD — HUMAN DECISION REQUIRED.** |
 | 8 | Liquidity limit | `RiskConfig.enforce_liquidity_limit` | `True` | **INHERITED, conditional** | Only enforced on calls where the caller supplies a `liquidity_state`; if the caller omits it, the check simply does not run for that call (distinct from the regime axis itself reporting `UNKNOWN`, which always rejects). Whether every Live pre-trade call reliably supplies this is a Live-integration question, not a policy-number question -- tracked as a Known Issue below, not a DECISION REQUIRED. |
@@ -319,6 +319,19 @@ here):
   set for #1/#6/#7** — the independently-blocking Toss capability gap
   (`docs/operations/TOSS-API-GAP-ANALYSIS.md`) means none of this
   changes whether Live can activate today.
+  **Correction (Batch H, independent audit item 2)**: "독립-차단적"
+  (independently-blocking) overstates this. `evaluate_safety_gate`'s
+  broker-capability check only fails for a capability actually present
+  in the caller's own `SafetyGateContext.required_capabilities`
+  (`src/broker/live/safety_gate.py` lines 94-96) — a hypothetical
+  caller that only requires `MARKET_ORDER` (which Toss's own capability
+  table above reports `ENABLED`, not `UNKNOWN`) would NOT be blocked by
+  this condition alone. What actually keeps Live blocked today is that
+  every existing test/reference caller chooses to require
+  `ACCOUNT_BALANCE`/`POSITIONS` (both still `UNKNOWN`), not a structural
+  guarantee independent of what a real live driver would someday
+  request. No real live driver exists yet to make this choice for real
+  (confirmed structurally zero production callers, this session).
 
 **DECISION REQUIRED: risk limit values for #1/#6/#7 — awaiting user
 ratification.** The three proposals above are Claude's reasoned

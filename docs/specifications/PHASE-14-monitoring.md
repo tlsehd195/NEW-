@@ -203,11 +203,15 @@ Limitations); once raised, an `Alert` is never mutated.
 ## 8. Collectors
 
 `monitoring/collectors.py` is the only place in `monitoring.*` that
-combines point-in-time filtering with `metrics.py` + `health.py`. Nine
-collectors, one per component: `collect_data_quality`,
+combines point-in-time filtering with `metrics.py` + `health.py`. Ten
+collectors, one per component (**corrected count, Batch H, independent
+audit item 9** -- this section previously said "Nine," missing
+`collect_account`, added in Phase 17 to close the Phase 15/ADR-0021
+known limitation that `paper_account_equity`/`paper_pnl`/
+`paper_drawdown` were never a `MonitoringEvent`): `collect_data_quality`,
 `collect_prediction`, `collect_decision`, `collect_sizing`,
 `collect_risk`, `collect_broker`, `collect_ai_gateway`,
-`collect_learning`, `collect_model_evolution`. Every collector filters
+`collect_learning`, `collect_model_evolution`, `collect_account`. Every collector filters
 its input sequence to `<field> <= as_of_time` *before* calling
 `metrics.py` (`PriceBar.available_time`, `PredictionOutput.as_of_time`,
 `DecisionOutput.as_of_time`, `PositionSizingResult.as_of_time`,

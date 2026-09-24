@@ -37,9 +37,12 @@ def _run_text(steps: list[dict]) -> str:
 def test_workflow_is_valid_yaml_with_a_weekly_schedule_and_manual_dispatch():
     """ADR-0145 revised ADR-0144's original manual-only decision: at this
     project's actual data scale, a full rescan is cheap enough to run
-    weekly (defense-in-depth), timed before the Saturday Learning Cycle
-    reads the same catalog. workflow_dispatch stays too, for an
-    immediate on-demand run."""
+    weekly (defense-in-depth), timed before the next week's Paper
+    Trading cycles read the same catalog for real trading decisions --
+    NOT before the Saturday Learning Cycle, which never reads the
+    market-data catalog at all (Batch H correction, independent audit
+    item 11; see ADR-0145's own correction note). workflow_dispatch
+    stays too, for an immediate on-demand run."""
     doc = _load()
     # PyYAML parses the bare `on:` key as the boolean True.
     triggers = doc.get(True, doc.get("on"))

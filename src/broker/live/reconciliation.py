@@ -5,8 +5,24 @@ function here is pure: it never queries the broker itself, only compares
 two already-fetched snapshots. A mismatch or an unavailable side is
 never silently resolved by trusting one side over the other --
 `ReconciliationStatus.UNKNOWN`/`MISMATCH` both block new order
-submission in `broker.live.session.LiveTradingSession` until an operator
-records a resolution (instruction section 16, 17, 30).
+submission in `broker.live.session.LiveTradingSession`.
+
+**Correction (Batch H, independent audit item 3)**: "until an operator
+records a resolution" overstated what actually exists -- there is no
+method anywhere in this codebase for an operator to directly record a
+resolution. The only real path out of `MISMATCH`/`UNKNOWN` within a
+running session is calling `LiveTradingSession.reconcile_order` again
+and having it return `MATCHED` this time (`session.py`'s own
+`_internal_status[client_order_id] = broker_status.status` update,
+gated on `result.status == ReconciliationStatus.MATCHED`) -- which
+requires the broker's real reported state and this session's internal
+expectation to actually agree, not a data-entry action. If they never
+converge within the running process, the only other exit today is
+restarting with a fresh `LiveTradingSession`, whose `_internal_status`
+starts empty -- discarding the unresolved state rather than resolving
+it (matches `docs/operations/LIVE-TRADING-RUNBOOK.md`'s own procedures,
+which describe re-querying the broker and manual investigation, not a
+resolution-recording API this module does not have).
 
 See docs/specifications/PHASE-16-live-trading.md section 8.
 """

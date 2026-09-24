@@ -22,11 +22,23 @@
 # anything a future edge case in the incremental checker might miss,
 # not just pre-ADR-0143 history. Scheduled weekly (Saturday 05:00 UTC --
 # after the week's last weekday Paper Trading run at Friday 22:00 UTC,
-# before the Learning Cycle's own Saturday 06:00 UTC run, so a bad bar
-# found here is already excluded before that week's retraining reads
-# the same catalog). `workflow_dispatch` is kept too, for an immediate,
-# on-demand run right after noticing an unusually bad cycle (e.g. an
-# unexpectedly high issue count) rather than waiting for Saturday.
+# before the Learning Cycle's own Saturday 06:00 UTC run).
+#
+# **Correction (Batch H, independent audit item 11)**: this comment
+# previously claimed the 05:00-before-06:00 ordering protects "that
+# week's retraining" because a bad bar found here would already be
+# excluded before the Learning Cycle reads the same catalog. That is
+# false: scripts/run_learning_cycle.py never reads the market-data
+# catalog at all (only --paper-store) and never calls get_bars() --
+# see docs/decisions/ADR-0145's own Batch H correction for the full
+# explanation. The real reason for this ordering is simpler and still
+# holds: it lets a CRITICAL bar this rescan finds be excluded from
+# get_bars() before the FOLLOWING WEEK's Paper Trading cycles read the
+# market-data catalog for real trading decisions, not because of any
+# effect on the Learning Cycle specifically. `workflow_dispatch` is
+# kept too, for an immediate, on-demand run right after noticing an
+# unusually bad cycle (e.g. an unexpectedly high issue count) rather
+# than waiting for Saturday.
 #
 # **What this does NOT do**: it does not touch the paper-trading-store
 # artifact (Trade Journal/decisions/candidate models) at all -- only the

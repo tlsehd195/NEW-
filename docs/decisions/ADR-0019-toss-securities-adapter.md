@@ -1,6 +1,12 @@
 # ADR-0019: Toss Securities Adapter
 
-**Status:** Accepted
+**Status:** Accepted (partially superseded by `docs/decisions/ADR-0027-toss-broker-adapter-completion.md`
+-- Batch H, independent audit item 17: `cancel_order`/`get_order_status`/
+`get_account`/`get_positions`, all `BrokerCapabilityError`-raising stubs
+when this ADR was written, were implemented for real against Toss's
+official Tier 1 endpoints in Phase 21/ADR-0027. This ADR is kept as the
+historical record of Phase 13's original design; read ADR-0027 for the
+current, accurate capability state.)
 
 ## Context
 

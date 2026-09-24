@@ -106,6 +106,21 @@ UNAVAILABLE/DEGRADED (Phase 14), now also a kill-switch trigger (Phase
 -> `AIResponse(status=ERROR)` (Phase 12). No real Slack/email delivery
 is required or built this phase, per instruction.
 
+**Correction (Batch H, independent audit item 10)**: the "Persisted"/
+"Alertable" = Yes marks in the table above were true only in the sense
+that the collector functions and `monitoring.repository.InMemory*`
+reference implementations existed and were exercised by tests -- a
+repo-wide grep found zero production callers of any collector, and
+`storage.monitoring_repository`'s real DuckDB repositories had zero
+production callers either (only their own test files used them), so
+none of this was ever actually persisted by any real execution of this
+project's daily cron. Closed for the `prediction`/`decision`/`sizing`/
+`risk`/`account` rows above by Batch F (`scripts/run_monitoring_sweep.py`,
+ADR-0183) -- `Orders / Fills`/`Broker health`/`Data health`/
+`Model health`/`Feature drift` rows remain genuinely unwired to any real
+production caller, for the same reasons `docs/operations/
+PRODUCTION-READINESS-MATRIX.md`'s Monitoring row now documents.
+
 ## 7. Paper Trading Performance Evaluation -- Explicit Non-Sufficiency of Return Alone
 
 This review explicitly does not, and did not, treat "Paper return >
