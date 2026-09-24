@@ -35,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   SHARD_COUNT: "10"
@@ -128,11 +128,42 @@ jobs:
             --target-db-path ./data/insider_combined \
             "${ARGS[@]}"
 
-      - name: Upload combined catalog
+      - name: Upload combined catalog (90-day quick-access copy)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: insider-transactions-catalog
           path: ./data/insider_combined
           retention-days: 90
+
+      # Durable copy: a workflow artifact expires after its retention
+      # window (90 days above) regardless of whether anyone -- human or
+      # AI session -- ever comes back to copy it somewhere safer. A
+      # Release asset does not expire on its own, and this step needs
+      # no one watching: it runs unconditionally as part of this same
+      # job, every time this workflow completes a merge, publishing to
+      # a FIXED, well-known tag (not the account owner's own
+      # research-catalogs release, which they create/update manually
+      # for the price+fundamentals catalogs -- this one is fully
+      # automatic and owned by this workflow). run_full_validation.yml
+      # falls back to this exact tag when its own --release-tag input
+      # doesn't carry an insider_catalog.zip.
+      - name: Publish the combined catalog to a durable Release (no expiry, no human step needed)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ ! -f ./data/insider_combined/catalog.duckdb ]; then
+            echo "No combined catalog produced this run (e.g. every shard failed) -- nothing to publish."
+            exit 0
+          fi
+          cd ./data/insider_combined && zip -qr ../insider_catalog.zip . && cd -
+          TAG="insider-transactions-catalog"
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "${{ github.repository }}" \
+              --title "Insider transactions catalog (auto-updated)" \
+              --notes "Auto-published by ingest_insider_transactions_full.yml on every successful merge. Always the latest combined SEC Form 4 catalog -- see that workflow's own run history for what universe coverage this reflects as of its last update."
+          fi
+          gh release upload "$TAG" ./data/insider_catalog.zip --repo "${{ github.repository }}" --clobber
           if-no-files-found: ignore

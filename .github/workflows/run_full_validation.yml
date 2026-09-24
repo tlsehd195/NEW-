@@ -21,9 +21,19 @@
 #   - price_catalog.zip           (scripts/ingest_real_market_data.py output -- required)
 #   - fundamentals_catalog.zip    (scripts/ingest_fundamentals_data.py output -- required)
 #   - insider_catalog.zip         (scripts/ingest_insider_transactions.py / merge_insider_
-#                                   transaction_catalogs.py output -- optional; when absent,
-#                                   the insider_buying candidate is skipped, exactly like
-#                                   omitting --insider-db-path on the CLI)
+#                                   transaction_catalogs.py output -- optional here specifically
+#                                   because it is not required in this release at all:
+#                                   ingest_insider_transactions_full.yml auto-publishes its own
+#                                   copy to a fixed "insider-transactions-catalog" release this
+#                                   workflow falls back to; when neither has one, the
+#                                   insider_buying candidate is skipped, same as omitting
+#                                   --insider-db-path on the CLI)
+#
+# The resulting report is committed straight into the repo (docs/research/
+# reports/), not left as a 90-day workflow artifact only -- account-owner
+# request, 2026-09-24: relying on a Claude session (or anyone) coming back
+# within 90 days to copy the result somewhere durable was identified as a
+# real single point of failure, not a real safeguard.
 #
 # workflow_dispatch-only -- a real, potentially long (walk-forward across
 # 30+ candidates), real-data validation run, never scheduled.
@@ -54,7 +64,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -85,19 +95,34 @@ jobs:
           test -f ./data/price_catalog/catalog.duckdb
           test -f ./data/fundamentals_catalog/catalog.duckdb
 
-      - name: Download insider catalog (optional)
+      - name: Download insider catalog (optional -- tries the given release, then the auto-published one)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # First choice: an insider_catalog.zip the account owner put in
+          # their own release alongside price/fundamentals. Second
+          # choice: ingest_insider_transactions_full.yml's own durable
+          # Release (it publishes there automatically, unconditionally,
+          # every time it completes a merge -- see that workflow's own
+          # "Publish the combined catalog to a durable Release" step) --
+          # this makes the insider_buying candidate work with zero
+          # manual upload step, not just an optional convenience.
           if gh release download "${{ inputs.release_tag }}" \
               --repo "${{ github.repository }}" \
               --pattern "insider_catalog.zip" --dir ./data --clobber 2>/dev/null; then
+            echo "Using insider_catalog.zip from release ${{ inputs.release_tag }}."
+          elif gh release download "insider-transactions-catalog" \
+              --repo "${{ github.repository }}" \
+              --pattern "insider_catalog.zip" --dir ./data --clobber 2>/dev/null; then
+            echo "Using insider_catalog.zip from the auto-published insider-transactions-catalog release."
+          else
+            echo "No insider catalog found in either release -- insider_buying candidate will be skipped, same as omitting --insider-db-path."
+            echo "INSIDER_FLAG=" >> "$GITHUB_ENV"
+          fi
+          if [ -f ./data/insider_catalog.zip ]; then
             unzip -q ./data/insider_catalog.zip -d ./data/insider_catalog
             echo "INSIDER_FLAG=--insider-db-path ./data/insider_catalog" >> "$GITHUB_ENV"
-          else
-            echo "No insider_catalog.zip in release ${{ inputs.release_tag }} -- insider_buying candidate will be skipped, same as omitting --insider-db-path."
-            echo "INSIDER_FLAG=" >> "$GITHUB_ENV"
           fi
 
       - name: Run the full walk-forward + PBO/DSR validation
@@ -112,7 +137,7 @@ jobs:
             --data-status REAL \
             --report-out ./validation_report.json
 
-      - name: Upload the validation report
+      - name: Upload the validation report (90-day quick-access copy)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
@@ -120,3 +145,32 @@ jobs:
           path: ./validation_report.json
           retention-days: 90
           if-no-files-found: warn
+
+      # Durable copy, unconditional and automatic: a workflow artifact
+      # expires after 90 days regardless of whether anyone -- human or
+      # AI session -- ever comes back to read it and write it up
+      # elsewhere. This commits the raw report straight into the repo
+      # (git history, no expiry) every time this job produces one, with
+      # no dependence on a Claude session or the account owner being
+      # around to do it manually. This is the raw JSON, not a written
+      # narrative addendum -- STRATEGY-VALIDATION-REPORT.md's prose
+      # addenda still need a human/LLM's judgment to interpret what a
+      # result means (RULE 0.8), but the underlying numbers themselves
+      # are never solely at the mercy of a 90-day clock again.
+      - name: Commit the report into the repo (durable, no expiry, no human step needed)
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f ./validation_report.json ]; then
+            echo "No report produced this run -- nothing to commit."
+            exit 0
+          fi
+          mkdir -p docs/research/reports
+          TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+          DEST="docs/research/reports/full-validation-${TIMESTAMP}.json"
+          cp ./validation_report.json "$DEST"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$DEST"
+          git commit -m "chore: record full validation report (${{ inputs.release_tag }}, ${{ inputs.start }}..${{ inputs.end }})"
+          git push

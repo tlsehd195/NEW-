@@ -30,13 +30,16 @@ def _merge_steps(doc: dict) -> list[dict]:
     return doc["jobs"]["merge"]["steps"]
 
 
-def test_workflow_is_valid_yaml_manual_dispatch_only_and_read_only():
+def test_workflow_is_valid_yaml_manual_dispatch_only():
     doc = _load()
     triggers = doc.get(True, doc.get("on"))
     assert triggers is not None
     assert "workflow_dispatch" in triggers
     assert "schedule" not in triggers
-    assert doc["permissions"]["contents"] == "read"
+    # write, not read: the merge job publishes the combined catalog to
+    # a GitHub Release (see test_merge_job_publishes_the_combined_catalog_
+    # to_a_durable_release below) -- this needs contents:write.
+    assert doc["permissions"]["contents"] == "write"
 
 
 def test_matrix_has_ten_shards_matching_the_env_shard_count():
@@ -100,3 +103,23 @@ def test_merge_job_uploads_the_combined_catalog():
     assert len(upload_steps) == 1
     assert upload_steps[0]["with"]["name"] == "insider-transactions-catalog"
     assert upload_steps[0].get("if") == "always()"
+
+
+def test_merge_job_publishes_the_combined_catalog_to_a_durable_release():
+    """A workflow artifact (above) expires after its retention window
+    regardless of whether anyone comes back for it -- this step
+    publishes the same catalog to a fixed, well-known Release tag
+    automatically, every successful merge, so run_full_validation.yml's
+    own fallback download always has a current copy without any human
+    or Claude-session upload step in between."""
+    steps = _merge_steps(_load())
+    publish_step = next(s for s in steps if "gh release upload" in s.get("run", ""))
+    assert publish_step.get("if") == "always()"
+    run_text = publish_step["run"]
+    assert "insider-transactions-catalog" in run_text
+    assert "gh release view" in run_text  # creates the release only if it doesn't already exist
+    assert "gh release create" in run_text
+    assert "--clobber" in run_text  # replaces the asset in place on every run, not accumulating duplicates
+    # Guards against publishing a stale/missing catalog from a run where
+    # every shard failed.
+    assert "if [ ! -f ./data/insider_combined/catalog.duckdb ]" in run_text
