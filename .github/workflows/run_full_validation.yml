@@ -1,0 +1,122 @@
+# Runs scripts/run_long_horizon_validation.py (the full walk-forward +
+# PBO/DSR candidate pipeline, including ml_tree, ADR-0192) against real
+# price/fundamentals/insider catalogs that already exist -- collected
+# for real in the account owner's own Google Colab session (Session 37)
+# and, for the price+fundamentals pair, already confirmed complete
+# there (87-symbol RESEARCH_UNIVERSE_STAGE4, 2010-01-01..2026-09-11).
+#
+# This workflow does NOT re-ingest anything -- GitHub-hosted runners
+# have their own outbound network path (already verified for real by
+# ingest_fama_french_factors.yml/ingest_insider_transactions_full.yml),
+# but re-collecting 87 symbols x ~13 years from scratch would take many
+# hours and duplicate work already done. Instead it downloads the
+# already-collected catalogs from a GitHub Release (chosen over a
+# workflow artifact specifically because artifacts expire after their
+# retention window -- a Release asset does not expire on its own) and
+# runs the validation pipeline against them directly.
+#
+# Expected Release assets (see this repo's README/CLAUDE.md for the
+# exact upload steps), each a zip of the catalog DIRECTORY
+# storage.config's StorageEngine expects (containing catalog.duckdb):
+#   - price_catalog.zip           (scripts/ingest_real_market_data.py output -- required)
+#   - fundamentals_catalog.zip    (scripts/ingest_fundamentals_data.py output -- required)
+#   - insider_catalog.zip         (scripts/ingest_insider_transactions.py / merge_insider_
+#                                   transaction_catalogs.py output -- optional; when absent,
+#                                   the insider_buying candidate is skipped, exactly like
+#                                   omitting --insider-db-path on the CLI)
+#
+# workflow_dispatch-only -- a real, potentially long (walk-forward across
+# 30+ candidates), real-data validation run, never scheduled.
+name: Run Full Strategy Validation (Real Data)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag of the GitHub Release holding price_catalog.zip / fundamentals_catalog.zip / (optional) insider_catalog.zip"
+        type: string
+        required: true
+      universe:
+        description: "Universe to validate (must match _UNIVERSES in run_long_horizon_validation.py)"
+        type: string
+        default: "RESEARCH_UNIVERSE"
+      start:
+        description: "Range start (YYYY-MM-DD) -- must not overlap strategy_research.locked_windows.TEST_1"
+        type: string
+        default: "2010-01-01"
+      end:
+        description: "Range end (YYYY-MM-DD) -- must not overlap TEST_1; default is TEST_1's own start, the boundary every prior real Stage-3/4 run has used"
+        type: string
+        default: "2023-04-28"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Download price + fundamentals catalogs (required)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p ./data
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "price_catalog.zip" --pattern "fundamentals_catalog.zip" \
+            --dir ./data --clobber
+          unzip -q ./data/price_catalog.zip -d ./data/price_catalog
+          unzip -q ./data/fundamentals_catalog.zip -d ./data/fundamentals_catalog
+          test -f ./data/price_catalog/catalog.duckdb
+          test -f ./data/fundamentals_catalog/catalog.duckdb
+
+      - name: Download insider catalog (optional)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release download "${{ inputs.release_tag }}" \
+              --repo "${{ github.repository }}" \
+              --pattern "insider_catalog.zip" --dir ./data --clobber 2>/dev/null; then
+            unzip -q ./data/insider_catalog.zip -d ./data/insider_catalog
+            echo "INSIDER_FLAG=--insider-db-path ./data/insider_catalog" >> "$GITHUB_ENV"
+          else
+            echo "No insider_catalog.zip in release ${{ inputs.release_tag }} -- insider_buying candidate will be skipped, same as omitting --insider-db-path."
+            echo "INSIDER_FLAG=" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run the full walk-forward + PBO/DSR validation
+        run: |
+          set -euo pipefail
+          python3 scripts/run_long_horizon_validation.py \
+            --universe "${{ inputs.universe }}" \
+            --start "${{ inputs.start }}" --end "${{ inputs.end }}" \
+            --db-path ./data/price_catalog \
+            --fundamentals-db-path ./data/fundamentals_catalog \
+            $INSIDER_FLAG \
+            --data-status REAL \
+            --report-out ./validation_report.json
+
+      - name: Upload the validation report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: full-validation-report
+          path: ./validation_report.json
+          retention-days: 90
+          if-no-files-found: warn

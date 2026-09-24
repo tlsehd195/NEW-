@@ -151,7 +151,28 @@ Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직
   `"Out of host capacity."`로 실패 — 오라클 쪽 AP-TOKYO-1 리전의
   `VM.Standard.A1.Flex` 무료 티어 재고 소진 문제이지 워크플로 버그가
   아님. 재시도하거나 다른 리전/AD로 바꿔서 다시 `workflow_dispatch`
-  실행해볼 것.)
+  실행해볼 것. 2026-09-24 세션 중 3번째 시도(`run #3`)도 돌려봤으나
+  역시 실패 — 재고 문제가 아직 안 풀린 것으로 보임. 며칠 뒤 다시
+  `workflow_dispatch`로 재시도하거나 다른 리전으로 바꿔볼 것.)
+- **`run_full_validation.yml`용 Release 카탈로그 업로드** (ADR-0193):
+  Google Drive에 있는 87종목 실 데이터 카탈로그(`data/price_catalog`,
+  `data/fundamentals_catalog` — Session 37 코랩에서 수집 완료된 것)를
+  GitHub Release에 zip으로 올려야 `run_full_validation.yml` 워크플로가
+  돌아간다. 이 세션은 구글 드라이브에 접근할 수 없어서 대신 못 함.
+  - 절차: 드라이브에서 두 폴더(각각 안에 `catalog.duckdb` 있음)를
+    로컬로 받은 뒤 `zip -r price_catalog.zip <price 폴더 내용>`/
+    `zip -r fundamentals_catalog.zip <fundamentals 폴더 내용>`로
+    압축(zip 안에 바로 `catalog.duckdb`가 보이게 — 폴더 한 겹 더
+    감싸지 않기). GitHub 저장소 → Releases → "Draft a new release" →
+    태그 지정(예: `research-catalogs-v1`) → 두 zip 파일을 Assets로 첨부
+    → Publish.
+  - `insider_catalog.zip`(내부자거래, `ingest_insider_transactions_full.yml`
+    결과물)도 준비되면 같은 Release에 같은 방식으로 추가 — 없어도
+    워크플로는 정상 동작(insider_buying 후보만 생략됨).
+  - 업로드 끝나면 `run_full_validation.yml`을 `workflow_dispatch`로
+    실행하면서 `release_tag`에 방금 만든 태그명을 입력 — 나머지 입력
+    (`universe`/`start`/`end`)은 기본값이 이미 Stage 4 실행 전례와
+    동일하게 맞춰져 있어 그대로 둬도 됨.
 
 ## Grounding Gate 배선 보류 결정 (2026-09-24)
 
