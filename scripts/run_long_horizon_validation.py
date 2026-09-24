@@ -85,7 +85,7 @@ populated by scripts/ingest_real_market_data.py):
 
 Add `--fundamentals-db-path ./data/fundamentals_data` (populated by
 `scripts/ingest_fundamentals_data.py`, ADR-0042) to additionally
-include the `leverage`/`ml_ols`/`ml_ridge`/`rank_average_ensemble`
+include the `leverage`/`ml_ols`/`ml_ridge`/`ml_tree`/`rank_average_ensemble`
 candidates and, as of ADR-0051, 14 more fundamentals-dependent
 raw-IC-screened candidates (5 fundamentals-only, 7 hybrid, 2
 cross-sectional composites -- see `_FUNDAMENTALS_FACTOR_CANDIDATES`/
@@ -137,7 +137,7 @@ from strategy_research.classification import (  # noqa: E402
 )
 from strategy_research.evidence import assess_pbo_dsr_applicability, classify_evidence_level  # noqa: E402
 from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
-from ml.ml_strategy import MLStrategy, MLStrategyParameters, ridge_cv_builder  # noqa: E402
+from ml.ml_strategy import MLStrategy, MLStrategyParameters, bagged_tree_builder, ridge_cv_builder  # noqa: E402
 from strategy_research.ensemble_strategy import RankAverageEnsembleParameters, RankAverageEnsembleStrategy  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
     abnormal_investment_score,
@@ -899,6 +899,22 @@ def main() -> int:
                     security_ids, fundamentals_repository, MLStrategyParameters(top_n=_TOP_N_FOR_EVALUATION),
                     feature_cache=ml_feature_cache, target_cache=ml_target_cache,
                     model_builder=ridge_cv_builder, version="ml_ridge_cv_v1",
+                ),
+            ))
+            # Third model family (ADR-0192): the first NONLINEAR
+            # candidate this project has run -- a small bagged ensemble
+            # of shallow CART regression trees over the same 6 features
+            # (see src/ml/tree_model.py). ml_ols/ml_ridge both assume a
+            # linear combination of the factor scores; this tests
+            # whether non-linear interactions among them carry signal
+            # the linear families cannot express.
+            strategy_specs.append((
+                "ml_tree",
+                "bagged shallow CART regression trees over all 6 factor scores, fundamentals-based (see src/ml/tree_model.py, ADR-0192)",
+                lambda: MLStrategy(
+                    security_ids, fundamentals_repository, MLStrategyParameters(top_n=_TOP_N_FOR_EVALUATION),
+                    feature_cache=ml_feature_cache, target_cache=ml_target_cache,
+                    model_builder=bagged_tree_builder, version="ml_tree_v1",
                 ),
             ))
             # Rank-average ensemble (ADR-0043 Decision 5): a
