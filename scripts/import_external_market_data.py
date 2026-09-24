@@ -252,7 +252,33 @@ def main(argv: list[str] | None = None) -> int:
                 "QUALITY_REJECTED); Raw copies are retained, not deleted.",
                 file=sys.stderr,
             )
-        return 0 if result.status.value == "SUCCESS" and quality_run.status != DataQualityRunStatus.CRITICAL_FAILURE else 1
+        # External audit finding (2026-09-24): IngestionRunner.run()'s
+        # per-record status is SUCCESS whenever fetch/normalize/append
+        # raised no exception, even when the provider genuinely returned
+        # zero records for every symbol (a real failure mode -- a bad
+        # --source-name/--data-dir, or a provider outage the CSVs were
+        # never actually produced from) -- that "clean but empty" case
+        # is legitimate elsewhere (e.g. an already-up-to-date symbol's
+        # normal re-run has nothing NEW to add), so IngestionRunner
+        # itself is not changed. `missing_symbols` -- computed above from
+        # this repository's ACTUAL persisted bars for [start, end], not
+        # just this run's new ones -- is the honest signal: every
+        # requested symbol having zero bars after the run completed
+        # means nothing was ever ingested for anyone, not a partial gap.
+        if missing_symbols and len(missing_symbols) == len(symbols):
+            print(
+                f"FATAL: every requested symbol ({len(symbols)}) has zero bars in the repository "
+                f"for [{args.start.date()}, {args.end.date()}] after this run -- nothing was actually "
+                "ingested (check --source-name/--data-dir).",
+                file=sys.stderr,
+            )
+        return (
+            0
+            if result.status.value == "SUCCESS"
+            and quality_run.status != DataQualityRunStatus.CRITICAL_FAILURE
+            and not (missing_symbols and len(missing_symbols) == len(symbols))
+            else 1
+        )
     finally:
         engine.close()
 

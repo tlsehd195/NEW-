@@ -220,6 +220,42 @@ class TestImportExternalMarketDataCli:
         assert manifest["data_quality_issue_count"] == 0
         assert not any(i["check"] == "future_dated" for i in manifest["data_quality_issues"])
 
+    def test_every_symbol_producing_zero_bars_fails_the_run_not_a_silent_success(self, tmp_path) -> None:
+        """External audit finding (2026-09-24): IngestionRunner.run()
+        marks a symbol SUCCESS whenever fetch/normalize/append raised no
+        exception, even when the provider genuinely returned zero
+        records for it -- legitimate for a single already-up-to-date
+        symbol mid-run, but when EVERY requested symbol ends up with
+        zero real bars persisted, that means nothing was ever ingested
+        for anyone (a bad --source-name/--data-dir, or CSVs that were
+        never actually produced) and must not report exit 0. Each CSV
+        here exists (so no PermanentProviderError/FAILED status) but has
+        only a header row -- the "clean but empty" case, not a missing-
+        file case (already covered by the sibling test above)."""
+        module = _load_script()
+
+        data_dir = tmp_path / "external_csvs"
+        data_dir.mkdir()
+        _write_csv(data_dir / "AAPL.csv", [])
+        _write_csv(data_dir / "MSFT.csv", [])
+
+        db_path = tmp_path / "db"
+        exit_code = module.main(
+            [
+                "--source-name", "test_external_source",
+                "--data-dir", str(data_dir),
+                "--symbols", "AAPL", "MSFT",
+                "--start", "2010-01-01",
+                "--end", "2010-01-31",
+                "--db-path", str(db_path),
+            ]
+        )
+        assert exit_code == 1
+
+        manifest = json.loads((db_path / "import_manifest.json").read_text())
+        assert manifest["missing_symbols"] == ["AAPL", "MSFT"]
+        assert manifest["total_bars_persisted"] == 0
+
     def test_no_network_module_is_imported_by_this_script(self) -> None:
         source = _SCRIPT_PATH.read_text()
         for forbidden in ("import requests", "urllib.request", "http.client", "TiingoHttpTransport", "StooqHttpTransport"):

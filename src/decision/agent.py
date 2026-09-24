@@ -20,6 +20,7 @@ produces BUY/SELL by "falling through" an unhandled case -- the final
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Optional, Protocol
 
@@ -124,6 +125,24 @@ class BaselineRuleDecisionAgent:
 
         if prediction is None or prediction.expected_return is None or prediction.confidence is None:
             return build(DecisionAction.NO_TRADE, "prediction_unavailable")
+
+        # Independent audit finding (2026-09-24): a NaN/inf
+        # expected_return or uncertainty is exactly as untrustworthy as
+        # a missing one, but was NOT treated the same way. A NaN
+        # `uncertainty` makes the `uncertainty_exceeds_signal` gate's own
+        # `<=` comparison silently evaluate to False (NaN comparisons are
+        # always False in Python), letting the gate be skipped entirely
+        # instead of blocking the trade; an infinite `expected_return`
+        # satisfies `expected_return >= config.min_expected_return`
+        # unconditionally below, producing a directional BUY from a
+        # value no real predictor should ever emit. Both are fail-closed
+        # here, before any other gate runs, matching this function's own
+        # "no rule ever produces BUY/SELL by falling through an
+        # unhandled case" invariant (module docstring).
+        if not math.isfinite(prediction.expected_return) or (
+            prediction.uncertainty is not None and not math.isfinite(prediction.uncertainty)
+        ):
+            return build(DecisionAction.NO_TRADE, "non_finite_prediction_value")
 
         if prediction.confidence < config.min_confidence:
             return build(DecisionAction.NO_TRADE, "confidence_below_threshold")

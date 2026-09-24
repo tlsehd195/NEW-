@@ -211,11 +211,17 @@ from strategy_research.walk_forward_evaluation import run_walk_forward_evaluatio
 from data_infra.versioning import compute_data_version  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
-# Every real provider this project has ever integrated
-# (src/data_infra/providers/tiingo.py, stooq.py) stamps exactly this
-# source name onto Provenance.source -- used by the Phase 28
-# REAL-provenance-plausibility check below.
-_KNOWN_REAL_PROVIDER_SOURCES = {"tiingo", "stooq"}
+# Every real provider this project has ever integrated stamps exactly
+# this source name onto Provenance.source -- used by the Phase 28
+# REAL-provenance-plausibility check below. "stooq" is kept even though
+# ADR-0164 removed it from the live FallbackDataProvider chain (a
+# catalog built before that change can still legitimately carry stooq-
+# sourced bars); "twelvedata"/"alphavantage" (src/data_infra/providers/
+# twelvedata.py, alphavantage.py) were added by ADR-0164 as the current
+# chain's tiers 2/3 but never added here -- independent audit finding
+# F-6 (2026-09-24): a real run using genuine ADR-0164-era data would
+# have been wrongly rejected by the check below as "unexpected sources".
+_KNOWN_REAL_PROVIDER_SOURCES = {"tiingo", "stooq", "twelvedata", "alphavantage"}
 _BENCHMARK_ID = "SPY_TOTAL_RETURN_REAL"
 
 # ADR-0052: portfolio-construction breadth for this evaluation run,

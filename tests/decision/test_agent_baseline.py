@@ -196,6 +196,58 @@ class TestMissingOrInvalidData:
         assert decision.action == DecisionAction.NO_TRADE
         assert decision.decision_reason == "regime_stress_unknown"
 
+    def test_no_trade_when_uncertainty_is_nan(self) -> None:
+        """Independent audit finding (2026-09-24): before this fix, a
+        NaN `uncertainty` made the `uncertainty_exceeds_signal` gate's
+        own `abs(expected_return) <= uncertainty * ratio` comparison
+        silently evaluate to False (every comparison against NaN is
+        False in Python), skipping the gate entirely instead of
+        blocking the trade -- this exact scenario produced a BUY before
+        the fix."""
+        agent = BaselineRuleDecisionAgent()
+        prediction = make_prediction(expected_return=0.02, confidence=0.9, uncertainty=float("nan"))
+        regime = make_composite()
+        decision = agent.decide("AAA", _utc(2024, 6, 1), prediction, regime, empty_portfolio(_utc(2024, 6, 1)))
+        assert decision.action == DecisionAction.NO_TRADE
+        assert decision.decision_reason == "non_finite_prediction_value"
+
+    def test_no_trade_when_expected_return_is_infinite(self) -> None:
+        """Independent audit finding (2026-09-24): +inf satisfied
+        `expected_return >= config.min_expected_return` unconditionally,
+        producing a directional BUY from a value no real predictor
+        should ever emit -- this exact scenario produced a BUY (with a
+        target_weight_hint bounded only by max_target_weight_hint, not
+        rejected) before the fix."""
+        agent = BaselineRuleDecisionAgent()
+        prediction = make_prediction(expected_return=float("inf"), confidence=0.9)
+        regime = make_composite()
+        decision = agent.decide("AAA", _utc(2024, 6, 1), prediction, regime, empty_portfolio(_utc(2024, 6, 1)))
+        assert decision.action == DecisionAction.NO_TRADE
+        assert decision.decision_reason == "non_finite_prediction_value"
+
+    def test_no_trade_when_expected_return_is_negative_infinite(self) -> None:
+        agent = BaselineRuleDecisionAgent()
+        prediction = make_prediction(expected_return=float("-inf"), confidence=0.9)
+        regime = make_composite()
+        decision = agent.decide(
+            "AAA", _utc(2024, 6, 1), prediction, regime, portfolio_holding(_utc(2024, 6, 1), "AAA", 10.0),
+        )
+        assert decision.action == DecisionAction.NO_TRADE
+        assert decision.decision_reason == "non_finite_prediction_value"
+
+    def test_nan_expected_return_still_falls_through_to_no_trade(self) -> None:
+        """NaN expected_return was already accidentally safe before this
+        fix (every `>=`/`<=` comparison against NaN is False, so it fell
+        through to the final `NO_TRADE` default) -- this test pins that
+        the new explicit finiteness gate now catches it deliberately,
+        with an honest reason, rather than relying on that accident."""
+        agent = BaselineRuleDecisionAgent()
+        prediction = make_prediction(expected_return=float("nan"), confidence=0.9)
+        regime = make_composite()
+        decision = agent.decide("AAA", _utc(2024, 6, 1), prediction, regime, empty_portfolio(_utc(2024, 6, 1)))
+        assert decision.action == DecisionAction.NO_TRADE
+        assert decision.decision_reason == "non_finite_prediction_value"
+
     def test_regime_entirely_absent_does_not_block_a_decision(self) -> None:
         """Regime is a gate only when available -- Prediction is the
         mandatory input, Regime is an additional check applied only when

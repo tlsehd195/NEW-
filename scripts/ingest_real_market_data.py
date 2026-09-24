@@ -247,6 +247,17 @@ def main() -> int:
                 corporate_action_results.append({"security_id": symbol, "count": len(actions), "error": None})
             except (TransientProviderError, PermanentProviderError) as exc:
                 corporate_action_results.append({"security_id": symbol, "count": 0, "error": str(exc)})
+        # External audit finding (2026-09-24): a per-symbol
+        # TransientProviderError/PermanentProviderError above was
+        # already caught and recorded, but corporate_action_results
+        # never factored into this run's exit code at all -- every
+        # symbol's corporate-action fetch could fail (a real provider
+        # outage, an auth error, a wrong endpoint) and this script would
+        # still report SUCCESS/exit 0 as long as price bars themselves
+        # ingested fine. A single symbol with no real corporate action
+        # in range is a legitimate, error=None, count=0 result (not
+        # counted here); only a genuine fetch error counts as "failed".
+        corporate_action_failed_symbols = sorted(r["security_id"] for r in corporate_action_results if r["error"] is not None)
 
         quality = DataQualityFramework()
         # ADR-0167 identified this bug but deliberately deferred fixing it
@@ -467,6 +478,7 @@ def main() -> int:
             ],
             "corporate_actions_persisted": len(all_actions),
             "corporate_actions_per_symbol": corporate_action_results,
+            "corporate_action_failed_symbols": corporate_action_failed_symbols,
             "content_checksum": checksum,
             "data_version": checksum,
         }
@@ -530,11 +542,20 @@ def main() -> int:
                 "still be treated as failed so it is never silently mistaken for a clean ingestion.",
                 file=sys.stderr,
             )
+        corporate_actions_entirely_failed = bool(corporate_action_failed_symbols) and len(corporate_action_failed_symbols) == len(symbols)
+        if corporate_actions_entirely_failed:
+            print(
+                f"FATAL: corporate-action collection failed for every requested symbol "
+                f"({len(symbols)}) -- price bars were never split/dividend-adjusted for this run: "
+                f"{corporate_action_failed_symbols}",
+                file=sys.stderr,
+            )
         return (
             0
             if result.status.value == "SUCCESS"
             and quality_run.status != DataQualityRunStatus.CRITICAL_FAILURE
             and not unexplained_zero_bar_symbols
+            and not corporate_actions_entirely_failed
             else 1
         )
     finally:
