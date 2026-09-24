@@ -1,0 +1,234 @@
+# One-time/on-demand provisioning of an Oracle Cloud Always Free
+# Ampere A1 (ARM, VM.Standard.A1.Flex, 4 OCPU / 24GB RAM) instance that
+# hosts a GitHub Actions self-hosted runner -- account owner's own
+# request, 2026-09-24, for running colibri
+# (EXTERNAL_REPO_APPLICABILITY_REPORT.md priority 10; this container
+# has no hardware that could run it, see ADR discussion in
+# docs/decisions/).
+#
+# Every network resource (VCN/internet gateway/route table/security
+# list/subnet) is created only if a same-named one does not already
+# exist -- safe to re-run without duplicating resources.
+#
+# A fresh ed25519 SSH key pair is generated on the runner and the
+# PRIVATE half is uploaded as a short-retention workflow artifact (the
+# account owner downloads it once from the run's own Summary page);
+# it is never printed to the log and never committed. The instance's
+# GitHub Actions runner registration token is a short-lived (1 hour)
+# token fetched fresh from the GitHub API using GH_RUNNER_PAT
+# immediately before launch -- GH_RUNNER_PAT itself is never sent to
+# or stored on the instance, only that ephemeral token is.
+#
+# `workflow_dispatch`-only -- provisioning a billable-adjacent (Always
+# Free tier) cloud resource must never be on a recurring schedule.
+name: Provision OCI Colibri Runner
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install OCI CLI
+        run: pip install --quiet oci-cli
+
+      - name: Write OCI config from secrets (never echoed)
+        env:
+          OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          chmod 700 "$HOME/.oci"
+          printf '%s\n' "$OCI_API_KEY" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          echo "TENANCY_OCID=$OCI_TENANCY_OCID" >> "$GITHUB_ENV"
+
+      - name: Discover availability domain and image
+        run: |
+          set -euo pipefail
+          AD_NAME=$(oci iam availability-domain list --compartment-id "$TENANCY_OCID" \
+            --query "data[0].name" --raw-output)
+          IMAGE_ID=$(oci compute image list --compartment-id "$TENANCY_OCID" \
+            --operating-system "Canonical Ubuntu" --operating-system-version "24.04" \
+            --shape "VM.Standard.A1.Flex" \
+            --query "data[?contains(\"display-name\", 'aarch64') && !contains(\"display-name\", 'Minimal')] | [0].id" \
+            --raw-output)
+          echo "AD_NAME=$AD_NAME" >> "$GITHUB_ENV"
+          echo "IMAGE_ID=$IMAGE_ID" >> "$GITHUB_ENV"
+          echo "Availability domain and image resolved."
+
+      - name: Create (or reuse) the VCN
+        run: |
+          set -euo pipefail
+          VCN_ID=$(oci network vcn list --compartment-id "$TENANCY_OCID" \
+            --query "data[?\"display-name\"=='colibri-vcn' && \"lifecycle-state\"!='TERMINATED'] | [0].id" --raw-output)
+          if [ "$VCN_ID" = "null" ] || [ -z "$VCN_ID" ]; then
+            VCN_ID=$(oci network vcn create --compartment-id "$TENANCY_OCID" \
+              --cidr-block "10.20.0.0/16" --display-name "colibri-vcn" \
+              --wait-for-state AVAILABLE --query "data.id" --raw-output)
+            echo "Created a new VCN."
+          else
+            echo "Reusing existing VCN."
+          fi
+          echo "VCN_ID=$VCN_ID" >> "$GITHUB_ENV"
+
+      - name: Create (or reuse) the internet gateway
+        run: |
+          set -euo pipefail
+          IGW_ID=$(oci network internet-gateway list --compartment-id "$TENANCY_OCID" --vcn-id "$VCN_ID" \
+            --query "data[?\"display-name\"=='colibri-igw' && \"lifecycle-state\"!='TERMINATED'] | [0].id" --raw-output)
+          if [ "$IGW_ID" = "null" ] || [ -z "$IGW_ID" ]; then
+            IGW_ID=$(oci network internet-gateway create --compartment-id "$TENANCY_OCID" --vcn-id "$VCN_ID" \
+              --display-name "colibri-igw" --is-enabled true \
+              --wait-for-state AVAILABLE --query "data.id" --raw-output)
+            echo "Created a new internet gateway."
+          else
+            echo "Reusing existing internet gateway."
+          fi
+          echo "IGW_ID=$IGW_ID" >> "$GITHUB_ENV"
+
+      - name: Create (or reuse) the route table
+        run: |
+          set -euo pipefail
+          RT_ID=$(oci network route-table list --compartment-id "$TENANCY_OCID" --vcn-id "$VCN_ID" \
+            --query "data[?\"display-name\"=='colibri-rt' && \"lifecycle-state\"!='TERMINATED'] | [0].id" --raw-output)
+          if [ "$RT_ID" = "null" ] || [ -z "$RT_ID" ]; then
+            RT_ID=$(oci network route-table create --compartment-id "$TENANCY_OCID" --vcn-id "$VCN_ID" \
+              --display-name "colibri-rt" \
+              --route-rules "[{\"destination\": \"0.0.0.0/0\", \"destinationType\": \"CIDR_BLOCK\", \"networkEntityId\": \"$IGW_ID\"}]" \
+              --wait-for-state AVAILABLE --query "data.id" --raw-output)
+            echo "Created a new route table."
+          else
+            echo "Reusing existing route table."
+          fi
+          echo "RT_ID=$RT_ID" >> "$GITHUB_ENV"
+
+      - name: Create (or reuse) the security list
+        run: |
+          set -euo pipefail
+          SL_ID=$(oci network security-list list --compartment-id "$TENANCY_OCID" --vcn-id "$VCN_ID" \
+            --query "data[?\"display-name\"=='colibri-seclist' && \"lifecycle-state\"!='TERMINATED'] | [0].id" --raw-output)
+          if [ "$SL_ID" = "null" ] || [ -z "$SL_ID" ]; then
+            SL_ID=$(oci network security-list create --compartment-id "$TENANCY_OCID" --vcn-id "$VCN_ID" \
+              --display-name "colibri-seclist" \
+              --egress-security-rules '[{"destination": "0.0.0.0/0", "destinationType": "CIDR_BLOCK", "protocol": "all", "isStateless": false}]' \
+              --ingress-security-rules '[{"source": "0.0.0.0/0", "sourceType": "CIDR_BLOCK", "protocol": "6", "isStateless": false, "tcpOptions": {"destinationPortRange": {"min": 22, "max": 22}}}]' \
+              --wait-for-state AVAILABLE --query "data.id" --raw-output)
+            echo "Created a new security list (SSH inbound only, all outbound)."
+          else
+            echo "Reusing existing security list."
+          fi
+          echo "SL_ID=$SL_ID" >> "$GITHUB_ENV"
+
+      - name: Create (or reuse) the subnet
+        run: |
+          set -euo pipefail
+          SUBNET_ID=$(oci network subnet list --compartment-id "$TENANCY_OCID" --vcn-id "$VCN_ID" \
+            --query "data[?\"display-name\"=='colibri-subnet' && \"lifecycle-state\"!='TERMINATED'] | [0].id" --raw-output)
+          if [ "$SUBNET_ID" = "null" ] || [ -z "$SUBNET_ID" ]; then
+            SUBNET_ID=$(oci network subnet create --compartment-id "$TENANCY_OCID" --vcn-id "$VCN_ID" \
+              --cidr-block "10.20.0.0/24" --display-name "colibri-subnet" \
+              --route-table-id "$RT_ID" --security-list-ids "[\"$SL_ID\"]" \
+              --wait-for-state AVAILABLE --query "data.id" --raw-output)
+            echo "Created a new subnet."
+          else
+            echo "Reusing existing subnet."
+          fi
+          echo "SUBNET_ID=$SUBNET_ID" >> "$GITHUB_ENV"
+
+      - name: Generate a fresh SSH key pair for this instance
+        run: |
+          set -euo pipefail
+          ssh-keygen -t ed25519 -N "" -f colibri_key -C "colibri-oci-$(date -u +%Y%m%d)"
+
+      - name: Upload the private key (download once, then delete this artifact)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: colibri-ssh-private-key
+          path: colibri_key
+          retention-days: 1
+
+      - name: Fetch a short-lived runner registration token
+        env:
+          GH_RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(curl -fsSL -X POST \
+            -H "Authorization: token $GH_RUNNER_PAT" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runners/registration-token" \
+            | jq -r .token)
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "Failed to obtain a runner registration token -- check GH_RUNNER_PAT's scope (needs 'repo')." >&2
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "RUNNER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Render the cloud-init bootstrap script
+        run: |
+          set -euo pipefail
+          sed \
+            -e "s|__REPO_URL__|https://github.com/${{ github.repository }}|" \
+            -e "s|__RUNNER_TOKEN__|$RUNNER_TOKEN|" \
+            scripts/deploy/oci_colibri_runner_bootstrap.sh.template > bootstrap_filled.sh
+
+      - name: Launch the instance
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=$(oci compute instance launch \
+            --compartment-id "$TENANCY_OCID" \
+            --availability-domain "$AD_NAME" \
+            --shape "VM.Standard.A1.Flex" \
+            --shape-config '{"ocpus": 4, "memoryInGBs": 24}' \
+            --image-id "$IMAGE_ID" \
+            --subnet-id "$SUBNET_ID" \
+            --assign-public-ip true \
+            --display-name "colibri-runner" \
+            --ssh-authorized-keys-file colibri_key.pub \
+            --user-data-file bootstrap_filled.sh \
+            --wait-for-state RUNNING \
+            --query "data.id" --raw-output)
+          echo "INSTANCE_ID=$INSTANCE_ID" >> "$GITHUB_ENV"
+          echo "Instance launched: $INSTANCE_ID"
+
+      - name: Report the instance's public IP
+        run: |
+          set -euo pipefail
+          VNIC_ID=$(oci compute instance list-vnics --instance-id "$INSTANCE_ID" \
+            --query "data[0].id" --raw-output)
+          PUBLIC_IP=$(oci network vnic get --vnic-id "$VNIC_ID" --query "data.\"public-ip\"" --raw-output)
+          echo "Instance public IP: $PUBLIC_IP"
+          echo "SSH once cloud-init finishes (a minute or two): ssh -i colibri_key ubuntu@$PUBLIC_IP"
+          echo "### Colibri runner instance" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Public IP: \`$PUBLIC_IP\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SSH: \`ssh -i colibri_key ubuntu@$PUBLIC_IP\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Private key: download the \`colibri-ssh-private-key\` artifact from this run (expires in 1 day)" >> "$GITHUB_STEP_SUMMARY"
