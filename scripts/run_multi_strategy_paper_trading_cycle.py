@@ -224,6 +224,17 @@ def _run_run_cycle_strategy(
             {"as_of_time": as_of.isoformat(), "warnings": list(warnings)}
             for as_of, warnings in state.corporate_action_warnings
         ],
+        # Independent audit finding (2026-09-24): same surfacing
+        # treatment as mark_to_market_missing/corporate_action_warnings
+        # above -- see run_paper_trading_cycle.py's identical field for
+        # what populates it (orchestration.paper_runner.PaperRunnerState.
+        # skipped_delayed_fills). RUN_CYCLE-only (BUY_AND_HOLD's own
+        # allocation loop never calls orchestration.paper_runner.
+        # run_cycle, so it can never populate this field).
+        "skipped_delayed_fills": [
+            {"as_of_time": as_of.isoformat(), "security_ids": list(skipped)}
+            for as_of, skipped in state.skipped_delayed_fills
+        ],
     }
 
 

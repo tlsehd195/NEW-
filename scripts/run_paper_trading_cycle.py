@@ -493,6 +493,22 @@ def main(argv=None) -> int:
             flush=True,
         )
 
+    # Independent audit finding (2026-09-24): same "never let a real
+    # issue arrive with zero signal" treatment as mark_to_market_missing/
+    # corporate_action_warnings above -- a delayed (T+1) fill whose
+    # originating decision could not be re-located is correctly never
+    # fabricated a link, but was previously dropped with no signal at
+    # all that a real trade's economic outcome never reached the Trade
+    # Journal.
+    if state.skipped_delayed_fills:
+        total_skipped = sum(len(skipped) for _, skipped in state.skipped_delayed_fills)
+        print(
+            f"WARNING: {total_skipped} delayed fill(s) skipped (originating decision not found) across "
+            f"{len(state.skipped_delayed_fills)} checkpoint(s) -- see skipped_delayed_fills "
+            "in the report JSON for details.",
+            flush=True,
+        )
+
     final_account = session.account_summary(as_of=checkpoints[-1])
 
     # Session 38: Phase 18's compute_paper_performance_report, wired
@@ -592,6 +608,10 @@ def main(argv=None) -> int:
         "corporate_action_warnings": [
             {"as_of_time": as_of.isoformat(), "warnings": list(warnings)}
             for as_of, warnings in state.corporate_action_warnings
+        ],
+        "skipped_delayed_fills": [
+            {"as_of_time": as_of.isoformat(), "security_ids": list(skipped)}
+            for as_of, skipped in state.skipped_delayed_fills
         ],
         "performance": paper_performance_report_to_payload(performance_report),
         "content_checksum": checksum,
