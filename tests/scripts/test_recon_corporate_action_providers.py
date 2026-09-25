@@ -96,6 +96,7 @@ class TestMain:
         module = _load_module()
         monkeypatch.setenv("TWELVEDATA_API_KEY", "secret-twelvedata-key")
         monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "secret-alphavantage-key")
+        monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
         called_urls = []
 
         def _fake_fetch(url):
@@ -113,3 +114,20 @@ class TestMain:
         out = capsys.readouterr().out
         assert "secret-twelvedata-key" not in out
         assert "secret-alphavantage-key" not in out
+
+    def test_sleeps_over_one_second_between_calls_within_the_same_provider(self, monkeypatch) -> None:
+        """2026-09-25 follow-up: the first real run fired both Alpha
+        Vantage candidates 4ms apart, and its SPLITS call came back
+        with Alpha Vantage's own throttle notice instead of real data
+        -- this pacing is what makes a re-run's answer trustworthy."""
+        module = _load_module()
+        monkeypatch.setenv("TWELVEDATA_API_KEY", "k1")
+        monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "k2")
+        monkeypatch.setattr(module, "_fetch", lambda url: (200, "ok"))
+        sleep_calls = []
+        monkeypatch.setattr(module.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+        module.main()
+
+        assert len(sleep_calls) == (len(module._TWELVEDATA_CANDIDATES) - 1) + (len(module._ALPHAVANTAGE_CANDIDATES) - 1)
+        assert all(s > 1.0 for s in sleep_calls)

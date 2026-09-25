@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -97,7 +98,18 @@ def main() -> int:
         if not api_key:
             print(f"=== {env_var} not set -- skipping its candidates ===\n")
             continue
-        for label, build_url in candidates:
+        for i, (label, build_url) in enumerate(candidates):
+            # 2026-09-25 follow-up: the first real run fired both Alpha
+            # Vantage calls back-to-back (4ms apart) and its SPLITS call
+            # came back with Alpha Vantage's own "spread out your
+            # requests" throttle notice instead of real data or a real
+            # error -- Tier 1 evidence for DIVIDENDS, but genuinely
+            # inconclusive for SPLITS. A >1s gap before every call after
+            # the first respects Alpha Vantage's own documented 1
+            # request/second limit so every candidate gets a clean,
+            # unthrottled answer.
+            if i > 0:
+                time.sleep(1.1)
             url = build_url(api_key)
             print(f"=== {label} ===")
             status, body = _fetch(url)
