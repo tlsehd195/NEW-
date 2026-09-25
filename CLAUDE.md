@@ -151,6 +151,16 @@ Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직
   `KIS_APP_KEY`/`KIS_APP_SECRET`로 직접 등록 — `ADR-0082`의
   `MARKET_DATA_API_KEY`와 동일한 패턴. 등록 완료되면 `src/broker/kis/`
   어댑터 작성 + 실제 모의투자 API 검증 진행.
+- **GEMINI_API_KEY GitHub Actions secret 등록** (`ADR-0206`): AI 예측
+  리서치 실험(`src/ai_gateway/providers/gemini*.py`,
+  `scripts/run_ai_prediction_experiment.py`,
+  `scripts/verify_gemini_adapter.py`)용 Gemini API 키는 이 세션의
+  로컬 환경 변수로는 이미 확인됨(값 자체는 세션 밖으로 나간 적 없음)
+  — 하지만 `.github/workflows/verify_gemini_adapter.yml`이 CI에서
+  돌아가려면 같은 키를 GitHub 저장소 Settings → Secrets and variables
+  → Actions에 `GEMINI_API_KEY`로 직접 등록해야 함 (KIS_APP_KEY와 동일
+  패턴). 등록 전까지는 `workflow_dispatch`로 그 워크플로를 실행해도
+  실패한다.
 - **colibri 실행용 Oracle Cloud 서버** (`EXTERNAL_REPO_APPLICABILITY_
   REPORT.md` priority 10): Oracle Cloud Always Free 계정 생성(완료,
   2026-09-24) → `VM.Standard.A1.Flex`(ARM, 4 OCPU/24GB RAM) 인스턴스

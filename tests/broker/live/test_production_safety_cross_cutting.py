@@ -56,11 +56,14 @@ class TestSecretAccessIsConfinedToOneFileAcrossTheWholeSrcTree:
         # test_tiingo_auth.py, enforces isolation within that subpackage).
         # ADR-0164 added twelvedata_auth.py/alphavantage_auth.py the same
         # way for the 2nd/3rd fallback tiers (Stooq needs no key at all).
+        # ADR-0206 added ai_gateway/providers/gemini_auth.py the same way
+        # for the real (research-only) Gemini provider adapter.
         allowed_files = {
             ("broker", "toss", "auth.py"),
             ("data_infra", "providers", "tiingo_auth.py"),
             ("data_infra", "providers", "twelvedata_auth.py"),
             ("data_infra", "providers", "alphavantage_auth.py"),
+            ("ai_gateway", "providers", "gemini_auth.py"),
         }
         offenders: list[str] = []
         for py_file in src_root.rglob("*.py"):
