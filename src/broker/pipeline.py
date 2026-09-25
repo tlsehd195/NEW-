@@ -7,6 +7,25 @@ objects, caller decides what to keep" separation
 `learning.pipeline.run_learning_pipeline`/`evolution.pipeline.
 generate_candidate_batch` already use).
 
+**No safety gate (independent audit finding F2, 2026-09-24): this
+function calls `adapter.submit_order(...)` directly and unconditionally
+-- it never evaluates `broker.live.safety_gate.evaluate_safety_gate`,
+never checks a kill switch, never checks `LiveActivationApproval`.**
+That is deliberate: this module is adapter-agnostic infrastructure (it
+accepts any `BrokerAdapter`, `execution_mode` is a plain caller-supplied
+audit-log label, not a real gate input) and has no way to know whether
+its caller already evaluated a safety gate. Today's one real caller
+(`broker.paper.us_longterm_runner.run_buy_and_hold_paper_session`,
+`execution_mode="PAPER"`) needs no gate -- Paper Trading has no kill
+switch/activation-approval concept. `orchestration.live_runner.
+run_cycle`/`broker.live.session.LiveTradingSession.submit` are the real,
+gated path for Live orders, and call `adapter.submit_order` directly
+themselves, never through this function. **A future caller must never
+pass a real Live-capable adapter (e.g. `broker.toss.adapter.
+TossBrokerAdapter`) to this function without having already run
+`evaluate_safety_gate` itself and confirmed it passed** -- this function
+provides no such protection on its own.
+
 See docs/specifications/PHASE-13-toss-securities-adapter.md section 15.
 """
 

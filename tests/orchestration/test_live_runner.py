@@ -28,6 +28,7 @@ from broker.live.kill_switch import KillSwitchTriggerContext
 from broker.live.safety_gate import SafetyGateContext
 from broker.live.session import LiveTradingSession
 from broker.mock import MockBrokerAdapter
+from broker.models import BrokerPosition
 
 from decision.agent import BaselineRuleDecisionAgent
 from decision.config import DecisionConfig
@@ -678,6 +679,58 @@ class TestAccountUnavailableFailsClosed:
             assert False, "expected a RuntimeError, not a silently-empty portfolio"
         except RuntimeError as exc:
             assert "live_account_unavailable" in str(exc)
+
+
+class _OnePositionUnavailableAdapter(MockBrokerAdapter):
+    """Wraps a real `MockBrokerAdapter` -- everything delegates to the
+    normal mock behavior except `get_positions`, which injects one
+    genuinely `available=False` `BrokerPosition` for `security_id`
+    alongside whatever real positions the mock already holds.
+    `MockBrokerAdapter` itself has no built-in way to simulate a partial
+    (single-security) position-read failure -- its own `failure_mode=
+    "account_unavailable"` fails the WHOLE broker (account AND every
+    position at once), a different, already-tested scenario."""
+
+    def __init__(self, *args, unavailable_security_id: str, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._unavailable_security_id = unavailable_security_id
+
+    def get_positions(self, *, as_of):
+        real = super().get_positions(as_of=as_of)
+        return real + (
+            BrokerPosition(
+                security_id=self._unavailable_security_id, as_of_time=as_of,
+                available=False, unavailable_reason="simulated_partial_position_read_failure",
+            ),
+        )
+
+
+class TestPositionUnavailableFailsClosed:
+    """Independent audit finding F5 (2026-09-24): before this fix, an
+    individual `available=False` `BrokerPosition` was silently
+    `continue`d out of `_live_portfolio_view`'s own `positions` dict --
+    indistinguishable from a genuine zero position -- while `run_cycle`
+    unconditionally hardcodes `position_state_known=True` on every
+    gate_context regardless. A decision for that one security could
+    proceed on a silently-wrong "you hold zero shares" assumption while
+    the safety gate was told position state was fully known."""
+
+    def test_a_broker_that_cannot_confirm_one_position_raises_rather_than_treating_it_as_zero(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        adapter = _OnePositionUnavailableAdapter(BrokerConfig(broker_id="toss"), unavailable_security_id="AAA")
+        live_config = make_live_config(live_trading_enabled=True, max_daily_loss=20_000.0, max_order_frequency_per_hour=100)
+        session = LiveTradingSession(live_config, adapter)
+
+        try:
+            run_cycle(
+                ["AAA"], view.current_time, view, session,
+                gate_context=_gate_context(session, view.current_time), **_components(),
+            )
+            assert False, "expected a RuntimeError, not a silently-zero position"
+        except RuntimeError as exc:
+            assert "live_position_unavailable" in str(exc)
+            assert "AAA" in str(exc)
 
 
 class TestRiskHealthDerivedFromState:
