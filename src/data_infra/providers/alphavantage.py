@@ -40,14 +40,29 @@ Twelve Data have already failed for a symbol during this project's own
 narrow daily incremental catch-up window (a few weeks at most, ADR-0164),
 not a broad historical backfill.
 
-**Deliberately does NOT implement corporate-action fetching**, same
-reasoning as `StooqDataProvider`/`TwelveDataDataProvider`: Tiingo
-remains this project's sole corporate-action source. `adjusted_close`
-is never populated here either -- Alpha Vantage's free
+`adjusted_close` is never populated here -- Alpha Vantage's free
 `TIME_SERIES_DAILY` endpoint does not return a split/dividend-adjusted
 close (that is a separate, premium `TIME_SERIES_DAILY_ADJUSTED`
 endpoint this project does not use), and fabricating one would violate
 this project's raw/adjusted separation discipline.
+
+**Corporate-action fetching (`fetch_corporate_actions`/
+`normalize_corporate_actions`, added 2026-09-25)**: confirmed Tier 1,
+not guessed -- `scripts/recon_corporate_action_providers.py`'s own real
+`workflow_dispatch` run got real HTTP 200 data from BOTH the
+`DIVIDENDS` and `SPLITS` functions on a real free-tier key, including
+GE's own real 2021-08-02 reverse split (`split_factor: "0.1250"`,
+matching this project's own already-known REVERSE_SPLIT edge case,
+`docs/operations/MARKET-DATA-PROVIDER.md`). This closes the gap run #44
+(2026-09-25) exposed: corporate-action collection previously called
+Tiingo ONLY, with no fallback at all, so a day where Tiingo's own
+hourly budget (ADR-0160, shared with price-bar fetching) was already
+exhausted failed corporate actions for every requested symbol at once.
+`scripts/ingest_real_market_data.py` now tries Tiingo first, falling
+back to this provider per symbol -- never the reverse, since Alpha
+Vantage's real free-tier cap (25 requests/day, TWO calls per symbol
+here) could not cover a full ~87-symbol universe on its own even if it
+went first.
 """
 
 from __future__ import annotations
@@ -55,7 +70,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Sequence
 
-from data_infra.models import PriceBar, Provenance
+from data_infra.enums import CorporateActionType
+from data_infra.models import CorporateAction, PriceBar, Provenance
 from data_infra.provider import PermanentProviderError, TransientProviderError, bar_available_time, clamp_ingestion_time
 from data_infra.providers.alphavantage_auth import resolve_api_key
 from data_infra.providers.alphavantage_config import AlphaVantageConfig
@@ -65,6 +81,11 @@ from data_infra.versioning import compute_data_version
 _QUERY_PATH = "/query"
 _TIME_SERIES_KEY = "Time Series (Daily)"
 _REQUIRED_RAW_FIELDS = ("1. open", "2. high", "3. low", "4. close", "5. volume")
+_CORPORATE_ACTION_FUNCTIONS = (
+    # (function, kind, the raw record's own date field)
+    ("DIVIDENDS", "dividend", "ex_dividend_date"),
+    ("SPLITS", "split", "effective_date"),
+)
 
 
 class AlphaVantageDataProvider:
@@ -168,5 +189,112 @@ class AlphaVantageDataProvider:
             "rate_limit_per_minute": None,
             "is_real_external_provider": True,
             "configuration_version": self._config.configuration_version(),
-            "supports_corporate_actions": False,  # deliberately not implemented, see module docstring
+            "supports_corporate_actions": True,  # confirmed 2026-09-25, see module docstring
         }
+
+    # -- Corporate actions (extra, not part of the DataProvider
+    # Protocol -- same addition TiingoDataProvider already makes) --
+
+    def fetch_corporate_actions(self, security_id: str, start: datetime, end: datetime) -> list[dict]:
+        """Two real calls per symbol (`DIVIDENDS` then `SPLITS`),
+        client-side filtered to `[start, end]` -- neither function
+        accepts a date-range query parameter, same limitation
+        `fetch()`'s own "No native date-range query parameter" already
+        documents for `TIME_SERIES_DAILY`. Each returned record carries
+        `_kind` so `normalize_corporate_actions` knows which shape it
+        is without re-inspecting field names."""
+        api_key = resolve_api_key(self._config)
+        start_date, end_date = start.date(), end.date()
+        records: list[dict] = []
+        for function, kind, date_field in _CORPORATE_ACTION_FUNCTIONS:
+            params = {"function": function, "symbol": security_id, "apikey": api_key}
+            response = self._transport.get(_QUERY_PATH, params=params, timeout=self._config.timeout_seconds)
+            body = response.body
+
+            if isinstance(body, dict) and ("Error Message" in body or "Note" in body or "Information" in body):
+                message = body.get("Error Message") or body.get("Note") or body.get("Information")
+                if "Note" in body or "Information" in body:
+                    raise TransientProviderError(f"Alpha Vantage rate limited for {security_id} ({function}): {message}")
+                raise PermanentProviderError(f"Alpha Vantage error for {security_id} ({function}): {message}")
+
+            if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+                raise PermanentProviderError(
+                    f"unexpected Alpha Vantage response shape for {security_id} ({function}): "
+                    f"expected an object with a 'data' list"
+                )
+
+            for row in body["data"]:
+                date_str = row.get(date_field)
+                if not date_str:
+                    continue
+                row_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                if not (start_date <= row_date <= end_date):
+                    continue  # client-side range filter -- see this method's own docstring
+                records.append(dict(row, security_id=security_id, _kind=kind))
+        return records
+
+    def normalize_corporate_actions(
+        self, security_id: str, raw_records: Sequence[dict], *, retrieved_at: datetime, ingestion_time: datetime,
+    ) -> list[CorporateAction]:
+        """A `split_factor` != 1.0 becomes a SPLIT/REVERSE_SPLIT event
+        (identical `ratio > 1.0` convention `TiingoDataProvider.
+        normalize_corporate_actions` already uses); an `amount` > 0
+        dividend row becomes a DIVIDEND event. Same point-in-time
+        discipline as Tiingo's own implementation: `available_time`/
+        `ingestion_time` are always the caller-supplied ingestion
+        moment, never the (possibly much earlier) real event date --
+        backdating would make a late-discovered action falsely visible
+        to an as-of query made before this system actually knew about
+        it."""
+        actions: list[CorporateAction] = []
+        for record in raw_records:
+            if record["_kind"] == "split":
+                ratio = float(record["split_factor"])
+                if ratio == 1.0:
+                    continue
+                event_date = datetime.strptime(record["effective_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                action_type = CorporateActionType.SPLIT if ratio > 1.0 else CorporateActionType.REVERSE_SPLIT
+                actions.append(
+                    CorporateAction(
+                        security_id=security_id,
+                        action_type=action_type,
+                        available_time=ingestion_time,
+                        ingestion_time=ingestion_time,
+                        provenance=Provenance(
+                            source="alphavantage", source_dataset=f"alphavantage_corporate_actions_{security_id}",
+                            source_record_id=f"{security_id}:{record['effective_date']}:split",
+                            retrieved_at=retrieved_at,
+                            data_version=compute_data_version(
+                                {"effective_date": record["effective_date"], "split_factor": record["split_factor"]}
+                            ),
+                        ),
+                        event_time=event_date,
+                        effective_time=event_date,
+                        details={"ratio": ratio},
+                    )
+                )
+            elif record["_kind"] == "dividend":
+                amount = float(record["amount"])
+                if amount <= 0.0:
+                    continue
+                event_date = datetime.strptime(record["ex_dividend_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                actions.append(
+                    CorporateAction(
+                        security_id=security_id,
+                        action_type=CorporateActionType.DIVIDEND,
+                        available_time=ingestion_time,
+                        ingestion_time=ingestion_time,
+                        provenance=Provenance(
+                            source="alphavantage", source_dataset=f"alphavantage_corporate_actions_{security_id}",
+                            source_record_id=f"{security_id}:{record['ex_dividend_date']}:dividend",
+                            retrieved_at=retrieved_at,
+                            data_version=compute_data_version(
+                                {"ex_dividend_date": record["ex_dividend_date"], "amount": record["amount"]}
+                            ),
+                        ),
+                        event_time=event_date,
+                        effective_time=event_date,
+                        details={"amount": amount, "currency": "USD"},
+                    )
+                )
+        return actions

@@ -230,9 +230,20 @@ def main() -> int:
             for record in build_universe_memberships(universe, valid_from=args.start):
                 repository.add_universe_membership(record)
 
-        runner = IngestionRunner(provider, repository)
-        result = runner.run(symbols, args.start, args.end)
-
+        # Run #44 (2026-09-25): corporate-action collection ran AFTER
+        # price-bar ingestion and called Tiingo ONLY -- Tiingo's own
+        # hourly request budget (ADR-0160) is shared with price-bar
+        # fetching via the same TiingoHttpTransport instance, so a day
+        # where price fetching alone exhausted it left corporate
+        # actions with zero budget and no fallback, failing all 88
+        # requested symbols at once even though price data itself was
+        # 100% fine that day. Collecting corporate actions FIRST gives
+        # the resource with no substitute (Tiingo is this project's
+        # only source Alpha Vantage's own real free-tier cap, 25
+        # requests/day for TWO calls per symbol here, could not fully
+        # replace) first claim on the shared budget -- price-bar
+        # fetching below already has a real 3-tier fallback chain of
+        # its own and tolerates absorbing the remainder far better.
         corporate_action_results = []
         all_actions = []
         for symbol in symbols:
@@ -241,12 +252,31 @@ def main() -> int:
                 actions = tiingo.normalize_corporate_actions(
                     symbol, raw_actions, retrieved_at=args.end, ingestion_time=args.end
                 )
-                for action in actions:
-                    repository.add_corporate_action(action)
-                all_actions.extend(actions)
-                corporate_action_results.append({"security_id": symbol, "count": len(actions), "error": None})
-            except (TransientProviderError, PermanentProviderError) as exc:
-                corporate_action_results.append({"security_id": symbol, "count": 0, "error": str(exc)})
+                source = "tiingo"
+            except (TransientProviderError, PermanentProviderError) as tiingo_exc:
+                # 2026-09-25 addition: Alpha Vantage's real free-tier
+                # DIVIDENDS/SPLITS endpoints are now a confirmed, working
+                # fallback (Tier 1 -- see AlphaVantageDataProvider's own
+                # module docstring) for exactly the symbols Tiingo
+                # could not serve this run, never the reverse.
+                try:
+                    raw_actions = alphavantage.fetch_corporate_actions(symbol, args.start, args.end)
+                    actions = alphavantage.normalize_corporate_actions(
+                        symbol, raw_actions, retrieved_at=args.end, ingestion_time=args.end
+                    )
+                    source = "alphavantage"
+                except (TransientProviderError, PermanentProviderError) as alphavantage_exc:
+                    corporate_action_results.append(
+                        {
+                            "security_id": symbol, "count": 0,
+                            "error": f"tiingo={tiingo_exc}; alphavantage={alphavantage_exc}",
+                        }
+                    )
+                    continue
+            for action in actions:
+                repository.add_corporate_action(action)
+            all_actions.extend(actions)
+            corporate_action_results.append({"security_id": symbol, "count": len(actions), "error": None, "source": source})
         # External audit finding (2026-09-24): a per-symbol
         # TransientProviderError/PermanentProviderError above was
         # already caught and recorded, but corporate_action_results
@@ -256,8 +286,12 @@ def main() -> int:
         # still report SUCCESS/exit 0 as long as price bars themselves
         # ingested fine. A single symbol with no real corporate action
         # in range is a legitimate, error=None, count=0 result (not
-        # counted here); only a genuine fetch error counts as "failed".
+        # counted here); only a genuine fetch error (both Tiingo AND
+        # Alpha Vantage failed) counts as "failed".
         corporate_action_failed_symbols = sorted(r["security_id"] for r in corporate_action_results if r["error"] is not None)
+
+        runner = IngestionRunner(provider, repository)
+        result = runner.run(symbols, args.start, args.end)
 
         quality = DataQualityFramework()
         # ADR-0167 identified this bug but deliberately deferred fixing it
@@ -520,6 +554,16 @@ def main() -> int:
         print(f"Providers used: {providers_used}")
         print(f"Historical universe membership available: {historical_universe_membership_available}")
         print(f"Corporate actions persisted: {len(all_actions)}")
+        if corporate_action_failed_symbols:
+            # Visible even for a PARTIAL failure now (previously only
+            # printed once every symbol failed) -- both Tiingo and Alpha
+            # Vantage failed for these specific symbols; see this run's
+            # own manifest "corporate_actions_per_symbol" for each
+            # symbol's actual error text.
+            print(
+                f"Corporate-action collection failed for {len(corporate_action_failed_symbols)} of "
+                f"{len(symbols)} symbol(s) (both Tiingo and Alpha Vantage failed): {corporate_action_failed_symbols}"
+            )
         print(f"Data quality status: {quality_run.status.value} ({len(quality_run.issues)} issue(s))")
         # Session 37: print the severity breakdown directly to the job's
         # own stdout log -- the full per-issue manifest only round-trips
@@ -542,20 +586,27 @@ def main() -> int:
                 "still be treated as failed so it is never silently mistaken for a clean ingestion.",
                 file=sys.stderr,
             )
-        corporate_actions_entirely_failed = bool(corporate_action_failed_symbols) and len(corporate_action_failed_symbols) == len(symbols)
-        if corporate_actions_entirely_failed:
-            print(
-                f"FATAL: corporate-action collection failed for every requested symbol "
-                f"({len(symbols)}) -- price bars were never split/dividend-adjusted for this run: "
-                f"{corporate_action_failed_symbols}",
-                file=sys.stderr,
-            )
+        # 2026-09-25 (run #44 follow-up, account owner decision): this
+        # run previously treated "corporate-action collection failed
+        # for every requested symbol" as fatal for the WHOLE run,
+        # skipping "Run paper trading cycle" even on a day price data
+        # was 100% fine -- exactly what happened 2026-09-25 when
+        # Tiingo's shared budget ran out on corporate actions alone.
+        # Now that corporate actions are collected FIRST (above) and
+        # fall back to Alpha Vantage per symbol, a full failure should
+        # be rare -- but price-data integrity, not corporate-action
+        # freshness, is what must gate whether Paper Trading runs today:
+        # a missed split/dividend refresh is recoverable on the next
+        # successful run (nothing is deleted, only delayed), while
+        # skipping trading on good price data is not. Corporate-action
+        # failures (partial or total) are still surfaced loudly above
+        # and in the manifest -- just never fatal to this run's own exit
+        # code.
         return (
             0
             if result.status.value == "SUCCESS"
             and quality_run.status != DataQualityRunStatus.CRITICAL_FAILURE
             and not unexplained_zero_bar_symbols
-            and not corporate_actions_entirely_failed
             else 1
         )
     finally:

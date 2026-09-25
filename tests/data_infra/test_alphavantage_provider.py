@@ -139,8 +139,115 @@ class TestNormalize:
 
 
 class TestMetadata:
-    def test_metadata_declares_no_corporate_action_support(self) -> None:
+    def test_metadata_declares_corporate_action_support(self) -> None:
+        # 2026-09-25: confirmed Tier 1 against a real free-tier key --
+        # see AlphaVantageDataProvider's own module docstring.
         provider = AlphaVantageDataProvider(AlphaVantageConfig(), _StubTransport({}))
         meta = provider.metadata()
-        assert meta["supports_corporate_actions"] is False
+        assert meta["supports_corporate_actions"] is True
         assert meta["provider_id"] == "alphavantage"
+
+
+class _FunctionRoutedStubTransport:
+    """Unlike `_StubTransport` (always the same body), corporate-action
+    fetching makes two real calls per symbol (DIVIDENDS then SPLITS)
+    with different `function` params -- this stub returns a different
+    body per `function` so both branches of a single test are covered
+    honestly, not just whichever one a single fixed body happens to
+    satisfy."""
+
+    def __init__(self, bodies_by_function: dict) -> None:
+        self._bodies_by_function = bodies_by_function
+        self.calls: list[tuple[str, dict]] = []
+
+    def get(self, path, *, params, timeout):
+        self.calls.append((path, params))
+        return AlphaVantageTransportResponse(status_code=200, body=self._bodies_by_function[params["function"]], headers={})
+
+
+# Real Tier 1 evidence: scripts/recon_corporate_action_providers.py's
+# own real workflow_dispatch run against a real free-tier key
+# (2026-09-25). GE's real 2021-08-02 reverse split (split_factor
+# "0.1250") matches this project's own already-known REVERSE_SPLIT edge
+# case, docs/operations/MARKET-DATA-PROVIDER.md.
+_REAL_DIVIDENDS_BODY = {
+    "symbol": "AAPL",
+    "data": [
+        {"ex_dividend_date": "2026-08-10", "declaration_date": "2026-07-30", "record_date": "2026-08-10", "payment_date": "2026-08-13", "amount": "0.27"},
+        {"ex_dividend_date": "2025-11-10", "declaration_date": "2025-10-30", "record_date": "2025-11-10", "payment_date": "2025-11-13", "amount": "0.26"},
+    ],
+}
+_REAL_SPLITS_BODY = {
+    "symbol": "GE",
+    "data": [
+        {"effective_date": "2024-04-02", "split_factor": "1.2530"},
+        {"effective_date": "2021-08-02", "split_factor": "0.1250"},
+        {"effective_date": "2000-05-08", "split_factor": "3.0000"},
+    ],
+}
+
+
+class TestFetchCorporateActions:
+    def test_fetches_both_dividends_and_splits_and_tags_each_records_kind(self) -> None:
+        transport = _FunctionRoutedStubTransport({"DIVIDENDS": _REAL_DIVIDENDS_BODY, "SPLITS": _REAL_SPLITS_BODY})
+        provider = AlphaVantageDataProvider(AlphaVantageConfig(), transport)
+        records = provider.fetch_corporate_actions("GE", utc(2000, 1, 1), utc(2026, 12, 31))
+        assert {"DIVIDENDS", "SPLITS"} == {c[1]["function"] for c in transport.calls}
+        kinds = {r["_kind"] for r in records}
+        assert kinds == {"dividend", "split"}
+
+    def test_filters_to_the_requested_date_range_client_side(self) -> None:
+        transport = _FunctionRoutedStubTransport({"DIVIDENDS": _REAL_DIVIDENDS_BODY, "SPLITS": _REAL_SPLITS_BODY})
+        provider = AlphaVantageDataProvider(AlphaVantageConfig(), transport)
+        records = provider.fetch_corporate_actions("GE", utc(2021, 1, 1), utc(2021, 12, 31))
+        assert len(records) == 1
+        assert records[0]["effective_date"] == "2021-08-02"
+
+    def test_raises_transient_error_on_rate_limit_information(self) -> None:
+        transport = _FunctionRoutedStubTransport(
+            {"DIVIDENDS": {"Information": "Please consider spreading out your free API requests more sparingly (1 request per second)"}, "SPLITS": _REAL_SPLITS_BODY}
+        )
+        provider = AlphaVantageDataProvider(AlphaVantageConfig(), transport)
+        with pytest.raises(TransientProviderError):
+            provider.fetch_corporate_actions("AAPL", utc(2024, 1, 1), utc(2024, 12, 31))
+
+    def test_raises_permanent_error_on_unexpected_shape(self) -> None:
+        transport = _FunctionRoutedStubTransport({"DIVIDENDS": {"unexpected": "shape"}, "SPLITS": _REAL_SPLITS_BODY})
+        provider = AlphaVantageDataProvider(AlphaVantageConfig(), transport)
+        with pytest.raises(PermanentProviderError):
+            provider.fetch_corporate_actions("AAPL", utc(2024, 1, 1), utc(2024, 12, 31))
+
+
+class TestNormalizeCorporateActions:
+    def test_a_ratio_above_one_is_a_split_a_ratio_below_one_is_a_reverse_split(self) -> None:
+        transport = _FunctionRoutedStubTransport({"DIVIDENDS": _REAL_DIVIDENDS_BODY, "SPLITS": _REAL_SPLITS_BODY})
+        provider = AlphaVantageDataProvider(AlphaVantageConfig(), transport)
+        raw = provider.fetch_corporate_actions("GE", utc(2000, 1, 1), utc(2026, 12, 31))
+        actions = provider.normalize_corporate_actions("GE", raw, retrieved_at=utc(2026, 9, 25), ingestion_time=utc(2026, 9, 25))
+        by_date = {a.event_time: a for a in actions if a.action_type.value in ("SPLIT", "REVERSE_SPLIT")}
+        assert by_date[utc(2021, 8, 2)].action_type.value == "REVERSE_SPLIT"
+        assert by_date[utc(2021, 8, 2)].details["ratio"] == 0.125
+        assert by_date[utc(2000, 5, 8)].action_type.value == "SPLIT"
+        assert by_date[utc(2000, 5, 8)].details["ratio"] == 3.0
+
+    def test_a_real_dividend_row_becomes_a_dividend_event(self) -> None:
+        transport = _FunctionRoutedStubTransport({"DIVIDENDS": _REAL_DIVIDENDS_BODY, "SPLITS": {"symbol": "AAPL", "data": []}})
+        provider = AlphaVantageDataProvider(AlphaVantageConfig(), transport)
+        raw = provider.fetch_corporate_actions("AAPL", utc(2026, 1, 1), utc(2026, 12, 31))
+        actions = provider.normalize_corporate_actions("AAPL", raw, retrieved_at=utc(2026, 9, 25), ingestion_time=utc(2026, 9, 25))
+        assert len(actions) == 1
+        assert actions[0].action_type.value == "DIVIDEND"
+        assert actions[0].details == {"amount": 0.27, "currency": "USD"}
+        # point-in-time discipline: never backdated to the real ex-date
+        assert actions[0].available_time == utc(2026, 9, 25)
+        assert actions[0].ingestion_time == utc(2026, 9, 25)
+        assert actions[0].provenance.source == "alphavantage"
+
+    def test_real_actions_are_readable_through_the_in_memory_repository(self) -> None:
+        transport = _FunctionRoutedStubTransport({"DIVIDENDS": {"symbol": "GE", "data": []}, "SPLITS": _REAL_SPLITS_BODY})
+        provider = AlphaVantageDataProvider(AlphaVantageConfig(), transport)
+        raw = provider.fetch_corporate_actions("GE", utc(2000, 1, 1), utc(2026, 12, 31))
+        actions = provider.normalize_corporate_actions("GE", raw, retrieved_at=utc(2026, 9, 25), ingestion_time=utc(2026, 9, 25))
+        assert len(actions) == 3
+        repo = InMemoryDataRepository(corporate_actions=actions)
+        assert len(repo.get_corporate_actions("GE", utc(2000, 1, 1), utc(2026, 12, 31), as_of_time=utc(2026, 9, 25))) == 3

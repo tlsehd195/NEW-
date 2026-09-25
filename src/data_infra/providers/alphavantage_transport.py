@@ -16,6 +16,13 @@ like Twelve Data, Alpha Vantage reports quota/rate-limit errors as HTTP
 body instead of a real HTTP error status (a documented, long-standing
 API quirk), so that body-shape interpretation lives in
 `AlphaVantageDataProvider.fetch()` instead.
+
+2026-09-25 addition: owns an `AlphaVantageRateLimiter` (one per
+instance, shared by whichever caller holds this instance) and paces
+every real call through it -- see that module's own docstring for why
+a real recon run made this necessary (the same category of real-usage
+gap `TwelveDataRateLimiter`/ADR-0164 already found for Twelve Data,
+just per-second instead of per-minute).
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from data_infra.provider import PermanentProviderError, TransientProviderError, parse_retry_after_seconds
+from data_infra.providers.alphavantage_ratelimit import AlphaVantageRateLimiter
 
 _SAFE_RESPONSE_HEADERS = {"content-type", "retry-after", "x-request-id"}
 
@@ -48,10 +56,19 @@ class AlphaVantageTransportResponse:
 
 
 class AlphaVantageHttpTransport:
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, *, rate_limiter: Optional[AlphaVantageRateLimiter] = None) -> None:
         self._base_url = base_url.rstrip("/")
+        # A fresh, instance-owned limiter when the caller does not
+        # supply one -- constructing exactly one AlphaVantageHttpTransport
+        # and reusing it is what makes this shared without any caller
+        # having to pass one explicitly, same discipline
+        # TwelveDataHttpTransport's own rate_limiter parameter has.
+        self._rate_limiter = rate_limiter if rate_limiter is not None else AlphaVantageRateLimiter()
 
     def get(self, path: str, *, params: dict[str, str], timeout: float) -> AlphaVantageTransportResponse:
+        self._rate_limiter.wait_if_needed()
+        self._rate_limiter.record_request()
+
         query = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"{self._base_url}{path}?{query}" if query else f"{self._base_url}{path}"
         req = urllib.request.Request(url, headers={"Content-Type": "application/json"}, method="GET")
