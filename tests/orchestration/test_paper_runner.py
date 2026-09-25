@@ -412,6 +412,64 @@ class TestMaxTurnoverPropagatesThroughTheWholeChain:
         assert outcome.submission is not None
 
 
+class TestLiquidityStatePropagatesThroughTheWholeChain:
+    """2순위 priority pass: `risk.engine.DeterministicPortfolioRiskEngine.
+    assess`'s `enforce_liquidity_limit` check (default `True`) was
+    effectively dead for every run to date -- `run_cycle` never passed
+    a real `liquidity_state` at all, and the check's own guard
+    (`config.enforce_liquidity_limit and liquidity_state is not None`)
+    silently skips whenever `liquidity_state is None`. `regime.get(
+    RegimeAxis.LIQUIDITY)` is already computed every cycle for
+    `position_sizer.size()`'s own internal use -- now also threaded
+    into `risk_engine.assess`."""
+
+    def test_normal_liquidity_no_longer_silently_skips_the_check(self) -> None:
+        """`_scenario()`'s bars use a constant volume (200_000.0 every
+        day) -- recent/baseline ratio is exactly 1.0, a real NORMAL
+        classification (`RegimeConfig`'s default 0.5/1.5 low/high
+        ratio bounds), not the `UNKNOWN` a too-short history would give."""
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)  # well past liquidity_baseline_window=60
+        risk_config = RiskConfig(max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(bars, risk_config=risk_config)
+
+        outcomes = run_cycle(["AAA"], view.current_time, view, session, **_components(risk_config))
+        outcome = outcomes[0]
+
+        assert "liquidity_unknown" not in outcome.risk_checked.breached_limits
+        assert "liquidity_limit_breached" not in outcome.risk_checked.breached_limits
+        assert outcome.submission is not None
+
+    def test_a_real_low_liquidity_period_now_actually_rejects_the_buy(self) -> None:
+        """Strongest proof the check is genuinely wired, not just
+        'no longer errors': the checkpoint under test is index 100, so
+        the 5 trading days immediately AS-OF that checkpoint (indices
+        96-100, `liquidity_recent_window=5`) have their volume dropped
+        to 1/20th of baseline (ratio 0.05, well under the default 0.5
+        low-ratio bound) -- `enforce_liquidity_limit` (default True)
+        must now actually REJECT the BUY as `liquidity_limit_breached`,
+        something impossible before this fix since `liquidity_state`
+        was always `None`."""
+        import dataclasses
+
+        repo, config, bars = _scenario()
+        low_volume_bars = [
+            dataclasses.replace(b, volume=10_000.0) if 96 <= i <= 100 else b
+            for i, b in enumerate(bars)
+        ]
+        repo = build_repository(bars=low_volume_bars, securities=[make_security("AAA", "AAA")])
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_drawdown=None, max_portfolio_volatility=None)
+        session = _session(low_volume_bars, risk_config=risk_config)
+
+        outcomes = run_cycle(["AAA"], view.current_time, view, session, **_components(risk_config))
+        outcome = outcomes[0]
+
+        assert outcome.risk_checked.reason == "liquidity_limit_breached"
+        assert "liquidity_limit" in outcome.risk_checked.breached_limits
+        assert outcome.submission is None
+
+
 class TestReentryCooldownPropagatesThroughTheWholeChain:
     """Session 36 continued -- ADR-0093/ADR-0095/ADR-0096:
     `last_exit_time_by_security` is now sourced from a REAL

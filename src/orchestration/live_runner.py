@@ -181,6 +181,7 @@ from predict.models import PredictionOutput
 from predict.predictor import Predictor
 
 from regime.detector import RegimeDetector
+from regime.enums import RegimeAxis
 from regime.models import CompositeRegimeObservation
 
 from risk.engine import PortfolioRiskEngine
@@ -256,6 +257,16 @@ class LiveRunnerState:
     `value_history`."""
 
     value_history: list[float] = field(default_factory=list)
+    # ADR-0197 named Live turnover a real gap, believing it needed "a
+    # genuine new design decision (data source, window)". Re-verified
+    # (2순위 priority pass): the data source and formula already exist
+    # -- `backtest.portfolio.PortfolioAccounting.turnover()`'s own
+    # "cumulative real trade notional / average historical portfolio
+    # value" -- Live just never accumulated its own trade_notionals the
+    # way Paper's PortfolioAccounting does internally. Appended once per
+    # real fill (mirroring PortfolioAccounting._trade_notionals.append
+    # (fill.notional) exactly), never backfilled or fabricated for a gap.
+    trade_notionals: list[float] = field(default_factory=list)
     risk_assessment_total: int = 0
     risk_assessment_rejected: int = 0
 
@@ -349,6 +360,24 @@ def _compute_risk_health(state: LiveRunnerState, monitoring_config: MonitoringCo
         config=monitoring_config, as_of_time=as_of_time, health_id=f"RISK-HEALTH-{as_of_time.isoformat()}",
     )
     return health.status
+
+
+def _live_turnover(state: Optional[LiveRunnerState]) -> Optional[float]:
+    """Identical formula to `backtest.portfolio.PortfolioAccounting.
+    turnover()` (cumulative real trade notional / average historical
+    portfolio value), applied to `LiveRunnerState`'s own real,
+    session-accumulated `trade_notionals`/`value_history` instead of
+    Paper's in-process accounting object. `None` (never a fabricated
+    `0.0`) whenever this session tracks no history at all -- a fresh
+    `state=None` caller, or one with an empty `value_history` -- so
+    `risk_engine.assess` correctly treats it the same as `RiskConfig.
+    max_turnover`'s other "configured but genuinely unknown" case."""
+    if state is None or not state.value_history:
+        return None
+    avg_value = sum(state.value_history) / len(state.value_history)
+    if avg_value <= 0:
+        return None
+    return sum(state.trade_notionals) / avg_value
 
 
 def _last_exit_time_by_security(
@@ -537,10 +566,21 @@ def run_cycle(
         if sizing_repository is not None:
             sizing_repository.record(sizing)
 
+        # ADR-0197 named this a real gap and, at the time, believed
+        # closing it required an entirely new liquidity-classification
+        # module. Re-verified (2순위 priority pass): `regime` above
+        # already computes the LIQUIDITY axis every loop iteration
+        # (`position_sizer.size()` already reads it internally for its
+        # own `liquidity_scale`) -- this was a threading fix, not a new
+        # module. Identical fix applied to `paper_runner.py` in the same
+        # pass.
+        liquidity_obs = regime.get(RegimeAxis.LIQUIDITY)
         risk_checked = risk_engine.assess(
             security_id, as_of_time, sizing, portfolio, current_price=current_price,
             sector_by_security=sector_by_security, value_history=value_history,
             last_exit_time_by_security=last_exit_time_by_security,
+            liquidity_state=liquidity_obs.state if liquidity_obs is not None else None,
+            turnover=_live_turnover(state),
             provenance=TradeProvenance.LIVE_TRADING, experiment_id=experiment_id,
         )
         if risk_repository is not None:
@@ -593,6 +633,8 @@ def run_cycle(
                     decision_id=decision.decision_id, fill=fill, position_after=current_quantity + signed,
                     provenance=TradeProvenance.LIVE_TRADING, experiment_id=experiment_id,
                 )
+                if state is not None:
+                    state.trade_notionals.append(fill.notional)
 
             # Independent audit finding (2026-09-24): ADR-0177 fixed this
             # exact same-cycle TOCTOU gap in `paper_runner.run_cycle` but

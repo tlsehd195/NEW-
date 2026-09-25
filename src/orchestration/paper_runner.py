@@ -177,7 +177,7 @@ from predict.models import PredictionOutput
 from predict.predictor import Predictor
 
 from regime.detector import RegimeDetector
-from regime.enums import AXIS_STATE_ENUM
+from regime.enums import AXIS_STATE_ENUM, RegimeAxis
 from regime.models import CompositeRegimeObservation
 
 from risk.engine import PortfolioRiskEngine
@@ -1035,6 +1035,7 @@ def run_cycle(
         if sizing_repository is not None:
             sizing_repository.record(sizing)
 
+        liquidity_obs = regime.get(RegimeAxis.LIQUIDITY)
         risk_checked = risk_engine.assess(
             security_id, as_of_time, sizing, portfolio, current_price=current_price,
             sector_by_security=sector_by_security, value_history=value_history,
@@ -1052,6 +1053,18 @@ def run_cycle(
             # PortfolioAccounting.turnover`) -- simply never threaded
             # through to this call before now.
             turnover=session.adapter.accounting.turnover(),
+            # ADR-0197 named this a real gap ("liquidity_state dead
+            # config") and, at the time, believed closing it required an
+            # entirely new liquidity-classification module. Re-verified
+            # (2순위 priority pass): `regime.features.compute_liquidity`
+            # already exists and is already computed every loop
+            # iteration as part of `regime` above (`position_sizer.
+            # size()` already reads its LIQUIDITY axis internally for
+            # `liquidity_scale`) -- this was a threading fix, not a new
+            # module. `.state` is exactly the `str` `risk_engine.assess`
+            # already expects (`LiquidityState.value`, see `RegimeObservation.
+            # state`'s own docstring).
+            liquidity_state=liquidity_obs.state if liquidity_obs is not None else None,
             provenance=provenance, experiment_id=experiment_id,
         )
         if risk_repository is not None:

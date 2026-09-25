@@ -321,6 +321,33 @@ class LiveTradingSession:
                     self._operational_state = OperationalState.ACTIVE
         return result
 
+    def reconcile_open_orders(self, *, as_of: datetime) -> tuple[ReconciliationResult, ...]:
+        """2순위 priority pass (ADR-0200 F4's "zero automatic callers of
+        reconcile_order" gap, deliberately deferred there as "a genuine
+        new feature -- what triggers it, how often"): this closes the
+        "what it reconciles" half only -- every order `not is_closed_
+        status`, the identical candidate set `engage_kill_switch`'s own
+        auto-cancel loop already uses, reconciled one at a time through
+        the real, already-fail-closed `reconcile_order` (a single
+        MISMATCH here still forces `RECONCILIATION_REQUIRED`, per the F3
+        fix on that method). Deliberately NOT a scheduler/cron/periodic
+        trigger -- "how often" is a real operational decision this
+        project has no Live production entrypoint to make yet (same
+        "adopt now, wire in later" precedent ADR-0151 already set); a
+        caller (a future Live entrypoint, or an operator running this
+        by hand) decides when to call this, this method only decides
+        what happens once called.
+
+        Iterates a snapshot of `_internal_status`'s keys, not the live
+        dict, for the identical reason `engage_kill_switch`'s own loop
+        already does -- `reconcile_order` mutates `_internal_status`
+        inside the loop body on a MATCHED result."""
+        open_order_ids = tuple(
+            client_order_id for client_order_id, status in self._internal_status.items()
+            if not is_closed_status(status)
+        )
+        return tuple(self.reconcile_order(client_order_id, as_of=as_of) for client_order_id in open_order_ids)
+
     def engage_kill_switch(self, reason: str, *, occurred_at: datetime) -> KillSwitchEngagementResult:
         event = _engage_kill_switch(
             event_id=self._kill_switch_ids.allocate(), reason=reason, occurred_at=occurred_at,
