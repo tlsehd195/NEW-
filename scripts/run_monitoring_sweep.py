@@ -20,9 +20,11 @@ repositories (which also picked up a real ordering fix alongside this
 script -- see that module's own docstring).
 
 **Scope, deliberately bounded and disclosed, not silently narrowed**:
-covers `prediction`/`decision`/`sizing`/`risk`/`account` -- the five
-components with real, already-populated repositories in
-`--paper-store` today. Does NOT cover:
+covers `prediction`/`decision`/`regime`/`sizing`/`risk`/`account` --
+the six components with real, already-populated repositories in
+`--paper-store` today (`regime` added by a later, independent audit
+fix, 2026-09-25 -- `collect_regime` previously did not exist at all).
+Does NOT cover:
 - `data_quality`: needs real `PriceBar` history from the SEPARATE
   market-data catalog (`--db-path`, not `--paper-store`) -- a real,
   addressable gap, left for a follow-up that also accepts a
@@ -33,11 +35,17 @@ components with real, already-populated repositories in
   through (it calls `PaperBrokerAdapter.submit_order` directly) -- no
   real data exists in `--paper-store` for this component today.
 - `ai_gateway`/`learning`/`model_evolution`: `ai_gateway` has zero real
-  production calls (independently confirmed elsewhere this session);
-  `learning`/`model_evolution` run on a separate weekly cron
-  (`learning_cycle.yml`) against a different repository shape --
-  integrating them is a distinct follow-up, not folded in here to keep
-  this script's own scope honest and reviewable.
+  production calls (independently confirmed elsewhere this session).
+  **Correction (independent audit finding, 2026-09-25): `model_evolution`
+  does NOT actually run on any cron.** `learning_cycle.yml`'s weekly
+  cron (`0 6 * * 6`, real and confirmed) only ever invokes
+  `scripts/run_learning_cycle.py` -- there is no `model_evolution` CLI
+  script anywhere in this repository, and no workflow references
+  `evolution.pipeline`/`generate_candidate_batch` at all (confirmed via
+  a repo-wide search). Only `learning` is actually scheduled;
+  `model_evolution` has zero production callers, period -- integrating
+  either into this sweep is a distinct follow-up, not folded in here to
+  keep this script's own scope honest and reviewable.
 - Drift detection (`monitoring.drift`): needs a real baseline-vs-current
   comparison window this script does not yet construct -- `drift_
   results`/drift-derived alerts are always empty this pass, not
@@ -222,8 +230,8 @@ def main(argv: list[str] | None = None) -> int:
         report = {
             "note": (
                 "Real monitoring sweep over an already-populated --paper-store. "
-                "Covers prediction/decision/sizing/risk/account only -- see this "
-                "script's own module docstring for the disclosed, not-yet-covered "
+                "Covers prediction/decision/regime/sizing/risk/account only -- see "
+                "this script's own module docstring for the disclosed, not-yet-covered "
                 "components (data_quality, broker, ai_gateway, learning, "
                 "model_evolution, drift detection)."
             ),

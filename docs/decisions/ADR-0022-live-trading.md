@@ -265,6 +265,24 @@ site — grep-able, auditable, never a default.
   builds and fully tests the safety infrastructure, but cannot itself
   close that gap (it is Phase 13's own deferred research item, not
   something `broker.live.*` can resolve by writing more code).
+  **Correction (independent audit finding, 2026-09-25): this claim is
+  stale as written.** Phase 21 (`src/broker/toss/adapter.py`'s own
+  module docstring) DID implement all six `BrokerAdapter` Protocol
+  methods against Toss's Tier 1 OpenAPI spec endpoints — "confirms the
+  endpoints" in the narrow sense of "builds real code against them,"
+  which is what this bullet's wording literally promised, is done. What
+  is NOT done, and is the real reason Live Trading is still unreachable
+  today, is `get_capabilities()` deliberately still reporting
+  `account/position/order-status/cancel` as `CapabilityStatus.UNKNOWN`
+  (never `ENABLED`) because none of the six methods has ever been
+  operationally verified end to end against a real Toss account — see
+  `docs/operations/LIVE-RISK-POLICY.md`'s own later correction for the
+  precise, current mechanism (`evaluate_safety_gate`'s capability check
+  only fails for a capability the CALLER chooses to require in
+  `SafetyGateContext.required_capabilities`; no real Live driver has
+  ever existed to make that choice for real). This bullet is left
+  otherwise unedited as a record of what Phase 16 actually believed at
+  the time — see the correction above for the accurate, current state.
 - Live fills cannot carry a genuinely measured slippage/spread
   breakdown — `reference_price = price` is an honest placeholder, not a
   real measurement, until a quote source exists.
