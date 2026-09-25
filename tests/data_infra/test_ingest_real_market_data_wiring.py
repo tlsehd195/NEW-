@@ -362,28 +362,53 @@ class TestCorporateActionFailureGatesExitCode:
         assert "corporate_action_results" in assign_line
         assert "error" in assign_line
 
-    def test_corporate_actions_entirely_failed_only_trips_when_every_symbol_failed(self) -> None:
-        # Mirrors F-1's conservative "entire run got nothing" severity
-        # threshold -- a partial corporate-action failure (some symbols
-        # okay, others not) must not fail the whole run, only a total
-        # wipeout should.
-        source = _source()
-        assign_line = next(
-            line for line in source.splitlines()
-            if line.strip().startswith("corporate_actions_entirely_failed = ")
-        )
-        assert "corporate_action_failed_symbols" in assign_line
-        assert "len(corporate_action_failed_symbols) == len(symbols)" in assign_line
-
-    def test_a_fatal_message_is_printed_when_corporate_actions_entirely_fail(self) -> None:
-        source = _source()
-        assert "corporate-action collection failed for every requested symbol" in source
-
-    def test_return_statement_also_checks_corporate_actions_entirely_failed(self) -> None:
+    def test_corporate_action_failures_no_longer_gate_the_exit_code(self) -> None:
+        # Run #44 (2026-09-25): treating "corporate actions failed for
+        # every symbol" as fatal skipped an entire day of Paper Trading
+        # even though price data was 100% fine -- corporate-action
+        # freshness is recoverable on a later run, so it must never gate
+        # this script's own exit code, only price-data integrity does.
         source = _source()
         return_start = source.index("        return (\n            0\n")
         return_block = source[return_start:source.index("\n        )", return_start)]
-        assert "corporate_actions_entirely_failed" in return_block
+        assert "corporate_actions_entirely_failed" not in return_block
+        assert "corporate_actions_entirely_failed" not in source
+
+    def test_corporate_action_failures_are_still_printed_for_ci_log_visibility(self) -> None:
+        source = _source()
+        assert "corporate_action_failed_symbols" in source
+        print_line = next(
+            line for line in source.splitlines()
+            if "Corporate-action collection failed for" in line
+        )
+        assert print_line
+
+
+class TestCorporateActionsFallBackToAlphaVantage:
+    """2026-09-25 (run #44 root cause): corporate-action collection
+    previously called Tiingo ONLY, with no fallback at all -- a day
+    Tiingo's own hourly budget (shared with price-bar fetching) was
+    already exhausted failed every symbol at once. Alpha Vantage's real
+    free-tier DIVIDENDS/SPLITS endpoints are now a confirmed, working
+    fallback (`scripts/recon_corporate_action_providers.py`'s own real
+    workflow_dispatch run, including GE's real 2021-08-02 reverse
+    split)."""
+
+    def test_alphavantage_fetch_corporate_actions_is_called_as_a_fallback(self) -> None:
+        source = _source()
+        assert "tiingo.fetch_corporate_actions(" in source
+        assert "alphavantage.fetch_corporate_actions(" in source
+        assert "alphavantage.normalize_corporate_actions(" in source
+
+    def test_corporate_action_collection_runs_before_price_bar_ingestion(self) -> None:
+        # Tiingo's shared hourly budget must be claimed by corporate
+        # actions (no substitute) before price-bar fetching (which has
+        # its own real 3-tier fallback and tolerates absorbing the
+        # remainder far better) -- see this script's own inline comment.
+        source = _source()
+        corp_action_loop_index = source.index("tiingo.fetch_corporate_actions(")
+        price_bar_runner_index = source.index("runner = IngestionRunner(provider, repository)")
+        assert corp_action_loop_index < price_bar_runner_index
 
 
 class TestTiingoRequestBudgetSharedAcrossBothCallPaths:

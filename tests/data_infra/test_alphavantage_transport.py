@@ -13,6 +13,7 @@ import urllib.error
 import pytest
 
 from data_infra.provider import PermanentProviderError, TransientProviderError
+from data_infra.providers.alphavantage_ratelimit import AlphaVantageRateLimiter
 from data_infra.providers.alphavantage_transport import AlphaVantageHttpTransport
 
 
@@ -124,6 +125,41 @@ class TestMalformedResponse:
         transport = AlphaVantageHttpTransport("https://www.alphavantage.co")
         response = transport.get("/query", params={}, timeout=5.0)
         assert response.body is None
+
+
+class TestRateLimiting:
+    """2026-09-25: a real recon run fired two Alpha Vantage calls 4ms
+    apart and the second came back with Alpha Vantage's own throttle
+    notice instead of real data -- `get()` must consult a shared
+    `AlphaVantageRateLimiter` before every real call, mirroring
+    `TwelveDataHttpTransport`'s identical `TestRateLimiting`
+    discipline."""
+
+    def test_a_shared_rate_limiter_is_paced_across_repeated_calls(self, monkeypatch) -> None:
+        def fake_urlopen(req, timeout):
+            return _FakeHTTPResponse(200, {"data": []}, {})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        clock_value = {"t": 0.0}
+        waits: list[float] = []
+
+        def fake_sleep(seconds: float) -> None:
+            waits.append(seconds)
+            clock_value["t"] += seconds  # a real sleep_fn must advance real wall-clock time
+
+        limiter = AlphaVantageRateLimiter(limit_per_second=1, clock=lambda: clock_value["t"], sleep_fn=fake_sleep)
+        transport = AlphaVantageHttpTransport("https://www.alphavantage.co", rate_limiter=limiter)
+        for _ in range(2):  # effective cap is 1 -- the 2nd must wait
+            transport.get("/query", params={}, timeout=5.0)
+        assert len(waits) == 1
+
+    def test_without_an_explicit_rate_limiter_a_default_one_is_still_enforced(self, monkeypatch) -> None:
+        def fake_urlopen(req, timeout):
+            return _FakeHTTPResponse(200, {"data": []}, {})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        transport = AlphaVantageHttpTransport("https://www.alphavantage.co")
+        assert transport._rate_limiter is not None
 
 
 class TestNoSecretInRequestConstruction:
