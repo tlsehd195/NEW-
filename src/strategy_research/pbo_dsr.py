@@ -124,7 +124,19 @@ def compute_pbo(
     groups: list[list[int]] = []
     start = 0
     for g in range(num_groups):
-        # The last group absorbs any remainder so every fold is used exactly once.
+        # The last group absorbs any remainder so every fold is used exactly
+        # once. NOT the only defensible convention: `purgedcv._pbo.
+        # _contiguous_blocks` instead spreads the remainder across the
+        # FIRST `remainder` groups -- confirmed (2026-09-26,
+        # scripts/cross_verify_pbo_dsr_with_purgedcv.py, ADR-0207) to be
+        # the entire cause of a real ~7pp PBO gap between the two
+        # implementations on this project's own 58-fold/8-group real
+        # data. The Bailey et al. (2015) CSCV paper assumes an evenly
+        # divisible fold count and specifies no remainder rule, so
+        # neither convention is "more correct" -- this is a disclosed,
+        # deliberate choice, not a bug, and is not being changed to
+        # match purgedcv without a reason beyond "the other library did
+        # it differently."
         size = group_size if g < num_groups - 1 else fold_count - start
         groups.append(list(range(start, start + size)))
         start += size

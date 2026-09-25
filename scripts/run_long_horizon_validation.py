@@ -116,7 +116,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from backtest.contribution import compute_contribution_report_from_fills  # noqa: E402
 from backtest.strategy import BuyAndHoldStrategy  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
-from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
+from data_infra.exchange_calendars_adapter import build_xnys_calendar  # noqa: E402
 from data_infra.providers.sp500_index_constituent_history import (  # noqa: E402
     constituents_as_of,
     parse_ticker_intervals,
@@ -742,10 +742,14 @@ def main() -> int:
     # consults this calendar to build one checkpoint per "trading day"
     # (src/backtest/engine.py -> build_daily_checkpoints), so using the
     # toy calendar would generate a checkpoint on every real US market
-    # holiday outside 2024. US_EQUITY_NYSE is a rule-derived calendar
-    # spanning 2000-2035 (see its own docstring for exactly what it does
-    # and does not cover).
-    repository = DuckDBDataRepository(engine, calendars={"US_EQUITY": US_EQUITY_NYSE})
+    # holiday outside 2024. ADR-0207 (2026-09-26): switched from the
+    # rule-derived US_EQUITY_NYSE (2000-2035, cannot cover ad-hoc
+    # closures) to the real exchange_calendars-backed XNYS calendar --
+    # see data_infra.exchange_calendars_adapter's own docstring for its
+    # one real trade-off (a fixed ~21-year supported window, currently
+    # 2006-09-25..2027-09-24). --start/--end below must stay within that
+    # window; a real production run already does (2010-01-01 onward).
+    repository = DuckDBDataRepository(engine, calendars={"US_EQUITY": build_xnys_calendar()})
     fundamentals_engine = None
     fundamentals_repository = None
     if args.fundamentals_db_path is not None:
