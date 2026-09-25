@@ -635,6 +635,131 @@ class TestValueHistoryState:
         assert "drawdown_unknown" not in outcomes[-1].risk_checked.breached_limits
 
 
+class TestLiquidityStatePropagatesThroughTheWholeChain:
+    """2순위 priority pass -- Live-side equivalent of `test_paper_runner.
+    py`'s own `TestLiquidityStatePropagatesThroughTheWholeChain`: `regime`
+    is already computed every cycle for `position_sizer.size()`'s own
+    internal use; now also threaded into `risk_engine.assess`."""
+
+    def test_normal_liquidity_no_longer_silently_skips_the_check(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)  # well past liquidity_baseline_window=60
+        risk_config = RiskConfig(max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(risk_config),
+        )[0]
+
+        assert "liquidity_unknown" not in outcome.risk_checked.breached_limits
+        assert "liquidity_limit" not in outcome.risk_checked.breached_limits
+
+    def test_a_real_low_liquidity_period_now_actually_rejects_the_buy(self) -> None:
+        import dataclasses
+
+        repo, config, bars = _scenario()
+        low_volume_bars = [
+            dataclasses.replace(b, volume=10_000.0) if 96 <= i <= 100 else b
+            for i, b in enumerate(bars)
+        ]
+        repo = build_repository(bars=low_volume_bars, securities=[make_security("AAA", "AAA")])
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(risk_config),
+        )[0]
+
+        assert outcome.risk_checked.reason == "liquidity_limit_breached"
+        assert "liquidity_limit" in outcome.risk_checked.breached_limits
+
+
+class TestLiveTurnoverPropagatesThroughTheWholeChain:
+    """2순위 priority pass: ADR-0197 believed Live turnover needed a
+    genuine new data source/window design decision. Re-verified: the
+    data (`LiveRunnerState.value_history`, already accumulated for
+    max_drawdown/volatility) and formula (`backtest.portfolio.
+    PortfolioAccounting.turnover()`'s own cumulative-notional-over-
+    average-value) already existed -- only `trade_notionals` needed to
+    be accumulated the same way, appended once per real fill."""
+
+    def test_without_state_turnover_stays_unknown_never_fabricated_zero(self) -> None:
+        repo, config, bars = _scenario()
+        view, _, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_turnover=10.0, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session,
+            gate_context=_gate_context(session, view.current_time), **_components(risk_config),
+        )[0]
+
+        assert "turnover_unknown" in outcome.risk_checked.breached_limits
+
+    def test_with_state_a_real_fill_accumulates_trade_notionals(self) -> None:
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+        components = _components(risk_config)
+        state = LiveRunnerState()
+
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, state=state,
+            gate_context=_gate_context(session, view.current_time),
+            # `state`'s own risk_health override (module docstring point
+            # 2) is UNKNOWN below MonitoringConfig's default
+            # min_sample_count=5 -- irrelevant to what this test verifies
+            # (trade_notionals accumulation), so lowered to 1 to let a
+            # single real cycle's own PASS-ing risk check clear the
+            # safety gate's `risk_health == HEALTHY` requirement.
+            monitoring_config=MonitoringConfig(min_sample_count=1),
+            # `trade_notionals.append` is gated behind a real fill
+            # actually being recorded, same as `paper_runner.py`'s own
+            # trade-journal-write-side gating -- no journal, no append.
+            trade_journal_repository=InMemoryTradeJournalRepository(),
+            **components,
+        )[0]
+
+        assert outcome.submission is not None and outcome.submission.submitted
+        assert len(state.trade_notionals) == 1
+        response = outcome.submission.response
+        assert state.trade_notionals[0] == response.filled_quantity * response.avg_fill_price
+
+    def test_a_configured_max_turnover_no_longer_rejects_every_buy_as_unknown_once_state_has_history(self) -> None:
+        """Mirrors `test_paper_runner.py`'s own
+        `TestMaxTurnoverPropagatesThroughTheWholeChain` -- a second
+        cycle, now that `state` carries real `value_history`/
+        `trade_notionals` from the first, must see a real (not
+        `None`) turnover."""
+        repo, config, bars = _scenario()
+        view, clock, _ = _build_view(repo, config, 100)
+        risk_config = RiskConfig(max_turnover=100.0, max_drawdown=None, max_portfolio_volatility=None)
+        session = _session()
+        components = _components(risk_config)
+        state = LiveRunnerState()
+        journal = InMemoryTradeJournalRepository()
+        monitoring_config = MonitoringConfig(min_sample_count=1)
+
+        run_cycle(
+            ["AAA"], view.current_time, view, session, state=state,
+            gate_context=_gate_context(session, view.current_time),
+            monitoring_config=monitoring_config, trade_journal_repository=journal, **components,
+        )
+        clock.index = 101
+        outcome = run_cycle(
+            ["AAA"], view.current_time, view, session, state=state,
+            gate_context=_gate_context(session, view.current_time),
+            monitoring_config=monitoring_config, trade_journal_repository=journal, **components,
+        )[0]
+
+        assert len(state.trade_notionals) >= 1  # the first cycle's own real fill
+        assert "turnover_unknown" not in outcome.risk_checked.breached_limits
+
+
 class TestPersistence:
     def test_all_five_repositories_receive_exactly_one_record(self, tmp_path) -> None:
         repo, config, bars = _scenario()

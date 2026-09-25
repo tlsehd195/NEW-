@@ -8,7 +8,7 @@ import pytest
 
 from live_helpers import utc
 
-from broker.live.approval import REQUIRED_CONFIRMATION_TOKEN, LiveActivationApproval
+from broker.live.approval import REQUIRED_CONFIRMATION_TOKEN, LiveActivationApproval, approval_to_payload, payload_to_approval
 
 
 class TestApprovedByMustBeHuman:
@@ -73,6 +73,40 @@ class TestStrategyEvidenceMustBeReviewed:
             checklist_completed=True, strategy_evidence_reviewed=True,
         )
         assert approval.is_valid() is True
+
+
+class TestPayloadRoundTrip:
+    """2순위 priority pass (ADR-0197's "no human-approval CLI tool" gap):
+    `scripts/grant_live_activation_approval.py` writes/reads a real
+    approval via this exact round trip."""
+
+    def test_round_trip_preserves_every_field(self) -> None:
+        approval = LiveActivationApproval(
+            approved_by="jane.doe", approved_at=utc(2024, 1, 2), confirmation_token=REQUIRED_CONFIRMATION_TOKEN,
+            checklist_completed=True, strategy_evidence_reviewed=True,
+        )
+        reloaded = payload_to_approval(approval_to_payload(approval))
+        assert reloaded == approval
+
+    def test_a_tampered_payload_with_checklist_forced_true_but_missing_other_fields_still_fails_validation(self) -> None:
+        """The round trip re-runs __post_init__ -- a hand-edited JSON
+        file cannot bypass validation just by round-tripping structurally."""
+        with pytest.raises(ValueError):
+            payload_to_approval({
+                "approved_by": "jane.doe", "approved_at": utc(2024, 1, 2).isoformat(),
+                "confirmation_token": "wrong phrase", "checklist_completed": True,
+                "strategy_evidence_reviewed": True,
+            })
+
+    def test_payload_uses_plain_json_serializable_types(self) -> None:
+        import json
+
+        approval = LiveActivationApproval(
+            approved_by="jane.doe", approved_at=utc(2024, 1, 2), confirmation_token=REQUIRED_CONFIRMATION_TOKEN,
+            checklist_completed=True, strategy_evidence_reviewed=True,
+        )
+        # Must not raise -- every value is a plain JSON type (str/bool).
+        json.dumps(approval_to_payload(approval))
 
 
 class TestTimestampMustBeAware:

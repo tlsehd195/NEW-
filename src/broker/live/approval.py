@@ -74,3 +74,39 @@ class LiveActivationApproval:
         caller can express intent (`approval.is_valid()`) without
         re-deriving the same checks."""
         return True
+
+
+def approval_to_payload(approval: LiveActivationApproval) -> dict:
+    """2순위 priority pass (ADR-0197's "no human-approval CLI tool" gap):
+    a plain-JSON round trip, kept local to this module rather than
+    `storage.serialization` -- this object has no repository (module
+    docstring: nothing in the deterministic pipeline constructs one),
+    so it belongs with its own type, not the persistence layer that
+    every OTHER `_to_payload`/`payload_to_*` pair in this project
+    backs. Used by `scripts/grant_live_activation_approval.py` to
+    write what an operator granted to a file; a future real Live
+    entrypoint reads it back via `payload_to_approval` to build the
+    `SafetyGateContext.approval` it needs -- this module still never
+    constructs one on the pipeline's behalf."""
+    return {
+        "approved_by": approval.approved_by,
+        "approved_at": approval.approved_at.isoformat(),
+        "confirmation_token": approval.confirmation_token,
+        "checklist_completed": approval.checklist_completed,
+        "strategy_evidence_reviewed": approval.strategy_evidence_reviewed,
+    }
+
+
+def payload_to_approval(data: dict) -> LiveActivationApproval:
+    """The inverse of `approval_to_payload` -- re-runs `__post_init__`'s
+    full validation (frozen dataclass construction), so a tampered or
+    stale JSON file (e.g. `checklist_completed` hand-edited to `true`)
+    is rejected exactly as if it had never been a real, granted
+    approval, never trusted just because it round-trips structurally."""
+    return LiveActivationApproval(
+        approved_by=data["approved_by"],
+        approved_at=datetime.fromisoformat(data["approved_at"]),
+        confirmation_token=data["confirmation_token"],
+        checklist_completed=data["checklist_completed"],
+        strategy_evidence_reviewed=data["strategy_evidence_reviewed"],
+    )

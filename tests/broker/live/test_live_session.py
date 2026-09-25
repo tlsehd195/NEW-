@@ -320,6 +320,59 @@ class TestReconcileOrderMismatchBlocksWhileActive:
         assert blocked.error == "reconciliation_required"
 
 
+class TestReconcileOpenOrders:
+    """2순위 priority pass (ADR-0200 F4's "zero automatic callers of
+    reconcile_order" gap): `reconcile_open_orders` reconciles every
+    order `not is_closed_status`, the same real per-order
+    `reconcile_order` already fixed for the F3 MISMATCH bug -- never a
+    parallel, unaudited path."""
+
+    def test_reconciles_only_orders_not_already_closed(self) -> None:
+        session = _session()
+        ctx = _gate_ctx(session)
+        order = session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert order.submitted is True  # MockBrokerAdapter fills synchronously -> already CLOSED (FILLED)
+
+        # A second, still-open order -- simulates the real scenario
+        # reconciliation exists for: a submission whose outcome this
+        # session never confirmed (e.g. a disconnected response).
+        session._internal_status["CID-OPEN"] = BrokerOrderStatus.PENDING  # type: ignore[attr-defined]
+
+        results = session.reconcile_open_orders(as_of=utc(2024, 1, 3))
+
+        assert len(results) == 1
+        assert results[0].subject_id == "CID-OPEN"
+
+    def test_a_mismatch_among_open_orders_still_blocks_new_submissions(self) -> None:
+        """Routes through the real reconcile_order per order -- the F3
+        fix (a confirmed MISMATCH forces RECONCILIATION_REQUIRED) fires
+        exactly the same whether reached one order at a time or via
+        this batch driver."""
+        session = _session()
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)
+        # This session's own record drifts from the broker's real
+        # (synchronously FILLED) status -- the same real-world scenario
+        # TestReconcileOrderMismatchBlocksWhileActive already covers for
+        # a single reconcile_order call.
+        session._internal_status["CID-1"] = BrokerOrderStatus.PENDING  # type: ignore[attr-defined]
+
+        results = session.reconcile_open_orders(as_of=utc(2024, 1, 3))
+
+        assert len(results) == 1
+        assert results[0].status.value == "MISMATCH"
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+
+    def test_no_open_orders_is_a_real_empty_result_not_an_error(self) -> None:
+        session = _session()
+        ctx = _gate_ctx(session)
+        session.submit(_order(), requested_at=utc(2024, 1, 2), gate_context=ctx)  # closes to FILLED
+
+        results = session.reconcile_open_orders(as_of=utc(2024, 1, 3))
+
+        assert results == ()
+
+
 class TestScenario11DuplicateClientOrderId:
     def test_duplicate_submission_returns_same_response_no_new_order(self) -> None:
         session = _session()
