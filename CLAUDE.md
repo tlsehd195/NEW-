@@ -151,16 +151,6 @@ Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직
   `KIS_APP_KEY`/`KIS_APP_SECRET`로 직접 등록 — `ADR-0082`의
   `MARKET_DATA_API_KEY`와 동일한 패턴. 등록 완료되면 `src/broker/kis/`
   어댑터 작성 + 실제 모의투자 API 검증 진행.
-- **GEMINI_API_KEY GitHub Actions secret 등록** (`ADR-0206`): AI 예측
-  리서치 실험(`src/ai_gateway/providers/gemini*.py`,
-  `scripts/run_ai_prediction_experiment.py`,
-  `scripts/verify_gemini_adapter.py`)용 Gemini API 키는 이 세션의
-  로컬 환경 변수로는 이미 확인됨(값 자체는 세션 밖으로 나간 적 없음)
-  — 하지만 `.github/workflows/verify_gemini_adapter.yml`이 CI에서
-  돌아가려면 같은 키를 GitHub 저장소 Settings → Secrets and variables
-  → Actions에 `GEMINI_API_KEY`로 직접 등록해야 함 (KIS_APP_KEY와 동일
-  패턴). 등록 전까지는 `workflow_dispatch`로 그 워크플로를 실행해도
-  실패한다.
 - **colibri 실행용 Oracle Cloud 서버** (`EXTERNAL_REPO_APPLICABILITY_
   REPORT.md` priority 10): Oracle Cloud Always Free 계정 생성(완료,
   2026-09-24) → `VM.Standard.A1.Flex`(ARM, 4 OCPU/24GB RAM) 인스턴스
@@ -177,33 +167,14 @@ Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직
   실행해볼 것. 2026-09-24 세션 중 3번째 시도(`run #3`)도 돌려봤으나
   역시 실패 — 재고 문제가 아직 안 풀린 것으로 보임. 며칠 뒤 다시
   `workflow_dispatch`로 재시도하거나 다른 리전으로 바꿔볼 것.)
-- **`run_full_validation.yml`용 Release 카탈로그 업로드** (ADR-0193):
-  Google Drive에 있는 87종목 실 데이터 카탈로그(`data/price_catalog`,
-  `data/fundamentals_catalog` — Session 37 코랩에서 수집 완료된 것)를
-  GitHub Release에 zip으로 올려야 `run_full_validation.yml` 워크플로가
-  돌아간다. 이 세션은 구글 드라이브에 접근할 수 없어서 대신 못 함.
-  - 절차: 드라이브에서 두 폴더(각각 안에 `catalog.duckdb` 있음)를
-    로컬로 받은 뒤 `zip -r price_catalog.zip <price 폴더 내용>`/
-    `zip -r fundamentals_catalog.zip <fundamentals 폴더 내용>`로
-    압축(zip 안에 바로 `catalog.duckdb`가 보이게 — 폴더 한 겹 더
-    감싸지 않기). GitHub 저장소 → Releases → "Draft a new release" →
-    태그 지정(예: `research-catalogs-v1`) → 두 zip 파일을 Assets로 첨부
-    → Publish.
-  - `insider_catalog.zip`은 **수동으로 안 올려도 됨** (2026-09-24
-    후속 수정) — `ingest_insider_transactions_full.yml`의 `merge` job이
-    성공할 때마다 고정 Release 태그(`insider-transactions-catalog`)에
-    자동 업로드하고, `run_full_validation.yml`이 그 태그를 자동
-    fallback으로 시도함. 가격/재무제표 두 개만 위 절차로 수동 업로드
-    하면 됨.
-  - 업로드 끝나면 `run_full_validation.yml`을 `workflow_dispatch`로
-    실행하면서 `release_tag`에 방금 만든 태그명을 입력 — 나머지 입력
-    (`universe`/`start`/`end`)은 기본값이 이미 Stage 4 실행 전례와
-    동일하게 맞춰져 있어 그대로 둬도 됨.
-  - **결과 저장 방식(2026-09-24 후속 수정)**: `run_full_validation.yml`
-    결과(JSON)는 90일 아티팩트뿐 아니라 `docs/research/reports/`에
-    워크플로 자신이 직접 커밋해서 영구 보존함(Claude 세션이 90일 안에
-    돌아와서 옮겨줘야 하는 구조가 아님) — 이유는 `ADR-0193`의
-    "2026-09-24 후속 수정" 절 참고.
+- ~~`run_full_validation.yml`용 Release 카탈로그 업로드~~ — **완료**
+  (2026-09-24 사용자 업로드, `research-catalogs-v1` 태그). 절차/배경은
+  `ADR-0193` 참고. `run_full_validation.yml`이 이 태그로 2026-09-24,
+  2026-09-25 두 번 모두 성공(`success`) — 87종목 `RESEARCH_UNIVERSE`
+  실데이터, 2010-01-01~2023-04-28, 51개 전략/팩터 후보 walk-forward
+  검증. 2026-09-25 결과: 51개 전부 `INCONCLUSIVE`(확정 알파 입증된
+  후보 없음, PBO 18.6%) — `docs/research/reports/
+  full-validation-20260925T160732Z.json`.
 
 ## Grounding Gate 배선 보류 결정 (2026-09-24)
 
