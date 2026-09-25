@@ -162,6 +162,31 @@ class PaperBrokerAdapter:
         self._accounting.apply_fill(fill)
         self._fills.setdefault(client_order_id, []).append((fill_id, fill))
         self._fill_ids.advance_past(fill_id)
+        # Independent audit finding F2 (2026-09-24, "restart amnesia"
+        # class, same family as restore_rejection above):
+        # `_bar_participation_consumed` (max_participation's own running
+        # tally of how much of a single bar's real volume this fill's
+        # bar has already claimed) is process-local and was never
+        # rebuilt here -- a restart mid-bar silently reset it to empty,
+        # letting a later `_attempt_fill` call for the SAME bar claim up
+        # to `max_participation` all over again on top of what a
+        # pre-restart process already consumed, a real double-dip past
+        # the configured limit. Re-derives the same `bar_key`
+        # `_attempt_fill` itself computes, via the market data source's
+        # own `get_reference_bar` at this fill's real `execution_time`
+        # (the identical `as_of` `_attempt_fill` originally resolved the
+        # bar from) -- never a fabricated/guessed key. A `None` bar
+        # (the underlying catalog changed since this fill was produced,
+        # an already-anomalous state this method has no honest way to
+        # recover from) leaves the tally exactly as it was, same as
+        # every other restore_* method's "reproduce what already
+        # happened, never guess" discipline.
+        bar = self._market_data_source.get_reference_bar(fill.security_id, as_of=fill.execution_time)
+        if bar is not None:
+            bar_key = (fill.security_id, bar.available_time, bar.timestamp)
+            self._bar_participation_consumed[bar_key] = (
+                self._bar_participation_consumed.get(bar_key, 0.0) + fill.quantity
+            )
 
     def restore_cancellation(self, client_order_id: str) -> None:
         self._cancelled.add(client_order_id)

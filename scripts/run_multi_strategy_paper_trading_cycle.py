@@ -314,7 +314,28 @@ def _run_buy_and_hold_strategy(
         # its own past the first checkpoint, so it must call it here
         # itself, or a Buy & Hold order would stay PENDING for the
         # entire run and `final_cash` would silently never move.
-        session.advance(checkpoint)
+        #
+        # Independent audit finding F1 (2026-09-24): a FRESH run's
+        # initial buy is submitted (above, `run_buy_and_hold_paper_
+        # session`) with `requested_at=checkpoints[0]` -- this loop's
+        # very own `i == 0` iteration used to call `session.advance
+        # (checkpoints[0])` unconditionally, attempting that SAME
+        # order's first fill at the IDENTICAL `as_of` it was just
+        # submitted at. `_attempt_fill`'s own docstring states "a
+        # decision and its fill can never share the same reference
+        # bar" -- `PaperMarketDataSource.get_reference_bar` resolves
+        # the exact same bar for both calls when `as_of` is identical,
+        # so this was a genuine same-bar decide-and-fill leak, not
+        # merely a documentation claim contradicted in theory. Skipped
+        # only for a FRESH run's own very first iteration (never on a
+        # RESUMED run, where `already_bought` is already `True` and
+        # `checkpoints[0]` of THIS run is a genuinely later, real
+        # checkpoint than whatever one the order was originally
+        # submitted under in an earlier process) -- the first real
+        # fill attempt now correctly lands one real checkpoint later,
+        # exactly like `run_cycle`'s own T+1 discipline.
+        if not (i == 0 and not already_bought):
+            session.advance(checkpoint)
         value_history.append(compute_portfolio_snapshot(session, view, checkpoint).portfolio_value)
 
     return {

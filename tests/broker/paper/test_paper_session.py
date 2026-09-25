@@ -182,3 +182,39 @@ class TestRestoreRehydratesFullState:
         response, fills = restored.submit(order, requested_at=utc(2024, 1, 2))
         assert response.filled_quantity == 10.0
         assert len(fill_repo.list_all()) == 1  # still exactly one fill total
+
+    def test_restore_reproduces_the_bar_participation_cap_already_consumed(self) -> None:
+        """Independent audit finding F2 (2026-09-24, same "restart
+        amnesia" family as R2 above): `_bar_participation_consumed`
+        (max_participation's own running tally of how much of a single
+        bar's real volume has already been claimed) was never rebuilt by
+        `restore()` -- a restart mid-bar silently reset the tally to
+        empty, letting a SECOND order against the SAME bar in the
+        restored process claim up to the FULL cap all over again on top
+        of what the pre-restart process already consumed."""
+        session, _, order_repo, fill_repo, status_repo, _ = _new_session(
+            bars=[make_bar(available_time=utc(2024, 1, 2), volume=1_000.0)],
+            config=make_paper_config(max_participation=0.10),  # cap = 100 shares of this bar
+        )
+        first = make_validated_order(client_order_id="CID-1", quantity=60.0)
+        session.submit(first, requested_at=utc(2024, 1, 2))
+        session.advance(utc(2024, 1, 2))  # ADR-0154: first (deferred) fill attempt -- consumes 60 of the 100-share cap
+        status1 = session.adapter.get_order_status("CID-1", as_of=utc(2024, 1, 2))
+        assert status1.status == BrokerOrderStatus.FILLED
+        assert status1.filled_quantity == 60.0
+
+        mds2 = InMemoryPaperMarketDataSource([make_bar(available_time=utc(2024, 1, 2), volume=1_000.0)])
+        restored = PaperTradingSession.restore(
+            session.config, mds2, order_repository=order_repo, fill_repository=fill_repo,
+            status_repository=status_repo, corporate_action_repository=InMemoryPaperCorporateActionRepository(),
+            as_of=utc(2024, 1, 2),
+        )
+
+        second = make_validated_order(client_order_id="CID-2", quantity=100.0)
+        restored.submit(second, requested_at=utc(2024, 1, 2))
+        restored.advance(utc(2024, 1, 2))
+        status2 = restored.adapter.get_order_status("CID-2", as_of=utc(2024, 1, 2))
+        # Only 100 - 60 = 40 of the 100-share cap remains for this bar --
+        # NOT the full 100 a reset-to-empty tally would have wrongly allowed.
+        assert status2.status == BrokerOrderStatus.PARTIAL_FILLED
+        assert status2.filled_quantity == 40.0

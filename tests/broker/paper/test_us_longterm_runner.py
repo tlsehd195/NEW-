@@ -94,6 +94,36 @@ class TestEqualWeightAllocation:
         assert aaa_notional > 0 and bbb_notional > 0
         assert abs(aaa_notional - bbb_notional) / max(aaa_notional, bbb_notional) < 0.20
 
+    def test_a_duplicate_security_id_is_deduplicated_not_double_allocated(self) -> None:
+        """Independent audit finding F4 (2026-09-24): before this fix,
+        a repeated symbol in `security_ids` produced TWO separate BUY
+        orders for it, but `positions_so_far[security_id] = PositionView
+        (...)` silently overwrote the first entry rather than
+        accumulating -- undercounting portfolio_value for every LATER
+        symbol's own risk_check, and the repeat's own `current_quantity
+        =0.0` (hardcoded, correct only for a genuine first allocation)
+        let the risk engine treat the second AAA buy as opening a brand
+        new position rather than adding to the one just placed a few
+        lines above -- a real single-name concentration-limit bypass.
+        With the fix, "AAA" duplicated must produce exactly ONE order,
+        identical to passing ["AAA", "BBB"] without a repeat."""
+        buy_time = utc(2024, 1, 2)
+        mds = InMemoryPaperMarketDataSource([
+            make_bar(security_id="AAA", available_time=buy_time, close=100.0),
+            make_bar(security_id="BBB", available_time=buy_time, close=50.0),
+        ])
+        config = make_paper_config(initial_cash=100_000.0, max_participation=1.0)
+        session = PaperTradingSession(config, mds)
+
+        result = run_buy_and_hold_paper_session(
+            ["AAA", "AAA", "BBB"], mds, session, buy_time=buy_time,
+            configuration_version="cfg-v1", risk_check=_permissive_risk_check(),
+        )
+
+        assert len(result.orders) == 2  # not 3 -- the duplicate AAA never became a second order
+        assert {o.security_id for o in result.orders} == {"AAA", "BBB"}
+        assert result.skipped_symbols == ()
+
     def test_only_buys_once_true_buy_and_hold(self) -> None:
         """Calling the runner a second time re-allocates against
         whatever cash remains, proving this is a one-shot allocation

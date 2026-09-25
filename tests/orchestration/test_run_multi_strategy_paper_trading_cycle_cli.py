@@ -23,7 +23,7 @@ from data_infra.universe import SymbolMetadata, UniverseDefinition
 from storage.config import StorageConfig
 from storage.data_repository import DuckDBDataRepository
 from storage.engine import StorageEngine
-from storage.paper_repository import DuckDBPaperOrderRepository
+from storage.paper_repository import DuckDBPaperFillRepository, DuckDBPaperOrderRepository
 from storage.prediction_repository import DuckDBPredictionRepository
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run_multi_strategy_paper_trading_cycle.py"
@@ -169,6 +169,44 @@ class TestMultiStrategyIsolation:
 
         order_repo = DuckDBPaperOrderRepository(StorageEngine(StorageConfig(root_dir=store_root / "buy_and_hold")))
         assert len(order_repo.list_all()) == 1  # exactly one BUY, never a second
+
+    def test_buy_and_hold_initial_buy_never_fills_on_the_same_bar_it_was_decided_on(self, tmp_path) -> None:
+        """Independent audit finding F1 (2026-09-24): the initial buy is
+        submitted with requested_at=checkpoints[0], and this strategy's
+        own driving loop used to call session.advance(checkpoints[0])
+        -- the SAME checkpoint -- as its very first iteration, attempting
+        that order's first fill at the IDENTICAL as_of it was just
+        decided at. `backtest.fills.Fill.decision_time`/`execution_time`
+        being equal would be exactly that same-bar leak (ADR-0154's own
+        T+1 discipline exists specifically to prevent a decision and its
+        fill from ever sharing one reference bar)."""
+        db_path = tmp_path / "market_data"
+        store_root = tmp_path / "store"
+        out_path = tmp_path / "report.json"
+        _seed_long_catalog(db_path)
+
+        module = _load_module(_SCRIPT_PATH)
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        rc = module.main([
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store-root", str(store_root),
+            "--strategies", "buy_and_hold",
+            "--start", "2024-06-15", "--end", "2024-06-25",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+
+        fill_repo = DuckDBPaperFillRepository(StorageEngine(StorageConfig(root_dir=store_root / "buy_and_hold")))
+        fills = fill_repo.list_all()
+        assert len(fills) >= 1, "fixture must produce at least one real fill for this test to mean anything"
+        for record in fills:
+            assert record.fill.execution_time > record.fill.decision_time, (
+                f"fill {record.fill_id} executed at {record.fill.execution_time}, "
+                f"same as (or before) its own decision_time {record.fill.decision_time} -- "
+                "a same-bar decide-and-fill leak"
+            )
 
     def test_buy_and_hold_applies_a_split_landing_after_the_initial_buy(self, tmp_path) -> None:
         """ADR-0163: BUY_AND_HOLD never applied corporate actions at all
