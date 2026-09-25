@@ -280,7 +280,26 @@ class LiveTradingSession:
             as_of_time=as_of, configuration_version=self.config.configuration_version(),
         )
         self._reconciliation_repository.record(result)
-        if result.status == ReconciliationStatus.MATCHED:
+        # Independent audit finding F3 (2026-09-24): a genuine MISMATCH
+        # (both internal AND broker status are known, but disagree --
+        # `compare_order_status`'s own logic, distinct from UNKNOWN,
+        # which is what happens when either side's state is simply
+        # unavailable) previously did nothing to `_operational_state` at
+        # all -- while the session was ACTIVE (the normal case, not
+        # already RECONCILIATION_REQUIRED), a confirmed bookkeeping
+        # disagreement between this session's own record and the real
+        # broker's reported status left new order submissions completely
+        # unblocked. A MISMATCH is a stronger signal than UNKNOWN (it is
+        # a CONFIRMED inconsistency, not merely unavailable data), so it
+        # gets the identical fail-closed treatment `submit`'s own
+        # consecutive-failure/UNKNOWN-response paths already give a
+        # broker-reported ambiguity -- forced into RECONCILIATION_
+        # REQUIRED unconditionally (never gated behind a threshold,
+        # since a single confirmed mismatch is already a real, not
+        # merely suspected, inconsistency).
+        if result.status == ReconciliationStatus.MISMATCH:
+            self._operational_state = OperationalState.RECONCILIATION_REQUIRED
+        elif result.status == ReconciliationStatus.MATCHED:
             self._internal_status[client_order_id] = broker_status.status
             # Session 37 (ADR-0115, external review N-1): re-derives the
             # resulting state from *every* tracked order's status, the

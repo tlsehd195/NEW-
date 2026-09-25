@@ -276,6 +276,50 @@ class TestReconcileOrderRequiresEveryOrderResolved:
         assert session.operational_state == OperationalState.ACTIVE
 
 
+class TestReconcileOrderMismatchBlocksWhileActive:
+    """Independent audit finding F3 (2026-09-24): a genuine MISMATCH
+    (both internal AND broker status are known but disagree -- distinct
+    from UNKNOWN, which is what happens when either side's state is
+    simply unavailable) previously did nothing to `_operational_state`
+    at all. While ACTIVE (the normal case, not already RECONCILIATION_
+    REQUIRED), a confirmed bookkeeping disagreement between this
+    session's own record and the real broker's reported status left new
+    order submissions completely unblocked."""
+
+    def test_a_mismatch_found_while_active_blocks_further_submissions(self) -> None:
+        session = _session()
+        ctx = _gate_ctx(session)
+        order = _order()
+        outcome = session.submit(order, requested_at=utc(2024, 1, 2), gate_context=ctx)
+        assert outcome.submitted is True
+        assert session.operational_state == OperationalState.ACTIVE
+
+        # Simulate a real-world drift: this session's own internal
+        # record of the order's status has fallen out of sync with what
+        # the broker itself now reports (e.g. a missed webhook, a
+        # manual cancel on the broker's own dashboard) -- never a
+        # fabricated scenario, the exact case reconcile_order exists to
+        # detect. MockBrokerAdapter fills synchronously here, so the
+        # broker's own real status is FILLED -- PENDING genuinely
+        # disagrees with it.
+        session._internal_status[order.client_order_id] = BrokerOrderStatus.PENDING  # type: ignore[attr-defined]
+
+        result = session.reconcile_order(order.client_order_id, as_of=utc(2024, 1, 3))
+        assert result.status.value == "MISMATCH"
+        # The bug: a confirmed mismatch, found while the session was
+        # ACTIVE, must immediately block new submissions -- it must
+        # never require a separate, unrelated failure threshold to be
+        # crossed first.
+        assert session.operational_state == OperationalState.RECONCILIATION_REQUIRED
+
+        third_ctx = _gate_ctx(session)
+        blocked = session.submit(
+            _order(client_order_id="CID-2", security_id="BBB"), requested_at=utc(2024, 1, 3), gate_context=third_ctx,
+        )
+        assert blocked.submitted is False
+        assert blocked.error == "reconciliation_required"
+
+
 class TestScenario11DuplicateClientOrderId:
     def test_duplicate_submission_returns_same_response_no_new_order(self) -> None:
         session = _session()

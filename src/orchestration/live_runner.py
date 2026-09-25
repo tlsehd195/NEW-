@@ -285,7 +285,23 @@ def _live_portfolio_view(session: LiveTradingSession, view: AsOfDataView, as_of_
     `session.account_summary()` (see module docstring point 1). Raises
     rather than defaulting to a fabricated $0 balance when the broker
     itself reports the read as unavailable -- a caller whose broker is
-    down should see that failure, not a silently-empty portfolio."""
+    down should see that failure, not a silently-empty portfolio.
+
+    Independent audit finding F5 (2026-09-24): this same "raise, never
+    fabricate" discipline previously applied only to the ACCOUNT-level
+    read above, not to an individual position. A `BrokerPosition` with
+    `available=False` (the broker successfully answered but explicitly
+    could not report THIS security's real position -- a partial data
+    outage, distinct from a security simply not appearing because
+    nothing is held in it) was silently `continue`d out of `positions`,
+    indistinguishable from a genuine zero position. `run_cycle` then
+    hardcodes `position_state_known=True` on every gate_context
+    regardless (this function's own docstring is exactly why that
+    hardcoding was considered safe) -- so a decision for that one
+    security could proceed on a silently-wrong "you hold zero shares"
+    assumption while the safety gate was told position state was fully
+    known. Raising here, exactly like the account-level case above,
+    keeps that hardcoding actually true instead of merely assumed."""
     account = session.adapter.get_account(as_of=as_of_time)
     if not account.available or account.cash is None:
         raise RuntimeError(
@@ -297,7 +313,11 @@ def _live_portfolio_view(session: LiveTradingSession, view: AsOfDataView, as_of_
     market_value = 0.0
     for broker_position in session.adapter.get_positions(as_of=as_of_time):
         if not broker_position.available or broker_position.quantity is None:
-            continue
+            raise RuntimeError(
+                f"live_position_unavailable: cannot build a PortfolioView while the broker cannot "
+                f"confirm {broker_position.security_id!r}'s real position "
+                f"(broker={session.adapter.broker_id!r}, reason={broker_position.unavailable_reason!r})"
+            )
         average_cost = broker_position.average_cost or 0.0
         positions[broker_position.security_id] = PositionView(broker_position.security_id, broker_position.quantity, average_cost)
         price = _reference_price(view, broker_position.security_id, as_of_time)
