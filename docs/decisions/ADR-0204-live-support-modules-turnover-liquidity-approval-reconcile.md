@@ -2,12 +2,12 @@
 
 **Status:** Accepted
 **Date:** 2026-09-25
-**Deciders:** Claude Code session (continuing ADR-0195 through ADR-0203's
+**Deciders:** Claude Code session (continuing ADR-0195 through ADR-0205's
 audit-response and priority-pass work), account owner
 
 **Related documents:** `docs/decisions/ADR-0197-external-audit-p2-batch-de-2026-09-24.md`
 (Live turnover / liquidity_state deferrals), `docs/decisions/ADR-0200-external-audit-p2-batch-i-2026-09-25.md`
-(F3 MISMATCH fix, F4 reconciliation-driver deferral), ADR-0203 (this
+(F3 MISMATCH fix, F4 reconciliation-driver deferral), ADR-0205 (this
 session's own priority-ranking exercise that surfaced this batch)
 
 ## Context

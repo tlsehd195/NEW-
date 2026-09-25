@@ -1,4 +1,4 @@
-# ADR-0203: Deferred-item priority pass -- candidate natural key & SecurityMaster/UniverseMembership provenance
+# ADR-0205: Deferred-item priority pass -- candidate natural key & SecurityMaster/UniverseMembership provenance
 
 **Status:** Accepted
 **Date:** 2026-09-25
