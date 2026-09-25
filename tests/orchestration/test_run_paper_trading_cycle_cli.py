@@ -19,6 +19,7 @@ from pathlib import Path
 
 from backtest_helpers import make_bars, make_security, trading_days
 
+from data_infra.exchange_calendars_adapter import build_xnys_calendar
 from data_infra.universe import SymbolMetadata, UniverseDefinition
 
 from storage.config import StorageConfig
@@ -283,7 +284,14 @@ class TestResume:
         # run had not already recorded -- i.e. exactly (full-month
         # trading days) minus (however many the first run already did),
         # never the full month over again.
-        full_month_days = len(trading_days(date(2024, 2, 1), date(2024, 2, 29)))
+        #
+        # ADR-0207: run_paper_trading_cycle.py now injects the real
+        # exchange_calendars-backed XNYS calendar, not `trading_days`'
+        # own toy `US_EQUITY` default -- February 2024 has a real
+        # Presidents Day (2024-02-19) the toy calendar does not know
+        # about, so the expected count must come from the same real
+        # calendar the script under test actually uses.
+        full_month_days = len(trading_days(date(2024, 2, 1), date(2024, 2, 29), calendar=build_xnys_calendar()))
         assert second["checkpoints_run"] > 0
         assert second["checkpoints_run"] == full_month_days - first["checkpoints_run"]
 

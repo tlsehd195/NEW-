@@ -1,0 +1,281 @@
+{
+  "candidate_count": 51,
+  "common_valid_fold_count": 58,
+  "dsr": {
+    "by_candidate": {
+      "abnormal_investment": {
+        "absolute_difference": 0.0009242085645772002,
+        "our_dsr": 0.7771984577189792,
+        "purgedcv_dsr": 0.776274249154402
+      },
+      "altman_z": {
+        "absolute_difference": 0.0002790388283273604,
+        "our_dsr": 0.9975025882947279,
+        "purgedcv_dsr": 0.9972235494664006
+      },
+      "asset_growth": {
+        "absolute_difference": 6.358198588984898e-05,
+        "our_dsr": 0.5366416336214516,
+        "purgedcv_dsr": 0.5365780516355617
+      },
+      "asset_turnover_change": {
+        "absolute_difference": 0.0009180292672705814,
+        "our_dsr": 0.9572141366031548,
+        "purgedcv_dsr": 0.9562961073358842
+      },
+      "bid_ask_spread": {
+        "absolute_difference": 3.460002104244131e-05,
+        "our_dsr": 0.487063028890897,
+        "purgedcv_dsr": 0.4870976289119394
+      },
+      "book_to_market": {
+        "absolute_difference": 0.0007666041763416676,
+        "our_dsr": 0.17262349913936498,
+        "purgedcv_dsr": 0.17339010331570665
+      },
+      "buy_and_hold": {
+        "absolute_difference": 0.0005197647446682496,
+        "our_dsr": 0.2629692128784488,
+        "purgedcv_dsr": 0.26348897762311707
+      },
+      "cash_holdings": {
+        "absolute_difference": 0.00030403717235627514,
+        "our_dsr": 0.8876422327588301,
+        "purgedcv_dsr": 0.8873381955864739
+      },
+      "cashflow_yield": {
+        "absolute_difference": 0.0007489961057713379,
+        "our_dsr": 0.14073502595099974,
+        "purgedcv_dsr": 0.14148402205677107
+      },
+      "combined_factor": {
+        "absolute_difference": 6.98581237845719e-06,
+        "our_dsr": 0.07797036938968371,
+        "purgedcv_dsr": 0.07797735520206217
+      },
+      "coskewness": {
+        "absolute_difference": 8.227685563810816e-05,
+        "our_dsr": 0.48725751994644534,
+        "purgedcv_dsr": 0.48733979680208345
+      },
+      "dividend_growth": {
+        "absolute_difference": 0.0011118611561126146,
+        "our_dsr": 0.9023165623262897,
+        "purgedcv_dsr": 0.901204701170177
+      },
+      "downside_beta": {
+        "absolute_difference": 0.000514058579888288,
+        "our_dsr": 0.6685119056842705,
+        "purgedcv_dsr": 0.6679978471043823
+      },
+      "earnings_yield": {
+        "absolute_difference": 4.607337177736648e-05,
+        "our_dsr": 0.4828191391912542,
+        "purgedcv_dsr": 0.48286521256303155
+      },
+      "fifty_two_week_high": {
+        "absolute_difference": 3.1046641686627297e-05,
+        "our_dsr": 0.521272239545208,
+        "purgedcv_dsr": 0.5212411929035213
+      },
+      "gross_profitability": {
+        "absolute_difference": 3.72155278609565e-05,
+        "our_dsr": 0.5118560194604406,
+        "purgedcv_dsr": 0.5118188039325796
+      },
+      "high_volume_return_premium": {
+        "absolute_difference": 0.00028660363147131607,
+        "our_dsr": 0.1771452838580973,
+        "purgedcv_dsr": 0.17743188748956862
+      },
+      "idiosyncratic_skewness": {
+        "absolute_difference": 0.0013735599360716888,
+        "our_dsr": 0.7352429070048065,
+        "purgedcv_dsr": 0.7338693470687349
+      },
+      "idiosyncratic_volatility": {
+        "absolute_difference": 0.0007339839578840435,
+        "our_dsr": 0.7106199474628418,
+        "purgedcv_dsr": 0.7098859635049578
+      },
+      "illiquidity": {
+        "absolute_difference": 0.0009755669920933352,
+        "our_dsr": 0.816035945036429,
+        "purgedcv_dsr": 0.8150603780443356
+      },
+      "industry_momentum": {
+        "absolute_difference": 0.00034221909201237466,
+        "our_dsr": 0.6577231988817954,
+        "purgedcv_dsr": 0.657380979789783
+      },
+      "leverage": {
+        "absolute_difference": 0.0007805408737773245,
+        "our_dsr": 0.9120787325941211,
+        "purgedcv_dsr": 0.9112981917203438
+      },
+      "long_term_momentum": {
+        "absolute_difference": 0.0013788953834101836,
+        "our_dsr": 0.8751054967630296,
+        "purgedcv_dsr": 0.8737266013796194
+      },
+      "long_term_reversal": {
+        "absolute_difference": 0.0004088296593511842,
+        "our_dsr": 0.12398192432324301,
+        "purgedcv_dsr": 0.1243907539825942
+      },
+      "low_beta": {
+        "absolute_difference": 0.00024461287184923686,
+        "our_dsr": 0.17864559413052733,
+        "purgedcv_dsr": 0.17889020700237657
+      },
+      "max_effect": {
+        "absolute_difference": 0.000559727219502093,
+        "our_dsr": 0.3727000939475374,
+        "purgedcv_dsr": 0.3732598211670395
+      },
+      "merton_dd": {
+        "absolute_difference": 0.0001943624292137791,
+        "our_dsr": 0.9614861727364142,
+        "purgedcv_dsr": 0.9612918103072005
+      },
+      "ml_ols": {
+        "absolute_difference": 0.0006243829079020102,
+        "our_dsr": 0.7334888146140385,
+        "purgedcv_dsr": 0.7328644317061365
+      },
+      "ml_ridge": {
+        "absolute_difference": 0.00037288377613842183,
+        "our_dsr": 0.6155830177039424,
+        "purgedcv_dsr": 0.615210133927804
+      },
+      "ml_tree": {
+        "absolute_difference": 0.0010372827376069482,
+        "our_dsr": 0.9156689592095557,
+        "purgedcv_dsr": 0.9146316764719488
+      },
+      "net_operating_assets": {
+        "absolute_difference": 0.00019296355628178885,
+        "our_dsr": 0.4454930580771657,
+        "purgedcv_dsr": 0.4456860216334475
+      },
+      "net_stock_issuance": {
+        "absolute_difference": 0.00035527203874541335,
+        "our_dsr": 0.7069551334176943,
+        "purgedcv_dsr": 0.7065998613789489
+      },
+      "ohlson_o": {
+        "absolute_difference": 0.0009691113300226428,
+        "our_dsr": 0.8767734261199628,
+        "purgedcv_dsr": 0.8758043147899401
+      },
+      "operating_leverage": {
+        "absolute_difference": 0.0010698914218043587,
+        "our_dsr": 0.7623110316299453,
+        "purgedcv_dsr": 0.7612411402081409
+      },
+      "piotroski": {
+        "absolute_difference": 0.0001976550499436791,
+        "our_dsr": 0.2133844411799331,
+        "purgedcv_dsr": 0.21358209622987678
+      },
+      "quality_minus_junk": {
+        "absolute_difference": 0.0007560120295676542,
+        "our_dsr": 0.9210369605161174,
+        "purgedcv_dsr": 0.9202809484865497
+      },
+      "rank_average_ensemble": {
+        "absolute_difference": 0.00022948377757181504,
+        "our_dsr": 0.9899550112405853,
+        "purgedcv_dsr": 0.9897255274630135
+      },
+      "rd_expenditure": {
+        "absolute_difference": 0.0012069255380242616,
+        "our_dsr": 0.8251953111632193,
+        "purgedcv_dsr": 0.823988385625195
+      },
+      "residual_momentum": {
+        "absolute_difference": 0.0007380615041251426,
+        "our_dsr": 0.7336923376926886,
+        "purgedcv_dsr": 0.7329542761885635
+      },
+      "return_seasonality": {
+        "absolute_difference": 0.00044483996841715445,
+        "our_dsr": 0.6720306647108796,
+        "purgedcv_dsr": 0.6715858247424624
+      },
+      "risk_controlled_momentum": {
+        "absolute_difference": 0.0007903272353341206,
+        "our_dsr": 0.6718668151082531,
+        "purgedcv_dsr": 0.671076487872919
+      },
+      "rs_rating": {
+        "absolute_difference": 0.0005514679336114936,
+        "our_dsr": 0.865735809699676,
+        "purgedcv_dsr": 0.8651843417660645
+      },
+      "sales_yield": {
+        "absolute_difference": 0.000941280328595584,
+        "our_dsr": 0.28281127742954637,
+        "purgedcv_dsr": 0.28375255775814195
+      },
+      "share_turnover": {
+        "absolute_difference": 0.0008233858742130451,
+        "our_dsr": 0.805856569635697,
+        "purgedcv_dsr": 0.8050331837614839
+      },
+      "shareholder_yield": {
+        "absolute_difference": 0.00034271850927997116,
+        "our_dsr": 0.4129326525436314,
+        "purgedcv_dsr": 0.41327537105291134
+      },
+      "short_term_reversal": {
+        "absolute_difference": 0.00024550300080294907,
+        "our_dsr": 0.4238180962493403,
+        "purgedcv_dsr": 0.42406359925014325
+      },
+      "size": {
+        "absolute_difference": 0.0006265929117852398,
+        "our_dsr": 0.5722254487327624,
+        "purgedcv_dsr": 0.5715988558209771
+      },
+      "sloan_accruals": {
+        "absolute_difference": 0.0005208873134562308,
+        "our_dsr": 0.9308877177514185,
+        "purgedcv_dsr": 0.9303668304379623
+      },
+      "sue": {
+        "absolute_difference": 0.00011764276740217072,
+        "our_dsr": 0.44265061130989763,
+        "purgedcv_dsr": 0.4427682540772998
+      },
+      "trend_volatility": {
+        "absolute_difference": 0.00036544412131495063,
+        "our_dsr": 0.18272121288152332,
+        "purgedcv_dsr": 0.18308665700283827
+      },
+      "value_composite": {
+        "absolute_difference": 0.00039227621784460043,
+        "our_dsr": 0.43433072468873085,
+        "purgedcv_dsr": 0.43472300090657545
+      }
+    },
+    "max_absolute_difference": 0.0013788953834101836,
+    "mean_absolute_difference": 0.000540775935451286,
+    "num_trials": 51,
+    "var_sharpe_across_trials": 0.017940988775304076
+  },
+  "num_groups": 8,
+  "pbo": {
+    "absolute_difference": 0.07142857142857144,
+    "our_num_combinations": 70,
+    "our_probability": 0.18571428571428572,
+    "purgedcv_num_combinations": 70,
+    "purgedcv_probability": 0.11428571428571428
+  },
+  "self_check": {
+    "matches_reported": true,
+    "recomputed_our_pbo_probability": 0.18571428571428572,
+    "reported_pbo_probability": 0.18571428571428572
+  },
+  "source_report": "docs/research/reports/full-validation-20260925T160732Z.json"
+}

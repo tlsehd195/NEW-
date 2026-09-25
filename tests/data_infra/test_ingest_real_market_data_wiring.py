@@ -301,16 +301,24 @@ class TestUnexplainedZeroBarSymbolsGateExitCode:
     nothing for a symbol on a real, open NYSE trading day, indistinguishable
     from a run that legitimately saw zero bars because the whole range
     was a market holiday. Fixed by cross-checking `missing_symbols`
-    against the real, production-grade `US_EQUITY_NYSE` calendar (never
-    the toy Phase-1-scope `US_EQUITY` sample, whose own module docstring
-    explicitly disclaims production accuracy)."""
+    against a production-grade NYSE calendar (never the toy Phase-1-scope
+    `US_EQUITY` sample, whose own module docstring explicitly disclaims
+    production accuracy).
+
+    ADR-0207 (2026-09-26): the production-grade calendar itself was
+    swapped from the rule-derived `US_EQUITY_NYSE` to the real
+    exchange_calendars-backed XNYS calendar (`data_infra.
+    exchange_calendars_adapter.build_xnys_calendar`) -- this test was
+    updated to match, not relaxed; it still asserts the script never
+    falls back to the toy sample."""
 
     def test_uses_the_production_grade_nyse_calendar_not_the_toy_sample(self) -> None:
         source = _source()
-        assert "from data_infra.calendar import US_EQUITY_NYSE" in source
+        assert "from data_infra.exchange_calendars_adapter import build_xnys_calendar" in source
+        assert "xnys_calendar.is_trading_day(" in source
         # Never the toy Phase-1-scope calendars this script must not
         # silently start relying on for a real trading-day computation.
-        assert "US_EQUITY_NYSE.is_trading_day(" in source
+        assert "from data_infra.calendar import US_EQUITY" not in source
 
     def test_manifest_has_expected_trading_days_and_unexplained_zero_bar_keys(self) -> None:
         keys = _manifest_keys(_tree())

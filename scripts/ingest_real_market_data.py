@@ -113,8 +113,10 @@ having silently returned nothing for a symbol on a real, open trading
 day, indistinguishable in this script's own exit code from a run that
 legitimately saw no bars because the whole requested range was a market
 holiday. `expected_trading_days_in_range` (computed from the real,
-production-grade `US_EQUITY_NYSE` calendar, never the toy Phase-1-scope
-`US_EQUITY` sample) and `unexplained_zero_bar_symbols` now distinguish
+exchange_calendars-backed XNYS calendar -- ADR-0207, superseding the
+rule-derived `US_EQUITY_NYSE` this comment originally named, never the
+toy Phase-1-scope `US_EQUITY` sample) and `unexplained_zero_bar_symbols`
+now distinguish
 the two: this script now exits non-zero, and prints a FATAL line, only
 when at least one requested symbol has zero persisted bars AND the
 requested range contains at least one real NYSE trading day. A
@@ -134,7 +136,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from data_infra.calendar import US_EQUITY_NYSE  # noqa: E402
+from data_infra.exchange_calendars_adapter import build_xnys_calendar  # noqa: E402
 from data_infra.provider import IngestionRunner, PermanentProviderError, TransientProviderError  # noqa: E402
 from data_infra.providers.alphavantage import AlphaVantageDataProvider  # noqa: E402
 from data_infra.providers.alphavantage_config import DEFAULT_ALPHAVANTAGE_CONFIG  # noqa: E402
@@ -450,14 +452,15 @@ def main() -> int:
         # this fix touches). What WAS a real, silent gap: this flagship
         # script never checked whether a `missing_symbols` entry was
         # actually explainable by the market being closed. Cross-checking
-        # against the real, production-grade NYSE calendar
-        # (`US_EQUITY_NYSE`, not the toy Phase-1-scope `US_EQUITY`/
-        # `KR_EQUITY` samples -- see calendar.py's own docstring) closes
-        # that gap here, at the script layer only.
+        # against the real exchange_calendars-backed XNYS calendar
+        # (ADR-0207; not the toy Phase-1-scope `US_EQUITY`/`KR_EQUITY`
+        # samples -- see calendar.py's own docstring) closes that gap
+        # here, at the script layer only.
+        xnys_calendar = build_xnys_calendar()
         expected_trading_days_in_range = sum(
             1
             for offset in range((args.end.date() - args.start.date()).days + 1)
-            if US_EQUITY_NYSE.is_trading_day(args.start.date() + timedelta(days=offset))
+            if xnys_calendar.is_trading_day(args.start.date() + timedelta(days=offset))
         )
         unexplained_zero_bar_symbols = list(missing_symbols) if expected_trading_days_in_range > 0 else []
 
