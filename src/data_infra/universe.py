@@ -673,7 +673,13 @@ def build_universe_memberships(universe: UniverseDefinition, *, valid_from: date
     `docs/decisions/ADR-0032-security-identity-and-survivorship-aware-universe.md`.
     Every `SymbolMetadata` in this project with `listed_from`/`listed_to`
     still `None` today (e.g. `PILOT_UNIVERSE_V1`) behaves byte-for-byte
-    identically to before this change -- this is purely additive."""
+    identically to before this change -- this is purely additive.
+
+    `UniverseMembership.provenance` is left `None` (ADR-0196 F-4
+    follow-up): neither a statically-curated `UniverseDefinition` nor
+    `_SP500_PIT_CONFIRMED_LISTED_FROM` tracks a real fetch timestamp
+    this function could honestly report as `Provenance.retrieved_at`
+    -- disclosed here rather than fabricating one."""
     return [
         UniverseMembership(
             security_id=s.symbol, universe=universe.name,
@@ -702,7 +708,11 @@ def build_security_masters(universe: UniverseDefinition, *, valid_from: datetime
     explicit provider-confirmed reason this module does not have
     (`SymbolMetadata` carries no such field), so `DELISTED` is used as
     the honest, least-specific-that-is-still-correct default rather
-    than guessing a more specific reason."""
+    than guessing a more specific reason.
+
+    `SecurityMaster.provenance` is left `None` for the same reason
+    `build_universe_memberships` leaves `UniverseMembership.provenance`
+    `None` -- see that function's docstring (ADR-0196 F-4 follow-up)."""
     return [
         SecurityMaster(
             security_id=s.symbol,

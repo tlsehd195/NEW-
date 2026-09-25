@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Sequence
 
+from data_infra.versioning import compute_data_version
+
 from learning.enums import CandidateModelStatus, SplitName
 from learning.models import CandidateModelArtifact, LabeledSample, TrainingDataset
 
@@ -96,6 +98,16 @@ class LinearRegressionTrainer:
         self._feature_ids = list(feature_ids)
         self._ridge = ridge
         self._ids = _IdAllocator()
+        # ADR-0195 P1-4 follow-up: trainer_version alone (a fixed
+        # per-class string) does not vary with feature_ids/ridge, so a
+        # retrain of the same dataset with different runtime
+        # hyperparameters previously collided on an unchanged candidate
+        # natural key. This hashes exactly the runtime config passed to
+        # __init__ -- never the learned coefficients/intercept, which
+        # belong in `parameters` as output, not identity.
+        self._trainer_config_version = compute_data_version(
+            {"feature_ids": self._feature_ids, "ridge": self._ridge}
+        )
 
     def _samples_with_required_features(self, samples: Sequence[LabeledSample]) -> list[LabeledSample]:
         required = set(self._feature_ids)
@@ -144,6 +156,7 @@ class LinearRegressionTrainer:
             trained_at=trained_at,
             provenance=dataset.provenance,
             experiment_id=experiment_id,
+            trainer_config_version=self._trainer_config_version,
         )
 
     def predict(self, candidate: CandidateModelArtifact, sample: LabeledSample) -> Optional[float]:
