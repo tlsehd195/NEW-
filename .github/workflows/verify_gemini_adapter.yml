@@ -1,0 +1,52 @@
+# One-time/on-demand verification that GeminiProviderAdapter (ADR-0206)
+# actually reaches the real Gemini API end to end, through the real
+# ai_gateway.gateway.AIGateway pipeline. See
+# `scripts/verify_gemini_adapter.py`'s own module docstring -- costs
+# real (free-tier) Gemini quota every run, so this is `workflow_dispatch`
+# only, never a recurring schedule, same discipline as
+# `verify_alpaca_paper_broker.yml`.
+name: Verify Gemini Adapter
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Gemini model to verify against (default: the adapter's own default)"
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Verify Gemini adapter (real API call)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # workflow_dispatch inputs are never interpolated directly into
+          # a `run:` block via `${{ }}` -- passed as an env var instead,
+          # the same fix already applied across this repository's other
+          # workflows (see verify_alpaca_paper_broker.yml's own comment).
+          MODEL_INPUT: ${{ inputs.model }}
+        run: |
+          if [ -n "$MODEL_INPUT" ]; then
+            python3 scripts/verify_gemini_adapter.py --model "$MODEL_INPUT"
+          else
+            python3 scripts/verify_gemini_adapter.py
+          fi
