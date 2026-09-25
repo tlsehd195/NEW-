@@ -149,9 +149,25 @@ def evaluate_account_health(
     if max_drawdown is not None and _finite(drawdown) and drawdown >= max_drawdown:
         status = ComponentHealthStatus.UNAVAILABLE
         reason = f"drawdown={drawdown:.4f}_exceeds_max_drawdown={max_drawdown:.4f}"
+    elif max_drawdown is None:
+        # Independent audit finding (2026-09-24): this branch previously
+        # reported HEALTHY (reason="max_drawdown_not_configured") --
+        # a specific, reassuring claim about a threshold that was never
+        # actually evaluated. A real account in a severe real drawdown,
+        # run with no --max-drawdown configured (this project's own CLI
+        # default), would show ACCOUNT as HEALTHY in monitoring, masking
+        # exactly the condition this collector exists to surface. "Not
+        # configured" means "cannot evaluate," the same fail-closed
+        # UNKNOWN treatment `evaluate_pipeline_health`'s own "empty
+        # input is UNKNOWN, never assumed healthy" docstring and
+        # `evaluate_health_from_failure_rate`'s `sample_count=0` ->
+        # UNKNOWN gate already use elsewhere in this same module --
+        # never a vacuous HEALTHY.
+        status = ComponentHealthStatus.UNKNOWN
+        reason = "max_drawdown_not_configured"
     else:
         status = ComponentHealthStatus.HEALTHY
-        reason = "within_max_drawdown" if max_drawdown is not None else "max_drawdown_not_configured"
+        reason = "within_max_drawdown"
 
     return ComponentHealth(
         health_id=health_id, component=MonitoringComponent.ACCOUNT, status=status, as_of_time=as_of_time,

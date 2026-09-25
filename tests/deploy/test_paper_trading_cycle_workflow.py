@@ -209,6 +209,25 @@ def test_monitoring_sweep_step_runs_and_never_fails_the_job():
     assert sweep_upload["with"].get("if-no-files-found") == "ignore"
 
 
+def test_representative_security_id_is_resolved_from_the_real_universe_not_hardcoded():
+    """Independent audit finding (2026-09-24): `--representative-
+    security-id` was previously hardcoded to the literal string "AAPL",
+    disconnected from the "$UNIVERSE" variable that actually controls
+    what this workflow trades -- silently fragile against a future
+    universe change or AAPL being removed from it. Resolved dynamically
+    from the SAME real universe instead, via select_universe_shard.py."""
+    doc = _load()
+    steps = _steps(doc)
+    sweep_step = next(s for s in steps if "run_monitoring_sweep.py" in s.get("run", ""))
+    invocation_line = next(
+        line for line in sweep_step["run"].splitlines() if "run_monitoring_sweep.py" in line
+    )
+    assert "AAPL" not in invocation_line
+    assert "select_universe_shard.py" in sweep_step["run"]
+    assert "--universe \"$UNIVERSE\"" in sweep_step["run"]
+    assert "--representative-security-id \"$REPRESENTATIVE_SECURITY_ID\"" in sweep_step["run"]
+
+
 def test_signal_ic_alphalens_script_is_deliberately_not_automated():
     """TEST-1 (src/strategy_research/locked_windows.py) spans
     2023-04-28 to 2026-08-27, which covers this project's entire real

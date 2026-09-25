@@ -149,6 +149,23 @@ jobs:
       - name: Create (or reuse) the security list
         run: |
           set -euo pipefail
+          # Independent audit finding (2026-09-24): SSH ingress here is
+          # source 0.0.0.0/0 (the whole internet), not scoped to the
+          # account owner's own IP. This is a real, known trade-off, not
+          # an oversight: the account owner's own IP is not knowable in
+          # advance (this runs unattended on a 15-minute schedule per
+          # the module docstring's own capacity-retry strategy, and a
+          # home/office IP is typically dynamic anyway), and auth is
+          # SSH-key-only (a fresh ed25519 keypair generated per run,
+          # never a password) -- a meaningfully smaller attack surface
+          # than an open password-auth port, though not equivalent to a
+          # CIDR-restricted one. This instance is a research/non-
+          # production runner, not a trading system. Left open by
+          # design rather than force-narrowed to a guessed CIDR that
+          # could lock the account owner out of their own instance;
+          # once the instance is up and the account owner's own stable
+          # IP is known, they can narrow this security list's ingress
+          # rule directly from the OCI console.
           SL_ID=$(oci network security-list list --compartment-id "$TENANCY_OCID" --vcn-id "$VCN_ID" \
             --query "data[?\"display-name\"=='colibri-seclist' && \"lifecycle-state\"!='TERMINATED'] | [0].id" --raw-output)
           if [ "$SL_ID" = "null" ] || [ -z "$SL_ID" ]; then

@@ -50,12 +50,15 @@ from monitoring.metrics import (
     compute_learning_metrics,
     compute_model_evolution_metrics,
     compute_prediction_metrics,
+    compute_regime_metrics,
     compute_risk_metrics,
     compute_sizing_metrics,
 )
 from monitoring.models import ComponentHealth, MonitoringEvent
 
 from predict.models import PredictionOutput
+
+from regime.models import CompositeRegimeObservation
 
 from risk.models import PositionSizingResult, RiskCheckedPosition
 
@@ -127,6 +130,32 @@ def collect_prediction(
         event_id=event_id, component=MonitoringComponent.PREDICTION, event_type="prediction_observation",
         health=health, observed_at=observed_at, as_of_time=as_of_time, metrics=metrics, config=config,
         source_record_ids=tuple(p.prediction_id for p in filtered),
+    )
+    return event, health
+
+
+def collect_regime(
+    observations: Sequence[CompositeRegimeObservation], *, as_of_time: datetime, observed_at: datetime,
+    config: MonitoringConfig, event_id: str, health_id: str,
+) -> tuple[MonitoringEvent, ComponentHealth]:
+    """Independent audit finding (2026-09-24, "REGIME collector 부재"):
+    `MonitoringComponent.REGIME` was a declared enum member with no
+    corresponding collector at all, even though `evaluate_existence_
+    health`'s own docstring already names Regime as one of the four
+    components it exists for -- a genuine gap, not a deliberate scope
+    decision. Mirrors `collect_prediction`/`collect_decision` exactly:
+    existence-based health (is this layer still producing output at
+    all), never a judgment on the content of what it produced."""
+    filtered = _filter_by_time(observations, as_of_time, key=lambda o: o.as_of_time)
+    metrics = compute_regime_metrics(filtered)
+    health = evaluate_existence_health(
+        MonitoringComponent.REGIME, count=metrics["count"], config=config, as_of_time=as_of_time,
+        health_id=health_id, event_id=event_id,
+    )
+    event = _make_event(
+        event_id=event_id, component=MonitoringComponent.REGIME, event_type="regime_observation",
+        health=health, observed_at=observed_at, as_of_time=as_of_time, metrics=metrics, config=config,
+        source_record_ids=tuple(o.composite_id for o in filtered),
     )
     return event, health
 

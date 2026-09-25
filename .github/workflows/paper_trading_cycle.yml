@@ -241,8 +241,19 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
+          # Independent audit finding (2026-09-24): the representative
+          # security id was previously hardcoded to the literal string
+          # "AAPL", disconnected from the "$UNIVERSE" variable that
+          # actually controls what this workflow trades -- silently
+          # fragile against a future universe change or AAPL being
+          # removed from it. Resolved dynamically from the SAME real
+          # universe instead, via the already-tested select_universe_
+          # shard.py (a large --shard-count isolates just the first,
+          # alphabetically-sorted symbol -- deterministic, no hardcoded
+          # ticker, always a real member of whatever "$UNIVERSE" is).
+          REPRESENTATIVE_SECURITY_ID=$(python3 scripts/select_universe_shard.py --universe "$UNIVERSE" --shard-index 0 --shard-count 1000)
           python3 scripts/run_monitoring_sweep.py \
-            --paper-store "$PAPER_STORE_DIR" --representative-security-id AAPL \
+            --paper-store "$PAPER_STORE_DIR" --representative-security-id "$REPRESENTATIVE_SECURITY_ID" \
             --start "$(date -u -d '7 days ago' +%F)" --end "$(date -u +%F)" \
             --out monitoring_sweep_report.json
 
