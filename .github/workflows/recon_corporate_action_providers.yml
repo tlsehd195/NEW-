@@ -1,0 +1,38 @@
+# One-shot reconnaissance: does Twelve Data or Alpha Vantage's real
+# free-tier API return corporate-action (split/dividend) data? See
+# scripts/recon_corporate_action_providers.py's own module docstring
+# for the full "why" (run #44, 2026-09-25: corporate-action collection
+# failed for every requested symbol because it only ever uses Tiingo,
+# which shares its hourly request budget with price-bar fetching and
+# has no fallback of its own).
+#
+# workflow_dispatch-only, one-shot -- delete or repurpose once the real
+# answer is known and the actual provider-wiring approach is decided.
+name: Recon Corporate Action Providers
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Run reconnaissance (no parsing, just real status/body observation)
+        env:
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+        run: python3 scripts/recon_corporate_action_providers.py
