@@ -31,6 +31,12 @@ DDL_STATEMENTS: tuple[str, ...] = (
         valid_from TIMESTAMP NOT NULL,
         valid_to TIMESTAMP,
         status TEXT NOT NULL,
+        provenance_source TEXT,
+        provenance_source_dataset TEXT,
+        provenance_source_record_id TEXT,
+        provenance_retrieved_at TIMESTAMP,
+        provenance_data_version TEXT,
+        provenance_schema_version INTEGER,
         PRIMARY KEY (security_id, valid_from)
     )
     """,
@@ -75,6 +81,12 @@ DDL_STATEMENTS: tuple[str, ...] = (
         universe TEXT NOT NULL,
         valid_from TIMESTAMP NOT NULL,
         valid_to TIMESTAMP,
+        provenance_source TEXT,
+        provenance_source_dataset TEXT,
+        provenance_source_record_id TEXT,
+        provenance_retrieved_at TIMESTAMP,
+        provenance_data_version TEXT,
+        provenance_schema_version INTEGER,
         PRIMARY KEY (security_id, universe, valid_from)
     )
     """,

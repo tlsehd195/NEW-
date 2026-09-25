@@ -14,9 +14,15 @@ def utc(y, m, d):
     return datetime(y, m, d, tzinfo=timezone.utc)
 
 
+class _FakeProvenance:
+    def __init__(self, source):
+        self.source = source
+
+
 class _FakeBar:
-    def __init__(self, timestamp):
+    def __init__(self, timestamp, *, source="test_provider"):
         self.timestamp = timestamp
+        self.provenance = _FakeProvenance(source)
 
 
 class _FakeRepository:
@@ -84,3 +90,40 @@ class TestBuildDelistedSecurityMastersFromBars:
         )
         assert len(records) == 1
         assert records[0].valid_to > records[0].valid_from
+
+
+class TestProvenance:
+    """ADR-0196 F-4 follow-up: unlike data_infra.universe's writers
+    (which leave provenance None -- no real fetch timestamp tracked),
+    this writer derives from real, already-ingested PriceBars and can
+    honestly fill Provenance."""
+
+    def test_provenance_is_populated_not_none(self) -> None:
+        repo = _FakeRepository({"DELL": [_FakeBar(utc(2013, 10, 29), source="tiingo")]})
+        record = build_delisted_security_masters_from_bars(
+            repo, ["DELL"], price_history_start=utc(1900, 1, 1), as_of_time=utc(2026, 1, 1)
+        )[0]
+        assert record.provenance is not None
+        assert record.provenance.source == "derived_from_price_bars"
+        assert record.provenance.source_dataset == "tiingo"
+        assert record.provenance.source_record_id == "DELL"
+        assert record.provenance.retrieved_at == utc(2026, 1, 1)
+
+    def test_provenance_source_dataset_names_every_distinct_bar_source(self) -> None:
+        """Two bars from two different providers (e.g. a primary source
+        plus a fallback) -- source_dataset must not silently pick only
+        one and hide the other."""
+        repo = _FakeRepository(
+            {"DELL": [_FakeBar(utc(2013, 10, 28), source="tiingo"), _FakeBar(utc(2013, 10, 29), source="stooq")]}
+        )
+        record = build_delisted_security_masters_from_bars(
+            repo, ["DELL"], price_history_start=utc(1900, 1, 1), as_of_time=utc(2026, 1, 1)
+        )[0]
+        assert record.provenance.source_dataset == "stooq,tiingo"
+
+    def test_retrieved_at_is_the_caller_supplied_as_of_time_never_now(self) -> None:
+        repo = _FakeRepository({"DELL": [_FakeBar(utc(2013, 10, 29))]})
+        record = build_delisted_security_masters_from_bars(
+            repo, ["DELL"], price_history_start=utc(1900, 1, 1), as_of_time=utc(2025, 6, 1)
+        )[0]
+        assert record.provenance.retrieved_at == utc(2025, 6, 1)

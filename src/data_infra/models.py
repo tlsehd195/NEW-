@@ -83,6 +83,16 @@ class SecurityMaster:
     valid_from: datetime
     status: SecurityStatus
     valid_to: Optional[datetime] = None
+    # ADR-0196 F-4 follow-up: unlike PriceBar/CorporateAction/
+    # BenchmarkPoint, `Provenance` is Optional here, not required --
+    # this project's own "never fabricate" discipline means a real
+    # `Provenance.retrieved_at` cannot honestly be filled for every
+    # writer (e.g. a statically-curated UniverseDefinition has no
+    # tracked fetch timestamp at all). `None` means "not confirmed
+    # which source/version produced this record," the same honest-gap
+    # convention `SymbolMetadata`'s own Optional fields already use --
+    # never a guessed or fabricated Provenance standing in for a real one.
+    provenance: Optional[Provenance] = None
 
     def __post_init__(self) -> None:
         _require_aware("SecurityMaster.valid_from", self.valid_from)
@@ -232,6 +242,10 @@ class UniverseMembership:
     universe: str
     valid_from: datetime
     valid_to: Optional[datetime] = None
+    # ADR-0196 F-4 follow-up -- see SecurityMaster.provenance's docstring
+    # comment for why this is Optional here, unlike PriceBar/
+    # CorporateAction/BenchmarkPoint.
+    provenance: Optional[Provenance] = None
 
     def __post_init__(self) -> None:
         _require_aware("UniverseMembership.valid_from", self.valid_from)

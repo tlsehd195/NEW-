@@ -174,6 +174,25 @@ def row_to_provenance(row: dict) -> Provenance:
     )
 
 
+def provenance_to_row_optional(p: Optional[Provenance]) -> dict:
+    """`SecurityMaster`/`UniverseMembership` (ADR-0196 F-4 follow-up) --
+    unlike `provenance_to_row`'s required case, `p` may honestly be
+    `None` (no real Provenance was ever confirmed for this record)."""
+    if p is None:
+        return {
+            "provenance_source": None, "provenance_source_dataset": None,
+            "provenance_source_record_id": None, "provenance_retrieved_at": None,
+            "provenance_data_version": None, "provenance_schema_version": None,
+        }
+    return provenance_to_row(p)
+
+
+def row_to_provenance_optional(row: dict) -> Optional[Provenance]:
+    if row.get("provenance_source") is None:
+        return None
+    return row_to_provenance(row)
+
+
 def fundamental_record_to_row(record: FundamentalRecord) -> dict:
     row = {
         "security_id": record.security_id,
@@ -391,7 +410,7 @@ PRICE_BAR_COLUMNS = (
 
 
 def security_master_to_row(sec: SecurityMaster) -> dict:
-    return {
+    row = {
         "security_id": sec.security_id,
         "ticker": sec.ticker,
         "exchange": sec.exchange,
@@ -402,6 +421,8 @@ def security_master_to_row(sec: SecurityMaster) -> dict:
         "valid_to": to_utc_naive(sec.valid_to),
         "status": sec.status.value,
     }
+    row.update(provenance_to_row_optional(sec.provenance))
+    return row
 
 
 def row_to_security_master(row: dict) -> SecurityMaster:
@@ -415,6 +436,7 @@ def row_to_security_master(row: dict) -> SecurityMaster:
         valid_from=from_utc_naive(row["valid_from"]),
         valid_to=from_utc_naive(row.get("valid_to")),
         status=SecurityStatus(row["status"]),
+        provenance=row_to_provenance_optional(row),
     )
 
 
@@ -475,12 +497,14 @@ def row_to_benchmark_point(row: dict) -> BenchmarkPoint:
 
 
 def universe_membership_to_row(m: UniverseMembership) -> dict:
-    return {
+    row = {
         "security_id": m.security_id,
         "universe": m.universe,
         "valid_from": to_utc_naive(m.valid_from),
         "valid_to": to_utc_naive(m.valid_to),
     }
+    row.update(provenance_to_row_optional(m.provenance))
+    return row
 
 
 def row_to_universe_membership(row: dict) -> UniverseMembership:
@@ -489,6 +513,7 @@ def row_to_universe_membership(row: dict) -> UniverseMembership:
         universe=row["universe"],
         valid_from=from_utc_naive(row["valid_from"]),
         valid_to=from_utc_naive(row.get("valid_to")),
+        provenance=row_to_provenance_optional(row),
     )
 
 
@@ -1420,6 +1445,7 @@ def candidate_model_to_payload(candidate: CandidateModelArtifact) -> dict:
         "trained_at": _dt_iso(candidate.trained_at),
         "provenance": candidate.provenance.value,
         "experiment_id": candidate.experiment_id,
+        "trainer_config_version": candidate.trainer_config_version,
     }
 
 
@@ -1437,6 +1463,7 @@ def payload_to_candidate_model(data: dict) -> CandidateModelArtifact:
         trained_at=_dt_from_iso(data["trained_at"]),
         provenance=TradeProvenance(data["provenance"]),
         experiment_id=data.get("experiment_id"),
+        trainer_config_version=data.get("trainer_config_version"),
     )
 
 

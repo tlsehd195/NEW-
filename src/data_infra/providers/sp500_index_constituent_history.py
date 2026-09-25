@@ -362,7 +362,16 @@ def build_sp500_index_universe_memberships(
     get_universe`) sees exclusive `valid_to` semantics -- both are
     internally consistent with their own module's convention, but this
     boundary-day difference between the two query paths is real and
-    intentional, not a bug to reconcile."""
+    intentional, not a bug to reconcile.
+
+    `provenance` is left `None` (ADR-0196 F-4 follow-up):
+    `parse_ticker_intervals` reads `csv_path` directly and tracks no
+    real fetch/retrieval timestamp, so a `Provenance.retrieved_at`
+    cannot honestly be filled here yet. When one is (this module's own
+    docstring already fixes `Provenance.source` as
+    `"fja05680_sp500_ticker_start_end"` for that day), thread a real
+    retrieval timestamp in as a new parameter here rather than
+    guessing one."""
     return [
         UniverseMembership(
             security_id=iv.ticker,

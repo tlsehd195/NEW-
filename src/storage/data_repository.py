@@ -450,14 +450,16 @@ class DuckDBDataRepository:
 
     def add_security(self, security: SecurityMaster) -> None:
         row = security_master_to_row(security)
+        cols = (
+            "security_id", "ticker", "exchange", "currency", "company_id",
+            "instrument_type", "valid_from", "valid_to", "status",
+            "provenance_source", "provenance_source_dataset", "provenance_source_record_id",
+            "provenance_retrieved_at", "provenance_data_version", "provenance_schema_version",
+        )
         self._engine.connection.execute(
-            "INSERT INTO security_master (security_id, ticker, exchange, currency, company_id, "
-            "instrument_type, valid_from, valid_to, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            f"INSERT INTO security_master ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))}) "
             "ON CONFLICT (security_id, valid_from) DO NOTHING",
-            [row[c] for c in (
-                "security_id", "ticker", "exchange", "currency", "company_id",
-                "instrument_type", "valid_from", "valid_to", "status",
-            )],
+            [row[c] for c in cols],
         )
 
     def add_corporate_action(self, action: CorporateAction) -> None:
@@ -540,8 +542,13 @@ class DuckDBDataRepository:
 
     def add_universe_membership(self, membership: UniverseMembership) -> None:
         row = universe_membership_to_row(membership)
+        cols = (
+            "security_id", "universe", "valid_from", "valid_to",
+            "provenance_source", "provenance_source_dataset", "provenance_source_record_id",
+            "provenance_retrieved_at", "provenance_data_version", "provenance_schema_version",
+        )
         self._engine.connection.execute(
-            "INSERT INTO universe_membership (security_id, universe, valid_from, valid_to) "
-            "VALUES (?, ?, ?, ?) ON CONFLICT (security_id, universe, valid_from) DO NOTHING",
-            [row["security_id"], row["universe"], row["valid_from"], row["valid_to"]],
+            f"INSERT INTO universe_membership ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))}) "
+            "ON CONFLICT (security_id, universe, valid_from) DO NOTHING",
+            [row[c] for c in cols],
         )

@@ -130,6 +130,21 @@ class CandidateModelArtifact:
     trained_at: datetime
     provenance: TradeProvenance
     experiment_id: Optional[str] = None
+    # External audit follow-up (ADR-0195 P1-4, deferred there, closed
+    # here): a content hash of a trainer's own runtime hyperparameters
+    # (e.g. LinearRegressionTrainer's feature_ids/ridge) -- not the
+    # learned/output values already in `parameters`. `trainer_version`
+    # alone is a fixed per-class string for most trainers, so two
+    # trains of the SAME dataset differing only in runtime
+    # hyperparameters previously collided on an unchanged natural key
+    # (storage.learning_repository.DuckDBCandidateModelRepository.
+    # _natural_key) and the second, genuinely different candidate was
+    # silently dropped. None for a trainer with no runtime
+    # hyperparameters to hash (e.g. MeanRewardBaselineTrainer) or one
+    # that already encodes its only hyperparameter into `trainer_version`
+    # itself (TrailingWindowMeanTrainer's `window`) -- never a
+    # fabricated hash standing in for "nothing to hash".
+    trainer_config_version: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.candidate_id:

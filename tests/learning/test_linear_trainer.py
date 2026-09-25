@@ -192,3 +192,47 @@ class TestEvaluatorPerSamplePrediction:
             candidate, result.dataset, samples, evaluated_at=utc(2024, 3, 1), predict_fn=trainer.predict,
         )
         assert evaluation.test_metrics.sample_count == full_test_count - 1
+
+
+class TestTrainerConfigVersion:
+    """ADR-0195 P1-4 follow-up: trainer_config_version must reflect this
+    trainer's own runtime hyperparameters (feature_ids/ridge), not the
+    learned coefficients/intercept, so DuckDBCandidateModelRepository's
+    natural key can tell two differently-configured retrains of the
+    same dataset apart."""
+
+    def test_present_and_deterministic_for_a_given_config(self) -> None:
+        result = _dataset_result()
+        trainer = LinearRegressionTrainer(["feature_a", "feature_b"], ridge=0.01)
+        c1 = trainer.train(result.dataset, result.labeled_samples, trained_at=utc(2024, 3, 1))
+        c2 = trainer.train(result.dataset, result.labeled_samples, trained_at=utc(2024, 3, 1))
+        assert c1.trainer_config_version is not None
+        assert c1.trainer_config_version == c2.trainer_config_version
+
+    def test_differs_when_ridge_differs(self) -> None:
+        result = _dataset_result()
+        c1 = LinearRegressionTrainer(["feature_a", "feature_b"], ridge=0.01).train(
+            result.dataset, result.labeled_samples, trained_at=utc(2024, 3, 1),
+        )
+        c2 = LinearRegressionTrainer(["feature_a", "feature_b"], ridge=0.5).train(
+            result.dataset, result.labeled_samples, trained_at=utc(2024, 3, 1),
+        )
+        assert c1.trainer_config_version != c2.trainer_config_version
+
+    def test_differs_when_feature_ids_differ(self) -> None:
+        result = _dataset_result()
+        c1 = LinearRegressionTrainer(["feature_a"], ridge=0.01).train(
+            result.dataset, result.labeled_samples, trained_at=utc(2024, 3, 1),
+        )
+        c2 = LinearRegressionTrainer(["feature_a", "feature_b"], ridge=0.01).train(
+            result.dataset, result.labeled_samples, trained_at=utc(2024, 3, 1),
+        )
+        assert c1.trainer_config_version != c2.trainer_config_version
+
+    def test_mean_reward_baseline_trainer_has_no_fabricated_config_version(self) -> None:
+        """No runtime hyperparameters exist for this trainer -- None is
+        the honest value, never a fabricated hash standing in for
+        "nothing to hash"."""
+        result = _dataset_result()
+        candidate = MeanRewardBaselineTrainer().train(result.dataset, result.labeled_samples, trained_at=utc(2024, 3, 1))
+        assert candidate.trainer_config_version is None

@@ -36,7 +36,8 @@ from datetime import datetime, timedelta
 from typing import Sequence
 
 from data_infra.enums import InstrumentType, SecurityStatus
-from data_infra.models import SecurityMaster
+from data_infra.models import Provenance, SecurityMaster
+from data_infra.versioning import compute_data_version
 
 
 def build_delisted_security_masters_from_bars(
@@ -70,6 +71,26 @@ def build_delisted_security_masters_from_bars(
         timestamps = [b.timestamp for b in bars]
         valid_from = min(timestamps)
         valid_to = max(timestamps) + timedelta(days=1)
+        # ADR-0196 F-4 follow-up: unlike the other two SecurityMaster/
+        # UniverseMembership writers (data_infra.universe's static
+        # UniverseDefinitions, sp500_index_constituent_history's CSV
+        # parse -- neither tracks a real fetch timestamp), this record
+        # is genuinely derived from real, already-ingested PriceBars,
+        # each carrying its own real Provenance. `retrieved_at` is
+        # honestly `as_of_time` (when THIS derivation actually ran, not
+        # a guess); `source`/`source_dataset` name the underlying bars'
+        # own provenance sources rather than fabricating a new one.
+        bar_sources = sorted({b.provenance.source for b in bars})
+        provenance = Provenance(
+            source="derived_from_price_bars",
+            source_dataset=",".join(bar_sources),
+            source_record_id=security_id,
+            retrieved_at=as_of_time,
+            data_version=compute_data_version(
+                {"security_id": security_id, "valid_from": valid_from.isoformat(),
+                 "valid_to": valid_to.isoformat(), "bar_sources": bar_sources}
+            ),
+        )
         records.append(
             SecurityMaster(
                 security_id=security_id,
@@ -81,6 +102,7 @@ def build_delisted_security_masters_from_bars(
                 valid_from=valid_from,
                 valid_to=valid_to,
                 status=SecurityStatus.DELISTED,
+                provenance=provenance,
             )
         )
     return records

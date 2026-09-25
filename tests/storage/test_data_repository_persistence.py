@@ -88,6 +88,63 @@ class TestPersistenceAndRestart:
         assert len(actions) == 1
         engine2.close()
 
+    def test_security_master_and_universe_membership_provenance_survives_restart(self, tmp_path) -> None:
+        """ADR-0196 F-4 follow-up: SecurityMaster.provenance/
+        UniverseMembership.provenance are Optional -- both the honest
+        None case (no real Provenance known) and a genuinely populated
+        one must round-trip through DuckDB unchanged, not silently
+        dropped to None on reload."""
+        from data_infra.models import SecurityMaster, UniverseMembership
+        from data_infra.enums import InstrumentType, SecurityStatus
+
+        prov = Provenance(
+            source="derived_from_price_bars", source_dataset="tiingo", source_record_id="BBB",
+            retrieved_at=utc(2026, 1, 1), data_version="v1",
+        )
+        with_provenance = SecurityMaster(
+            security_id="BBB", ticker="BBB", exchange="UNKNOWN", currency="USD", company_id="COMPANY-BBB",
+            instrument_type=InstrumentType.EQUITY, valid_from=utc(2020, 1, 1), status=SecurityStatus.DELISTED,
+            provenance=prov,
+        )
+        membership_with_provenance = UniverseMembership(
+            security_id="BBB", universe="SP500", valid_from=utc(2020, 1, 1), provenance=prov,
+        )
+
+        config = StorageConfig(tmp_path / "store")
+        engine1 = StorageEngine(config)
+        repo1 = DuckDBDataRepository(engine1)
+        repo1.add_security(make_security("AAA", "AAA"))  # provenance=None, the honest default
+        repo1.add_security(with_provenance)
+        repo1.add_universe_membership(make_membership("AAA", utc(2020, 1, 1)))
+        repo1.add_universe_membership(membership_with_provenance)
+        engine1.close()
+
+        engine2 = StorageEngine(config)
+        repo2 = DuckDBDataRepository(engine2)
+        reloaded_none = repo2.get_security("AAA", utc(2024, 6, 1))
+        assert reloaded_none is not None and reloaded_none.provenance is None
+
+        reloaded_prov = repo2.get_security("BBB", utc(2024, 6, 1))
+        assert reloaded_prov is not None and reloaded_prov.provenance == prov
+
+        memberships = repo2.get_universe("US", "SP500", utc(2024, 6, 1))
+        assert set(memberships) == {"AAA", "BBB"}
+
+        # DataRepository has no public getter returning full
+        # UniverseMembership objects (get_universe only returns
+        # security_id strings) -- verify the row-level round trip
+        # directly via the same serialization functions add_universe_
+        # membership/get_universe use internally.
+        from storage.serialization import row_to_universe_membership
+
+        rows = engine2.connection.execute(
+            "SELECT * FROM universe_membership WHERE security_id = 'BBB'"
+        ).fetchall()
+        columns = [d[0] for d in engine2.connection.description]
+        reloaded_membership = row_to_universe_membership(dict(zip(columns, rows[0])))
+        assert reloaded_membership.provenance == prov
+        engine2.close()
+
     def test_append_is_idempotent_on_natural_key(self, tmp_path) -> None:
         engine = new_engine(tmp_path)
         repo = DuckDBDataRepository(engine)

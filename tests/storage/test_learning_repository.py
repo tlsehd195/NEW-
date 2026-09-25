@@ -7,6 +7,7 @@ from learning_helpers import build_journal_with_closed_trades, utc
 from storage_helpers import new_engine
 
 from learning.dataset import build_training_dataset
+from learning.linear_trainer import LinearRegressionTrainer
 from learning.pipeline import run_learning_pipeline
 
 from storage.learning_repository import (
@@ -112,6 +113,45 @@ class TestIdempotency:
 
         assert c1.candidate_id != c2.candidate_id, "the second, genuinely different retrain must not be silently dropped"
         assert len(repo.list_all()) == 2
+        engine.close()
+
+    def test_a_retrain_with_different_trainer_hyperparameters_is_not_silently_dropped(self, tmp_path) -> None:
+        """ADR-0195 P1-4's explicitly-deferred follow-up, closed here:
+        trainer_version alone (a fixed per-class string) does not vary
+        with LinearRegressionTrainer's own runtime feature_ids/ridge, so
+        retraining the exact SAME dataset with a different `ridge` used
+        to collide on an unchanged natural_key (dataset_version|
+        trainer_version|seed|provenance) and silently return the OLD
+        candidate. Same journal/records both times -- only `ridge`
+        differs -- so dataset_version is identical by construction; only
+        trainer_config_version can distinguish the two candidates now."""
+        journal, records = build_journal_with_closed_trades(6, features_fn=lambda i: {"momentum": 0.01 * i})
+
+        result1 = run_learning_pipeline(
+            journal, records, provenance=TradeProvenance.HISTORICAL_SIMULATION, run_at=utc(2024, 3, 1),
+            trainer=LinearRegressionTrainer(feature_ids=["momentum"], ridge=1e-6),
+        )
+        result2 = run_learning_pipeline(
+            journal, records, provenance=TradeProvenance.HISTORICAL_SIMULATION, run_at=utc(2024, 3, 1),
+            trainer=LinearRegressionTrainer(feature_ids=["momentum"], ridge=0.5),
+        )
+
+        assert result1.candidate.dataset_version == result2.candidate.dataset_version
+        assert result1.candidate.trainer_version == result2.candidate.trainer_version
+        assert result1.candidate.trainer_config_version != result2.candidate.trainer_config_version
+
+        engine = new_engine(tmp_path)
+        repo = DuckDBCandidateModelRepository(engine)
+        c1 = repo.record(result1.candidate)
+        c2 = repo.record(result2.candidate)
+
+        assert c1.candidate_id != c2.candidate_id, "different runtime hyperparameters must not collide into one candidate"
+        assert len(repo.list_all()) == 2
+
+        reloaded1 = repo.get(c1.candidate_id)
+        reloaded2 = repo.get(c2.candidate_id)
+        assert reloaded1 is not None and reloaded1.trainer_config_version == result1.candidate.trainer_config_version
+        assert reloaded2 is not None and reloaded2.trainer_config_version == result2.candidate.trainer_config_version
         engine.close()
 
     def test_recording_the_same_evaluation_twice_does_not_duplicate(self, tmp_path) -> None:

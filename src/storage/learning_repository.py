@@ -90,7 +90,13 @@ class DuckDBCandidateModelRepository:
 
     @staticmethod
     def _natural_key(c: CandidateModelArtifact) -> str:
-        return "|".join([c.dataset_version, c.trainer_version, str(c.seed), c.provenance.value])
+        # trainer_config_version included (ADR-0195 P1-4 follow-up): two
+        # trains of the same dataset/trainer_version/seed/provenance but
+        # different runtime hyperparameters (e.g. LinearRegressionTrainer's
+        # feature_ids/ridge) must not collide into "the same candidate".
+        return "|".join(
+            [c.dataset_version, c.trainer_version, str(c.seed), c.provenance.value, str(c.trainer_config_version)]
+        )
 
     def record(self, candidate: CandidateModelArtifact) -> CandidateModelArtifact:
         conn = self._engine.connection
