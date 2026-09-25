@@ -129,6 +129,31 @@ class TestSubmitOrder:
         assert response.status == BrokerOrderStatus.FILLED
         assert response.broker_order_id == "TOSS-1"
 
+    def test_a_repeated_client_order_id_is_not_resubmitted_to_the_real_broker(self, monkeypatch) -> None:
+        """Independent audit finding (2026-09-24): `broker.mock.
+        MockBrokerAdapter.submit_order` already treats a repeated
+        `client_order_id` as an idempotent replay, but this real adapter
+        had no equivalent -- a retried `submit_order` call (e.g. after a
+        network timeout where Toss actually received and processed the
+        first request) would place a SECOND real order. Before this fix,
+        `transport.call_count` here would have been 4 (2 token fetches +
+        2 real CREATE_ORDER_PATH submissions), not 3."""
+        monkeypatch.setenv("TOSS_API_KEY", "k")
+        monkeypatch.setenv("TOSS_API_SECRET", "s")
+        monkeypatch.setenv("TOSS_ACCOUNT_ID", "a")
+        transport = _RoutingTransport(order_response_body={"status": "FILLED", "orderId": "TOSS-1"})
+        adapter = TossBrokerAdapter(_live_config(), transport)
+        order = _order()
+
+        first = adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        second = adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+
+        assert second == first
+        assert second.response_id == first.response_id  # the SAME cached response object, never a fresh one
+        # 1 token fetch + 1 real order submission -- the second
+        # submit_order call must never reach the transport at all.
+        assert transport.call_count == 2
+
     def test_missing_credentials_raises_before_transport_call(self, monkeypatch) -> None:
         monkeypatch.delenv("TOSS_API_KEY", raising=False)
         monkeypatch.delenv("TOSS_API_SECRET", raising=False)

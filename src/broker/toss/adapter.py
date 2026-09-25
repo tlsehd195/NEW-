@@ -102,12 +102,31 @@ class TossBrokerAdapter:
         # an unmapped client_order_id honestly report UNKNOWN rather than
         # guessing -- never silently treated as "no such order."
         self._order_id_map: dict[str, str] = {}
+        # Independent audit finding (2026-09-24): `broker.mock.
+        # MockBrokerAdapter.submit_order` already treats a repeated
+        # `client_order_id` as an "idempotent replay -- never resubmits
+        # a logically identical order" (its own comment), but this real
+        # adapter had no equivalent at all -- a retried `submit_order`
+        # call (e.g. after a network timeout where Toss actually
+        # received and processed the first request but the response was
+        # lost) would place a SECOND real order against a real account.
+        # Same in-process-only caveat as `_order_id_map` above: a
+        # process restart loses this cache too, and a retry after a
+        # restart is not protected by it -- rehydrating both maps from
+        # `storage/broker_repository.py`'s already-persisted
+        # `broker_responses` table on startup is the same documented
+        # future-phase follow-up as `_order_id_map`'s own comment.
+        self._submitted_responses: dict[str, BrokerOrderResponse] = {}
 
     def _account_headers(self, access_token: str) -> dict[str, str]:
         credentials = resolve_credentials(self._config)
         return {"Authorization": f"Bearer {access_token}", ACCOUNT_HEADER: credentials.account_id}
 
     def submit_order(self, order: ValidatedOrder, *, requested_at: datetime) -> BrokerOrderResponse:
+        existing = self._submitted_responses.get(order.client_order_id)
+        if existing is not None:
+            return existing  # idempotent replay -- never resubmits a logically identical order
+
         access_token = self._auth.fetch_access_token()
         headers = self._account_headers(access_token)
         body = {
@@ -125,6 +144,7 @@ class TossBrokerAdapter:
         )
         if result.broker_order_id is not None:
             self._order_id_map[order.client_order_id] = result.broker_order_id
+        self._submitted_responses[order.client_order_id] = result
         return result
 
     def cancel_order(self, client_order_id: str, *, requested_at: datetime) -> BrokerOrderResponse:

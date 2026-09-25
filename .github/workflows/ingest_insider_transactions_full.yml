@@ -64,10 +64,21 @@ jobs:
           echo "symbols=$(python3 scripts/select_universe_shard.py --universe RESEARCH_UNIVERSE --shard-index ${{ matrix.shard }} --shard-count "$SHARD_COUNT")" >> "$GITHUB_OUTPUT"
 
       - name: Ingest this shard's Form 4 filings
+        env:
+          # Independent audit finding (2026-09-24): a workflow_dispatch
+          # `type: string` input must never be interpolated directly
+          # into a `run:` block via `${{ }}` -- GitHub expands that
+          # BEFORE the shell sees the script, turning a crafted input
+          # into literal shell code rather than a quoted argument.
+          # `steps.shard_symbols.outputs.symbols` is left as-is: it
+          # comes from this job's own `select_universe_shard.py` call
+          # against a fixed, built-in universe list, never from
+          # unsanitized user input.
+          USER_AGENT_INPUT: ${{ inputs.user_agent }}
         run: |
           python3 scripts/ingest_insider_transactions.py \
             --symbols ${{ steps.shard_symbols.outputs.symbols }} \
-            --user-agent "${{ inputs.user_agent }}" \
+            --user-agent "$USER_AGENT_INPUT" \
             --as-of "$(date -u +%F)" \
             --db-path "./data/insider_shard_${{ matrix.shard }}" \
             --manifest-out "insider_shard_${{ matrix.shard }}_manifest.json"

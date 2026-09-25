@@ -45,8 +45,14 @@ def test_runs_the_real_ingestion_script_with_the_configured_inputs():
     steps = _steps(_load())
     run_text = "\n".join(s.get("run", "") for s in steps)
     assert "ingest_insider_transactions.py" in run_text
-    assert "${{ inputs.symbols }}" in run_text
-    assert '${{ inputs.user_agent }}' in run_text
+    # Independent audit finding (2026-09-24): a workflow_dispatch input
+    # must never be interpolated directly into a run: block -- passed
+    # via env: and referenced as a shell variable instead.
+    assert "--symbols $SYMBOLS_INPUT" in run_text
+    assert '--user-agent "$USER_AGENT_INPUT"' in run_text
+    ingest_step = next(s for s in steps if "ingest_insider_transactions.py" in s.get("run", ""))
+    assert ingest_step["env"]["SYMBOLS_INPUT"] == "${{ inputs.symbols }}"
+    assert ingest_step["env"]["USER_AGENT_INPUT"] == "${{ inputs.user_agent }}"
     assert "--as-of" in run_text
 
 

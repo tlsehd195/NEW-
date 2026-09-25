@@ -79,5 +79,11 @@ def test_runs_the_real_verification_script_with_configurable_symbol_and_qty():
 
     text = _run_text(steps)
     assert "verify_alpaca_paper_broker.py" in text
-    assert "${{ inputs.symbol }}" in text
-    assert "${{ inputs.qty }}" in text
+    # Independent audit finding (2026-09-24): a workflow_dispatch input
+    # must never be interpolated directly into a run: block -- passed
+    # via env: and referenced as a shell variable instead.
+    assert '--symbol "$SYMBOL_INPUT"' in text
+    assert '--qty "$QTY_INPUT"' in text
+    verify_step = next(s for s in steps if "verify_alpaca_paper_broker.py" in s.get("run", ""))
+    assert verify_step["env"]["SYMBOL_INPUT"] == "${{ inputs.symbol }}"
+    assert verify_step["env"]["QTY_INPUT"] == "${{ inputs.qty }}"
