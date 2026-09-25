@@ -83,10 +83,18 @@ jobs:
       - name: Download price + fundamentals catalogs (required)
         env:
           GH_TOKEN: ${{ github.token }}
+          # Independent audit finding (2026-09-24): a workflow_dispatch
+          # `type: string` input must never be interpolated directly
+          # into a `run:` block via `${{ }}` -- GitHub expands that
+          # BEFORE the shell sees the script, turning a crafted input
+          # into literal shell code rather than a quoted argument. This
+          # workflow has `permissions: contents: write` and pushes
+          # commits, making this a real, consequential injection target.
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           mkdir -p ./data
-          gh release download "${{ inputs.release_tag }}" \
+          gh release download "$RELEASE_TAG_INPUT" \
             --repo "${{ github.repository }}" \
             --pattern "price_catalog.zip" --pattern "fundamentals_catalog.zip" \
             --dir ./data --clobber
@@ -98,6 +106,7 @@ jobs:
       - name: Download insider catalog (optional -- tries the given release, then the auto-published one)
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           # First choice: an insider_catalog.zip the account owner put in
@@ -108,10 +117,10 @@ jobs:
           # "Publish the combined catalog to a durable Release" step) --
           # this makes the insider_buying candidate work with zero
           # manual upload step, not just an optional convenience.
-          if gh release download "${{ inputs.release_tag }}" \
+          if gh release download "$RELEASE_TAG_INPUT" \
               --repo "${{ github.repository }}" \
               --pattern "insider_catalog.zip" --dir ./data --clobber 2>/dev/null; then
-            echo "Using insider_catalog.zip from release ${{ inputs.release_tag }}."
+            echo "Using insider_catalog.zip from release $RELEASE_TAG_INPUT."
           elif gh release download "insider-transactions-catalog" \
               --repo "${{ github.repository }}" \
               --pattern "insider_catalog.zip" --dir ./data --clobber 2>/dev/null; then
@@ -126,11 +135,15 @@ jobs:
           fi
 
       - name: Run the full walk-forward + PBO/DSR validation
+        env:
+          UNIVERSE_INPUT: ${{ inputs.universe }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
         run: |
           set -euo pipefail
           python3 scripts/run_long_horizon_validation.py \
-            --universe "${{ inputs.universe }}" \
-            --start "${{ inputs.start }}" --end "${{ inputs.end }}" \
+            --universe "$UNIVERSE_INPUT" \
+            --start "$START_INPUT" --end "$END_INPUT" \
             --db-path ./data/price_catalog \
             --fundamentals-db-path ./data/fundamentals_catalog \
             $INSIDER_FLAG \
@@ -159,6 +172,10 @@ jobs:
       # are never solely at the mercy of a 90-day clock again.
       - name: Commit the report into the repo (durable, no expiry, no human step needed)
         if: always()
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
         run: |
           set -euo pipefail
           if [ ! -f ./validation_report.json ]; then
@@ -172,5 +189,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "$DEST"
-          git commit -m "chore: record full validation report (${{ inputs.release_tag }}, ${{ inputs.start }}..${{ inputs.end }})"
+          git commit -m "chore: record full validation report ($RELEASE_TAG_INPUT, ${START_INPUT}..${END_INPUT})"
           git push

@@ -71,9 +71,16 @@ jobs:
 
       - name: Select this run's real candidate symbols
         id: symbols
+        env:
+          # Independent audit finding (2026-09-24): a workflow_dispatch
+          # `type: string` input must never be interpolated directly
+          # into a `run:` block via `${{ }}` -- GitHub expands that
+          # BEFORE the shell sees the script, turning a crafted input
+          # into literal shell code rather than a quoted string/argument.
+          SYMBOLS_INPUT: ${{ inputs.symbols }}
         run: |
-          if [ -n "${{ inputs.symbols }}" ]; then
-            echo "symbols=${{ inputs.symbols }}" >> "$GITHUB_OUTPUT"
+          if [ -n "$SYMBOLS_INPUT" ]; then
+            echo "symbols=$SYMBOLS_INPUT" >> "$GITHUB_OUTPUT"
           else
             echo "symbols=$(python3 scripts/select_delisted_candidates_since.py --sp500-intervals-csv sp500_ticker_start_end.csv --since 2020-01-01)" >> "$GITHUB_OUTPUT"
           fi

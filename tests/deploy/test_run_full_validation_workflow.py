@@ -98,15 +98,22 @@ def test_insider_catalog_falls_back_to_the_auto_published_release():
 
 
 def test_runs_the_real_validation_script_with_both_required_db_paths_and_the_insider_flag_variable():
-    run_text = "\n".join(s.get("run", "") for s in _steps())
+    steps = _steps()
+    run_text = "\n".join(s.get("run", "") for s in steps)
     assert "run_long_horizon_validation.py" in run_text
     assert "--db-path ./data/price_catalog" in run_text
     assert "--fundamentals-db-path ./data/fundamentals_catalog" in run_text
     assert "$INSIDER_FLAG" in run_text
     assert "--data-status REAL" in run_text
-    assert "${{ inputs.universe }}" in run_text
-    assert "${{ inputs.start }}" in run_text
-    assert "${{ inputs.end }}" in run_text
+    # Independent audit finding (2026-09-24): a workflow_dispatch input
+    # must never be interpolated directly into a run: block -- passed
+    # via env: and referenced as a shell variable instead.
+    assert '--universe "$UNIVERSE_INPUT"' in run_text
+    assert '--start "$START_INPUT" --end "$END_INPUT"' in run_text
+    validation_step = next(s for s in steps if "run_long_horizon_validation.py" in s.get("run", ""))
+    assert validation_step["env"]["UNIVERSE_INPUT"] == "${{ inputs.universe }}"
+    assert validation_step["env"]["START_INPUT"] == "${{ inputs.start }}"
+    assert validation_step["env"]["END_INPUT"] == "${{ inputs.end }}"
 
 
 def test_uploads_the_report_with_always_and_warn_on_missing():

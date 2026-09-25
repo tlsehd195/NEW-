@@ -43,6 +43,7 @@ import argparse
 import os
 import sys
 import time
+from urllib.parse import urlparse
 
 _PAPER_DOMAIN = "paper-api.alpaca.markets"
 _TERMINAL_ORDER_STATUSES = frozenset(
@@ -52,8 +53,24 @@ _TERMINAL_ORDER_STATUSES = frozenset(
 
 def _is_paper_endpoint(base_url: str | None) -> bool:
     """`None` means "use alpaca-py's own default paper domain" -- only
-    an explicit, non-paper `base_url` is rejected."""
-    return base_url is None or _PAPER_DOMAIN in base_url
+    an explicit, non-paper `base_url` is rejected.
+
+    Independent audit finding (2026-09-24): the previous check was a
+    plain substring test (`_PAPER_DOMAIN in base_url`), which this
+    docstring's own claim ("a misconfigured ALPACA_BASE_URL pointing at
+    the real live-trading domain can never reach this code path")
+    relies on being a real domain guard. A substring check is not one:
+    `_PAPER_DOMAIN` also matches as a QUERY STRING or PATH component of
+    an entirely different, attacker-controlled host (e.g.
+    `"https://evil.example.com/?x=paper-api.alpaca.markets"`), or as a
+    prefix of a look-alike hostname the real domain is not actually a
+    suffix of. Fixed by parsing the URL and checking the real hostname
+    is either exactly `_PAPER_DOMAIN` or a subdomain of it (`.` prefix
+    match), which a query string/path/look-alike host cannot satisfy."""
+    if base_url is None:
+        return True
+    hostname = urlparse(base_url).hostname
+    return hostname is not None and (hostname == _PAPER_DOMAIN or hostname.endswith("." + _PAPER_DOMAIN))
 
 
 def _poll_until_terminal(client, order_id, timeout_seconds: float, interval_seconds: float):

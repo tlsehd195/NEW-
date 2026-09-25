@@ -87,3 +87,45 @@ def test_ingest_insider_transactions_full_publish_step_no_longer_has_the_leaked_
         if "Publish the combined catalog" in s.get("name", "")
     )
     assert "if-no-files-found" not in publish_step["run"]
+
+
+# Independent audit finding (2026-09-24): a `workflow_dispatch` input
+# interpolated directly into a `run:` block via `${{ inputs.foo }}` is a
+# real script-injection vector -- GitHub expands the `${{ }}` expression
+# BEFORE the shell ever sees the script, so a crafted input string
+# becomes literal shell code, not a quoted argument, with whatever
+# secrets/permissions that job's `env:` carries in scope. Only a free
+# `type: string` input is exploitable this way -- GitHub itself
+# constrains a `type: choice`/`type: boolean` input to one of a fixed,
+# non-attacker-controlled set of values before the workflow ever runs,
+# so those are excluded here (`ingest_fama_french_factors.yml`'s
+# `frequency`, `repair_ingestion_time_inversions.yml`'s `apply`).
+_INPUT_INTERPOLATION_RE = re.compile(r"\$\{\{\s*inputs\.([A-Za-z0-9_-]+)\s*\}\}")
+
+
+def _string_input_names(doc: dict) -> set[str]:
+    dispatch = ((doc.get("on") or {}).get("workflow_dispatch") or {})
+    inputs = dispatch.get("inputs") or {}
+    return {
+        name for name, spec in inputs.items()
+        if (spec or {}).get("type", "string") == "string"
+    }
+
+
+def test_no_run_block_interpolates_a_free_string_workflow_dispatch_input_directly() -> None:
+    for path in ALL_WORKFLOW_FILES:
+        doc = _load(path)
+        string_inputs = _string_input_names(doc)
+        if not string_inputs:
+            continue
+        for job_name, step_name, run in _iter_run_blocks(doc):
+            for match in _INPUT_INTERPOLATION_RE.finditer(run):
+                input_name = match.group(1)
+                assert input_name not in string_inputs, (
+                    f"{path.name}::{job_name}::{step_name!r} run: block interpolates "
+                    f"${{{{ inputs.{input_name} }}}} directly -- a free-text "
+                    f"workflow_dispatch input must be passed via env: and referenced "
+                    f"as a shell variable instead, never interpolated into the run: "
+                    f"block's own text (script-injection risk: GitHub expands ${{{{ }}}} "
+                    f"before the shell parses the script)"
+                )

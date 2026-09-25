@@ -66,10 +66,20 @@ jobs:
           path: ./data/insider_final
 
       - name: Ingest the new symbol(s)
+        env:
+          # Independent audit finding (2026-09-24): a workflow_dispatch
+          # input must never be interpolated directly into a `run:`
+          # block via `${{ }}` -- GitHub expands that BEFORE the shell
+          # sees the script, turning a crafted input into literal shell
+          # code rather than a quoted argument. Passed as env vars
+          # instead (expanded by the shell as `$VAR`, never by GitHub's
+          # own template engine).
+          SYMBOLS_INPUT: ${{ inputs.symbols }}
+          USER_AGENT_INPUT: ${{ inputs.user_agent }}
         run: |
           python3 scripts/ingest_insider_transactions.py \
-            --symbols ${{ inputs.symbols }} \
-            --user-agent "${{ inputs.user_agent }}" \
+            --symbols $SYMBOLS_INPUT \
+            --user-agent "$USER_AGENT_INPUT" \
             --as-of "$(date -u +%F)" \
             --db-path ./data/insider_new_symbols \
             --manifest-out insider_new_symbols_manifest.json

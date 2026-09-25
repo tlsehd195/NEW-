@@ -56,10 +56,18 @@ jobs:
         run: pip install -e .
 
       - name: Ingest Form 4 filings for the verification symbol(s)
+        env:
+          # Independent audit finding (2026-09-24): a workflow_dispatch
+          # `type: string` input must never be interpolated directly
+          # into a `run:` block via `${{ }}` -- GitHub expands that
+          # BEFORE the shell sees the script, turning a crafted input
+          # into literal shell code rather than a quoted argument.
+          SYMBOLS_INPUT: ${{ inputs.symbols }}
+          USER_AGENT_INPUT: ${{ inputs.user_agent }}
         run: |
           python3 scripts/ingest_insider_transactions.py \
-            --symbols ${{ inputs.symbols }} \
-            --user-agent "${{ inputs.user_agent }}" \
+            --symbols $SYMBOLS_INPUT \
+            --user-agent "$USER_AGENT_INPUT" \
             --as-of "$(date -u +%F)" \
             --db-path ./data/insider_verification \
             --manifest-out insider_verification_manifest.json

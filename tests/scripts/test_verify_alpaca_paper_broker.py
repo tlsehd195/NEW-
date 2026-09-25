@@ -61,6 +61,28 @@ class TestIsPaperEndpoint:
         module = _load_module()
         assert module._is_paper_endpoint("https://example.com") is False
 
+    def test_a_subdomain_of_the_real_paper_domain_is_accepted(self) -> None:
+        module = _load_module()
+        assert module._is_paper_endpoint("https://us-east-1.paper-api.alpaca.markets") is True
+
+    def test_paper_domain_as_a_query_string_on_a_different_host_is_rejected(self) -> None:
+        """Independent audit finding (2026-09-24): the previous check
+        was a plain substring test (`_PAPER_DOMAIN in base_url`), which
+        this scenario alone disproves the module docstring's own claim
+        that a misconfigured base_url pointing anywhere but the real
+        paper domain "can never reach this code path" -- before the fix,
+        this exact URL was wrongly ACCEPTED as a paper endpoint."""
+        module = _load_module()
+        assert module._is_paper_endpoint("https://evil.example.com/?x=paper-api.alpaca.markets") is False
+
+    def test_a_lookalike_host_that_merely_starts_with_the_paper_domain_is_rejected(self) -> None:
+        module = _load_module()
+        assert module._is_paper_endpoint("https://paper-api.alpaca.markets.evil.com") is False
+
+    def test_paper_domain_embedded_in_the_url_path_is_rejected(self) -> None:
+        module = _load_module()
+        assert module._is_paper_endpoint("https://evil.example.com/paper-api.alpaca.markets") is False
+
 
 class _FakeOrder:
     def __init__(self, status: str) -> None:

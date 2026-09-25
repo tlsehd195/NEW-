@@ -52,9 +52,15 @@ def test_downloads_the_source_run_s_combined_catalog_by_run_id():
 
 
 def test_ingests_the_requested_symbols_then_merges_into_the_downloaded_catalog():
-    run_text = "\n".join(s.get("run", "") for s in _steps())
+    steps = _steps()
+    run_text = "\n".join(s.get("run", "") for s in steps)
     assert "ingest_insider_transactions.py" in run_text
-    assert "--symbols ${{ inputs.symbols }}" in run_text
+    # Independent audit finding (2026-09-24): a workflow_dispatch input
+    # must never be interpolated directly into a run: block -- passed
+    # via env: and referenced as a shell variable instead.
+    assert "--symbols $SYMBOLS_INPUT" in run_text
+    ingest_step = next(s for s in steps if "ingest_insider_transactions.py" in s.get("run", ""))
+    assert ingest_step["env"]["SYMBOLS_INPUT"] == "${{ inputs.symbols }}"
     assert "merge_insider_transaction_catalogs.py" in run_text
     assert "--target-db-path ./data/insider_final" in run_text
     assert "--shard-db-path ./data/insider_new_symbols" in run_text
