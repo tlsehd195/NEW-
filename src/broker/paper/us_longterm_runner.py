@@ -150,7 +150,27 @@ def run_buy_and_hold_paper_session(
     `broker_requests`/`broker_responses` audit trail
     `monitoring.collectors.collect_broker` reads is populated exactly
     once per real order, with no separate/duplicate submission needed
-    to also produce it."""
+    to also produce it.
+
+    **Independent audit finding F4 (2026-09-24)**: `security_ids` is
+    deduplicated here (first occurrence kept, order otherwise
+    preserved) before anything else runs. A duplicate previously
+    distorted the equal-weight allocation two ways at once: `positions_
+    so_far[security_id] = PositionView(...)` (below) silently
+    OVERWRITES rather than accumulates on a repeat key, so
+    `portfolio_value`'s own `sum(p.market_value for p in positions_
+    so_far.values())` undercounted every symbol's contribution but the
+    LAST one sharing that key -- corrupting the risk-exposure picture
+    every LATER symbol's own `risk_check` call sees; and the repeat
+    occurrence's own `build_validated_order(risk_checked,
+    current_quantity=0.0, ...)` call always hardcodes `0.0` (correct
+    for this strategy's genuine first-ever allocation, per this
+    docstring's own stated assumption), silently letting the risk
+    engine treat a SECOND buy in the same security as opening a brand
+    new position rather than adding to the first one just placed a few
+    lines above -- a real single-name concentration-limit bypass, not
+    merely a bookkeeping inaccuracy."""
+    security_ids = list(dict.fromkeys(security_ids))
     account = session.adapter.get_account(as_of=buy_time)
     if not account.available or account.cash is None:
         return BuyAndHoldRunResult(
