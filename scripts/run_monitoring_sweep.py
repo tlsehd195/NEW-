@@ -72,6 +72,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from monitoring.collectors import (  # noqa: E402
     collect_account,
     collect_decision,
+    collect_regime,
     collect_risk,
     collect_sizing,
 )
@@ -91,6 +92,7 @@ from storage.monitoring_repository import (  # noqa: E402
     DuckDBMonitoringEventRepository,
 )
 from storage.prediction_repository import DuckDBPredictionRepository  # noqa: E402
+from storage.regime_repository import DuckDBRegimeRepository  # noqa: E402
 from storage.risk_repository import DuckDBPositionSizingRepository, DuckDBRiskRepository  # noqa: E402
 
 
@@ -129,6 +131,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", required=True, type=_parse_date, help="Start date, YYYY-MM-DD -- the window this sweep observes")
     parser.add_argument("--end", required=True, type=_parse_date, help="End date, YYYY-MM-DD -- also this sweep's as_of_time/observed_at reference; never derived from wall-clock time")
     parser.add_argument("--out", type=Path, default=None, help="Where to write the JSON report (default: <paper-store>/monitoring_sweep_report.json)")
+    # Independent audit finding (2026-09-24): this script never had any
+    # way to pass a real max_drawdown to collect_account -- it always
+    # defaulted to None, which monitoring.health.evaluate_account_health
+    # now (correctly) reports as UNKNOWN rather than a vacuous HEALTHY
+    # (see that function's own docstring for why). Mirrors
+    # run_paper_trading_cycle.py's own --max-drawdown flag/default
+    # exactly (None = not enforced, same convention).
+    parser.add_argument("--max-drawdown", type=float, default=None, help="Real drawdown threshold for ACCOUNT health alerting (default: None -- not configured, reported as UNKNOWN rather than a vacuous HEALTHY)")
     args = parser.parse_args(argv)
 
     report_path = args.out or (args.paper_store / "monitoring_sweep_report.json")
@@ -139,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         decision_repository = DuckDBDecisionRepository(store_engine)
         sizing_repository = DuckDBPositionSizingRepository(store_engine)
         risk_repository = DuckDBRiskRepository(store_engine)
+        regime_repository = DuckDBRegimeRepository(store_engine)
 
         event_repository = DuckDBMonitoringEventRepository(store_engine)
         health_repository = DuckDBComponentHealthRepository(store_engine)
@@ -148,6 +159,14 @@ def main(argv: list[str] | None = None) -> int:
         decisions = decision_repository.list_all(start=args.start, end=args.end)
         sizing_results = sizing_repository.list_all(start=args.start, end=args.end)
         risk_results = risk_repository.list_all(start=args.start, end=args.end)
+        # Independent audit finding (2026-09-24, "REGIME collector 부재"):
+        # collect_regime previously did not exist -- REGIME was a
+        # declared MonitoringComponent with no collector wired to it at
+        # all. list_composites() has no start/end filter of its own
+        # (unlike the repositories above); collect_regime applies the
+        # same _filter_by_time windowing to args.end internally, the
+        # identical safety-net every other collector already has.
+        regime_composites = regime_repository.list_composites()
         # Deliberately NOT windowed to [--start, --end] -- this reconstructs
         # the portfolio's real cumulative value history up to --end, the
         # same real input scripts/run_paper_trading_cycle.py's own
@@ -171,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         for records, collector in (
             (predictions, collect_prediction),
             (decisions, collect_decision),
+            (regime_composites, collect_regime),
             (sizing_results, collect_sizing),
             (risk_results, collect_risk),
         ):
@@ -181,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             collected.append((event, health))
         account_event, account_health = collect_account(
             equity_history, as_of_time=args.end, observed_at=args.end, config=config,
-            event_id=event_ids(), health_id=health_ids(),
+            event_id=event_ids(), health_id=health_ids(), max_drawdown=args.max_drawdown,
         )
         collected.append((account_event, account_health))
 

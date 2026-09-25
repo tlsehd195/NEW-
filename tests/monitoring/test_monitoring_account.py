@@ -61,15 +61,24 @@ class TestEvaluateAccountHealth:
         )
         assert health.status == ComponentHealthStatus.UNKNOWN
 
-    def test_max_drawdown_not_configured_is_healthy_regardless_of_actual_drawdown(self) -> None:
-        """`None` means "not enforced" -- the same convention every
-        other Optional threshold in this codebase uses. This function
-        never invents a default drawdown limit of its own."""
+    def test_max_drawdown_not_configured_is_unknown_never_a_vacuous_healthy(self) -> None:
+        """Independent audit finding (2026-09-24): `None` means "not
+        enforced," but this function previously reported HEALTHY for
+        that case regardless of the real drawdown -- a specific,
+        reassuring claim about a threshold that was never actually
+        evaluated. A real account in a severe real drawdown, run with
+        no --max-drawdown configured (this project's own CLI default),
+        would have shown ACCOUNT as HEALTHY in monitoring, masking
+        exactly the condition this collector exists to surface.
+        Fixed to UNKNOWN, matching `evaluate_pipeline_health`'s own
+        "empty input is UNKNOWN, never assumed healthy" precedent in
+        this same module."""
         health = evaluate_account_health(
             sample_count=10, equity=500_000.0, drawdown=0.60, max_drawdown=None,
             config=make_config(), as_of_time=utc(2024, 1, 2), health_id="H3",
         )
-        assert health.status == ComponentHealthStatus.HEALTHY
+        assert health.status == ComponentHealthStatus.UNKNOWN
+        assert health.reason == "max_drawdown_not_configured"
 
     def test_drawdown_within_configured_max_is_healthy(self) -> None:
         health = evaluate_account_health(

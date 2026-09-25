@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from monitoring_helpers import (
     make_ai_response, make_bar, make_broker_request, make_broker_response, make_candidate, make_decision,
-    make_evaluation, make_lineage, make_prediction, make_risk_result, make_sizing_result, make_training_dataset,
-    make_transition, utc,
+    make_evaluation, make_lineage, make_prediction, make_regime_composite, make_risk_result, make_sizing_result,
+    make_training_dataset, make_transition, utc,
 )
 
 from ai_gateway.enums import RequestStatus
@@ -20,9 +20,12 @@ from monitoring.metrics import (
     compute_learning_metrics,
     compute_model_evolution_metrics,
     compute_prediction_metrics,
+    compute_regime_metrics,
     compute_risk_metrics,
     compute_sizing_metrics,
 )
+
+from regime.enums import StressState, TrendState
 
 from risk.enums import RiskCheckStatus
 
@@ -45,6 +48,12 @@ class TestEmptyInputNeverFabricatesAValue:
         m = compute_decision_metrics([])
         assert m["count"] == 0.0
         assert m["buy_rate"] is None
+
+    def test_regime_empty(self) -> None:
+        m = compute_regime_metrics([])
+        assert m["count"] == 0.0
+        assert m["unknown_trend_rate"] is None
+        assert m["unknown_stress_rate"] is None
 
     def test_sizing_empty(self) -> None:
         m = compute_sizing_metrics([])
@@ -135,6 +144,29 @@ class TestDecisionMetrics:
         assert m["hold_rate"] == 0.25
         assert m["no_trade_rate"] == 0.25
         assert m["sell_rate"] == 0.0
+
+
+class TestRegimeMetrics:
+    """Independent audit finding (2026-09-24, "REGIME collector 부재"):
+    `compute_regime_metrics` -- and the `collect_regime` collector it
+    feeds -- previously did not exist at all."""
+
+    def test_unknown_trend_and_stress_rates(self) -> None:
+        composites = [
+            make_regime_composite(composite_id="C1", trend_state=TrendState.BULL.value, stress_state=StressState.NORMAL.value),
+            make_regime_composite(composite_id="C2", trend_state=TrendState.UNKNOWN.value, stress_state=StressState.NORMAL.value),
+            make_regime_composite(composite_id="C3", trend_state=TrendState.BULL.value, stress_state=StressState.UNKNOWN.value),
+            make_regime_composite(composite_id="C4", trend_state=TrendState.UNKNOWN.value, stress_state=StressState.UNKNOWN.value),
+        ]
+        m = compute_regime_metrics(composites)
+        assert m["count"] == 4.0
+        assert m["unknown_trend_rate"] == 0.5
+        assert m["unknown_stress_rate"] == 0.5
+
+    def test_a_composite_missing_the_stress_axis_entirely_is_not_counted_as_unknown(self) -> None:
+        composites = [make_regime_composite(composite_id="C1", trend_state=TrendState.BULL.value, stress_state=None)]
+        m = compute_regime_metrics(composites)
+        assert m["unknown_stress_rate"] == 0.0
 
 
 class TestSizingAndRiskMetrics:

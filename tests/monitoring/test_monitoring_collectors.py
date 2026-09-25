@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from monitoring_helpers import (
     make_ai_response, make_bar, make_broker_response, make_config, make_decision, make_lineage,
-    make_prediction, make_risk_result, make_sizing_result, make_training_dataset, make_transition, utc,
+    make_prediction, make_regime_composite, make_risk_result, make_sizing_result, make_training_dataset,
+    make_transition, utc,
 )
 
 from monitoring.collectors import (
@@ -18,6 +19,7 @@ from monitoring.collectors import (
     collect_learning,
     collect_model_evolution,
     collect_prediction,
+    collect_regime,
     collect_risk,
     collect_sizing,
 )
@@ -63,6 +65,30 @@ class TestCollectDecisionExistenceHealth:
         )
         assert health.status == ComponentHealthStatus.HEALTHY
         assert event.metrics["hold_rate"] == 1.0
+
+
+class TestCollectRegimeExistenceHealth:
+    """Independent audit finding (2026-09-24, "REGIME collector 부재"):
+    `collect_regime` previously did not exist at all -- `MonitoringComponent.
+    REGIME` was a declared enum member with no collector wired to it."""
+
+    def test_no_observations_is_unavailable(self) -> None:
+        config = make_config()
+        event, health = collect_regime(
+            [], as_of_time=utc(2024, 1, 2), observed_at=utc(2024, 1, 2), config=config, event_id="E1", health_id="H1",
+        )
+        assert health.status == ComponentHealthStatus.UNAVAILABLE
+        assert event.component == MonitoringComponent.REGIME
+
+    def test_real_observations_are_healthy_and_carry_source_record_ids(self) -> None:
+        config = make_config(degraded_min_expected_count=1)
+        composites = [make_regime_composite(composite_id="C1"), make_regime_composite(composite_id="C2")]
+        event, health = collect_regime(
+            composites, as_of_time=utc(2024, 1, 2), observed_at=utc(2024, 1, 2), config=config, event_id="E1", health_id="H1",
+        )
+        assert health.status == ComponentHealthStatus.HEALTHY
+        assert event.metrics["count"] == 2.0
+        assert set(event.source_record_ids) == {"C1", "C2"}
 
 
 class TestCollectSizingFailureRate:

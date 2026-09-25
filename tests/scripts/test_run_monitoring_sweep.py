@@ -101,20 +101,25 @@ class TestEndToEndAgainstARealPaperStore:
         assert report["record_counts"]["predictions"] > 0
         assert report["record_counts"]["decisions"] > 0
         assert report["record_counts"]["risk_results"] > 0
-        assert report["events_persisted"] == 5  # prediction, decision, sizing, risk, account
+        # Independent audit finding (2026-09-24, "REGIME collector 부재"):
+        # collect_regime is now wired in too -- prediction, decision,
+        # regime, sizing, risk, account.
+        assert report["events_persisted"] == 6
         assert {h["component"] for h in report["component_healths"]} == {
-            "PREDICTION", "DECISION", "SIZING", "RISK", "ACCOUNT",
+            "PREDICTION", "DECISION", "REGIME", "SIZING", "RISK", "ACCOUNT",
         }
 
         # Real persistence -- not just an in-memory result thrown away.
         store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
         event_repository = DuckDBMonitoringEventRepository(store_engine)
         health_repository = DuckDBComponentHealthRepository(store_engine)
-        assert len(event_repository.list_all()) == 5
+        assert len(event_repository.list_all()) == 6
         assert len(event_repository.list_all(component=MonitoringComponent.RISK)) == 1
+        assert len(event_repository.list_all(component=MonitoringComponent.REGIME)) == 1
         assert health_repository.get_latest(MonitoringComponent.RISK) is not None
-        # A pipeline-level health record is persisted too (6th health row).
-        assert len(health_repository.list_all()) == 6
+        assert health_repository.get_latest(MonitoringComponent.REGIME) is not None
+        # A pipeline-level health record is persisted too (7th health row).
+        assert len(health_repository.list_all()) == 7
         store_engine.close()
 
     def test_re_running_the_same_window_is_idempotent(self, tmp_path) -> None:
@@ -137,10 +142,35 @@ class TestEndToEndAgainstARealPaperStore:
         # never overwriting) -- so the real invariant a re-run must
         # uphold is "no crash, and every previously-persisted row is
         # still exactly as it was," not "count stays the same." Confirms
-        # at least the first run's own 5 events are still present and
-        # untouched, and a second run's own 5 were added on top.
-        assert len(event_repository.list_all()) == 10
+        # at least the first run's own 6 events are still present and
+        # untouched, and a second run's own 6 were added on top.
+        assert len(event_repository.list_all()) == 12
         store_engine.close()
+
+    def test_account_health_is_unknown_not_a_vacuous_healthy_when_max_drawdown_is_omitted(self, tmp_path) -> None:
+        """Independent audit finding (2026-09-24): before
+        `monitoring.health.evaluate_account_health`'s own fix, omitting
+        `--max-drawdown` (this script's own default -- it previously had
+        no such flag at all) silently reported ACCOUNT as HEALTHY
+        regardless of the real drawdown, masking exactly the condition
+        this sweep exists to surface."""
+        paper_store = _populate_paper_store(tmp_path)
+        out_path = tmp_path / "sweep_report.json"
+
+        sweep_module = _load(_SWEEP_SCRIPT_PATH, "run_monitoring_sweep")
+        rc = sweep_module.main([
+            "--paper-store", str(paper_store),
+            "--representative-security-id", "AAA",
+            "--start", "2024-02-01", "--end", "2024-02-15",
+            "--out", str(out_path),
+            # --max-drawdown deliberately omitted
+        ])
+        assert rc == 0
+
+        report = json.loads(out_path.read_text())
+        account_health = next(h for h in report["component_healths"] if h["component"] == "ACCOUNT")
+        assert account_health["status"] == ComponentHealthStatus.UNKNOWN.value
+        assert account_health["reason"] == "max_drawdown_not_configured"
 
     def test_no_alerts_raised_for_a_healthy_short_run(self, tmp_path) -> None:
         """The real fixture this test file builds produces a healthy,
@@ -156,6 +186,13 @@ class TestEndToEndAgainstARealPaperStore:
             "--representative-security-id", "AAA",
             "--start", "2024-02-01", "--end", "2024-02-15",
             "--out", str(out_path),
+            # Independent audit finding (2026-09-24): ACCOUNT health is
+            # now correctly UNKNOWN (not a vacuous HEALTHY) when no real
+            # threshold is configured -- a real, generous threshold this
+            # short healthy run never approaches is required here for
+            # this test's own "a genuinely healthy run raises no
+            # alerts" intent to still hold.
+            "--max-drawdown", "1.0",
         ])
         assert rc == 0
 

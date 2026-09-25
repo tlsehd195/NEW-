@@ -24,6 +24,9 @@ from monitoring.config import MonitoringConfig
 from predict.enums import PredictionMethodType
 from predict.models import PredictionOutput
 
+from regime.enums import RegimeAxis, SubjectKind, TrendState
+from regime.models import CompositeRegimeObservation, RegimeObservation
+
 from risk.enums import RiskCheckStatus
 from risk.models import PositionSizingResult, RiskCheckedPosition
 
@@ -69,6 +72,31 @@ def make_prediction(
         uncertainty=uncertainty, confidence=confidence, method="random_walk_v1",
         method_type=PredictionMethodType.DETERMINISTIC_BASELINE, feature_version="feat-v1", data_version=("dv-1",),
         method_version="method-v1", configuration_version="cfg-v1",
+    )
+
+
+def make_regime_observation(
+    *, axis: RegimeAxis = RegimeAxis.TREND, state: str = TrendState.BULL.value,
+    security_id: str = "AAA", as_of_time: datetime = utc(2024, 1, 2),
+) -> RegimeObservation:
+    return RegimeObservation(
+        regime_id=f"REG-{axis.value}", axis=axis, subject_id=security_id, subject_kind=SubjectKind.SECURITY,
+        timestamp=as_of_time, as_of_time=as_of_time, state=state, value=0.1 if state != "UNKNOWN" else None,
+        definition="test_definition_v1", reliability=1.0, lookback_days=20,
+        feature_version="feat-v1", data_version=("dv-1",), method_version="method-v1", configuration_version="cfg-v1",
+    )
+
+
+def make_regime_composite(
+    *, composite_id: str = "CREG-000001", security_id: str = "AAA", as_of_time: datetime = utc(2024, 1, 2),
+    trend_state: str = TrendState.BULL.value, stress_state: Optional[str] = "NORMAL",
+) -> CompositeRegimeObservation:
+    axes = {RegimeAxis.TREND: make_regime_observation(axis=RegimeAxis.TREND, state=trend_state, security_id=security_id, as_of_time=as_of_time)}
+    if stress_state is not None:
+        axes[RegimeAxis.STRESS] = make_regime_observation(axis=RegimeAxis.STRESS, state=stress_state, security_id=security_id, as_of_time=as_of_time)
+    return CompositeRegimeObservation(
+        composite_id=composite_id, subject_id=security_id, subject_kind=SubjectKind.SECURITY,
+        as_of_time=as_of_time, axes=axes,
     )
 
 

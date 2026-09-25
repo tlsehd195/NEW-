@@ -28,6 +28,9 @@ from learning.models import CandidateModelArtifact, EvaluationResult, TrainingDa
 
 from predict.models import PredictionOutput
 
+from regime.enums import RegimeAxis, StressState, TrendState
+from regime.models import CompositeRegimeObservation
+
 from risk.enums import RiskCheckStatus
 from risk.models import PositionSizingResult, RiskCheckedPosition
 
@@ -126,6 +129,37 @@ def compute_decision_metrics(decisions: Sequence[DecisionOutput]) -> dict:
         "hold_rate": counts.get(DecisionAction.HOLD, 0) / n,
         "exit_rate": counts.get(DecisionAction.EXIT, 0) / n,
         "no_trade_rate": counts.get(DecisionAction.NO_TRADE, 0) / n,
+    }
+
+
+def compute_regime_metrics(observations: Sequence[CompositeRegimeObservation]) -> dict:
+    """Independent audit finding (2026-09-24, "REGIME collector 부재"):
+    `MonitoringComponent.REGIME` was a declared enum member with no
+    corresponding metrics/collector function at all --
+    `monitoring.health.evaluate_existence_health`'s own docstring
+    already names "Prediction, Decision, Regime, Learning" as the four
+    components it exists for, so Regime's own absence was a genuine
+    gap, not a deliberate scope decision. `unknown_trend_rate`/
+    `unknown_stress_rate` mirror `decision.agent.BaselineRuleDecision
+    Agent`'s own fail-closed treatment of exactly those two axes
+    (`regime_trend_unknown`/`regime_stress_unknown` gates) -- a rising
+    UNKNOWN rate here is the real, upstream signal for why Decision's
+    own NO_TRADE rate might be climbing."""
+    n = len(observations)
+    if n == 0:
+        return {"count": 0.0, "unknown_trend_rate": None, "unknown_stress_rate": None}
+    trend_unknown = sum(
+        1 for o in observations
+        if (axis := o.axes.get(RegimeAxis.TREND)) is not None and axis.state == TrendState.UNKNOWN.value
+    )
+    stress_unknown = sum(
+        1 for o in observations
+        if (axis := o.axes.get(RegimeAxis.STRESS)) is not None and axis.state == StressState.UNKNOWN.value
+    )
+    return {
+        "count": float(n),
+        "unknown_trend_rate": trend_unknown / n,
+        "unknown_stress_rate": stress_unknown / n,
     }
 
 
