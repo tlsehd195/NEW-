@@ -207,6 +207,7 @@ from strategy_research.risk_controlled_momentum import (  # noqa: E402
     RiskControlledMomentumStrategy,
 )
 from strategy_research.runner import run_gross_and_net  # noqa: E402
+from strategy_research.split_adjusted_institutional_holdings import SplitAdjustedInstitutionalHoldingRepository  # noqa: E402
 from strategy_research.splits import build_chronological_split  # noqa: E402
 from strategy_research.trend_volatility import TrendVolatilityParameters, TrendVolatilityStrategy  # noqa: E402
 from strategy_research.walk_forward_evaluation import run_walk_forward_evaluation  # noqa: E402
@@ -787,7 +788,12 @@ def main() -> int:
     institutional_repository = None
     if args.institutional_db_path is not None:
         institutional_engine = StorageEngine(StorageConfig(root_dir=args.institutional_db_path))
-        institutional_repository = DuckDBInstitutionalHoldingRepository(institutional_engine)
+        # 13F share counts are never split-adjusted -- restate them on
+        # the as-of share basis so a split never reads as institutional
+        # buying (strategy_research.split_adjusted_institutional_holdings).
+        institutional_repository = SplitAdjustedInstitutionalHoldingRepository(
+            DuckDBInstitutionalHoldingRepository(institutional_engine), repository,
+        )
     institutional_filer_engine = None
     institutional_filer_repository = None
     if args.institutional_filer_db_path is not None:
@@ -1399,6 +1405,9 @@ def main() -> int:
 
         report["research_log_summary"] = log.summary()
         report_path.parent.mkdir(parents=True, exist_ok=True)
+        if institutional_repository is not None:
+            report["institutional_split_adjustments_applied"] = institutional_repository.applied_split_count
+            print(f"institutional_ownership_change: {institutional_repository.applied_split_count} stock split(s) applied to 13F share counts")
         report_path.write_text(json.dumps(report, indent=2, default=str))
         print(f"\nFull report written to: {report_path}")
         return 0

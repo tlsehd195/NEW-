@@ -170,3 +170,21 @@ longer summed into institutional shares (`is_common_share_position`).
 `run_full_validation.yml` now ingests the committed CSV into a DuckDB
 catalog and passes `--institutional-db-path`, so the
 `institutional_ownership_change` candidate is no longer skipped.
+
+## Addendum 2 (2026-09-26): split adjustment
+
+The first real, full backfill (2013-06-30 onward, 75 symbols) confirmed
+13F share counts are raw and never split-adjusted (AAPL ~506M shares at
+2013-06-30 vs ~2.98B at 2015-06-30, across its 2014 7:1 split).
+`institutional_ownership_change_score`'s quarter-over-quarter log change
+would read any split as institutional buying. `run_long_horizon_
+validation.py` now wraps the holdings repository in
+`strategy_research.split_adjusted_institutional_holdings.
+SplitAdjustedInstitutionalHoldingRepository`, which restates each
+quarter's shares on the share basis in effect at `as_of_time` using the
+price catalog's own SPLIT/REVERSE_SPLIT corporate actions (only those
+with `available_time <= as_of_time`). The factor's pre-registered
+construction is unchanged; this corrects its input data. The report
+records `institutional_split_adjustments_applied`, so a run whose price
+catalog carries no split events is visible rather than silently
+unadjusted.
