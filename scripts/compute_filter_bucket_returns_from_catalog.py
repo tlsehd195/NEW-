@@ -14,18 +14,19 @@ selecting real signal; a spread near zero (the same shape of finding
 `compute_signal_ic_from_catalog.py --strategy long_term_momentum`
 already produced for the shared momentum score) means it likely is not.
 
-**TEST-1 protection**: identical guard to
+**Locked-window protection**: identical guard to
 `compute_signal_ic_from_catalog.py` -- same reasoning applies
 verbatim (`_passes_filter`'s moving-average/volatility windows were
-also corrected by ADR-0038), same default `--end`, same hard refusal
-with no override flag.
+also corrected by ADR-0038), same default `--end`
+(`earliest_locked_window_start()`), same hard refusal with no override
+flag.
 
 Usage:
     python3 scripts/compute_filter_bucket_returns_from_catalog.py \\
         --db-path ./data/real_2010_latest \\
         --universe RESEARCH_UNIVERSE \\
         --start 2010-01-01 \\
-        [--end 2023-04-28]  # defaults to TEST_1.start; anything later is refused
+        [--end 2020-08-28]  # defaults to earliest_locked_window_start(); anything later is refused
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
 from strategy_research._dates import add_months  # noqa: E402
-from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
+from strategy_research.locked_windows import earliest_locked_window_start, overlaps_any_locked_window  # noqa: E402
 from strategy_research.signal_ic import bucket_return_analysis  # noqa: E402
 from strategy_research.trend_volatility import TrendVolatilityParameters, TrendVolatilityStrategy  # noqa: E402
 
@@ -65,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
     parser.add_argument(
         "--end", type=str, default=None,
-        help="YYYY-MM-DD. Defaults to TEST_1.start; the script refuses to run past that (see module docstring).",
+        help="YYYY-MM-DD. Defaults to the earliest locked window's start; the script refuses to run past that (see module docstring).",
     )
     parser.add_argument("--step-months", type=int, default=1, help="Rebalance interval, matches TrendVolatilityStrategy's default")
     parser.add_argument("--horizon-days", type=int, default=30)
@@ -75,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     end = (
         datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         if args.end is not None
-        else TEST_1.start
+        else earliest_locked_window_start()
     )
 
     locked = overlaps_any_locked_window(start, end)

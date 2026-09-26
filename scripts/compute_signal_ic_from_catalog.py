@@ -35,17 +35,22 @@ each rebalance date and reading their realized forward returns, which
 means querying the actual price history, not just the report's summary
 statistics.
 
-**TEST-1 protection, not a suggestion**: this script REFUSES to run
-(exit code 1, no partial output) if the requested `[--start, --end]`
-range overlaps `strategy_research.locked_windows.TEST_1`. This is
-deliberate and has no override flag. Signal IC computed with today's
-(post-ADR-0038-fix) `_momentum_score` against the TEST-1 window would
-answer "does the CORRECTED signal predict returns in the window we
-already observed the UNCORRECTED strategies fail on" -- exactly the
+**Locked-window protection, not a suggestion**: this script REFUSES to
+run (exit code 1, no partial output) if the requested `[--start, --end]`
+range overlaps ANY `strategy_research.locked_windows.LOCKED_WINDOWS`
+entry (`TEST_1`, `TEST_2`, ...). This is deliberate and has no override
+flag. Signal IC computed with today's (post-ADR-0038-fix)
+`_momentum_score` against an already-observed held-out TEST window
+would answer "does the CORRECTED signal predict returns in a window we
+already observed some strategy fail (or succeed) in" -- exactly the
 post-hoc-tuning-via-TEST-reuse RULE 0.8 forbids, even though this
 script computes a read-only diagnostic rather than changing anything.
-Default `--end` is `TEST_1.start` for this reason -- the safe range is
-the path of least resistance, not an opt-in.
+Default `--end` is `strategy_research.locked_windows.
+earliest_locked_window_start()` for this reason -- the safe range is
+the path of least resistance, not an opt-in, and stays correct
+automatically as new windows get locked (a hardcoded `TEST_1.start`
+default silently became unsafe the moment `TEST_2` was added, since
+`TEST_2.start` is earlier -- see that function's own docstring).
 
 Usage:
     python3 scripts/compute_signal_ic_from_catalog.py \\
@@ -53,7 +58,7 @@ Usage:
         --universe RESEARCH_UNIVERSE \\
         --strategy long_term_momentum \\
         --start 2010-01-01 \\
-        [--end 2023-04-28]  # defaults to TEST_1.start; anything later is refused
+        [--end 2020-08-28]  # defaults to earliest_locked_window_start(); anything later is refused
 """
 
 from __future__ import annotations
@@ -88,7 +93,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     rs_rating_score,
     short_term_reversal_score,
 )
-from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
+from strategy_research.locked_windows import earliest_locked_window_start, overlaps_any_locked_window  # noqa: E402
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy  # noqa: E402
 from strategy_research.risk_controlled_momentum import (  # noqa: E402
     RiskControlledMomentumParameters,
@@ -180,8 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
     parser.add_argument(
         "--end", type=str, default=None,
-        help="YYYY-MM-DD. Defaults to TEST_1.start (the walk-forward TRAIN+VALIDATION boundary) -- "
-        "the script refuses to run past that unless you are certain you want to (see module docstring).",
+        help="YYYY-MM-DD. Defaults to the earliest locked window's start (see module docstring) -- "
+        "the script refuses to run past that unless you are certain you want to.",
     )
     parser.add_argument("--step-months", type=int, default=2, help="Rebalance interval, matches walk-forward test_window_months by default")
     parser.add_argument("--horizon-days", type=int, default=60)
@@ -191,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     end = (
         datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         if args.end is not None
-        else TEST_1.start
+        else earliest_locked_window_start()
     )
 
     locked = overlaps_any_locked_window(start, end)

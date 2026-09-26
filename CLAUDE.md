@@ -223,12 +223,19 @@ calendars`/`purgedcv` 배선, `ADR-0207`)은 이미 처리했다. 남은 항목�
   없다. VM 확보 후 순서: (1) Uptime Kuma를 VM에 배포해 자체 상태
   페이지로 사용, (2) rclone으로 DuckDB/리포트 백업을 클라우드 스토리지로
   동기화하는 스케줄 설정.
-- **51개 전략/팩터 후보 사람 리뷰**: 계정/키 발급이 아니라 판단이
-  필요한 항목. `docs/research/reports/full-validation-20260925T160732Z.json`
-  결과(51개 전부 `INCONCLUSIVE`, PBO 18.6%)를 사람이 직접 훑어보고,
-  후보군을 더 좁히거나 가설을 다시 세울지, 아니면 이 유니버스/기간
-  설정 자체를 바꿔서 재검증할지 결정하는 것 — 세션이 대신 결론 내릴
-  수 없는 영역이다.
+- ~~**51개 전략/팩터 후보 사람 리뷰**~~ — **1차 리뷰 완료** (2026-09-26,
+  `ADR-0209`). 51개 중 `CANDIDATE` 등급까지 오른 4개(`altman_z`,
+  `rank_average_ensemble`, `merton_dd`, `asset_turnover_change`)의
+  실제 held-out TEST 결과를 직접 확인 — **4개 전부 SPY 대비 큰 폭
+  언더퍼폼**(altman_z가 walk-forward 1등이었는데 TEST에서는 -52.9%
+  MDD로 최악, `ADR-0045`의 `leverage` -26.43% 선례와 동일한 패턴
+  재현). **결론: 51개 중 VALIDATED로 올릴 근거 있는 후보 없음.**
+  절차적 구멍도 하나 발견해서 같이 고침: 이번 검증이 쓴 held-out
+  TEST 구간(2020-08-28~2023-04-28)이 `locked_windows.py`에 등록 안
+  돼 있던 걸 `TEST_2`로 소급 등록 완료 — 앞으로 어떤 새 전략도 이
+  구간을 다시 TEST로 재사용 못 하게 막음(RULE 0.8). **남은 부분**:
+  새 S급 팩터 탐색(`ADR-0107~0109` 라운드 이후 재개 안 됨)은 아직
+  진행 전 — 별도로 이어서 할 예정.
 
 ## Grounding Gate 배선 보류 결정 (2026-09-24)
 

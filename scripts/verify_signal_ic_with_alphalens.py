@@ -21,7 +21,9 @@ extra already established for `quantstats`, ADR-0138).
 
 **Locked-window guard, no override flag** -- identical to
 `scripts/compute_signal_ic_from_catalog.py`'s own: refuses to run if
-`[--start, --end)` overlaps `strategy_research.locked_windows.TEST_1`.
+`[--start, --end)` overlaps any `strategy_research.locked_windows.
+LOCKED_WINDOWS` entry. Default `--end` is `strategy_research.
+locked_windows.earliest_locked_window_start()`.
 
 **Scope, disclosed, not hidden:** only price-only factors from
 `strategy_research.factor_scores` are wired in here (the momentum-
@@ -69,7 +71,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     rs_rating_score,
     short_term_reversal_score,
 )
-from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
+from strategy_research.locked_windows import earliest_locked_window_start, overlaps_any_locked_window  # noqa: E402
 from strategy_research.signal_ic import ScoreFn, compute_ic_series  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
@@ -184,8 +186,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD")
     parser.add_argument(
         "--end", type=str, default=None,
-        help="YYYY-MM-DD. Defaults to TEST_1.start, same locked-window precedent as "
-        "scripts/compute_signal_ic_from_catalog.py -- no override flag exists for this.",
+        help="YYYY-MM-DD. Defaults to the earliest locked window's start, same locked-window "
+        "precedent as scripts/compute_signal_ic_from_catalog.py -- no override flag exists for this.",
     )
     parser.add_argument("--step-months", type=int, default=2)
     parser.add_argument("--horizon-days", type=int, default=60)
@@ -203,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     end = (
         datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         if args.end is not None
-        else TEST_1.start
+        else earliest_locked_window_start()
     )
 
     locked = overlaps_any_locked_window(start, end)
