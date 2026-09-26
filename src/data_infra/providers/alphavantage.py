@@ -72,7 +72,13 @@ from typing import Sequence
 
 from data_infra.enums import CorporateActionType
 from data_infra.models import CorporateAction, PriceBar, Provenance
-from data_infra.provider import PermanentProviderError, TransientProviderError, bar_available_time, clamp_ingestion_time
+from data_infra.provider import (
+    PermanentProviderError,
+    TransientProviderError,
+    bar_available_time,
+    clamp_ingestion_time,
+    corporate_action_available_time,
+)
 from data_infra.providers.alphavantage_auth import resolve_api_key
 from data_infra.providers.alphavantage_config import AlphaVantageConfig
 from data_infra.providers.alphavantage_transport import AlphaVantageHttpTransport
@@ -240,12 +246,9 @@ class AlphaVantageDataProvider:
         (identical `ratio > 1.0` convention `TiingoDataProvider.
         normalize_corporate_actions` already uses); an `amount` > 0
         dividend row becomes a DIVIDEND event. Same point-in-time
-        discipline as Tiingo's own implementation: `available_time`/
-        `ingestion_time` are always the caller-supplied ingestion
-        moment, never the (possibly much earlier) real event date --
-        backdating would make a late-discovered action falsely visible
-        to an as-of query made before this system actually knew about
-        it."""
+        rule as Tiingo's own implementation: `available_time` is the
+        earlier of the ingestion moment and the event date's close
+        (`corporate_action_available_time`, ADR-0216)."""
         actions: list[CorporateAction] = []
         for record in raw_records:
             if record["_kind"] == "split":
@@ -258,7 +261,7 @@ class AlphaVantageDataProvider:
                     CorporateAction(
                         security_id=security_id,
                         action_type=action_type,
-                        available_time=ingestion_time,
+                        available_time=corporate_action_available_time(event_date, ingestion_time),
                         ingestion_time=ingestion_time,
                         provenance=Provenance(
                             source="alphavantage", source_dataset=f"alphavantage_corporate_actions_{security_id}",
@@ -282,7 +285,7 @@ class AlphaVantageDataProvider:
                     CorporateAction(
                         security_id=security_id,
                         action_type=CorporateActionType.DIVIDEND,
-                        available_time=ingestion_time,
+                        available_time=corporate_action_available_time(event_date, ingestion_time),
                         ingestion_time=ingestion_time,
                         provenance=Provenance(
                             source="alphavantage", source_dataset=f"alphavantage_corporate_actions_{security_id}",

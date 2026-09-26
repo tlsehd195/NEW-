@@ -17,6 +17,14 @@ applied, via the price repository's own `get_corporate_actions` look-
 ahead guard. A split takes effect for every quarter ending strictly
 before its `effective_time` (falling back to `event_time`); a 13F
 report dated on or after that time already reflects post-split shares.
+
+Only share-count splits are applied (ADR-0216): Tiingo also reports a
+spin-off's price adjustment as a `splitFactor` (real, in the
+research-catalogs-v1 catalog: HON 1.011/1.032 in 2018, PFE 1.054 in
+2020), which changes no holder's share count. A ratio counts as a share
+split only when it (or its inverse, for a reverse split) sits within
+0.1% of a simple fraction p/q with q <= 4 -- 2:1, 3:2, 5:4, 7:1, 1:8 --
+never 1.011 or 1.324.
 """
 
 from __future__ import annotations
@@ -29,6 +37,18 @@ from backtest.corporate_actions import _parse_ratio
 from data_infra.enums import CorporateActionType
 
 _SPLIT_TYPES = {CorporateActionType.SPLIT, CorporateActionType.REVERSE_SPLIT}
+_SHARE_SPLIT_TOLERANCE = 0.001
+
+
+def is_share_count_split(ratio: float) -> bool:
+    """True for a real share split/reverse split ratio, False for a
+    spin-off price adjustment Tiingo reports as a `splitFactor`."""
+    value = ratio if ratio >= 1.0 else 1.0 / ratio
+    for q in (1, 2, 3, 4):
+        p = round(value * q)
+        if p > q and abs(value - p / q) <= _SHARE_SPLIT_TOLERANCE * value:
+            return True
+    return False
 
 
 class SplitAdjustedInstitutionalHoldingRepository:
@@ -46,7 +66,7 @@ class SplitAdjustedInstitutionalHoldingRepository:
                 continue
             when = action.effective_time or action.event_time
             ratio = _parse_ratio(action.details.get("ratio"))
-            if when is None or ratio is None or ratio <= 0:
+            if when is None or ratio is None or ratio <= 0 or not is_share_count_split(ratio):
                 continue
             splits.append((when, ratio, action.provenance.source_record_id))
         return splits

@@ -84,3 +84,38 @@ def test_a_split_effective_on_the_quarter_end_itself_is_already_in_that_report()
     repo = SplitAdjustedInstitutionalHoldingRepository(HOLDINGS, _Prices([_split(Q2, "7:1")]))
     history = repo.get_institutional_holding_history("AAPL", _dt(2014, 9, 1))
     assert [h.institutional_shares for h in history] == [700.0, 700.0]
+
+
+def test_a_spin_off_price_adjustment_is_not_applied_to_share_counts() -> None:
+    """ADR-0216: Tiingo reports a spin-off as a splitFactor (real: HON
+    1.011 on 2018-10-01) -- no holder's share count changes."""
+    holdings = _Holdings([_holding(Q1, 100.0), _holding(Q2, 100.0)])
+    repo = SplitAdjustedInstitutionalHoldingRepository(holdings, _Prices([_split(_dt(2014, 6, 9), 1.011)]))
+    assert institutional_ownership_change_score("AAPL", _dt(2014, 9, 1), repo) == 0.0
+    assert repo.applied_split_count == 0
+
+
+def test_a_backfilled_tiingo_split_is_applied_in_a_historical_as_of_query(tmp_path) -> None:
+    """The real regression (research-catalogs-v1, 2026-09-26): a split
+    backfilled years later was stamped with the backfill's ingestion
+    time, so a 2014 as-of query never saw it and 0 splits were applied."""
+    from data_infra.providers.tiingo import TiingoDataProvider
+    from data_infra.providers.tiingo_config import TiingoConfig
+    from storage.config import StorageConfig
+    from storage.data_repository import DuckDBDataRepository
+    from storage.engine import StorageEngine
+
+    provider = TiingoDataProvider(TiingoConfig(), transport=object())
+    [action] = provider.normalize_corporate_actions(
+        "AAPL", [{"date": "2014-06-09T00:00:00.000Z", "splitFactor": 7.000007, "divCash": 0.0}],
+        retrieved_at=_dt(2026, 9, 11), ingestion_time=_dt(2026, 9, 11),
+    )
+    engine = StorageEngine(StorageConfig(root_dir=tmp_path))
+    try:
+        prices = DuckDBDataRepository(engine)
+        prices.add_corporate_action(action)
+        repo = SplitAdjustedInstitutionalHoldingRepository(HOLDINGS, prices)
+        assert math.isclose(institutional_ownership_change_score("AAPL", _dt(2014, 9, 1), repo), math.log(700 / 700.0007), abs_tol=1e-6)
+        assert repo.applied_split_count == 1
+    finally:
+        engine.close()

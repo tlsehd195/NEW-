@@ -77,6 +77,23 @@ def bar_available_time(event_date: datetime) -> datetime:
     return event_date + END_OF_SESSION_OFFSET
 
 
+def corporate_action_available_time(event_date: datetime, ingestion_time: datetime) -> datetime:
+    """ADR-0216: the earlier of `ingestion_time` and the close of the
+    action's own event date (`bar_available_time(event_date)`).
+
+    A split/dividend was public by its ex-date close (declared earlier
+    still), and the raw price bar for that same day -- already stamped
+    `bar_available_time(event_date)` -- embeds its price effect. Stamping
+    the action itself with a much later backfill `ingestion_time` hid
+    every historical split/dividend from as-of queries while the post-
+    split raw price stayed visible: a real 2014 AAPL buy-and-hold on the
+    research-catalogs-v1 catalog read the 7:1 split as a -84% loss. An
+    action ingested promptly (live operation) keeps `ingestion_time`
+    whenever that is earlier, so an action is never visible before the
+    event actually happened."""
+    return min(ingestion_time, bar_available_time(event_date))
+
+
 def clamp_ingestion_time(batch_ingestion_time: datetime, available_time: datetime) -> datetime:
     """Session 37 (ADR-0115, external review N-3): `ingestion_time` must
     never be earlier than `available_time`

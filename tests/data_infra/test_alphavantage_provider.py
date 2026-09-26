@@ -238,8 +238,8 @@ class TestNormalizeCorporateActions:
         assert len(actions) == 1
         assert actions[0].action_type.value == "DIVIDEND"
         assert actions[0].details == {"amount": 0.27, "currency": "USD"}
-        # point-in-time discipline: never backdated to the real ex-date
-        assert actions[0].available_time == utc(2026, 9, 25)
+        # ADR-0216: the earlier of ingestion time and the ex-date close
+        assert actions[0].available_time == utc(2026, 8, 10, 20)
         assert actions[0].ingestion_time == utc(2026, 9, 25)
         assert actions[0].provenance.source == "alphavantage"
 

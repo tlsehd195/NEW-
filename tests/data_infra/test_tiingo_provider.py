@@ -200,35 +200,39 @@ class TestCorporateActions:
         assert actions[0].action_type == CorporateActionType.DIVIDEND
         assert actions[0].details["amount"] == 0.24
 
-    def test_dividend_available_time_is_ingestion_time_never_backdated_to_event_date(self, monkeypatch) -> None:
-        """External review finding (Session 36 continued): a backfill
-        scenario where the ex-dividend date is months before the actual
-        ingestion -- `available_time` must be the later, real ingestion_
-        time, matching the SPLIT branch's own already-correct behavior
-        immediately below, never the earlier event date (which would let
-        an as-of query made before this system ever ingested the
-        dividend see it anyway -- a real leak, especially exploitable on
-        a broad historical backfill)."""
+    def test_backfilled_dividend_is_available_at_its_event_date_close(self, monkeypatch) -> None:
+        """ADR-0216 (supersedes the Session 36 ingestion-time-only rule):
+        a backfilled ex-dividend is available at its own event date's
+        close, the same moment that day's raw price bar becomes visible
+        -- never at the much later backfill ingestion time, which hid
+        every historical dividend from as-of backtests."""
         provider, _ = _provider([], monkeypatch)
         raw = [{"date": "2024-01-15T00:00:00.000Z", "splitFactor": "1.0", "divCash": "0.24"}]
         actions = provider.normalize_corporate_actions(
             "AAPL", raw, retrieved_at=utc(2024, 6, 1), ingestion_time=utc(2024, 6, 1),
         )
         assert len(actions) == 1
-        assert actions[0].available_time == utc(2024, 6, 1)  # ingestion_time, not the January event_date
-        assert actions[0].event_time == utc(2024, 1, 15)  # the real event date is still recorded, just not as available_time
+        assert actions[0].available_time == utc(2024, 1, 15, 20)
+        assert actions[0].ingestion_time == utc(2024, 6, 1)
+        assert actions[0].event_time == utc(2024, 1, 15)
 
-    def test_split_available_time_is_ingestion_time(self, monkeypatch) -> None:
-        """Locks in the SPLIT branch's own already-correct behavior so a
-        future change cannot silently regress it back toward event_date
-        the way the DIVIDEND branch once did."""
+    def test_backfilled_split_is_available_at_its_event_date_close(self, monkeypatch) -> None:
         provider, _ = _provider([], monkeypatch)
         raw = [{"date": "2024-01-15T00:00:00.000Z", "splitFactor": "2.0", "divCash": "0.0"}]
         actions = provider.normalize_corporate_actions(
             "AAPL", raw, retrieved_at=utc(2024, 6, 1), ingestion_time=utc(2024, 6, 1),
         )
         assert len(actions) == 1
-        assert actions[0].available_time == utc(2024, 6, 1)
+        assert actions[0].available_time == utc(2024, 1, 15, 20)
+
+    def test_an_action_is_never_available_before_its_own_ingestion(self, monkeypatch) -> None:
+        """Prompt (same-day) ingestion keeps the earlier ingestion time."""
+        provider, _ = _provider([], monkeypatch)
+        raw = [{"date": "2024-01-15T00:00:00.000Z", "splitFactor": "2.0", "divCash": "0.0"}]
+        actions = provider.normalize_corporate_actions(
+            "AAPL", raw, retrieved_at=utc(2024, 1, 15, 12), ingestion_time=utc(2024, 1, 15, 12),
+        )
+        assert actions[0].available_time == utc(2024, 1, 15, 12)
 
     def test_ordinary_row_produces_no_action(self, monkeypatch) -> None:
         provider, _ = _provider([], monkeypatch)
