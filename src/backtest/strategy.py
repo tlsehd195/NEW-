@@ -34,6 +34,37 @@ class OrderIntent:
     features: Optional[dict] = None
 
 
+def new_position_cash(
+    portfolio: PortfolioView,
+    data: AsOfDataView,
+    as_of_time: datetime,
+    target: set[str] | frozenset[str],
+    to_buy_count: int,
+    cost_safety_margin: float,
+) -> float:
+    """Cash to put into each NEW position of an equal-weight rebalance
+    toward `target` (ADR-0218).
+
+    Counts this rebalance's own SELL proceeds (held names leaving
+    `target`, at their latest close), since the engine fills those sells
+    before the buys. Caps each new position at an equal share of the
+    whole portfolio. Sizing from `portfolio.cash` alone left the sell
+    proceeds idle for one rebalance, then poured all of them into the
+    next rebalance's few new names. On research-catalogs-v1,
+    sloan_accruals put 34% of a $10k book into TSLA in 2019-07, and one
+    position produced a +306% held-out return."""
+    proceeds = 0.0
+    for security_id, position in portfolio.positions.items():
+        if security_id in target or position.quantity <= 0:
+            continue
+        bars = data.get_bars(security_id, as_of_time - timedelta(days=14), as_of_time)
+        if bars and bars[-1].close > 0:
+            proceeds += position.quantity * bars[-1].close
+    budget = (portfolio.cash + proceeds) * (1.0 - cost_safety_margin) / to_buy_count
+    cap = portfolio.portfolio_value * (1.0 - cost_safety_margin) / len(target)
+    return max(0.0, min(budget, cap))
+
+
 class Strategy(Protocol):
     """Any implementation — including a future ML-based strategy
     (Phase 6+) — plugs in here without BacktestEngine changing (Phase 2
