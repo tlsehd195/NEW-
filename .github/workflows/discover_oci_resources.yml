@@ -11,6 +11,17 @@
 # `update`/`delete` -- no tenancy resource is mutated. Output is
 # resource names/OCIDs/shapes only, never a secret value.
 #
+# 2026-09-26 addition: `provision_oci_colibri_runner.yml` has failed
+# every real attempt since it was created with the same "Out of host
+# capacity" error, and several secondary sources (news coverage, a
+# thread on Oracle's own Cloud Customer Connect community forum, blog
+# posts) report Oracle quietly cut the Always Free VM.Standard.A1.Flex
+# allocation in 2026, enforced since 2026-08-18. Rather than trust that
+# secondhand claim (or act on it by guessing new numbers), the added
+# step here reads this tenancy's OWN real service limit for A1 directly
+# from OCI's Limits API -- the actual number this account is entitled
+# to, not a blog's claim about "new tenancies in general."
+#
 # `workflow_dispatch`-only, matching `verify_oci_authentication.yml`.
 name: Discover OCI Resources
 
@@ -124,4 +135,38 @@ jobs:
           # (a real, separate console action -- this workflow only reads).
           oci iam region-subscription list --tenancy-id "$TENANCY_OCID" \
             --query "data[].{region:\"region-name\", status:status, home:\"is-home-region\"}" --output table
+          echo "::endgroup::"
+
+      - name: Check this tenancy's REAL Ampere A1 service limit (not a blog post)
+        env:
+          AD_NAME_FOR_LIMITS: JRxU:AP-TOKYO-1-AD-1
+        run: |
+          set -euo pipefail
+          echo "::group::Compute service limits containing 'a1' (this tenancy's own numbers)"
+          # 2026-09-26: multiple secondary sources (InfoQ, Oracle's own
+          # Cloud Customer Connect community forum, several blogs) report
+          # Oracle quietly cut the Always Free VM.Standard.A1.Flex
+          # allocation from 4 OCPU/24GB to 2 OCPU/12GB, enforced from
+          # 2026-08-18 -- but provision_oci_colibri_runner.yml still
+          # requests 4 OCPU/24GB (the spec colibri's own smallest usable
+          # model actually needs, per ADR-0189: >=24GB RAM), and every
+          # real launch attempt since then has failed with "Out of host
+          # capacity" (a raw-capacity signal, not a quota-exceeded one).
+          # This project's own discipline is to verify a claim like this
+          # against the tenancy's own real numbers, not take a blog post's
+          # word for it -- this step is that verification, not a guess.
+          oci limits value list --compartment-id "$TENANCY_OCID" --service-name compute \
+            --scope-type AD --availability-domain "$AD_NAME_FOR_LIMITS" \
+            --query "data[?contains(to_string(name), 'a1') || contains(to_string(name), 'A1')]" \
+            --output table
+          echo "::endgroup::"
+
+          echo "::group::Real-time resource availability for standard-a1-core-count"
+          # If this exact limit name is wrong for this tenancy/API version,
+          # the table above still has the real name(s) to use instead --
+          # this call is a bonus, not the only source of truth.
+          oci limits resource-availability get --service-name compute \
+            --limit-name standard-a1-core-count --compartment-id "$TENANCY_OCID" \
+            --availability-domain "$AD_NAME_FOR_LIMITS" --output table \
+            || echo "(limit name 'standard-a1-core-count' did not resolve for this tenancy -- see the table above for the real name)"
           echo "::endgroup::"
