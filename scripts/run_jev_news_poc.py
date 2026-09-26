@@ -333,6 +333,7 @@ class PriceTable:
 
     def __init__(self, closes: dict[str, dict[date, float]]) -> None:
         self.closes = closes
+        self.bars_without_adjusted_close = 0
         self.calendar = sorted({d for series in closes.values() for d in series})
 
     def _ret(self, symbol: str, d0: date, d1: date) -> Optional[float]:
@@ -373,12 +374,19 @@ def load_price_table(db_path: Path, symbols: list[str], start: date, end: date) 
     t0 = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
     t1 = datetime(end.year, end.month, end.day, tzinfo=timezone.utc)
     closes: dict[str, dict[date, float]] = {}
+    skipped = 0
     for symbol in symbols:
         bars = repository.get_bars(symbol, t0, t1, as_of_time=t1)
-        series = {b.timestamp.date(): float(b.adjusted_close or b.close) for b in bars}
+        # Adjusted closes only: a raw close next to an adjusted one would turn
+        # a split or dividend inside a window into a fake move. A bar without
+        # one is left out, so any window touching it is dropped, not guessed.
+        series = {b.timestamp.date(): float(b.adjusted_close) for b in bars if b.adjusted_close}
+        skipped += len(bars) - len(series)
         if series:
             closes[symbol] = series
-    return PriceTable(closes)
+    table = PriceTable(closes)
+    table.bars_without_adjusted_close = skipped
+    return table
 
 
 # ------------------------------------------------------------------ stats
@@ -630,6 +638,7 @@ def cmd_evaluate(args) -> int:
         "news_source": FNSPID_ALL_EXTERNAL_URL,
         "sample_items": len(sample),
         "dropped_no_prices": dropped_no_prices,
+        "price_bars_without_adjusted_close": prices.bars_without_adjusted_close,
         "jev_failures": failures,
         "items_evaluated": len(answered),
         "total_input_tokens": sum(r["input_tokens"] for r in answered),
