@@ -163,10 +163,16 @@ Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직
   전부 성공. 인스턴스 실제 생성(`launch_instance`) 단계에서만
   `"Out of host capacity."`로 실패 — 오라클 쪽 AP-TOKYO-1 리전의
   `VM.Standard.A1.Flex` 무료 티어 재고 소진 문제이지 워크플로 버그가
-  아님. 재시도하거나 다른 리전/AD로 바꿔서 다시 `workflow_dispatch`
-  실행해볼 것. 2026-09-24 세션 중 3번째 시도(`run #3`)도 돌려봤으나
-  역시 실패 — 재고 문제가 아직 안 풀린 것으로 보임. 며칠 뒤 다시
-  `workflow_dispatch`로 재시도하거나 다른 리전으로 바꿔볼 것.)
+  아님.
+  **2026-09-26 정정**: "다른 리전/AD로 바꿔볼 것"은 더 이상 유효한
+  선택지가 아님 — 이 테넌시는 이미 리전 구독 개수 한도에 걸려 2번째
+  리전 추가 시도가 실제로 "maximum number of regions... exceeded"
+  오류로 거부됐다(`.github/workflows/provision_oci_colibri_runner.yml`
+  자체 주석에 기록됨). 대신 그 워크플로가 `workflow_dispatch`뿐 아니라
+  **schedule로 자동 재시도**하도록 이미 바뀌어 있음(수분~수시간 간격,
+  인스턴스가 이미 있으면 스킵하고 스스로 스케줄을 끔) — **사용자가
+  수동으로 재실행할 필요 없음**, 재고가 풀릴 때까지 그냥 기다리면 됨.
+  가끔 Actions 탭에서 이 워크플로의 최근 실행 결과만 확인하면 충분.)
 - ~~`run_full_validation.yml`용 Release 카탈로그 업로드~~ — **완료**
   (2026-09-24 사용자 업로드, `research-catalogs-v1` 태그). 절차/배경은
   `ADR-0193` 참고. `run_full_validation.yml`이 이 태그로 2026-09-24,
