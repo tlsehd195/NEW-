@@ -14,6 +14,7 @@ from data_infra.providers.sec_13f_bulk_dataset import (
     AggregatedHolding,
     FilingWindow,
     aggregate_holdings,
+    dedupe_infotable_rows,
     generate_filing_windows,
     latest_submission_per_period,
     parse_submission_rows,
@@ -32,28 +33,44 @@ class TestGenerateFilingWindows:
         assert "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01jun2024-31aug2024_form13f.zip" in urls
 
     def test_four_windows_per_full_calendar_year(self) -> None:
-        windows = generate_filing_windows(2020, date(2020, 12, 31))
+        windows = generate_filing_windows(2025, date(2025, 12, 31))
         assert len(windows) == 4
-        assert [w.start for w in windows] == [date(2020, 3, 1), date(2020, 6, 1), date(2020, 9, 1), date(2020, 12, 1)]
+        assert [w.start for w in windows] == [date(2025, 3, 1), date(2025, 6, 1), date(2025, 9, 1), date(2025, 12, 1)]
 
     def test_december_window_spans_into_the_next_calendar_year(self) -> None:
-        windows = generate_filing_windows(2020, date(2020, 12, 31))
+        windows = generate_filing_windows(2025, date(2025, 12, 31))
         december_window = windows[-1]
-        assert december_window.start == date(2020, 12, 1)
-        assert december_window.end == date(2021, 2, 28)
+        assert december_window.start == date(2025, 12, 1)
+        assert december_window.end == date(2026, 2, 28)
 
     def test_december_window_ends_on_feb_29_in_a_leap_year(self) -> None:
-        # 2019-12-01 .. 2020-02-29 -- 2020 is a real leap year.
-        windows = generate_filing_windows(2019, date(2019, 12, 31))
+        # 2027-12-01 .. 2028-02-29 -- 2028 is a real leap year.
+        windows = generate_filing_windows(2027, date(2027, 12, 31))
         december_window = windows[-1]
-        assert december_window.end == date(2020, 2, 29)
+        assert december_window.end == date(2028, 2, 29)
+
+    def test_years_before_2024_use_the_real_legacy_quarterly_file_names(self) -> None:
+        # Real, confirmed: 2023q4_form13f.zip (data.gov's catalog entry);
+        # every pre-01mar2024 window-style URL was a real 404.
+        windows = generate_filing_windows(2023, date(2023, 12, 31))
+        assert [w.url.rsplit("/", 1)[1] for w in windows] == [
+            "2023q1_form13f.zip", "2023q2_form13f.zip", "2023q3_form13f.zip", "2023q4_form13f.zip",
+        ]
+        assert windows[-1].start == date(2023, 10, 1)
+        assert windows[-1].end == date(2023, 12, 31)
+
+    def test_legacy_quarters_hand_over_to_windows_at_march_2024(self) -> None:
+        windows = generate_filing_windows(2023, date(2024, 4, 1))
+        names = [w.url.rsplit("/", 1)[1] for w in windows]
+        assert names[-2:] == ["2024q1_form13f.zip", "01mar2024-31may2024_form13f.zip"]
+        assert "01dec2023-29feb2024_form13f.zip" not in names
 
     def test_stops_at_the_window_covering_through_date(self) -> None:
-        windows = generate_filing_windows(2024, date(2024, 4, 1))
+        windows = generate_filing_windows(2025, date(2025, 4, 1))
         assert windows == [
             FilingWindow(
-                start=date(2024, 3, 1), end=date(2024, 5, 31),
-                url="https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01mar2024-31may2024_form13f.zip",
+                start=date(2025, 3, 1), end=date(2025, 5, 31),
+                url="https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01mar2025-31may2025_form13f.zip",
             )
         ]
 
@@ -109,8 +126,8 @@ class TestLatestSubmissionPerPeriod:
         assert winners == {"LATE_AMEND": date(2020, 3, 31)}
 
 
-def _infotable_row(accession, cusip, shares):
-    return {"ACCESSION_NUMBER": accession, "CUSIP": cusip, "SSHPRNAMT": str(shares)}
+def _infotable_row(accession, cusip, shares, **extra):
+    return {"ACCESSION_NUMBER": accession, "CUSIP": cusip, "SSHPRNAMT": str(shares), **extra}
 
 
 class TestAggregateHoldings:
@@ -146,3 +163,35 @@ class TestAggregateHoldings:
     def test_a_row_from_a_non_winning_accession_is_excluded(self) -> None:
         result = aggregate_holdings([_infotable_row("SUPERSEDED", "037833100", 1)], {}, {"037833100": "AAPL"})
         assert result == []
+
+    def test_option_and_principal_amount_rows_are_not_counted_as_shares(self) -> None:
+        winning = {"A1": date(2025, 6, 30)}
+        cusip_map = {"037833100": "AAPL"}
+        rows = [
+            _infotable_row("A1", "037833100", 100, SSHPRNAMTTYPE="SH", PUTCALL=""),
+            _infotable_row("A1", "037833100", 5000, SSHPRNAMTTYPE="SH", PUTCALL="Call"),
+            _infotable_row("A1", "037833100", 7000, SSHPRNAMTTYPE="PRN", PUTCALL=""),
+        ]
+        result = aggregate_holdings(rows, winning, cusip_map)
+        assert [h.institutional_shares for h in result] == [100.0]
+
+
+class TestPointInTimeFilingLag:
+    def test_a_years_later_amendment_does_not_replace_the_contemporaneous_filing(self) -> None:
+        submissions = parse_submission_rows([
+            _submission_row("ORIG", "1", "31-MAR-2015", "14-MAY-2015"),
+            _submission_row("LATE_AMEND", "1", "31-MAR-2015", "01-JUN-2025", "13F-HR/A"),
+        ])
+        assert latest_submission_per_period(submissions, max_filing_lag_days=45) == {"ORIG": date(2015, 3, 31)}
+        assert latest_submission_per_period(submissions) == {"LATE_AMEND": date(2015, 3, 31)}
+
+    def test_a_period_with_only_late_filings_is_dropped(self) -> None:
+        submissions = parse_submission_rows([_submission_row("LATE", "1", "31-MAR-2015", "01-JUL-2015")])
+        assert latest_submission_per_period(submissions, max_filing_lag_days=45) == {}
+
+
+class TestDedupeInfotableRows:
+    def test_the_same_accession_row_from_two_overlapping_files_is_kept_once(self) -> None:
+        row = {"ACCESSION_NUMBER": "A1", "INFOTABLE_SK": "9", "CUSIP": "037833100", "SSHPRNAMT": "10"}
+        other = {**row, "INFOTABLE_SK": "10"}
+        assert dedupe_infotable_rows([row, dict(row), other]) == [row, other]

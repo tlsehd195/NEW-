@@ -140,3 +140,33 @@ downloads, one per ~3-month window, back to `--start-year`.
   matching `convert_sec_13f_filings_to_combined_csv.py`'s own
   `ADR-0131` precedent.
 - Full suite run before merge (branch-merge rule).
+
+## Addendum (2026-09-26): first real backfill run, three fixes
+
+The first real `backfill_institutional_holdings_from_sec_bulk.yml` run
+(https://github.com/tlsehd195/NEW-/actions/runs/36236486917) "succeeded"
+but was unusable:
+
+1. **Zero pre-2024 coverage.** 58 of 67 requested window URLs were real
+   404s -- every one before `01mar2024`. SEC published earlier data as
+   one ZIP per calendar quarter, `{YYYY}q{N}_form13f.zip` (real,
+   confirmed: `2023q4_form13f.zip` on data.gov's catalog entry for this
+   data set). `generate_filing_windows` now emits legacy quarterly URLs
+   for every quarter before March 2024 (2024q1 included, overlap handled
+   by the new `dedupe_infotable_rows`), then the window-style URLs.
+2. **Output never committed.** The repo-wide `*.csv` `.gitignore` rule
+   made the commit step report "no change". The workflow now uses
+   `git add -f`.
+3. **Point-in-time.** `latest_submission_per_period` now takes
+   `max_filing_lag_days`; the backfill passes
+   `THIRTEEN_F_FILING_DEADLINE_DAYS` (45), so an amendment filed years
+   later can no longer replace what was knowable at the `available_time`
+   downstream stamps on the record. Filings made after day 45 (including
+   next-business-day filings when day 45 is a weekend) are dropped, a
+   small, disclosed undercount rather than lookahead.
+
+Also: put/call option rows and `PRN` (principal amount) rows are no
+longer summed into institutional shares (`is_common_share_position`).
+`run_full_validation.yml` now ingests the committed CSV into a DuckDB
+catalog and passes `--institutional-db-path`, so the
+`institutional_ownership_change` candidate is no longer skipped.

@@ -137,6 +137,29 @@ jobs:
             echo "INSIDER_FLAG=--insider-db-path ./data/insider_catalog" >> "$GITHUB_ENV"
           fi
 
+      - name: Build institutional-holdings catalog (optional -- from the committed 13F backfill CSV)
+        run: |
+          set -euo pipefail
+          # backfill_institutional_holdings_from_sec_bulk.yml (ADR-0210)
+          # commits this CSV; without it the institutional_ownership_change
+          # candidate is skipped, same as omitting --institutional-db-path.
+          CSV=docs/research/reference/institutional_holdings_combined.csv
+          # --symbols: only the tickers the CSV actually covers (the CUSIP
+          # map resolves 75 of 87) -- the ingest CLI exits 1 on any
+          # requested symbol missing from the CSV.
+          if [ -f "$CSV" ]; then
+            python3 scripts/ingest_institutional_holdings.py \
+              --source-name sec_13f_bulk_dataset \
+              --combined-csv "$CSV" \
+              --symbols $(tail -n +2 "$CSV" | cut -d, -f1 | sort -u) \
+              --as-of "$(git log -1 --format=%cs -- "$CSV")" \
+              --db-path ./data/institutional_catalog
+            echo "INSTITUTIONAL_FLAG=--institutional-db-path ./data/institutional_catalog" >> "$GITHUB_ENV"
+          else
+            echo "No $CSV -- institutional_ownership_change candidate will be skipped."
+            echo "INSTITUTIONAL_FLAG=" >> "$GITHUB_ENV"
+          fi
+
       - name: Run the full walk-forward + PBO/DSR validation
         env:
           UNIVERSE_INPUT: ${{ inputs.universe }}
@@ -150,6 +173,7 @@ jobs:
             --db-path ./data/price_catalog \
             --fundamentals-db-path ./data/fundamentals_catalog \
             $INSIDER_FLAG \
+            $INSTITUTIONAL_FLAG \
             --data-status REAL \
             --report-out ./validation_report.json
 
