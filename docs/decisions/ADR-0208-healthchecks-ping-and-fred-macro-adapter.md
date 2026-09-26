@@ -90,17 +90,20 @@ is OHLCV-specific and does not fit a macro series keyed by `series_id`
 alone. `FredMacroProvider.fetch_series(series_id, start, end) ->
 list[FredObservation]` is its own, smaller contract instead.
 
-**Evidence tier**: built from FRED's own published API documentation
-(`series_observations`/`errors` pages) -- the same "Tier 2, documentation
-only" level this project's other market-data providers were originally
-built against. `scripts/verify_fred_adapter.py` +
-`.github/workflows/verify_fred_adapter.yml` (`workflow_dispatch` only,
-mirroring `verify_gemini_adapter.yml`) is the real, account-owner-run
-verification step against the real API (fetches `DGS3MO` over a 14-day
-window) that upgrades this to Tier 1 evidence once run -- update
-`fred_transport.py`'s own docstring if it reveals either documented fact
-(the `"."` missing-value marker, or HTTP 400 -- not 401/403 -- for a bad/
-unregistered `api_key`) to be wrong.
+**Evidence tier -- verified against a real call** (2026-09-26, post-
+merge follow-up, account owner's own `FRED_API_KEY`,
+`scripts/verify_fred_adapter.py`,
+https://github.com/tlsehd195/NEW-/actions/runs/36227829988): the real
+success path (request construction, auth-via-query-parameter, JSON
+response parsing) is confirmed working against the real FRED API -- a
+real `DGS3MO` call over a 14-day window returned 9 real observations
+(2026-09-14 through 2026-09-24, real floats, e.g. `4.11`/`4.24`), not
+just a documentation-derived guess. Two edge-case facts remain Tier 2
+(FRED's own documentation only) because that window happened to contain
+neither case: the `"."` missing-value marker, and the HTTP 400 (not
+401/403) auth-failure shape -- see `fred_transport.py`'s own updated
+docstring for the exact, honest split between what is now confirmed and
+what is still documentation-only.
 
 ## Testing
 

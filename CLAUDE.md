@@ -201,10 +201,12 @@ calendars`/`purgedcv` 배선, `ADR-0207`)은 이미 처리했다. 남은 항목�
 - ~~**FRED API key**~~ (`fred.stlouisfed.org`) — **키 등록 + 어댑터
   작성 완료** (2026-09-26, `ADR-0208`). `src/data_infra/providers/
   fred*.py` (Tiingo와 동일한 config/auth/transport 구조), 테스트 19개
-  추가, `scripts/verify_fred_adapter.py` + `verify_fred_adapter.yml`
-  (병합 후 실제 API 호출로 검증 예정 — 신규 워크플로라 GitHub Actions
-  API가 `main` 병합 전에는 dispatch를 못 받음, ADR-0208 자체에 이미
-  기록). **의도적으로 미배선 상태**: `risk_free_rate=0.0` 기본값
+  추가. `scripts/verify_fred_adapter.py` + `verify_fred_adapter.yml`로
+  병합 후(`main`, 2026-09-26) 실제 FRED API 호출까지 검증 완료 — 실제
+  `DGS3MO` 9개 관측치(2026-09-14~09-24) 수신 확인, `run 36227829988`.
+  "." 결측치 마커/HTTP 400 인증 실패 두 가지는 그 real call의 창구에서
+  실제로 발생하지 않아 여전히 Tier 2(문서 근거)로 남음 —
+  `fred_transport.py` 자체 docstring 참고. **의도적으로 미배선 상태**: `risk_free_rate=0.0` 기본값
   (`backtest.metrics`/`PaperPerformanceConfig`/`counterfactual` 등,
   기존에 이미 "risk-free rate 데이터 소스 없음"으로 명시돼 있던
   한계)을 이번에 조용히 바꾸지 않음 — 실제로 어느 시리즈를 쓸지,
