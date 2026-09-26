@@ -76,10 +76,13 @@ jobs:
       - name: Commit the real backfilled combined CSV
         run: |
           set -euo pipefail
-          if [ -n "$(git status --porcelain docs/research/reference/institutional_holdings_combined.csv)" ]; then
+          if [ -n "$(git status --porcelain --ignored docs/research/reference/institutional_holdings_combined.csv)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add docs/research/reference/institutional_holdings_combined.csv
+            # -f: the repo-wide `*.csv` .gitignore rule otherwise made
+            # this step report "no change" and silently drop the output
+            # (real, 2026-09-26 run 36236486917).
+            git add -f docs/research/reference/institutional_holdings_combined.csv
             git commit -m "Update real institutional-holdings backfill combined CSV [skip ci]"
             git push
           else

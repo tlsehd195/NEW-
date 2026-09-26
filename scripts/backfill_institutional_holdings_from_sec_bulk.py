@@ -57,13 +57,18 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from data_infra.institutional_holding_models import THIRTEEN_F_FILING_DEADLINE_DAYS  # noqa: E402
 from data_infra.providers.sec_13f_bulk_dataset import (  # noqa: E402
     SubmissionRecord,
     aggregate_holdings,
+    dedupe_infotable_rows,
     generate_filing_windows,
     latest_submission_per_period,
     parse_submission_rows,
 )
+
+
+_KEPT_INFOTABLE_COLUMNS = ("ACCESSION_NUMBER", "INFOTABLE_SK", "CUSIP", "SSHPRNAMT", "SSHPRNAMTTYPE", "PUTCALL")
 
 
 def _download_zip(url: str, *, user_agent: str) -> Optional[bytes]:
@@ -132,8 +137,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         kept = 0
         for row in infotable_rows:
             if row.get("CUSIP", "").strip() in cusip_to_ticker:
-                all_filtered_infotable_rows.append(row)
+                # Only the columns aggregation/dedup read -- dozens of
+                # windows' matched rows are held at once (pass 2).
+                all_filtered_infotable_rows.append({k: row.get(k) for k in _KEPT_INFOTABLE_COLUMNS if k in row})
                 kept += 1
+        del infotable_rows
         print(f"  {len(submission_rows)} submissions ({len(window_submissions)} real 13F-HR/13F-HR/A), {len(infotable_rows)} infotable rows ({kept} matched a known CUSIP).")
 
     if skipped_windows:
@@ -141,8 +149,17 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     print(f"\nTotal accumulated: {len(all_submissions)} real submissions, {len(all_filtered_infotable_rows)} matched infotable rows across {len(windows) - len(skipped_windows)} real windows.")
 
-    winning_period_by_accession = latest_submission_per_period(all_submissions)
-    print(f"Real, deduplicated (latest-amendment-wins) winning submissions: {len(winning_period_by_accession)}.")
+    before = len(all_filtered_infotable_rows)
+    all_filtered_infotable_rows = dedupe_infotable_rows(all_filtered_infotable_rows)
+    print(f"Dropped {before - len(all_filtered_infotable_rows)} duplicate infotable rows (same accession in two overlapping files).")
+
+    winning_period_by_accession = latest_submission_per_period(
+        all_submissions, max_filing_lag_days=THIRTEEN_F_FILING_DEADLINE_DAYS,
+    )
+    print(
+        f"Real, deduplicated (latest-amendment-wins, filed within {THIRTEEN_F_FILING_DEADLINE_DAYS} days "
+        f"of period end) winning submissions: {len(winning_period_by_accession)}."
+    )
 
     aggregated = aggregate_holdings(all_filtered_infotable_rows, winning_period_by_accession, cusip_to_ticker)
     print(f"Real aggregated (security_id, quarter_end) rows: {len(aggregated)}.")

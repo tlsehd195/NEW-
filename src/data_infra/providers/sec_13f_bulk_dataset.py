@@ -60,6 +60,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from typing import Optional
 
 # Real, confirmed real URL pattern and 4 fixed filing-window boundaries
 # per calendar year (see this module's own docstring, point 1).
@@ -90,6 +91,19 @@ class FilingWindow:
     url: str
 
 
+# Before the 01mar2024 window scheme, SEC published the same data set
+# as one ZIP per calendar quarter, named `{YYYY}q{N}_form13f.zip`
+# (real, confirmed: `2023q4_form13f.zip` is listed on data.gov's own
+# catalog entry for this data set,
+# https://catalog.data.gov/dataset/form-13f-data-sets/resource/ddca234e-1a08-449c-a130-5e477ffeed86,
+# and the real 2026-09-26 backfill run
+# https://github.com/tlsehd195/NEW-/actions/runs/36236486917 got a real
+# 404 for EVERY window-style URL before 01mar2024 -- 58 of 67 requested,
+# i.e. zero pre-2024 coverage). The first real window-style file this
+# project has confirmed is 01mar2024-31may2024.
+_FIRST_WINDOW_STYLE_START = date(2024, 3, 1)
+
+
 def generate_filing_windows(first_start_year: int, through_date: date) -> list[FilingWindow]:
     """Every real ~3-month filing window from `01mar<first_start_year>`
     through whichever window covers `through_date`, inclusive -- see
@@ -100,7 +114,24 @@ def generate_filing_windows(first_start_year: int, through_date: date) -> list[F
     published this far back (this module does not itself know how far
     back SEC's real archive goes)."""
     windows: list[FilingWindow] = []
+    # Legacy quarterly files first (`{YYYY}q{N}`), for every quarter
+    # before the window-style scheme took over. 2024q1 is requested
+    # too even though its Jan-Mar range overlaps 01mar2024-31may2024:
+    # it is not known whether SEC published it, a 404 is skipped by the
+    # caller, and an accession appearing in two files is deduplicated
+    # by `dedupe_infotable_rows`/`latest_submission_per_period`.
     year = first_start_year
+    while year <= _FIRST_WINDOW_STYLE_START.year:
+        for quarter in range(1, 5):
+            start = date(year, 3 * quarter - 2, 1)
+            if start > through_date or start >= _FIRST_WINDOW_STYLE_START:
+                break
+            end_month = 3 * quarter
+            end = date(year + 1, 1, 1) if end_month == 12 else date(year, end_month + 1, 1)
+            end = date.fromordinal(end.toordinal() - 1)
+            windows.append(FilingWindow(start=start, end=end, url=f"{_BULK_DATASET_BASE_URL}/{year}q{quarter}_form13f.zip"))
+        year += 1
+    year = max(first_start_year, _FIRST_WINDOW_STYLE_START.year)
     while True:
         for start_month, start_day, end_month, end_day in _WINDOW_BOUNDARIES:
             start = date(year, start_month, start_day)
@@ -167,7 +198,9 @@ def parse_submission_rows(rows: list[dict]) -> list[SubmissionRecord]:
     return records
 
 
-def latest_submission_per_period(submissions: list[SubmissionRecord]) -> dict[str, date]:
+def latest_submission_per_period(
+    submissions: list[SubmissionRecord], *, max_filing_lag_days: Optional[int] = None,
+) -> dict[str, date]:
     """`{winning_accession_number: period_of_report}` -- exactly one
     entry per real `(cik, period_of_report)` pair, keeping whichever
     submission has the latest `filing_date` (ties broken by the larger
@@ -178,6 +211,14 @@ def latest_submission_per_period(submissions: list[SubmissionRecord]) -> dict[st
     (amendments, possibly filed in a LATER window file)."""
     best: dict[tuple[str, date], SubmissionRecord] = {}
     for record in submissions:
+        if max_filing_lag_days is not None and (record.filing_date - record.period_of_report).days > max_filing_lag_days:
+            # Point-in-time guard: a submission filed after the
+            # `available_time` downstream stamps on this quarter
+            # (`thirteen_f_available_time`, quarter_end + 45 days) was not
+            # knowable then. Letting a years-later amendment (real,
+            # confirmed common -- this module's docstring point 2) win
+            # would be lookahead. Dropped, never re-dated.
+            continue
         key = (record.cik, record.period_of_report)
         current_best = best.get(key)
         if current_best is None:
@@ -217,6 +258,8 @@ def aggregate_holdings(
         security_id = cusip_to_security_id.get(row.get("CUSIP", "").strip())
         if security_id is None:
             continue  # not one of this project's own known, confirmed securities
+        if not is_common_share_position(row):
+            continue
         try:
             shares = float(row.get("SSHPRNAMT", 0) or 0)
         except ValueError:
@@ -229,3 +272,36 @@ def aggregate_holdings(
         AggregatedHolding(security_id=sid, quarter_end=qe, institutional_shares=v["shares"], num_institutions=len(v["filers"]))  # type: ignore[arg-type]
         for (sid, qe), v in totals.items()
     ]
+
+
+def is_common_share_position(row: dict) -> bool:
+    """A put/call option row (`PUTCALL` set) reports the UNDERLYING
+    share count under the SAME CUSIP as the stock itself, and a
+    `SSHPRNAMTTYPE` of `PRN` is a principal amount, not shares -- summing
+    either into "institutional shares held" would overstate long
+    ownership. A row missing `SSHPRNAMTTYPE` entirely is kept (treated as
+    shares), since this module has not confirmed every legacy quarterly
+    file carries that column."""
+    if (row.get("PUTCALL") or "").strip():
+        return False
+    share_type = (row.get("SSHPRNAMTTYPE") or "SH").strip().upper()
+    return share_type == "SH"
+
+
+def dedupe_infotable_rows(rows: list[dict]) -> list[dict]:
+    """Drops exact repeats of one `(ACCESSION_NUMBER, INFOTABLE_SK)`
+    Information Table row -- the same accession can appear in two
+    overlapping files (e.g. a legacy `2024q1` file and the
+    `01mar2024-31may2024` window), and `aggregate_holdings` would
+    otherwise count its shares twice. Falls back to the full row's
+    values as the key when `INFOTABLE_SK` is absent."""
+    seen: set[tuple] = set()
+    unique: list[dict] = []
+    for row in rows:
+        sk = row.get("INFOTABLE_SK")
+        key = (row.get("ACCESSION_NUMBER"), sk) if sk else tuple(sorted(row.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    return unique
