@@ -11,18 +11,23 @@ API, the same discipline ADR-0025 established for Tiingo).
 to import this module, and it stubs `urllib.request.urlopen` rather than
 reaching the network.
 
-**Evidence tier**: built from FRED's own published API documentation
-(https://fred.stlouisfed.org/docs/api/fred/series_observations.html and
-https://fred.stlouisfed.org/docs/api/fred/errors.html) -- the same
-"Tier 2, documentation only" evidence level this project's other
-market-data providers (Tiingo/TwelveData/AlphaVantage) were originally
-built against, not yet exercised against a real response inside this
-environment. `scripts/verify_fred_adapter.py` (ADR-0208) is the real,
-account-owner-run verification step that upgrades this to Tier 1
-evidence once it succeeds -- update this docstring (mirroring
-`ai_gateway.providers.gemini_transport`'s own "Verified against a real
-call" precedent) if it reveals any of the following documented facts to
-be wrong:
+**Verified against a real call** (2026-09-26, account owner's own
+`FRED_API_KEY`, `scripts/verify_fred_adapter.py`,
+https://github.com/tlsehd195/NEW-/actions/runs/36227829988): a real
+`GET .../fred/series/observations?series_id=DGS3MO&api_key=...&
+file_type=json&observation_start=...&observation_end=...` call against
+the real FRED API returned a real HTTP 200 with the exact documented
+success shape (`{"observations": [{"date": "2026-09-14", "value":
+"4.11"}, ...]}`, 9 real observations over a 14-day window) -- the
+request construction, auth-via-query-parameter, and success-path
+parsing (`fred.py`'s `_parse_observation_date`/`_parse_value`) are
+confirmed real, working code, not just documentation-derived guesses.
+
+**Two facts below remain Tier 2 (FRED's own published documentation
+only) -- that one real call's window happened to contain no missing
+day and no error response, so neither was actually exercised.** Update
+this docstring the same way if a future real call reveals either to be
+wrong:
 
 1. **A missing/unavailable observation's `"value"` field is the literal
    string `"."`**, never absent, `null`, or an empty string -- FRED's
