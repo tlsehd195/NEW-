@@ -1,0 +1,56 @@
+# One-time/on-demand verification of the real SEC Form 13F BULK
+# structured data set (every institutional filer's Information Table
+# for one ~3-month filing window, one ZIP) -- see
+# scripts/verify_sec_13f_bulk_dataset.py's own module docstring for
+# the full "why" (ADR-0131 only ever tested ONE filer's own filing,
+# this is the real, free path to genuine cross-market institutional
+# ownership coverage for institutional_ownership_change_score).
+#
+# This sandbox cannot reach www.sec.gov or api.openfigi.com directly
+# (ADR-0131's own disclosed limitation) -- workflow_dispatch-only,
+# same pattern as verify_fred_adapter.yml/verify_gemini_adapter.yml.
+name: Verify SEC 13F Bulk Dataset
+
+on:
+  workflow_dispatch:
+    inputs:
+      window_url:
+        description: "Real SEC 13F bulk data set ZIP URL (default: a recent window, see script's own --window-url default)"
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Verify SEC 13F bulk dataset (real download + real OpenFIGI confirmation calls)
+        env:
+          # workflow_dispatch inputs are never interpolated directly into
+          # a run: block via ${{ }} -- passed as an env var instead
+          # (tests/deploy/test_workflow_run_block_hygiene.py's own
+          # script-injection guard; verify_fred_adapter.yml's identical
+          # precedent).
+          WINDOW_URL_INPUT: ${{ inputs.window_url }}
+        run: |
+          if [ -n "$WINDOW_URL_INPUT" ]; then
+            python3 scripts/verify_sec_13f_bulk_dataset.py --window-url "$WINDOW_URL_INPUT"
+          else
+            python3 scripts/verify_sec_13f_bulk_dataset.py
+          fi
