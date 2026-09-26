@@ -28,6 +28,15 @@ Real network calls: `www.sec.gov` (`company_tickers.json` + one bulk
 `api.openfigi.com` (batched, 10 CUSIPs/request, 2.5s between batches --
 `ADR-0131`'s own real, confirmed no-API-key limits).
 
+**Real bug found and fixed (2026-09-26, first real run of this
+script)**: the automatic "most recent window" selection originally
+assumed a window is published as soon as its own `end` date has
+passed. Real, confirmed wrong: on 2026-09-26, the `01jun2026-
+31aug2026` window (ended 2026-08-31, weeks earlier) still 404'd -- SEC
+publishes a real, unknown lag AFTER a window closes. Fixed by trying
+the last 8 completed windows newest-first, falling back to an earlier
+one on a real 404, rather than assuming the newest is always ready.
+
 Usage:
     python3 scripts/build_institutional_ownership_cusip_map.py \\
         --user-agent "NEW- you@example.com" \\
@@ -93,10 +102,20 @@ def _core_name(title: str) -> str:
     return " ".join(tokens)
 
 
-def _download_zip(url: str) -> bytes:
+def _download_zip(url: str) -> Optional[bytes]:
+    """Returns `None` on a real HTTP 404 (this window has not been
+    published yet -- a real, confirmed lag exists between a window's
+    own end date and SEC actually publishing it, found the hard way:
+    2026-09-26, `01jun2026-31aug2026` -- ended 2026-08-31, weeks
+    before this run -- still 404'd). Any other error propagates."""
     req = urllib.request.Request(url, headers={"User-Agent": "NEW- sdh08060900@gmail.com"})
-    with urllib.request.urlopen(req, timeout=180) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(req, timeout=180) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
 
 
 def _read_tsv_from_zip(zf: zipfile.ZipFile, filename_upper: str) -> list[dict]:
@@ -157,26 +176,43 @@ def main(argv: Optional[list[str]] = None) -> int:
         core_name_by_ticker[ticker] = _core_name(title)
     print(f"Resolved real company names for {len(core_name_by_ticker)}/{len(symbols)} symbols.")
 
-    window_url = args.window_url
-    if window_url is None:
-        # The most recently COMPLETED real window as of today -- the
-        # window covering today's own date is very likely still open
-        # (SEC has not finished collecting its filings yet).
+    if args.window_url is not None:
+        candidate_urls = [args.window_url]
+    else:
+        # Try the most recently COMPLETED real windows, NEWEST first,
+        # falling back to an earlier one on a real 404 -- SEC publishes
+        # a window's real data set with a real, confirmed lag AFTER
+        # the window's own end date (found the hard way, 2026-09-26:
+        # `01jun2026-31aug2026` had already ended weeks earlier and
+        # still 404'd), so "ended before today" alone does not mean
+        # "published." Tries the last 8 completed windows (~2 years)
+        # before giving up -- an explicit --window-url always wins.
         today = date.today()
-        windows = generate_filing_windows(today.year - 1, today - timedelta(days=1))
+        windows = generate_filing_windows(today.year - 2, today - timedelta(days=1))
         completed = [w for w in windows if w.end < today]
         if not completed:
             print("FATAL: could not determine a completed real filing window automatically -- pass --window-url explicitly", file=sys.stderr)
             return 1
-        window_url = completed[-1].url
+        candidate_urls = [w.url for w in reversed(completed[-8:])]
 
-    print(f"Downloading {window_url} ...", flush=True)
-    try:
-        raw_zip = _download_zip(window_url)
-    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-        print(f"FATAL: could not download the bulk data set: {exc}", file=sys.stderr)
+    raw_zip: Optional[bytes] = None
+    window_url: Optional[str] = None
+    for candidate_url in candidate_urls:
+        print(f"Downloading {candidate_url} ...", flush=True)
+        try:
+            raw_zip = _download_zip(candidate_url)
+        except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+            print(f"FATAL: could not download the bulk data set: {exc}", file=sys.stderr)
+            return 1
+        if raw_zip is not None:
+            window_url = candidate_url
+            break
+        print(f"  Not published by SEC yet (real 404) -- trying an earlier window.", file=sys.stderr)
+
+    if raw_zip is None or window_url is None:
+        print(f"FATAL: none of the {len(candidate_urls)} most recent candidate windows are published yet -- pass --window-url explicitly for a known-good one", file=sys.stderr)
         return 1
-    print(f"Downloaded {len(raw_zip):,} bytes.")
+    print(f"Downloaded {len(raw_zip):,} bytes from {window_url}.")
 
     with zipfile.ZipFile(io.BytesIO(raw_zip)) as zf:
         infotable = _read_tsv_from_zip(zf, "INFOTABLE.TSV")
