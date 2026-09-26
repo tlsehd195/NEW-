@@ -212,7 +212,7 @@ from data_infra.versioning import compute_data_version  # noqa: E402
 
 # "RESEARCH_UNIVERSE_STAGE5" is an explicit opt-in name, not the
 # RESEARCH_UNIVERSE binding -- see RESEARCH_UNIVERSE_STAGE5's own
-# comment in data_infra/universe.py (ADR-0211).
+# comment in data_infra/universe.py (ADR-0212).
 _UNIVERSES = {
     "PILOT_UNIVERSE": PILOT_UNIVERSE_V1,
     "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4,

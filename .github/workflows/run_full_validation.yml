@@ -47,17 +47,21 @@ on:
         type: string
         required: true
       universe:
-        description: "Universe to validate (must match _UNIVERSES in run_long_horizon_validation.py; RESEARCH_UNIVERSE_STAGE5 = 203 symbols, ADR-0211)"
+        description: "Universe to validate (must match _UNIVERSES in run_long_horizon_validation.py; RESEARCH_UNIVERSE_STAGE5 = 203 symbols, ADR-0212)"
         type: string
         default: "RESEARCH_UNIVERSE"
       start:
-        description: "Range start (YYYY-MM-DD) -- 2010-01-01 when fundamentals candidates run; a price-only 2000-01-01 run needs a pre-2010 price catalog first (ADR-0211)"
+        description: "Range start (YYYY-MM-DD) -- 2010-01-01 when fundamentals candidates run; a price-only 2000-01-01 run needs a pre-2010 price catalog first (ADR-0212)"
         type: string
         default: "2010-01-01"
       end:
-        description: "Range end (YYYY-MM-DD) -- must not overlap any strategy_research.locked_windows window; default is TEST_2's own start (earliest_locked_window_start(), ADR-0209/ADR-0211)"
+        description: "Range end (YYYY-MM-DD) -- must not overlap any strategy_research.locked_windows window; default is TEST_2's own start (earliest_locked_window_start(), ADR-0209/ADR-0212)"
         type: string
         default: "2020-08-28"
+      price_only:
+        description: "Price-derived candidates only (ADR-0213): the release needs only price_catalog.zip; fundamentals/insider/institutional catalogs are not loaded"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -83,7 +87,27 @@ jobs:
         # of the rule-derived US_EQUITY_NYSE.
         run: pip install -e '.[market-calendars]'
 
+      - name: Download price catalog only (price_only)
+        if: ${{ inputs.price_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p ./data
+          gh release download "$RELEASE_TAG_INPUT" \
+            --repo "${{ github.repository }}" \
+            --pattern "price_catalog.zip" --dir ./data --clobber
+          unzip -q ./data/price_catalog.zip -d ./data/price_catalog
+          test -f ./data/price_catalog/catalog.duckdb
+          {
+            echo "FUNDAMENTALS_FLAG="
+            echo "INSIDER_FLAG="
+            echo "INSTITUTIONAL_FLAG="
+          } >> "$GITHUB_ENV"
+
       - name: Download price + fundamentals catalogs (required)
+        if: ${{ !inputs.price_only }}
         env:
           GH_TOKEN: ${{ github.token }}
           # Independent audit finding (2026-09-24): a workflow_dispatch
@@ -105,8 +129,10 @@ jobs:
           unzip -q ./data/fundamentals_catalog.zip -d ./data/fundamentals_catalog
           test -f ./data/price_catalog/catalog.duckdb
           test -f ./data/fundamentals_catalog/catalog.duckdb
+          echo "FUNDAMENTALS_FLAG=--fundamentals-db-path ./data/fundamentals_catalog" >> "$GITHUB_ENV"
 
       - name: Download insider catalog (optional -- tries the given release, then the auto-published one)
+        if: ${{ !inputs.price_only }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
@@ -138,6 +164,7 @@ jobs:
           fi
 
       - name: Build institutional-holdings catalog (optional -- from the committed 13F backfill CSV)
+        if: ${{ !inputs.price_only }}
         run: |
           set -euo pipefail
           # backfill_institutional_holdings_from_sec_bulk.yml (ADR-0210)
@@ -171,7 +198,7 @@ jobs:
             --universe "$UNIVERSE_INPUT" \
             --start "$START_INPUT" --end "$END_INPUT" \
             --db-path ./data/price_catalog \
-            --fundamentals-db-path ./data/fundamentals_catalog \
+            $FUNDAMENTALS_FLAG \
             $INSIDER_FLAG \
             $INSTITUTIONAL_FLAG \
             --data-status REAL \

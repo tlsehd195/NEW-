@@ -1,4 +1,4 @@
-# ADR-0211: Longer research history (price factors from 2000) + RESEARCH_UNIVERSE Stage 5 (203 symbols)
+# ADR-0212: Longer research history (price factors from 2000) + RESEARCH_UNIVERSE Stage 5 (203 symbols)
 
 **Status:** Accepted (code/config only -- no new data ingested, no backtest run)
 **Date:** 2026-09-26
@@ -93,6 +93,9 @@ cap. Extending the date range adds no requests.
    DuckDB schema-migration issue (tracked in another thread). Order:
    fix ingestion, ingest Stage 5 from 2000-01-01, publish a new Release
    catalog, then dispatch the price-only and fundamentals runs.
+   *(Update, same day: the schema issue was fixed by ADR-0211's additive
+   migration; ADR-0213 adds the Tiingo-only sharded ingestion workflow
+   and the `price_only` validation mode.)*
 
 ## Consequences
 
