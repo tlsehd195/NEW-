@@ -40,6 +40,7 @@ from strategy_research.factor_scores import (
     downside_beta_score,
     earnings_yield_score,
     fifty_two_week_high_score,
+    frog_in_the_pan_score,
     asset_turnover_change_score,
     gross_profitability_score,
     high_volume_return_premium_score,
@@ -47,6 +48,7 @@ from strategy_research.factor_scores import (
     idiosyncratic_volatility_score,
     illiquidity_score,
     industry_momentum_score,
+    intermediate_momentum_score,
     leverage_score,
     long_term_reversal_score,
     low_beta_score,
@@ -59,6 +61,7 @@ from strategy_research.factor_scores import (
     ohlson_o_score,
     operating_leverage_score,
     piotroski_f_score,
+    price_delay_score,
     quality_minus_junk_score,
     rd_expenditure_score,
     residual_momentum_score,
@@ -590,6 +593,161 @@ class TestCoskewnessScore:
         data = _view(repo, as_of_time)
 
         assert coskewness_score("NOBENCH", as_of_time, data) is None
+
+
+class TestIntermediateMomentumScore:
+    """2026-09-26 (ADR-0214) -- Novy-Marx (2012) intermediate-horizon
+    momentum: the return from 12 to 7 months before `as_of_time`,
+    ignoring the most recent 6 months."""
+
+    def _closes(self, n, rise_start, rise_end, daily):
+        closes = [100.0]
+        for i in range(1, n):
+            closes.append(closes[-1] * (1.0 + daily if rise_start <= i < rise_end else 1.0))
+        return closes
+
+    def test_early_riser_outscores_recent_riser_and_matches_the_formula(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 1, 4))
+        n = len(days)
+        # EARLY rises only inside the 12-7 month window; RECENT rises only in the last 6 months.
+        early = self._closes(n, n - 252, n - 148, 0.002)
+        recent = self._closes(n, n - 120, n, 0.002)
+        repo = InMemoryDataRepository(bars=list(make_bars("EARLY", days, early)) + list(make_bars("RECENT", days, recent)))
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        early_score = intermediate_momentum_score("EARLY", as_of_time, data)
+        recent_score = intermediate_momentum_score("RECENT", as_of_time, data)
+
+        assert early_score is not None and recent_score is not None
+        assert early_score > recent_score
+        assert recent_score == pytest.approx(0.0)
+        assert early_score == pytest.approx(early[-148] / early[-253] - 1.0)
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2020, 6, 1), date(2021, 1, 4))  # ~7 months, short of 12
+        repo = InMemoryDataRepository(bars=list(make_bars("SHORT", days, [100.0] * len(days))))
+        as_of_time = _utc(2021, 1, 4)
+
+        assert intermediate_momentum_score("SHORT", as_of_time, _view(repo, as_of_time)) is None
+
+    def test_rejects_an_inverted_window(self) -> None:
+        repo = InMemoryDataRepository(bars=[])
+        as_of_time = _utc(2021, 1, 4)
+        with pytest.raises(ValueError):
+            intermediate_momentum_score("X", as_of_time, _view(repo, as_of_time), start_months=6, end_months=7)
+
+
+class TestPriceDelayScore:
+    """2026-09-26 (ADR-0214) -- Hou & Moskowitz (2005) D1 price delay,
+    `1 - R2_restricted / R2_unrestricted` on weekly returns with 4
+    lagged market returns. Higher delay is more attractive (raw)."""
+
+    def _spy_path(self, n):
+        import random
+
+        rng = random.Random(7)
+        closes = [100.0]
+        for _ in range(1, n):
+            closes.append(closes[-1] * (1.0 + rng.gauss(0.0003, 0.01)))
+        return closes
+
+    def test_lagging_security_scores_higher_than_contemporaneous_security(self) -> None:
+        import random
+
+        start, end = date(2019, 1, 2), date(2021, 6, 1)
+        days = trading_days(start, end)
+        spy = self._spy_path(len(days))
+        rng = random.Random(11)
+        # SAME moves with SPY in the same week; LAGGED repeats SPY's path ~2 weeks late.
+        same = [c * (1.0 + rng.gauss(0.0, 0.002)) for c in spy]
+        lagged = [spy[max(0, i - 10)] for i in range(len(days))]
+        extra = list(make_bars("SAME", days, same)) + list(make_bars("LAGGED", days, lagged))
+        repo = _spy_repo(start, end, lambda i: spy[i], extra_bars=extra)
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+
+        same_score = price_delay_score("SAME", as_of_time, data)
+        lagged_score = price_delay_score("LAGGED", as_of_time, data)
+
+        assert same_score is not None and lagged_score is not None
+        assert 0.0 <= same_score < 0.2
+        assert lagged_score > 0.8
+        assert lagged_score > same_score
+
+    def test_missing_benchmark_returns_none(self) -> None:
+        days = trading_days(date(2019, 1, 2), date(2021, 6, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("NOBENCH", days, self._spy_path(len(days)))))
+        as_of_time = _utc(2021, 1, 4)
+
+        assert price_delay_score("NOBENCH", as_of_time, _view(repo, as_of_time)) is None
+
+    def test_insufficient_weekly_history_returns_none(self) -> None:
+        start, end = date(2020, 9, 1), date(2021, 1, 4)  # ~18 weeks, under the 26-week floor
+        days = trading_days(start, end)
+        spy = self._spy_path(len(days))
+        repo = _spy_repo(start, end, lambda i: spy[i], extra_bars=list(make_bars("THIN", days, spy)))
+        as_of_time = _utc(2021, 1, 4)
+
+        assert price_delay_score("THIN", as_of_time, _view(repo, as_of_time)) is None
+
+
+class TestFrogInThePanScore:
+    """2026-09-26 (ADR-0214) -- Da, Gurun & Warachka (2014). Score is
+    `PRET * -ID`, `ID = sgn(PRET) * (%neg - %pos)`, over the 12-month
+    formation window skipping the most recent month."""
+
+    def _closes(self, n, pattern):
+        closes = [100.0]
+        for i in range(1, n):
+            closes.append(closes[-1] * (1.0 + pattern(i)))
+        return closes
+
+    def _scores(self, patterns):
+        days = trading_days(date(2019, 1, 2), date(2021, 1, 4))
+        closes = {name: self._closes(len(days), fn) for name, fn in patterns.items()}
+        bars = [bar for name, c in closes.items() for bar in make_bars(name, days, c)]
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(InMemoryDataRepository(bars=bars), as_of_time)
+        return {name: frog_in_the_pan_score(name, as_of_time, data) for name in patterns}, closes
+
+    def test_signs_match_the_papers_double_sort_corners(self) -> None:
+        # CONT*: small moves, 3 of every 4 days in the trend direction.
+        # DISC*: small moves against the trend most days, one big jump every 20th day.
+        scores, _ = self._scores({
+            "CONTWIN": lambda i: 0.004 if i % 4 else -0.003,
+            "CONTLOSE": lambda i: -0.004 if i % 4 else 0.003,
+            "DISCWIN": lambda i: 0.10 if i % 20 == 0 else -0.002,
+            "DISCLOSE": lambda i: -0.08 if i % 20 == 0 else 0.002,
+        })
+
+        assert all(v is not None for v in scores.values())
+        assert scores["CONTWIN"] > 0  # continuous winners: strong continuation
+        assert scores["CONTLOSE"] < 0  # continuous losers: strong continuation down
+        assert scores["DISCLOSE"] > scores["DISCWIN"]  # discrete: momentum reverses (paper: -2.07%)
+        assert scores["CONTWIN"] > scores["DISCWIN"]  # same-direction winners, continuity decides
+
+    def test_matches_the_formula_and_skips_the_most_recent_month(self) -> None:
+        # Continuous gains through the formation window, then a crash in the skipped final month.
+        n = len(trading_days(date(2019, 1, 2), date(2021, 1, 4)))
+        scores, closes = self._scores({
+            "SKIP": lambda i: -0.03 if i >= n - 21 else (0.004 if i % 4 else -0.003),
+        })
+        window = closes["SKIP"][-253:-21]
+        rets = [window[i] / window[i - 1] - 1.0 for i in range(1, len(window))]
+        pos = sum(r > 0 for r in rets) / len(rets)
+        neg = sum(r < 0 for r in rets) / len(rets)
+        pret = window[-1] / window[0] - 1.0
+
+        assert pret > 0
+        assert scores["SKIP"] == pytest.approx(pret * (pos - neg))
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2020, 6, 1), date(2021, 1, 4))
+        repo = InMemoryDataRepository(bars=list(make_bars("SHORT", days, [100.0 + i for i in range(len(days))])))
+        as_of_time = _utc(2021, 1, 4)
+
+        assert frog_in_the_pan_score("SHORT", as_of_time, _view(repo, as_of_time)) is None
 
 
 class TestHighVolumeReturnPremiumScore:

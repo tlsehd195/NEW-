@@ -804,6 +804,225 @@ def high_volume_return_premium_score(
     return recent_avg / baseline_avg - 1.0
 
 
+def intermediate_momentum_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, start_months: int = 12, end_months: int = 7,
+) -> Optional[float]:
+    """HYPOTHESIS -- Novy-Marx (2012, "Is momentum really momentum?,"
+    Journal of Financial Economics 103(3): 429-453): the momentum
+    premium is driven mainly by a stock's INTERMEDIATE-horizon past
+    return, measured from 12 to 7 months before portfolio formation,
+    rather than by its most recent months -- sorting on that
+    intermediate return alone earns at least as much as sorting on the
+    conventional 12-2 momentum window. The "12 to 7 months prior"
+    window was confirmed via WebSearch/WebFetch (a secondary summary
+    quoting the paper's own "returns from 12 to 7 months prior"
+    wording), not reconstructed from memory alone.
+
+    **Distinct from every momentum construct already in this project**:
+    `_momentum_score` (`long_term_momentum.py`) and `rs_rating_score`
+    both weight the most recent months, `residual_momentum_score` strips
+    out market/factor exposure, and `industry_momentum_score` is a
+    sector-level signal. This score deliberately IGNORES the most recent
+    six months, so a stock that rallied 9 months ago and has been flat
+    since scores highly here but not in the others.
+
+    Construction: `close[t - 7m] / close[t - 12m] - 1`, with months
+    converted to trading days via `TRADING_DAYS_PER_MONTH` (21) --
+    i.e. the return from 252 to 147 trading days before `as_of_time`.
+    Score is RAW (higher intermediate return = more attractive). `None`
+    unless the full 12-month window is populated."""
+    if not 0 < end_months < start_months:
+        raise ValueError(f"need 0 < end_months < start_months, got {end_months}, {start_months}")
+    lookback_days = start_months * TRADING_DAYS_PER_MONTH
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=int(lookback_days * 1.6)), as_of_time),
+        lookback_days,
+    )
+    if len(bars) < lookback_days + 1:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    start_close = closes[0]
+    end_close = closes[-(end_months * TRADING_DAYS_PER_MONTH) - 1]
+    if not start_close or end_close is None:
+        return None
+    return end_close / start_close - 1.0
+
+
+def _ols_r_squared(y: Sequence[float], regressors: Sequence[Sequence[float]]) -> Optional[float]:
+    """R-squared of an OLS regression of `y` on an intercept plus
+    `regressors` (each a column the same length as `y`), solved via the
+    normal equations with partial-pivot Gaussian elimination -- kept
+    dependency-free like the rest of this module. `None` if `y` has zero
+    variance or the design matrix is singular."""
+    n = len(y)
+    columns = [[1.0] * n] + [list(col) for col in regressors]
+    k = len(columns)
+    xtx = [[sum(columns[i][t] * columns[j][t] for t in range(n)) for j in range(k)] for i in range(k)]
+    xty = [sum(columns[i][t] * y[t] for t in range(n)) for i in range(k)]
+    augmented = [row[:] + [rhs] for row, rhs in zip(xtx, xty)]
+    for col in range(k):
+        pivot = max(range(col, k), key=lambda r: abs(augmented[r][col]))
+        if abs(augmented[pivot][col]) < 1e-14:
+            return None
+        augmented[col], augmented[pivot] = augmented[pivot], augmented[col]
+        for r in range(k):
+            if r != col:
+                factor = augmented[r][col] / augmented[col][col]
+                for c in range(col, k + 1):
+                    augmented[r][c] -= factor * augmented[col][c]
+    coefficients = [augmented[i][k] / augmented[i][i] for i in range(k)]
+    y_mean = sum(y) / n
+    total = sum((v - y_mean) ** 2 for v in y)
+    if total == 0:
+        return None
+    residual = sum(
+        (y[t] - sum(coefficients[i] * columns[i][t] for i in range(k))) ** 2 for t in range(n)
+    )
+    return 1.0 - residual / total
+
+
+def _weekly_closes(bars) -> dict:
+    """Last close of each ISO calendar week, keyed by `(iso_year,
+    iso_week)` -- the daily-bar-to-weekly-return conversion
+    `price_delay_score` needs, done by calendar week (not every-5th-bar)
+    so a holiday-shortened week does not shift every later week's
+    boundary."""
+    weekly: dict = {}
+    for b in bars:
+        close = b.adjusted_close or b.close
+        if close:
+            iso = b.timestamp.date().isocalendar()
+            weekly[(iso[0], iso[1])] = close
+    return weekly
+
+
+def price_delay_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_weeks: int = 52, lags: int = 4,
+) -> Optional[float]:
+    """HYPOTHESIS -- Hou & Moskowitz (2005, "Market Frictions, Price
+    Delay, and the Cross-Section of Expected Returns," The Review of
+    Financial Studies 18(3): 981-1020): stocks whose prices respond
+    SLOWLY to market-wide news (a large share of their co-movement with
+    the market shows up with a lag) earn a significant return premium,
+    which the authors attribute to investor-recognition/market
+    frictions rather than to liquidity or size alone.
+
+    Their primary delay measure, D1, from weekly returns over the prior
+    year: regress the stock's weekly return on the contemporaneous
+    market return plus `lags` (4) lagged weekly market returns
+    (unrestricted), and on the contemporaneous market return alone
+    (restricted, all lag coefficients forced to zero); then
+    `D1 = 1 - R2_restricted / R2_unrestricted`. D1 near 0 means the
+    stock absorbs market news within the week; near 1 means most of the
+    explained variation arrives late. **Formula source caveat**: the
+    paper's own PDF (Rice University host) was not reachable from this
+    sandbox's network allowlist, so this is the widely-reproduced
+    textbook definition of D1 rather than one quoted from the primary
+    source -- flagged here rather than silently presented as verified.
+    Uses `BENCHMARK_SYMBOL` (SPY) as the market proxy instead of the
+    paper's CRSP value-weighted index, the same proxy every other
+    market-co-movement factor in this module uses.
+
+    **Distinct from every other factor already in this module**:
+    `low_beta_score`/`downside_beta_score`/`coskewness_score` measure
+    HOW MUCH a stock co-moves with the market; this measures WHEN
+    (contemporaneously vs. with a lag). `illiquidity_score`/
+    `bid_ask_spread_score`/`share_turnover_score` are trading-cost or
+    activity proxies, which the paper shows D1 is correlated with but
+    not subsumed by.
+
+    Score is RAW D1 (higher delay = more attractive, the paper's own
+    direction). Weekly returns are built from each ISO week's last
+    close (see `_weekly_closes`), security and benchmark paired by
+    week. `None` unless at least 26 paired weekly returns (half the
+    default window) remain after the lag alignment, or either R2 is
+    undefined or non-positive."""
+    padded_days = int((lookback_weeks + lags + 2) * 7 * 1.1)
+    start = as_of_time - timedelta(days=padded_days)
+    security_weekly = _weekly_closes(data.get_bars(security_id, start, as_of_time))
+    benchmark_weekly = _weekly_closes(data.get_bars(BENCHMARK_SYMBOL, start, as_of_time))
+    weeks = sorted(benchmark_weekly)[-(lookback_weeks + lags + 1):]
+    if len(weeks) < lags + 2:
+        return None
+    market_returns = [benchmark_weekly[weeks[i]] / benchmark_weekly[weeks[i - 1]] - 1.0 for i in range(1, len(weeks))]
+    y: list = []
+    contemporaneous: list = []
+    lagged: list = [[] for _ in range(lags)]
+    for i in range(lags, len(market_returns)):
+        this_week, previous_week = weeks[i + 1], weeks[i]
+        if this_week not in security_weekly or previous_week not in security_weekly:
+            continue
+        y.append(security_weekly[this_week] / security_weekly[previous_week] - 1.0)
+        contemporaneous.append(market_returns[i])
+        for lag in range(1, lags + 1):
+            lagged[lag - 1].append(market_returns[i - lag])
+    if len(y) < max(26, lags + 3):
+        return None
+    r2_restricted = _ols_r_squared(y, [contemporaneous])
+    r2_unrestricted = _ols_r_squared(y, [contemporaneous] + lagged)
+    if r2_restricted is None or r2_unrestricted is None or r2_unrestricted <= 0:
+        return None
+    return 1.0 - r2_restricted / r2_unrestricted
+
+
+def frog_in_the_pan_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, formation_months: int = 12, skip_months: int = 1,
+) -> Optional[float]:
+    """HYPOTHESIS -- Da, Gurun & Warachka (2014, "Frog in the Pan:
+    Continuous Information and Momentum," The Review of Financial
+    Studies 27(7): 2171-2218): investors under-react more to information
+    that arrives CONTINUOUSLY in many small pieces than to the same
+    total news arriving in a few large jumps, so momentum is strong
+    among "continuous-information" stocks and weak (even reversed) among
+    "discrete-information" stocks. Verified against the authors' own
+    working paper (academicweb.nd.edu/~zda/Frog.pdf, via WebFetch):
+    information discreteness `ID = sgn(PRET) * (%neg - %pos)`, where
+    PRET is the cumulative return over the 12-month formation period
+    skipping the most recent month and `%pos`/`%neg` are the shares of
+    positive/negative DAILY returns in that same window; low ID =
+    continuous. The paper's momentum spread falls monotonically from
+    5.94% (low-ID quintile) to -2.07% (high-ID quintile).
+
+    **Single-score simplification, flagged honestly**: the paper forms
+    portfolios by a sequential double sort (PRET first, then ID). This
+    module's convention is one per-security score, so this uses
+    `PRET * (-ID)`: momentum scaled by how continuous the information
+    was, with the sign flipping when it was discrete. That reproduces
+    the sign of all four corners of the paper's double sort --
+    continuous winners positive, continuous losers negative, and among
+    discrete stocks losers above winners (the paper's high-ID momentum
+    spread is negative, -2.07%). `-ID` alone would NOT work: it ranks
+    continuous losers as high as continuous winners, because ID
+    measures continuity regardless of direction. It is not a re-test of
+    `_momentum_score`/`rs_rating_score`: for a discrete-information
+    winner this score is negative where theirs is positive.
+
+    `None` unless the full formation window is populated and PRET is
+    non-zero (sgn undefined in spirit at exactly zero)."""
+    formation_days = formation_months * TRADING_DAYS_PER_MONTH
+    skip_days = skip_months * TRADING_DAYS_PER_MONTH
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=int(formation_days * 1.6)), as_of_time),
+        formation_days,
+    )
+    if len(bars) < formation_days + 1:
+        return None
+    closes = [b.adjusted_close or b.close for b in bars]
+    window = closes[: len(closes) - skip_days]
+    if any(c is None or c <= 0 for c in window):
+        return None
+    daily_returns = compute_returns(window)
+    if not daily_returns:
+        return None
+    pret = window[-1] / window[0] - 1.0
+    if pret == 0:
+        return None
+    share_positive = sum(1 for r in daily_returns if r > 0) / len(daily_returns)
+    share_negative = sum(1 for r in daily_returns if r < 0) / len(daily_returns)
+    information_discreteness = math.copysign(1.0, pret) * (share_negative - share_positive)
+    return pret * -information_discreteness
+
+
 def _fy_records(repository, security_id: str, concept: str, as_of_time: datetime) -> list:
     """Every annual (`fiscal_period == "FY"`) `FundamentalRecord` for
     `(security_id, concept)` already knowable `as_of_time`, ONE PER
