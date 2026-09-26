@@ -233,3 +233,15 @@ def test_script_does_not_import_trading_pipeline():
     source = _SCRIPT_PATH.read_text()
     for package in ("predict", "decision", "risk", "broker", "ai_gateway"):
         assert f"from {package}" not in source and f"import {package}" not in source
+
+
+def test_client_error_includes_server_reason_with_key_scrubbed():
+    def transport(url, payload, key, timeout):
+        body = io.BytesIO(f"insufficient credits for key {key}".encode())
+        raise urllib.error.HTTPError(url, 402, "Payment Required", {}, body)
+
+    client = poc.JevClient("SECRET-KEY-123", transport=transport, sleep=lambda s: None)
+    with pytest.raises(poc.JevError) as exc:
+        client.evaluate("x", {})
+    assert "402" in str(exc.value) and "insufficient credits" in str(exc.value)
+    assert "SECRET-KEY-123" not in str(exc.value)

@@ -176,13 +176,22 @@ class JevClient:
                 if exc.code in (429, 500, 502, 503, 529) and attempt < self._max_retries:
                     self._sleep(min(2 ** attempt, 30))
                     continue
-                raise JevError(f"Jev HTTP {exc.code}") from None
+                raise JevError(f"Jev HTTP {exc.code}: {self._error_detail(exc)}") from None
             except (urllib.error.URLError, TimeoutError) as exc:
                 if attempt < self._max_retries:
                     self._sleep(min(2 ** attempt, 30))
                     continue
                 raise JevError(f"Jev connection failed: {type(exc).__name__}") from None
         raise JevError("unreachable")
+
+    def _error_detail(self, exc: urllib.error.HTTPError) -> str:
+        """First 300 chars of the server's error body (e.g. why a 402 was
+        returned), with the key scrubbed in case the server echoes it."""
+        try:
+            body = exc.read().decode("utf-8", errors="replace") if exc.fp is not None else ""
+        except Exception:  # noqa: BLE001 -- best-effort diagnostics only
+            body = ""
+        return " ".join(body.replace(self._api_key, "[redacted]").split())[:300] or "(no body)"
 
 
 SENTIMENT_QUESTION = {
