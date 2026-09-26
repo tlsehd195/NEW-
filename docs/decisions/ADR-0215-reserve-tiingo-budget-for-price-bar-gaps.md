@@ -1,4 +1,4 @@
-# ADR-0214: Twelve Data first for price bars, Tiingo reserved for gaps
+# ADR-0215: Twelve Data first for price bars, Tiingo reserved for gaps
 
 **Status:** Accepted
 **Date:** 2026-09-26

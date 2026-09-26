@@ -173,7 +173,7 @@ from storage.engine import StorageEngine  # noqa: E402
 # "RESEARCH_UNIVERSE_STAGE5" is an explicit opt-in name, not the
 # RESEARCH_UNIVERSE binding -- see RESEARCH_UNIVERSE_STAGE5's own
 # comment in data_infra/universe.py (ADR-0212).
-# ADR-0214: Tiingo calls the corporate-action loop leaves unused for
+# ADR-0215: Tiingo calls the corporate-action loop leaves unused for
 # price bars of symbols Twelve Data does not serve (AVB today).
 TIINGO_PRICE_RESERVE = 8
 
@@ -257,7 +257,7 @@ def main() -> int:
     # given symbol.
     twelvedata = TwelveDataDataProvider(DEFAULT_TWELVEDATA_CONFIG, TwelveDataHttpTransport(DEFAULT_TWELVEDATA_CONFIG.base_url))
     alphavantage = AlphaVantageDataProvider(DEFAULT_ALPHAVANTAGE_CONFIG, AlphaVantageHttpTransport(DEFAULT_ALPHAVANTAGE_CONFIG.base_url))
-    # ADR-0214: Twelve Data first, Tiingo second for price bars. The
+    # ADR-0215: Twelve Data first, Tiingo second for price bars. The
     # corporate-action loop below claims Tiingo's hourly budget first,
     # so with Tiingo first here it was exhausted by the time price
     # fetching started anyway (run #47: every price bar already came
@@ -297,12 +297,12 @@ def main() -> int:
         all_actions = []
         for symbol in symbols:
             try:
-                # ADR-0214: leave TIINGO_PRICE_RESERVE calls of the shared
+                # ADR-0215: leave TIINGO_PRICE_RESERVE calls of the shared
                 # hourly budget for price bars Twelve Data cannot serve;
                 # Alpha Vantage takes over corporate actions past that.
                 if not args.tiingo_only and tiingo_budget.remaining() <= TIINGO_PRICE_RESERVE:
                     raise PermanentProviderError(
-                        f"Tiingo budget held back for price-bar fallback ({TIINGO_PRICE_RESERVE} calls reserved, ADR-0214)"
+                        f"Tiingo budget held back for price-bar fallback ({TIINGO_PRICE_RESERVE} calls reserved, ADR-0215)"
                     )
                 raw_actions = tiingo.fetch_corporate_actions(symbol, args.start, args.end)
                 actions = tiingo.normalize_corporate_actions(
