@@ -193,16 +193,23 @@ calendars`/`purgedcv` 배선, `ADR-0207`)은 이미 처리했다. 남은 항목�
 위 KIS/colibri 항목처럼 이미 설계까지 끝난 상태가 아니다. 계정/키가
 준비되면 세션에 알려주면, 그때 구체 설계를 잡고 진행한다.
 
-- **healthchecks.io + Discord 알림 연동**: 스케줄된 잡(예:
-  `run_paper_trading_cycle.yml` 등)이 죽었을 때 감지하는 데드맨 스위치용.
-  healthchecks.io 계정 생성 + 체크 URL 발급, 알림 채널은 Discord 웹훅으로
-  결정함(2026-09-26, 사용자 결정 — healthchecks.io가 Discord를 기본
-  통합으로 지원해서 Telegram Bot 발급 단계 자체가 필요 없음) — Discord
-  서버에서 웹훅 URL만 생성하면 됨. 발급된 값은 채팅에 붙여넣지 말고
-  GitHub Secrets에 등록 — 위 KIS 항목과 동일한 패턴.
-- **FRED API key** (`fred.stlouisfed.org`): 매크로 경제 데이터(금리,
-  CPI 등) provider 후보. 무료 발급 가능 — 발급 후 `MARKET_DATA_API_KEY`
-  패턴과 동일하게 GitHub Secrets에 등록.
+- ~~**healthchecks.io + Discord 알림 연동**~~ — **완료** (2026-09-26).
+  `HEALTHCHECKS_PING_URL` 시크릿 등록 완료, `paper_trading_cycle.yml`에
+  시작/종료(성공 시 기본 URL, 실패 시 `/fail`) 핑 배선 완료(`ADR-0208`).
+  Discord 알림 채널(healthchecks.io 사이트 자체 Integrations 설정)도
+  연결 완료.
+- ~~**FRED API key**~~ (`fred.stlouisfed.org`) — **키 등록 + 어댑터
+  작성 완료** (2026-09-26, `ADR-0208`). `src/data_infra/providers/
+  fred*.py` (Tiingo와 동일한 config/auth/transport 구조), 테스트 19개
+  추가, `scripts/verify_fred_adapter.py` + `verify_fred_adapter.yml`
+  (병합 후 실제 API 호출로 검증 예정 — 신규 워크플로라 GitHub Actions
+  API가 `main` 병합 전에는 dispatch를 못 받음, ADR-0208 자체에 이미
+  기록). **의도적으로 미배선 상태**: `risk_free_rate=0.0` 기본값
+  (`backtest.metrics`/`PaperPerformanceConfig`/`counterfactual` 등,
+  기존에 이미 "risk-free rate 데이터 소스 없음"으로 명시돼 있던
+  한계)을 이번에 조용히 바꾸지 않음 — 실제로 어느 시리즈를 쓸지,
+  결측일을 어떻게 처리할지는 별도의 명시적 결정이 필요해서 그때
+  다시 꺼낸다(`ADR-0151`의 "adopt now, wire in later" 전례).
 - **Langfuse**: `ai_gateway`를 실제로 호출하는 provider가 아직 하나도
   없는 상태(위 "Grounding Gate 배선 보류 결정" 참고)라 지금 당장은
   관측할 실제 호출이 없다 — Langfuse 계정/키 자체는 미리 준비해둘 수
