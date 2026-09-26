@@ -654,7 +654,7 @@ RESEARCH_UNIVERSE_STAGE4 = UniverseDefinition(
 )
 
 
-# -- RESEARCH_UNIVERSE Stage 5 (ADR-0211, 2026-09-26) -- the account
+# -- RESEARCH_UNIVERSE Stage 5 (ADR-0212, 2026-09-26) -- the account
 # owner asked for factor research over a longer history AND more
 # symbols. Unlike Stages 2-4 (hand-curated per-sector additions), the
 # 116 new symbols here come from ONE mechanical, pre-registered rule
@@ -677,7 +677,7 @@ RESEARCH_UNIVERSE_STAGE4 = UniverseDefinition(
 # caveat above would otherwise silently mix in.
 #
 # Purpose: every new symbol has continuous index membership back to
-# 2000, so a price-based run starting 2000-01-01 (ADR-0211) has a
+# 2000, so a price-based run starting 2000-01-01 (ADR-0212) has a
 # genuinely populated cross-section in its earliest folds rather than
 # one that fills in over time.
 #
@@ -687,7 +687,7 @@ RESEARCH_UNIVERSE_STAGE4 = UniverseDefinition(
 # in this stage corrects that -- delisted-price recovery
 # (`ingest_stockanalysis_wayback_delisted_prices.yml`) only covers
 # removals from 2020 onward. Any Stage 5 result over the 2000s must be
-# reported with that limitation (ADR-0211), and `--point-in-time-
+# reported with that limitation (ADR-0212), and `--point-in-time-
 # universe-as-of` (ADR-0176) remains the tool for membership-correct
 # runs. `listed_from`/`listed_to` stay governed by
 # `_real_symbol_metadata` exactly as before: most new symbols are
@@ -729,7 +729,7 @@ RESEARCH_UNIVERSE_STAGE5 = UniverseDefinition(
         "S&P 500 members whose current, uninterrupted index interval began on or before "
         "2000-01-03 (BF.B excluded for provider ticker-format reasons). Built so a "
         "2000-01-01-start price-factor run has a populated cross-section from its first "
-        "fold (ADR-0211). This selection is a 26-year survivor filter and makes "
+        "fold (ADR-0212). This selection is a 26-year survivor filter and makes "
         "survivorship bias WORSE for the 2000s, not better; it addresses breadth and "
         "history length only."
     ),

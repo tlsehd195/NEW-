@@ -171,7 +171,7 @@ from storage.engine import StorageEngine  # noqa: E402
 # against -- that run used PILOT_UNIVERSE only).
 # "RESEARCH_UNIVERSE_STAGE5" is an explicit opt-in name, not the
 # RESEARCH_UNIVERSE binding -- see RESEARCH_UNIVERSE_STAGE5's own
-# comment in data_infra/universe.py (ADR-0211).
+# comment in data_infra/universe.py (ADR-0212).
 _UNIVERSES = {
     "PILOT_UNIVERSE": PILOT_UNIVERSE_V1,
     "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4,
@@ -190,17 +190,42 @@ def main() -> int:
     parser.add_argument("--start", required=True, type=_parse_date, help="Start date, YYYY-MM-DD")
     parser.add_argument("--end", required=True, type=_parse_date, help="End date, YYYY-MM-DD -- also used as the ingestion's available_time/as_of reference; never derived from wall-clock time")
     parser.add_argument("--db-path", required=True, type=Path, help="Directory for the DuckDB catalog + Parquet store (created if it does not exist)")
+    parser.add_argument(
+        "--tiingo-only", action="store_true",
+        help=(
+            "ADR-0213: use Tiingo alone for both price bars and corporate actions (no Twelve Data / "
+            "Alpha Vantage fallback). For long-history backfills: Twelve Data's free tier caps a series "
+            "at 5,000 bars and Alpha Vantage's at ~100, so a fallback would silently truncate history "
+            "instead of failing loudly. Pair with --shard-index/--shard-count to stay under Tiingo's "
+            "hourly cap."
+        ),
+    )
+    parser.add_argument("--shard-index", type=int, default=None, help="ADR-0213: ingest only this shard of --universe (0-based); every universe symbol is still registered in security_master/universe_membership. Requires --shard-count.")
+    parser.add_argument("--shard-count", type=int, default=None, help="ADR-0213: number of shards; assignment is sorted(universe)[shard_index::shard_count], same as scripts/select_universe_shard.py. The benchmark is ingested with shard 0 only.")
     parser.add_argument("--manifest-out", type=Path, default=None, help="Where to write the JSON reproducibility manifest (default: <db-path>/ingestion_manifest.json)")
     args = parser.parse_args()
 
     manifest_path = args.manifest_out or (args.db_path / "ingestion_manifest.json")
+
+    if (args.shard_index is None) != (args.shard_count is None):
+        parser.error("--shard-index and --shard-count must be given together")
+    if args.shard_count is not None:
+        if args.symbols is not None:
+            parser.error("--shard-index/--shard-count select from --universe and cannot be combined with --symbols")
+        if args.shard_count <= 0 or not 0 <= args.shard_index < args.shard_count:
+            parser.error("--shard-index must satisfy 0 <= shard_index < shard_count")
 
     if args.symbols is not None:
         universe = None
         symbols = list(args.symbols)
     else:
         universe = _UNIVERSES[args.universe]
-        symbols = list(universe.symbol_ids) + [BENCHMARK_SYMBOL]
+        if args.shard_count is not None:
+            symbols = sorted(universe.symbol_ids)[args.shard_index :: args.shard_count]
+            if args.shard_index == 0:
+                symbols.append(BENCHMARK_SYMBOL)
+        else:
+            symbols = list(universe.symbol_ids) + [BENCHMARK_SYMBOL]
 
     # ADR-0160: exactly one TiingoHttpTransport is constructed here and
     # reused by both real call paths below (FallbackDataProvider's
@@ -226,7 +251,7 @@ def main() -> int:
     # given symbol.
     twelvedata = TwelveDataDataProvider(DEFAULT_TWELVEDATA_CONFIG, TwelveDataHttpTransport(DEFAULT_TWELVEDATA_CONFIG.base_url))
     alphavantage = AlphaVantageDataProvider(DEFAULT_ALPHAVANTAGE_CONFIG, AlphaVantageHttpTransport(DEFAULT_ALPHAVANTAGE_CONFIG.base_url))
-    provider = FallbackDataProvider(tiingo, twelvedata, alphavantage)
+    provider = tiingo if args.tiingo_only else FallbackDataProvider(tiingo, twelvedata, alphavantage)
 
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
     repository = DuckDBDataRepository(engine)
@@ -264,6 +289,9 @@ def main() -> int:
                 )
                 source = "tiingo"
             except (TransientProviderError, PermanentProviderError) as tiingo_exc:
+                if args.tiingo_only:
+                    corporate_action_results.append({"security_id": symbol, "count": 0, "error": f"tiingo={tiingo_exc}"})
+                    continue
                 # 2026-09-25 addition: Alpha Vantage's real free-tier
                 # DIVIDENDS/SPLITS endpoints are now a confirmed, working
                 # fallback (Tier 1 -- see AlphaVantageDataProvider's own

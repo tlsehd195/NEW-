@@ -201,7 +201,7 @@ class TestResearchUniverseStage4:
 
 
 class TestResearchUniverseStage5:
-    """Stage 5 (ADR-0211) -- Stage 4 plus 116 symbols from one
+    """Stage 5 (ADR-0212) -- Stage 4 plus 116 symbols from one
     pre-registered rule over the real fja05680/sp500 interval data
     (current, uninterrupted S&P 500 interval starting on or before
     2000-01-03), for a longer-history, broader price-factor run."""

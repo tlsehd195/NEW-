@@ -1,0 +1,129 @@
+# Builds a long-history research PRICE catalog (ADR-0213) and publishes
+# it as price_catalog.zip on a GitHub Release, for run_full_validation.yml
+# (price_only mode) to consume.
+#
+# Why this shape: Tiingo's confirmed free tier is 50 requests/hour and
+# the only fallbacks (Twelve Data, Alpha Vantage) truncate long histories
+# (5,000 / ~100 bars), so a 2000-onward backfill must run --tiingo-only
+# and stay under the hourly cap by itself. The universe is split into
+# SHARD_COUNT shards (sorted(universe)[i::SHARD_COUNT], at most
+# 21 symbols + SPY = 44 requests each), ingested one shard per hour into
+# the same catalog. That is ~10 hours, longer than a GitHub-hosted job's
+# 6-hour limit, so it runs as two chained jobs passing the catalog as an
+# artifact.
+#
+# Tiingo quota is shared with paper_trading_cycle.yml (cron 22:00 UTC
+# Mon-Fri, ~176 requests). Dispatch this on a weekend, or so it finishes
+# before 22:00 UTC, to avoid both drawing on the same hour. Daily total
+# (~408 + ~176) stays under Tiingo's 1,000/day cap either way.
+#
+# workflow_dispatch-only -- a real, long, quota-consuming run.
+name: Ingest research price catalog (long history, Tiingo-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: "Universe (must match _UNIVERSES in ingest_real_market_data.py)"
+        type: string
+        default: "RESEARCH_UNIVERSE_STAGE5"
+      start:
+        description: "Start date (YYYY-MM-DD)"
+        type: string
+        default: "2000-01-01"
+      end:
+        description: "End date (YYYY-MM-DD) -- a completed trading day, e.g. the last Friday"
+        type: string
+        required: true
+      release_tag:
+        description: "Release to publish price_catalog.zip to (created if missing)"
+        type: string
+        default: "research-price-catalog-stage5-2000"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SHARD_COUNT: "10"
+  # Tiingo's budget is a rolling hour; a little over an hour between
+  # shards keeps each shard's 44 requests in a fresh window.
+  SHARD_SLEEP_SECONDS: "3660"
+  CATALOG_DIR: data/research_price_catalog
+
+jobs:
+  first-half:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: pip install -e '.[market-calendars]'
+      - name: Ingest shards 0-4 (one per hour)
+        env:
+          MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
+          # Workflow inputs go through env, never ${{ }} inside run:
+          # (the injection rule run_full_validation.yml documents).
+          UNIVERSE_INPUT: ${{ inputs.universe }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+        run: bash scripts/ingest_price_catalog_shards.sh 0 4 no-initial-sleep
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: always()
+        with:
+          name: research-price-catalog-partial
+          path: ${{ env.CATALOG_DIR }}
+          retention-days: 7
+          if-no-files-found: error
+
+  second-half:
+    needs: first-half
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write  # gh release create/upload only
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: pip install -e '.[market-calendars]'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: research-price-catalog-partial
+          path: ${{ env.CATALOG_DIR }}
+      - name: Ingest shards 5-9 (one per hour, starting an hour after the first half)
+        env:
+          MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
+          UNIVERSE_INPUT: ${{ inputs.universe }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+        run: bash scripts/ingest_price_catalog_shards.sh 5 9 initial-sleep
+      - name: Coverage report (earliest/latest bar and bar count per symbol)
+        env:
+          UNIVERSE_INPUT: ${{ inputs.universe }}
+          START_INPUT: ${{ inputs.start }}
+        run: python3 scripts/report_price_catalog_coverage.py --db-path "$CATALOG_DIR" --universe "$UNIVERSE_INPUT" --start "$START_INPUT"
+      - name: Publish price_catalog.zip to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          UNIVERSE_INPUT: ${{ inputs.universe }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+        run: |
+          set -euo pipefail
+          (cd "$CATALOG_DIR" && zip -q -r ../../price_catalog.zip .)
+          if ! gh release view "$RELEASE_TAG_INPUT" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG_INPUT" --repo "${{ github.repository }}" \
+              --title "Research price catalog ($UNIVERSE_INPUT, $START_INPUT..$END_INPUT)" \
+              --notes "Published by ingest_research_price_catalog.yml (ADR-0213). Tiingo-only, $UNIVERSE_INPUT, $START_INPUT..$END_INPUT. Price catalog only -- run run_full_validation.yml with price_only=true against this tag."
+          fi
+          gh release upload "$RELEASE_TAG_INPUT" ./price_catalog.zip --repo "${{ github.repository }}" --clobber

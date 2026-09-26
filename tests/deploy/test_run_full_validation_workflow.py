@@ -58,7 +58,7 @@ def test_required_inputs_present_with_sensible_defaults():
     assert inputs["universe"]["default"] == "RESEARCH_UNIVERSE"
     assert inputs["start"]["default"] == "2010-01-01"
     # Default --end is the earliest locked window's start (TEST_2's,
-    # ADR-0209/ADR-0211). The old 2023-04-28 default (TEST_1's start)
+    # ADR-0209/ADR-0212). The old 2023-04-28 default (TEST_1's start)
     # overlapped TEST_2 once it was locked, so a default dispatch was
     # refused by run_long_horizon_validation.py's own locked-window
     # guard. Asserted against the registry itself so a future earlier
@@ -109,7 +109,11 @@ def test_runs_the_real_validation_script_with_both_required_db_paths_and_the_ins
     run_text = "\n".join(s.get("run", "") for s in steps)
     assert "run_long_horizon_validation.py" in run_text
     assert "--db-path ./data/price_catalog" in run_text
-    assert "--fundamentals-db-path ./data/fundamentals_catalog" in run_text
+    # The fundamentals path is set via $FUNDAMENTALS_FLAG so price_only
+    # (ADR-0213) can leave it empty; the non-price_only download step
+    # is what sets it.
+    assert "$FUNDAMENTALS_FLAG" in run_text
+    assert "FUNDAMENTALS_FLAG=--fundamentals-db-path ./data/fundamentals_catalog" in run_text
     assert "$INSIDER_FLAG" in run_text
     assert "--data-status REAL" in run_text
     # Independent audit finding (2026-09-24): a workflow_dispatch input
@@ -144,3 +148,21 @@ def test_commits_the_report_into_the_repo_durably():
     assert "git push" in run_text
     # Guards against committing a stale/missing report from a failed run.
     assert "if [ ! -f ./validation_report.json ]" in run_text
+
+
+def test_price_only_downloads_only_the_price_catalog_and_skips_every_other_catalog():
+    """ADR-0213: a price_only dispatch works against a release holding
+    only price_catalog.zip (ingest_research_price_catalog.yml's output)."""
+    assert _dispatch_inputs()["price_only"]["type"] == "boolean"
+    assert _dispatch_inputs()["price_only"]["default"] is False
+    steps = _steps()
+    price_only_step = next(s for s in steps if s.get("if") == "${{ inputs.price_only }}")
+    assert "price_catalog.zip" in price_only_step["run"]
+    assert "fundamentals_catalog.zip" not in price_only_step["run"]
+    for flag in ("FUNDAMENTALS_FLAG=", "INSIDER_FLAG=", "INSTITUTIONAL_FLAG="):
+        assert flag in price_only_step["run"]
+    skipped = [s["name"] for s in steps if s.get("if") == "${{ !inputs.price_only }}"]
+    assert len(skipped) == 3
+    assert any("fundamentals" in name for name in skipped)
+    assert any("insider" in name for name in skipped)
+    assert any("institutional" in name for name in skipped)
