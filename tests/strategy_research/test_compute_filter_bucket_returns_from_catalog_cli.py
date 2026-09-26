@@ -20,7 +20,7 @@ from storage_helpers import new_engine
 from data_infra.calendar import US_EQUITY
 from data_infra.universe import PILOT_UNIVERSE_V1
 from storage.data_repository import DuckDBDataRepository
-from strategy_research.locked_windows import TEST_1
+from strategy_research.locked_windows import TEST_1, earliest_locked_window_start, overlaps_any_locked_window
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "compute_filter_bucket_returns_from_catalog.py"
 
@@ -53,7 +53,12 @@ class TestTest1Refusal:
         assert exit_code == 1
         assert "LOCKED" in capsys.readouterr().err
 
-    def test_default_end_is_test_1_start_and_is_therefore_safe(self, tmp_path) -> None:
+    def test_default_end_is_the_earliest_locked_window_start_and_is_therefore_safe(self, tmp_path) -> None:
+        # Real regression this project's own test caught (2026-09-26,
+        # adding TEST_2, ADR-0209): this script's default used to be
+        # hardcoded to TEST_1.start directly, which became unsafe the
+        # moment TEST_2 (starting earlier) was added.
+        assert overlaps_any_locked_window(datetime(2010, 1, 1, tzinfo=timezone.utc), earliest_locked_window_start()) == ()
         module = _load_script()
         exit_code = module.main([
             "--db-path", str(tmp_path / "store"),

@@ -30,11 +30,12 @@ PROTOCOL.md`:
     family in this first run, so no multiple-comparisons correction is
     needed yet (would be, the moment a second candidate is added).
 
-**TEST-1 protection, not a suggestion**: identical to the other
+**Locked-window protection, not a suggestion**: identical to the other
 Signal-IC/walk-forward CLI scripts -- refuses (exit 1, no partial
-output) if `[--start, --end]` overlaps
-`strategy_research.locked_windows.TEST_1`, no override flag. Default
-`--end` is `TEST_1.start`.
+output) if `[--start, --end]` overlaps any
+`strategy_research.locked_windows.LOCKED_WINDOWS` entry, no override
+flag. Default `--end` is
+`strategy_research.locked_windows.earliest_locked_window_start()`.
 
 Usage:
     python3 scripts/train_ml_model_from_catalog.py \\
@@ -42,7 +43,7 @@ Usage:
         --fundamentals-db-path ./data/fundamentals_data \\
         --universe RESEARCH_UNIVERSE \\
         --start 2010-01-01 \\
-        [--end 2023-04-28]  # defaults to TEST_1.start; anything later is refused
+        [--end 2020-08-28]  # defaults to earliest_locked_window_start(); anything later is refused
 """
 
 from __future__ import annotations
@@ -68,7 +69,7 @@ from ml.linear_model import LinearRegressionModel  # noqa: E402
 from ml.target import HORIZON_DAYS, TARGET_ID  # noqa: E402
 
 from strategy_research._dates import add_months  # noqa: E402
-from strategy_research.locked_windows import TEST_1, overlaps_any_locked_window  # noqa: E402
+from strategy_research.locked_windows import earliest_locked_window_start, overlaps_any_locked_window  # noqa: E402
 from strategy_research.splits import build_chronological_split  # noqa: E402
 
 _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
@@ -93,9 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", required=True, type=str, help="YYYY-MM-DD -- TRAIN start")
     parser.add_argument(
         "--end", type=str, default=None,
-        help="YYYY-MM-DD. Defaults to TEST_1.start -- the script refuses to run past that "
-        "(see module docstring, no override flag). This is the VALIDATION end -- this "
-        "script never touches a TEST region at all.",
+        help="YYYY-MM-DD. Defaults to the earliest locked window's start -- the script refuses "
+        "to run past that (see module docstring, no override flag). This is the VALIDATION "
+        "end -- this script never touches a TEST region at all.",
     )
     parser.add_argument("--train-fraction", type=float, default=0.75, help="Fraction of [start, end] used for TRAIN; the remainder is VALIDATION")
     parser.add_argument("--step-months", type=int, default=2, help="Rebalance interval, matches this project's other Signal IC scripts' default")
@@ -105,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     end = (
         datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         if args.end is not None
-        else TEST_1.start
+        else earliest_locked_window_start()
     )
 
     locked = overlaps_any_locked_window(start, end)

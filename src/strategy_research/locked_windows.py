@@ -65,7 +65,55 @@ TEST_1 = LockedWindow(
     ),
 )
 
-LOCKED_WINDOWS: tuple[LockedWindow, ...] = (TEST_1,)
+# TEST-2: the chronological_split.test_start/test_end from
+# run_full_validation.yml's 2026-09-25 real 87-symbol walk-forward run
+# (RESEARCH_UNIVERSE stage4, overall range 2010-01-01..2023-04-28,
+# default 60/20/20 split), recorded verbatim from that run's own report
+# (docs/research/reports/full-validation-20260925T160732Z.json,
+# experiment_id 3b7e82ffa9bf47f3) -- same "record what the report
+# actually said, don't re-derive" discipline as TEST_1. Ends exactly at
+# TEST_1's own start (2023-04-28), so the two are adjacent, not
+# overlapping -- both can be locked independently. Added retroactively
+# (2026-09-26, human factor review of that run's 51 INCONCLUSIVE
+# results) -- this window was already observed by all 51 candidates
+# below before this entry existed; adding it now closes that gap so no
+# FUTURE strategy (including a newly-added one) can be evaluated
+# against it, per RULE 0.8.
+TEST_2 = LockedWindow(
+    name="TEST-2",
+    start=datetime(2020, 8, 28, tzinfo=timezone.utc),
+    end=datetime(2023, 4, 28, tzinfo=timezone.utc),
+    observed_by=(
+        "abnormal_investment", "altman_z", "asset_growth", "asset_turnover_change",
+        "bid_ask_spread", "book_to_market", "buy_and_hold", "cash_holdings",
+        "cashflow_yield", "combined_factor", "coskewness", "dividend_growth",
+        "downside_beta", "earnings_yield", "fifty_two_week_high", "gross_profitability",
+        "high_volume_return_premium", "idiosyncratic_skewness", "idiosyncratic_volatility",
+        "illiquidity", "industry_momentum", "leverage", "long_term_momentum",
+        "long_term_reversal", "low_beta", "max_effect", "merton_dd", "ml_ols",
+        "ml_ridge", "ml_tree", "net_operating_assets", "net_stock_issuance", "ohlson_o",
+        "operating_leverage", "piotroski", "quality_minus_junk", "rank_average_ensemble",
+        "rd_expenditure", "residual_momentum", "return_seasonality",
+        "risk_controlled_momentum", "rs_rating", "sales_yield", "share_turnover",
+        "shareholder_yield", "short_term_reversal", "size", "sloan_accruals", "sue",
+        "trend_volatility", "value_composite",
+    ),
+    note=(
+        "Observed once, real data, RESEARCH_UNIVERSE stage4 (87 symbols). "
+        "All 51 candidates classified INCONCLUSIVE (PBO=0.19); 4 reached "
+        "this project's CANDIDATE evidence level on the walk-forward folds "
+        "(altman_z, rank_average_ensemble, merton_dd, asset_turnover_change) "
+        "but all 4 substantially underperformed SPY on this exact held-out "
+        "TEST window regardless (altman_z: -44.5pp excess return, -52.9% "
+        "max drawdown) -- the same CANDIDATE-level-is-not-validated pattern "
+        "ADR-0045 already documented for `leverage` against a different "
+        "window. See docs/research/reports/"
+        "full-validation-20260925T160732Z.json for the full per-candidate "
+        "results this note summarizes."
+    ),
+)
+
+LOCKED_WINDOWS: tuple[LockedWindow, ...] = (TEST_1, TEST_2)
 
 
 def overlaps_any_locked_window(start: datetime, end: datetime) -> tuple[LockedWindow, ...]:
@@ -75,3 +123,29 @@ def overlaps_any_locked_window(start: datetime, end: datetime) -> tuple[LockedWi
     or TEST data for any new strategy/model evaluation when this
     returns anything non-empty."""
     return tuple(w for w in LOCKED_WINDOWS if start < w.end and end > w.start)
+
+
+def earliest_locked_window_start() -> datetime:
+    """The earliest `start` across every registered `LockedWindow` --
+    the one universally-safe default `--end` for any script that wants
+    "everything not-yet-observed" without naming a specific window.
+
+    **Real bug this fixes (2026-09-26, adding `TEST_2`)**: five scripts
+    (`compute_signal_ic_from_catalog.py`, `compute_fundamentals_ic_
+    from_catalog.py`, `compute_filter_bucket_returns_from_catalog.py`,
+    `train_ml_model_from_catalog.py`, `verify_signal_ic_with_
+    alphalens.py`) each hardcoded their own default `--end` to `TEST_1.
+    start` directly -- correct while `TEST_1` was the only locked
+    window, but `TEST_2.start` (2020-08-28) is earlier than `TEST_1.
+    start` (2023-04-28), so that hardcoded default silently became
+    unsafe (overlapping `TEST_2`) the moment `TEST_2` was added, caught
+    only because those scripts' own tests asserted the default was
+    safe and started failing. Calling this function instead of naming
+    a window directly means adding a future `TEST_3` starting earlier
+    than both cannot silently reintroduce the same bug a third time.
+
+    Never returns `None`/raises on an empty registry -- at least one
+    `LockedWindow` (`TEST_1`) always exists once this module has ever
+    been imported, so this is a plain `min()` over a guaranteed
+    non-empty sequence, not a fallible lookup a caller needs to guard."""
+    return min(w.start for w in LOCKED_WINDOWS)
