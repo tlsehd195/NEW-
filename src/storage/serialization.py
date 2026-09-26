@@ -51,6 +51,7 @@ from data_infra.fundamentals_models import FundamentalRecord
 from data_infra.insider_models import InsiderTransaction
 from data_infra.institutional_holding_models import InstitutionalFilerHoldingRecord, InstitutionalHoldingRecord
 from data_infra.short_interest_models import ShortInterestRecord
+from data_infra.macro_models import MacroObservationRecord
 from data_infra.models import (
     BenchmarkPoint,
     CorporateAction,
@@ -294,6 +295,33 @@ def row_to_short_interest_record(row: dict) -> ShortInterestRecord:
         short_interest_quantity=row["short_interest_quantity"],
         average_daily_volume=row.get("average_daily_volume"),
         days_to_cover=row.get("days_to_cover"),
+        available_time=from_utc_naive(row["available_time"]),
+        ingestion_time=from_utc_naive(row["ingestion_time"]),
+        provenance=row_to_provenance(row),
+    )
+
+
+def macro_observation_record_to_row(record: MacroObservationRecord) -> dict:
+    row = {
+        "series_id": record.series_id,
+        "observation_date": to_utc_naive(record.observation_date),
+        "value": record.value,
+        "realtime_start": to_utc_naive(record.realtime_start),
+        "realtime_end": to_utc_naive(record.realtime_end),
+        "available_time": to_utc_naive(record.available_time),
+        "ingestion_time": to_utc_naive(record.ingestion_time),
+    }
+    row.update(provenance_to_row(record.provenance))
+    return row
+
+
+def row_to_macro_observation_record(row: dict) -> MacroObservationRecord:
+    return MacroObservationRecord(
+        series_id=row["series_id"],
+        observation_date=from_utc_naive(row["observation_date"]),
+        value=row.get("value"),
+        realtime_start=from_utc_naive(row["realtime_start"]),
+        realtime_end=from_utc_naive(row.get("realtime_end")),
         available_time=from_utc_naive(row["available_time"]),
         ingestion_time=from_utc_naive(row["ingestion_time"]),
         provenance=row_to_provenance(row),

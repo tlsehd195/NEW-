@@ -911,6 +911,28 @@ DDL_STATEMENTS: tuple[str, ...] = (
         provenance_schema_version INTEGER NOT NULL
     )
     """,
+    # ADR-0217 -- point-in-time macro observations (data_infra.
+    # macro_models.MacroObservationRecord): one row per ALFRED vintage
+    # of one observation, so revisions coexist instead of overwriting.
+    # Natural key = provenance_source_record_id
+    # (source:series:observation_date:realtime_start).
+    """
+    CREATE TABLE IF NOT EXISTS macro_observation_vintages (
+        provenance_source_record_id TEXT PRIMARY KEY,
+        series_id TEXT NOT NULL,
+        observation_date TIMESTAMP NOT NULL,
+        value DOUBLE,
+        realtime_start TIMESTAMP NOT NULL,
+        realtime_end TIMESTAMP,
+        available_time TIMESTAMP NOT NULL,
+        ingestion_time TIMESTAMP NOT NULL,
+        provenance_source TEXT NOT NULL,
+        provenance_source_dataset TEXT NOT NULL,
+        provenance_retrieved_at TIMESTAMP NOT NULL,
+        provenance_data_version TEXT NOT NULL,
+        provenance_schema_version INTEGER NOT NULL
+    )
+    """,
 )
 
 

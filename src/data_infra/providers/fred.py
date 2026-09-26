@@ -36,10 +36,17 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Optional
 
+from data_infra.macro_models import (
+    MacroObservationRecord,
+    date_to_utc_midnight,
+    macro_record_id,
+    vintage_available_time,
+)
+from data_infra.models import Provenance
 from data_infra.provider import PermanentProviderError
 from data_infra.providers.fred_auth import resolve_api_key
 from data_infra.providers.fred_config import FredConfig
-from data_infra.providers.fred_transport import FredHttpTransport
+from data_infra.providers.fred_transport import ALFRED_REALTIME_END, FredHttpTransport
 
 # FRED's own documented convention (this module's transport docstring,
 # point 1): a missing/unavailable observation's "value" is this literal
@@ -52,6 +59,26 @@ class FredObservation:
     series_id: str
     observation_date: date
     value: Optional[float]  # None when FRED reports "." (no data for that date)
+    retrieved_at: datetime
+
+
+# FRED's own max `limit` per observations page.
+_VINTAGE_PAGE_LIMIT = 100_000
+
+
+@dataclass(frozen=True)
+class FredVintageObservation:
+    """One ALFRED row: the `value` FRED published for `observation_date`
+    during the real-time period `[realtime_start, realtime_end]`.
+    `realtime_start` is the date that value first appeared (the release
+    or revision date); `realtime_end` is `None` while the value is still
+    current (FRED's `9999-12-31` sentinel)."""
+
+    series_id: str
+    observation_date: date
+    value: Optional[float]
+    realtime_start: date
+    realtime_end: Optional[date]
     retrieved_at: datetime
 
 
@@ -116,9 +143,90 @@ class FredMacroProvider:
             )
         return observations
 
+    def fetch_series_vintages(self, series_id: str, start: date, end: date) -> list[FredVintageObservation]:
+        """Every vintage (ALFRED) of every observation of `series_id`
+        with `start <= observation_date <= end`, following FRED's
+        `count`/`offset` paging until all rows are read."""
+        if end < start:
+            raise ValueError(f"end ({end}) must not be before start ({start})")
+        api_key = resolve_api_key(self._config)
+        retrieved_at = datetime.now(timezone.utc)
+        rows: list[FredVintageObservation] = []
+        offset = 0
+        while True:
+            response = self._transport.get_series_vintage_observations(
+                series_id=series_id,
+                api_key=api_key,
+                observation_start=start.isoformat(),
+                observation_end=end.isoformat(),
+                offset=offset,
+                limit=_VINTAGE_PAGE_LIMIT,
+                timeout=self._config.timeout_seconds,
+            )
+            body = response.body
+            if not isinstance(body, dict) or not isinstance(body.get("observations"), list):
+                raise PermanentProviderError(
+                    f"unexpected FRED vintage response shape for series {series_id!r}: {body!r}"
+                )
+            page = body["observations"]
+            for raw in page:
+                if not isinstance(raw, dict) or not {"date", "value", "realtime_start", "realtime_end"} <= raw.keys():
+                    raise PermanentProviderError(
+                        f"unexpected FRED vintage observation shape for series {series_id!r}: {raw!r}"
+                    )
+                realtime_end_raw = raw["realtime_end"]
+                rows.append(
+                    FredVintageObservation(
+                        series_id=series_id,
+                        observation_date=_parse_observation_date(raw["date"], series_id=series_id),
+                        value=_parse_value(raw["value"], series_id=series_id),
+                        realtime_start=_parse_observation_date(raw["realtime_start"], series_id=series_id),
+                        realtime_end=(
+                            None if realtime_end_raw == ALFRED_REALTIME_END
+                            else _parse_observation_date(realtime_end_raw, series_id=series_id)
+                        ),
+                        retrieved_at=retrieved_at,
+                    )
+                )
+            offset += len(page)
+            count = body.get("count")
+            if not page:
+                return rows
+            if isinstance(count, int):
+                if offset >= count:
+                    return rows
+            elif len(page) < _VINTAGE_PAGE_LIMIT:
+                return rows
+
     def metadata(self) -> dict:
         return {
             "provider_id": self._config.provider_id,
             "provider_name": "FRED (Federal Reserve Economic Data)",
             "is_real_external_provider": True,
         }
+
+
+ALFRED_DATA_VERSION = "alfred_vintage_v1"
+
+
+def vintage_to_macro_record(obs: FredVintageObservation, *, ingestion_time: datetime) -> MacroObservationRecord:
+    """Stores one ALFRED row as a `MacroObservationRecord`, with
+    `available_time` from `realtime_start` (never `observation_date`) --
+    see `data_infra.macro_models`' own docstring."""
+    record_id = macro_record_id("fred", obs.series_id, obs.observation_date, obs.realtime_start)
+    return MacroObservationRecord(
+        series_id=obs.series_id,
+        observation_date=date_to_utc_midnight(obs.observation_date),
+        value=obs.value,
+        realtime_start=date_to_utc_midnight(obs.realtime_start),
+        realtime_end=None if obs.realtime_end is None else date_to_utc_midnight(obs.realtime_end),
+        available_time=vintage_available_time(obs.realtime_start),
+        ingestion_time=ingestion_time,
+        provenance=Provenance(
+            source="fred",
+            source_dataset=f"alfred:{obs.series_id}",
+            source_record_id=record_id,
+            retrieved_at=obs.retrieved_at,
+            data_version=ALFRED_DATA_VERSION,
+        ),
+    )

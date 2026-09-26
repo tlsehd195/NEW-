@@ -22,3 +22,9 @@ created: '2026-09-24T10:17:54.150Z'
 
 ## 관련 엔티티
 [data_infra](../entities/data-infra.md), [regime](../entities/regime.md), [backtest](../entities/backtest.md)(BacktestClock)
+
+
+
+## Macro data: vintages, not latest values (ADR-0217)
+
+Macro series (CPI, payrolls, PCE) are released with a lag and revised later. A point-in-time read must use the value as published at that time: `DuckDBMacroRepository.get_series_as_of` picks, per observation date, the latest ALFRED vintage whose `available_time <= as_of`. Reading today's FRED value for a past date is a look-ahead bug.
