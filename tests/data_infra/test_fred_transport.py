@@ -136,3 +136,18 @@ class TestVintageRequest:
         assert url.startswith("https://api.stlouisfed.org/fred/series/observations?")
         for part in ("realtime_start=1776-07-04", "realtime_end=9999-12-31", "output_type=1", "offset=200", "limit=100"):
             assert part in url
+
+
+def test_vintage_dates_request_uses_its_own_endpoint(monkeypatch) -> None:
+    captured_urls = []
+
+    def fake_urlopen(req, timeout):
+        captured_urls.append(req.full_url)
+        return _FakeHTTPResponse(200, {"count": 0, "vintage_dates": []}, {})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    FredHttpTransport("https://api.stlouisfed.org").get_series_vintage_dates(
+        series_id="DFF", api_key="x", offset=0, limit=10000, timeout=5.0
+    )
+    assert captured_urls[0].startswith("https://api.stlouisfed.org/fred/series/vintagedates?")
+    assert "realtime_start=1776-07-04" in captured_urls[0]

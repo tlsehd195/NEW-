@@ -28,6 +28,7 @@ import argparse
 import json
 import statistics
 import sys
+import time
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -36,7 +37,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data_infra.macro_models import MACRO_SERIES_BY_ID, MACRO_SERIES_CATALOG  # noqa: E402
-from data_infra.provider import ProviderError  # noqa: E402
+from data_infra.provider import ProviderError, TransientProviderError  # noqa: E402
 from data_infra.providers.fred import (  # noqa: E402
     FredMacroProvider,
     FredVintageObservation,
@@ -89,6 +90,17 @@ def coverage_summary(series_id: str, observations: list[FredVintageObservation])
     }
 
 
+def _fetch_with_retry(provider, series_id: str, start: date, end: date, attempts: int = 3):
+    for attempt in range(1, attempts + 1):
+        try:
+            return provider.fetch_series_vintages(series_id, start, end)
+        except TransientProviderError as exc:
+            if attempt == attempts:
+                raise
+            print(f"{series_id}: transient failure (attempt {attempt}/{attempts}): {exc}", file=sys.stderr)
+            time.sleep(10 * attempt)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--db-path", required=True, help="storage root directory (catalog.duckdb is created inside)")
@@ -119,7 +131,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         for series_id in series_ids:
             try:
-                observations = provider.fetch_series_vintages(series_id, start, end)
+                observations = _fetch_with_retry(provider, series_id, start, end)
             except ProviderError as exc:
                 print(f"{series_id}: FAILED {type(exc).__name__}: {exc}", file=sys.stderr)
                 failed.append(series_id)
