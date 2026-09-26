@@ -1,0 +1,87 @@
+# Real, multi-quarter institutional-ownership backfill --
+# scripts/backfill_institutional_holdings_from_sec_bulk.py's own module
+# docstring has the full "why"/two-pass design. Requires
+# docs/research/reference/institutional_ownership_cusip_map.json to
+# already exist (build_institutional_ownership_cusip_map.yml).
+#
+# Real, potentially long-running (dozens of ~86MB real SEC downloads,
+# one per ~3-month filing window) -- generous timeout,
+# workflow_dispatch-only (this is a real, deliberate multi-quarter
+# collection run, never scheduled, same discipline as
+# ingest_insider_transactions_full.yml).
+name: Backfill Institutional Holdings From SEC Bulk Dataset
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_agent:
+        description: "SEC fair-access contact string, e.g. 'ProjectName you@example.com'"
+        type: string
+        required: true
+      start_year:
+        description: "Earliest calendar year to request filing windows for"
+        type: string
+        default: "2010"
+      through_date:
+        description: "YYYY-MM-DD -- generate windows up through whichever window covers this date"
+        type: string
+        required: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Confirm the real CUSIP map exists
+        run: |
+          if [ ! -f docs/research/reference/institutional_ownership_cusip_map.json ]; then
+            echo "FATAL: docs/research/reference/institutional_ownership_cusip_map.json is missing -- run 'Build Institutional Ownership CUSIP Map' first." >&2
+            exit 1
+          fi
+
+      - name: Run the real backfill
+        env:
+          # workflow_dispatch inputs are never interpolated directly into
+          # a run: block via ${{ }} -- passed as env vars instead
+          # (tests/deploy/test_workflow_run_block_hygiene.py's own
+          # script-injection guard).
+          USER_AGENT_INPUT: ${{ inputs.user_agent }}
+          START_YEAR_INPUT: ${{ inputs.start_year }}
+          THROUGH_DATE_INPUT: ${{ inputs.through_date }}
+        run: |
+          mkdir -p docs/research/reference
+          python3 scripts/backfill_institutional_holdings_from_sec_bulk.py \
+            --user-agent "$USER_AGENT_INPUT" \
+            --cusip-map docs/research/reference/institutional_ownership_cusip_map.json \
+            --start-year "$START_YEAR_INPUT" \
+            --through-date "$THROUGH_DATE_INPUT" \
+            --out docs/research/reference/institutional_holdings_combined.csv
+
+      - name: Commit the real backfilled combined CSV
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain docs/research/reference/institutional_holdings_combined.csv)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add docs/research/reference/institutional_holdings_combined.csv
+            git commit -m "Update real institutional-holdings backfill combined CSV [skip ci]"
+            git push
+          else
+            echo "No change to the combined CSV since last run -- nothing to commit"
+          fi
