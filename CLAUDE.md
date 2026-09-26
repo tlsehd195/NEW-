@@ -193,11 +193,13 @@ calendars`/`purgedcv` 배선, `ADR-0207`)은 이미 처리했다. 남은 항목�
 위 KIS/colibri 항목처럼 이미 설계까지 끝난 상태가 아니다. 계정/키가
 준비되면 세션에 알려주면, 그때 구체 설계를 잡고 진행한다.
 
-- **healthchecks.io + Telegram 알림 연동**: 스케줄된 잡(예:
+- **healthchecks.io + Discord 알림 연동**: 스케줄된 잡(예:
   `run_paper_trading_cycle.yml` 등)이 죽었을 때 감지하는 데드맨 스위치용.
-  healthchecks.io 계정 생성 + 체크 URL 발급, Telegram Bot 토큰 발급(
-  `@BotFather`) 필요. 발급된 값은 채팅에 붙여넣지 말고 GitHub Secrets에
-  등록 — 위 KIS 항목과 동일한 패턴.
+  healthchecks.io 계정 생성 + 체크 URL 발급, 알림 채널은 Discord 웹훅으로
+  결정함(2026-09-26, 사용자 결정 — healthchecks.io가 Discord를 기본
+  통합으로 지원해서 Telegram Bot 발급 단계 자체가 필요 없음) — Discord
+  서버에서 웹훅 URL만 생성하면 됨. 발급된 값은 채팅에 붙여넣지 말고
+  GitHub Secrets에 등록 — 위 KIS 항목과 동일한 패턴.
 - **FRED API key** (`fred.stlouisfed.org`): 매크로 경제 데이터(금리,
   CPI 등) provider 후보. 무료 발급 가능 — 발급 후 `MARKET_DATA_API_KEY`
   패턴과 동일하게 GitHub Secrets에 등록.
