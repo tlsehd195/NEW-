@@ -90,4 +90,35 @@ nothing.
 
 ## Results (post-fix re-run)
 
-_Filled in below after the re-run._
+`run_full_validation.yml` run 36258207032 on this branch. Same release
+(`research-catalogs-v1`), same universe (`RESEARCH_UNIVERSE`), same range
+(2010-01-01..2020-08-28), with the repair step applied. Report:
+`docs/research/reports/full-validation-20260926T183155Z.json`, compared
+against `full-validation-20260926T151224Z.json`. This re-runs an
+already-seen window only to measure the fix. It is not new evidence for
+any candidate (RULE 0.8).
+
+- `institutional_split_adjustments_applied`: **0 → 4**. Those are the AAPL
+  2014, MA 2014, V 2015 and NKE 2015 splits, applied to 13F share counts.
+- `institutional_ownership_change`: 19/48 positive folds before and after.
+  The 2014-2016 folds move by roughly +0.3 to +1.1 percentage points each,
+  mostly from dividends now being paid. No fold changes sign. Held-out
+  (2018-07-11..2020-08-28) net return goes from +0.7% to +3.8%, against a
+  SPY total return of +30.9% (was +25.8% price-only). **The conclusion is
+  unchanged: no alpha.** Evidence level stays ROBUSTNESS_PENDING.
+- SPY held-out benchmark: +25.8% → +30.9%. That is the dividends the old
+  "REAL_TOTAL_RETURN" series was missing.
+- Across all 56 entries, median fold returns rise by about +0.3 to
+  +1.3 pp, and walk-forward worst drawdowns barely move. A single split
+  crash is only about 1/87 of an equal-weight book. PBO goes from 0.229 to
+  0.314.
+- The walk-forward CANDIDATE label goes from 8 to 20 entries. That bar is
+  a positive-fold ratio on absolute return, and dividends lift every fold.
+  So the jump reflects the correction, not new alpha. ADR-0209's
+  conclusion, that no candidate beats SPY on the locked TEST window,
+  was not re-tested here.
+- One held-out figure moved a lot: `abnormal_investment` went from +338%
+  to +32.7%. Its old number came from the hidden-split distortion.
+  `sloan_accruals`' held-out +306% (was +285%) is still implausible and
+  predates this fix, so it needs its own look.
+
