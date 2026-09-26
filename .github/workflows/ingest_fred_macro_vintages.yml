@@ -1,17 +1,15 @@
-# Ingests point-in-time (ALFRED vintage) FRED macro series into a fresh
-# DuckDB store and reports real coverage per series (ADR-0217). See
+# Ingests point-in-time (ALFRED vintage) FRED macro series and reports
+# real coverage per series (ADR-0217). See
 # `scripts/ingest_fred_macro_vintages.py`'s own docstring.
-# `workflow_dispatch` only: nothing consumes this data on a schedule yet
-# (the macro filter itself is still a design, ADR-0217).
+# One matrix job per series: daily series have thousands of vintages and
+# a single job for all 18 hit its 30-minute limit (run 36263810293).
+# `merge` then combines the per-series stores into one artifact.
+# `workflow_dispatch` only: nothing consumes this data on a schedule yet.
 name: Ingest FRED Macro Vintages
 
 on:
   workflow_dispatch:
     inputs:
-      series:
-        description: "Comma-separated FRED series ids (default: the whole MACRO_SERIES_CATALOG)"
-        type: string
-        default: ""
       start:
         description: "First observation date (YYYY-MM-DD)"
         type: string
@@ -27,7 +25,15 @@ permissions:
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      # FRED allows about 120 requests a minute per key.
+      max-parallel: 4
+      matrix:
+        # Must match data_infra.macro_models.MACRO_SERIES_CATALOG
+        # (tests/deploy/test_ingest_fred_macro_vintages_workflow.py).
+        series: [DFF, DGS3MO, DGS2, DGS10, T10Y2Y, T10Y3M, BAA10Y, DTWEXBGS, PAYEMS, UNRATE, ICSA, CPIAUCSL, CPILFESL, PCEPI, PCEPILFE, VIXCLS, CBBTCUSD, NFCI]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -43,22 +49,57 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           # Inputs go through env vars, never `${{ }}` inside `run:`
           # (tests/deploy/test_workflow_run_block_hygiene.py).
-          SERIES_INPUT: ${{ inputs.series }}
+          SERIES_INPUT: ${{ matrix.series }}
           START_INPUT: ${{ inputs.start }}
         run: |
-          python3 scripts/ingest_fred_macro_vintages.py \
+          python3 -u scripts/ingest_fred_macro_vintages.py \
             --db-path macro-store \
             --start "${START_INPUT:-1990-01-01}" \
             --series "$SERIES_INPUT" \
             --summary-json macro_coverage.json
 
-      - name: Upload macro store and coverage report
+      - name: Upload per-series store
         if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: fred-macro-part-${{ matrix.series }}
+          path: |
+            macro-store/catalog.duckdb
+            macro_coverage.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  merge:
+    needs: ingest
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: fred-macro-part-*
+          path: parts
+
+      - name: Merge per-series stores
+        run: |
+          python3 scripts/merge_macro_stores.py \
+            --out-db-path macro-store --summary-json macro_coverage.json parts/*/
+          cat macro_coverage.json
+
+      - name: Upload merged store and coverage report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: fred-macro-vintages
           path: |
             macro-store/catalog.duckdb
             macro_coverage.json
-          if-no-files-found: warn
           retention-days: 90
