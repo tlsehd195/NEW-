@@ -21,7 +21,7 @@ Phase 23. ADR-0029(전략 연구 프레임워크). 참고: `docs/research/STRATE
 - `RankAverageEnsembleStrategy` / `RankAverageEnsembleParameters`
 - `ResearchLog`, `EvidenceLevel`(Enum)
 - `pbo_dsr.compute_pbo`/`compute_dsr_for_all_candidates`(ADR-0035) — CSCV 기반 Probability of Backtest Overfitting/Deflated Sharpe Ratio. 폴드를 `num_groups`(기본 8)개 연속 블록으로 나눌 때 나머지를 마지막 그룹에 몰아주는 방식(다른 라이브러리인 `purgedcv`는 앞쪽 그룹에 분산 — 논문 자체가 나머지 처리 방식을 규정하지 않아 둘 다 정당한 선택, ADR-0207에서 51종목/58폴드 실데이터로 두 구현을 직접 교차검증해 PBO 7.1%p 격차의 정확한 원인으로 확인·문서화됨. DSR은 0.0014 이내로 일치 — 독립 검증 통과).
-- `factor_scores.py`: ~46개 팩터 함수(개별 나열 안 함, 전량 ingest 지양 원칙). 예외적으로 `guru_consensus_score`는 이 프로젝트에서 학술 인용 없이 "계정 소유자 본인 아이디어"로 명시적으로 문서화된 드문 사례라 여기 기록 — `data_infra.tracked_institutional_filers`의 point-in-time registry를 읽음.
+- `factor_scores.py`: ~54개 팩터 함수(2026-09-26 ADR-0214로 가격 기반 3개 추가, 개별 나열 안 함, 전량 ingest 지양 원칙). 예외적으로 `guru_consensus_score`는 이 프로젝트에서 학술 인용 없이 "계정 소유자 본인 아이디어"로 명시적으로 문서화된 드문 사례라 여기 기록 — `data_infra.tracked_institutional_filers`의 point-in-time registry를 읽음.
 
 ## 경계
 가장 큰 전략 모듈(20+ 파일) — `backtest` 엔진을 재사용만 하고 자체 실행 엔진은 없음.

@@ -78,6 +78,9 @@ from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
     bid_ask_spread_score,
     coskewness_score,
+    frog_in_the_pan_score,
+    intermediate_momentum_score,
+    price_delay_score,
     downside_beta_score,
     fifty_two_week_high_score,
     high_volume_return_premium_score,
@@ -157,6 +160,12 @@ _PRICE_ONLY_SCORES = {
     # asset-pricing literature, price-only, needing zero new data. Wired
     # in before any real IC result exists, per RULE 0.8.
     "coskewness": coskewness_score,
+    # 2026-09-26 (ADR-0214) -- Novy-Marx 2012, Hou & Moskowitz 2005, Da,
+    # Gurun & Warachka 2014, all price-only. Wired in before any real IC
+    # result exists, per RULE 0.8.
+    "intermediate_momentum": intermediate_momentum_score,
+    "price_delay": price_delay_score,
+    "frog_in_the_pan": frog_in_the_pan_score,
 }
 _SCORE_CHOICES = tuple(sorted(_MOMENTUM_STRATEGIES) + sorted(_PRICE_ONLY_SCORES))
 
