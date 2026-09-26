@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from data_infra.macro_models import (
     MacroObservationRecord,
@@ -191,7 +191,9 @@ class FredMacroProvider:
             )
         return observations
 
-    def fetch_series_vintages(self, series_id: str, start: date, end: date) -> list[FredVintageObservation]:
+    def fetch_series_vintages(
+        self, series_id: str, start: date, end: date, *, progress: Optional[Callable[[str], None]] = None,
+    ) -> list[FredVintageObservation]:
         """Every vintage (ALFRED) of every observation of `series_id`
         with `start <= observation_date <= end`.
 
@@ -208,11 +210,16 @@ class FredMacroProvider:
         retrieved_at = datetime.now(timezone.utc)
         vintage_dates = self._fetch_vintage_dates(series_id, api_key)
         windows = _realtime_windows(vintage_dates)
+        if progress is not None:
+            progress(f"{series_id}: {len(vintage_dates)} vintage dates, {len(windows)} real-time window(s)")
         rows: list[FredVintageObservation] = []
-        for realtime_start, realtime_end in windows:
-            rows.extend(
-                self._fetch_vintage_window(series_id, api_key, start, end, realtime_start, realtime_end, retrieved_at)
+        for i, (realtime_start, realtime_end) in enumerate(windows, start=1):
+            window_rows = self._fetch_vintage_window(
+                series_id, api_key, start, end, realtime_start, realtime_end, retrieved_at
             )
+            rows.extend(window_rows)
+            if progress is not None:
+                progress(f"{series_id}: window {i}/{len(windows)} {realtime_start}..{realtime_end}: {len(window_rows)} rows")
         return _merge_window_splits(rows)
 
     def _fetch_vintage_dates(self, series_id: str, api_key: str) -> list[date]:
