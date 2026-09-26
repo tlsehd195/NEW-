@@ -90,6 +90,45 @@ Left out on purpose:
   already point-in-time (a close is known at the close). No gold history
   before 2004-11 from any source this project has.
 
+### First real run (2026-09-26, run 36262966524)
+
+8 of 18 series ingested. Every daily series (DFF, DGS3MO, DGS2, DGS10,
+T10Y2Y, T10Y3M, BAA10Y, VIXCLS, CBBTCUSD) was rejected with HTTP 400:
+FRED allows at most 2000 vintage dates per real-time window and these
+have 2947–5132. NFCI timed out at 10 s. Fixed in the follow-up:
+`fetch_series_vintages` reads `fred/series/vintagedates` first, splits
+the real-time range into contiguous windows of at most 1500 vintages and
+joins values cut at window boundaries; vintage requests use a 60 s
+timeout and the script retries transient failures up to 3 times.
+
+Real coverage of the series that did load (observations from 1990):
+
+| Series | First archived vintage | Median release lag | Revised share |
+|---|---|---|---|
+| PAYEMS | 1990-02-02 | 34 days | 99.8% |
+| UNRATE | 1990-02-02 | 34 days | 62.1% |
+| CPIAUCSL | 1990-02-21 | 44 days | 97.5% |
+| CPILFESL | 1996-12-12 | 45 days | 95.2% |
+| PCEPI / PCEPILFE | 2000-08-01 | 59 days | 99.8% |
+| ICSA | 2009-05-28 | 5 days | 57.9% |
+| DTWEXBGS | 2019-02-04 | 5 days | 93.0% |
+
+(Lag is counted from the observation date, i.e. the first day of the
+month for monthly series.) What this means for the research window
+(before 2020-08-28):
+
+- Payrolls, unemployment and CPI are point-in-time usable for the whole
+  window, core CPI from 1997, PCE from 2000-08.
+- Almost every value was revised at least once. A backtest on today's
+  values would have been using numbers nobody had at the time.
+- Jobless claims only have archived vintages from 2009-05, and the broad
+  dollar index only from 2019-02, so with the vintage rule neither covers
+  most of the window. Both are revised (58% and 93%), so the
+  "observation date + fixed lag" fallback below does not apply to them.
+  Options for stage 2: start those two signals only from their first
+  vintage (fewer years), or use a traded proxy for the dollar (UUP ETF,
+  2007+, from the price catalog).
+
 ### Open question the first real run answers
 
 For daily market series (VIX, Treasury yields) ALFRED may only have
@@ -123,11 +162,31 @@ not a fitted threshold:
 | Rate shock | 2-year yield up more than 1 point over 3 months | DGS2 |
 | Dollar squeeze | Broad dollar up more than 5% over 3 months | DTWEXBGS |
 | Financial conditions | NFCI above 0 | NFCI |
+| Jobless claims | 4-week average initial claims 20% above its 52-week low | ICSA |
+| Yield curve (2y) | 10y − 2y spread below 0 | T10Y2Y |
 
 Combination: count of active flags maps to exposure (0–1 flags → 100%,
 2 → 75%, 3+ → 50%). The mapping and every threshold are pre-registered
 in a config before the first backtest; any change afterwards counts as
 a new trial for the DSR/PBO penalty.
+
+### Multiple-testing guard (account owner asked for more indicators, 2026-09-26)
+
+Every extra signal is another chance to find a combination that only
+worked by luck. Rules, fixed before the first backtest:
+
+- The signal list, thresholds and exposure mapping above are frozen in a
+  versioned config and recorded in the experiment log before any
+  backtest runs. The count of every signal/threshold/mapping variant
+  ever evaluated is the trial count `N`.
+- Results are judged by the Deflated Sharpe Ratio with that `N` and by
+  PBO over the variant set (the project's existing
+  `walk-forward-pbo-deflated-sharpe` protocol), not by the raw Sharpe of
+  the best variant.
+- Signals are also reported one at a time (each alone vs. no filter), so
+  a combined result that depends on one lucky signal is visible.
+- Adding a signal after results are seen means a new pre-registration
+  and a larger `N`, never a silent edit.
 
 ### Validation plan
 

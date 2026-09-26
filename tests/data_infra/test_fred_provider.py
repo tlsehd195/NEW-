@@ -104,17 +104,25 @@ class TestMetadata:
 
 
 class _StubVintageTransport:
-    """Serves `pages` in order; records each call's offset/limit."""
+    """Serves observation pages per real-time window (`pages[(start, end)]`,
+    or `pages[None]` for any window) and a fixed vintage-date list."""
 
-    def __init__(self, pages: list[dict]) -> None:
-        self._pages = list(pages)
+    def __init__(self, pages, vintage_dates=()) -> None:
+        self._pages = {k: list(v) for k, v in (pages.items() if isinstance(pages, dict) else {None: pages}.items())}
+        self._vintage_dates = list(vintage_dates)
         self.calls: list[dict] = []
+
+    def get_series_vintage_dates(self, *, series_id, api_key, offset, limit, timeout):
+        page = self._vintage_dates[offset:offset + limit]
+        return FredTransportResponse(status_code=200, body={"count": len(self._vintage_dates), "vintage_dates": page})
 
     def get_series_vintage_observations(
         self, *, series_id, api_key, observation_start, observation_end, offset, limit, timeout,
+        realtime_start, realtime_end,
     ):
-        self.calls.append({"series_id": series_id, "offset": offset, "limit": limit})
-        return FredTransportResponse(status_code=200, body=self._pages.pop(0))
+        self.calls.append({"offset": offset, "realtime_start": realtime_start, "realtime_end": realtime_end})
+        key = (realtime_start, realtime_end) if (realtime_start, realtime_end) in self._pages else None
+        return FredTransportResponse(status_code=200, body=self._pages[key].pop(0))
 
 
 def _vintage_row(obs_date: str, value: str, start: str, end: str = "9999-12-31") -> dict:
@@ -129,7 +137,7 @@ class TestFetchSeriesVintages:
                 _vintage_row("2024-01-01", "143.0", "2024-02-02", "2024-03-07"),
                 _vintage_row("2024-01-01", "143.2", "2024-03-08"),
             ]},
-        ])
+        ], vintage_dates=["2024-02-02", "2024-03-08"])
         rows = FredMacroProvider(FredConfig(), transport).fetch_series_vintages(
             "PAYEMS", date(2024, 1, 1), date(2024, 1, 31)
         )
@@ -137,6 +145,8 @@ class TestFetchSeriesVintages:
             (143.0, date(2024, 2, 2), date(2024, 3, 7)),
             (143.2, date(2024, 3, 8), None),
         ]
+        assert transport.calls[0]["realtime_start"] == "1776-07-04"
+        assert transport.calls[0]["realtime_end"] == "9999-12-31"
 
     def test_follows_count_offset_paging(self, monkeypatch) -> None:
         monkeypatch.setenv("FRED_API_KEY", "test-key")
@@ -149,6 +159,33 @@ class TestFetchSeriesVintages:
         )
         assert [r.value for r in rows] == [1.0, 2.0, 3.0]
         assert [c["offset"] for c in transport.calls] == [0, 2]
+
+    def test_long_history_is_split_into_contiguous_windows_and_rejoined(self, monkeypatch) -> None:
+        """Real run 36262966524: FRED rejects a window with > 2000 vintage
+        dates. 3000 daily vintages -> 2 windows; the value spanning the
+        boundary comes back cut in two and must be one row again."""
+        monkeypatch.setenv("FRED_API_KEY", "test-key")
+        from datetime import timedelta
+
+        vintages = [date(2010, 1, 1) + timedelta(days=i) for i in range(3000)]
+        boundary = vintages[1500]
+        w1 = ("1776-07-04", (boundary - timedelta(days=1)).isoformat())
+        w2 = (boundary.isoformat(), "9999-12-31")
+        transport = _StubVintageTransport({
+            w1: [{"count": 1, "observations": [_vintage_row("2010-01-01", "5.0", "2010-01-02", w1[1])]}],
+            w2: [{"count": 2, "observations": [
+                _vintage_row("2010-01-01", "5.0", w2[0], "2016-01-01"),
+                _vintage_row("2010-01-01", "5.1", "2016-01-02"),
+            ]}],
+        }, vintage_dates=[d.isoformat() for d in vintages])
+        rows = FredMacroProvider(FredConfig(), transport).fetch_series_vintages(
+            "DFF", date(2010, 1, 1), date(2010, 1, 1)
+        )
+        assert [(c["realtime_start"], c["realtime_end"]) for c in transport.calls] == [w1, w2]
+        assert [(r.value, r.realtime_start, r.realtime_end) for r in rows] == [
+            (5.0, date(2010, 1, 2), date(2016, 1, 1)),
+            (5.1, date(2016, 1, 2), None),
+        ]
 
     def test_missing_realtime_fields_raise_permanent_error(self, monkeypatch) -> None:
         monkeypatch.setenv("FRED_API_KEY", "test-key")
