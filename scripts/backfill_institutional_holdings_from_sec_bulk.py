@@ -141,8 +141,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                 # windows' matched rows are held at once (pass 2).
                 all_filtered_infotable_rows.append({k: row.get(k) for k in _KEPT_INFOTABLE_COLUMNS if k in row})
                 kept += 1
+        infotable_row_count = len(infotable_rows)
         del infotable_rows
-        print(f"  {len(submission_rows)} submissions ({len(window_submissions)} real 13F-HR/13F-HR/A), {len(infotable_rows)} infotable rows ({kept} matched a known CUSIP).")
+        print(f"  {len(submission_rows)} submissions ({len(window_submissions)} real 13F-HR/13F-HR/A), {infotable_row_count} infotable rows ({kept} matched a known CUSIP).")
 
     if skipped_windows:
         print(f"\n{len(skipped_windows)} window(s) skipped (not published, or a real download failure): {skipped_windows}")
