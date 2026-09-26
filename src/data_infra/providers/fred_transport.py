@@ -100,13 +100,17 @@ class FredHttpTransport:
     def get_series_vintage_observations(
         self, *, series_id: str, api_key: str, observation_start: str, observation_end: str,
         offset: int, limit: int, timeout: float,
+        realtime_start: str = ALFRED_REALTIME_START, realtime_end: str = ALFRED_REALTIME_END,
     ) -> FredTransportResponse:
         """ALFRED (archival FRED) request: the same `fred/series/
-        observations` endpoint, but over the WHOLE real-time range
-        (`realtime_start=1776-07-04`, `realtime_end=9999-12-31`, FRED's
-        own documented sentinels), so every vintage of every observation
-        comes back, each tagged with the `realtime_start`/`realtime_end`
-        period during which FRED published that value. `output_type=1`
+        observations` endpoint over a real-time window (by default the
+        WHOLE range, FRED's own sentinels `1776-07-04`..`9999-12-31`), so
+        every vintage of every observation in it comes back, each tagged
+        with the `realtime_start`/`realtime_end` period during which FRED
+        published that value. FRED rejects (HTTP 400) a window holding
+        more than 2000 vintage dates (real run 36262966524, e.g. DFF:
+        "There are 5132 vintage dates ... exceeds the maximum ... (2000)"),
+        so callers split long histories into windows. `output_type=1`
         (FRED's default: one row per observation per real-time period)
         is sent explicitly so a future FRED default change cannot
         silently change the row semantics. Paged with `offset`/`limit`
@@ -117,14 +121,32 @@ class FredHttpTransport:
             "file_type": "json",
             "observation_start": observation_start,
             "observation_end": observation_end,
-            "realtime_start": ALFRED_REALTIME_START,
-            "realtime_end": ALFRED_REALTIME_END,
+            "realtime_start": realtime_start,
+            "realtime_end": realtime_end,
             "output_type": "1",
             "sort_order": "asc",
             "offset": str(offset),
             "limit": str(limit),
         }
         return self._get("fred/series/observations", params, series_id=series_id, timeout=timeout)
+
+    def get_series_vintage_dates(
+        self, *, series_id: str, api_key: str, offset: int, limit: int, timeout: float,
+    ) -> FredTransportResponse:
+        """`fred/series/vintagedates`: every date on which the series was
+        published or revised (`{"count": N, "vintage_dates": [...]}`,
+        FRED's max `limit` is 10000)."""
+        params = {
+            "series_id": series_id,
+            "api_key": api_key,
+            "file_type": "json",
+            "realtime_start": ALFRED_REALTIME_START,
+            "realtime_end": ALFRED_REALTIME_END,
+            "sort_order": "asc",
+            "offset": str(offset),
+            "limit": str(limit),
+        }
+        return self._get("fred/series/vintagedates", params, series_id=series_id, timeout=timeout)
 
     def _get(self, path: str, params: dict, *, series_id: str, timeout: float) -> FredTransportResponse:
         query = "&".join(f"{k}={v}" for k, v in params.items())
