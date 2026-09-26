@@ -37,7 +37,7 @@ from typing import Optional, Sequence
 
 from data_infra.enums import CorporateActionType
 from data_infra.models import CorporateAction, PriceBar, Provenance
-from data_infra.provider import PermanentProviderError, bar_available_time, clamp_ingestion_time
+from data_infra.provider import PermanentProviderError, bar_available_time, clamp_ingestion_time, corporate_action_available_time
 from data_infra.providers.tiingo_auth import resolve_api_key
 from data_infra.providers.tiingo_config import TiingoConfig
 from data_infra.providers.tiingo_transport import TiingoHttpTransport, TiingoTransportResponse
@@ -231,18 +231,10 @@ class TiingoDataProvider:
                     CorporateAction(
                         security_id=security_id,
                         action_type=action_type,
-                        # available_time = when OUR system could have known
-                        # about this (PHASE-1-data-infrastructure.md section
-                        # 7 / ADR-0004) -- Tiingo's EOD feed only reports
-                        # splitFactor/divCash on ingestion, so that is
-                        # ingestion_time, never the (possibly much earlier)
-                        # event/effective date itself. Backdating this to
-                        # event_date would make a late-discovered action
-                        # falsely visible to an as-of query made before we
-                        # actually knew about it -- exactly the leak
-                        # tests/integration/test_market_data_point_in_time.py
-                        # exists to catch.
-                        available_time=ingestion_time,
+                        # ADR-0216: the earlier of ingestion_time and the
+                        # event date's close -- see
+                        # data_infra.provider.corporate_action_available_time.
+                        available_time=corporate_action_available_time(event_date, ingestion_time),
                         ingestion_time=ingestion_time,
                         provenance=Provenance(
                             source="tiingo", source_dataset=f"tiingo_eod_{security_id}",
@@ -261,17 +253,9 @@ class TiingoDataProvider:
                     CorporateAction(
                         security_id=security_id,
                         action_type=CorporateActionType.DIVIDEND,
-                        # Session 36 continued (external review
-                        # remediation): was `event_date` -- the exact
-                        # leak the SPLIT branch immediately above this
-                        # one already documents and avoids. Tiingo's EOD
-                        # feed only reports divCash on ingestion, same as
-                        # splitFactor; backdating to event_date (the
-                        # ex-dividend date) made a late-discovered
-                        # dividend falsely visible to an as-of query made
-                        # before this system had actually ingested it,
-                        # most exploitable on a backfill of older history.
-                        available_time=ingestion_time,
+                        # ADR-0216 (supersedes the Session 36 ingestion-
+                        # time-only rule): same as the SPLIT branch above.
+                        available_time=corporate_action_available_time(event_date, ingestion_time),
                         ingestion_time=ingestion_time,
                         provenance=Provenance(
                             source="tiingo", source_dataset=f"tiingo_eod_{security_id}",

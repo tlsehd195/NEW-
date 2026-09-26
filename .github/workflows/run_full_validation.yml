@@ -131,6 +131,12 @@ jobs:
           test -f ./data/fundamentals_catalog/catalog.duckdb
           echo "FUNDAMENTALS_FLAG=--fundamentals-db-path ./data/fundamentals_catalog" >> "$GITHUB_ENV"
 
+      - name: Re-stamp corporate-action available_time (ADR-0216)
+        # Catalogs ingested before ADR-0216 stamped every split/dividend
+        # with the backfill's ingestion time, hiding all of them from a
+        # historical backtest. Idempotent; a no-op on a newer catalog.
+        run: python3 scripts/repair_corporate_action_available_time.py --db-path ./data/price_catalog --apply
+
       - name: Download insider catalog (optional -- tries the given release, then the auto-published one)
         if: ${{ !inputs.price_only }}
         env:
