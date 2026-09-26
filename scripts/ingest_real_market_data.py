@@ -144,6 +144,7 @@ from data_infra.providers.alphavantage_transport import AlphaVantageHttpTranspor
 from data_infra.providers.fallback import FallbackDataProvider  # noqa: E402
 from data_infra.providers.tiingo import TiingoDataProvider  # noqa: E402
 from data_infra.providers.tiingo_config import DEFAULT_TIINGO_CONFIG  # noqa: E402
+from data_infra.providers.tiingo_budget import TiingoRequestBudget  # noqa: E402
 from data_infra.providers.tiingo_transport import TiingoHttpTransport  # noqa: E402
 from data_infra.providers.twelvedata import TwelveDataDataProvider  # noqa: E402
 from data_infra.providers.twelvedata_config import DEFAULT_TWELVEDATA_CONFIG  # noqa: E402
@@ -172,6 +173,10 @@ from storage.engine import StorageEngine  # noqa: E402
 # "RESEARCH_UNIVERSE_STAGE5" is an explicit opt-in name, not the
 # RESEARCH_UNIVERSE binding -- see RESEARCH_UNIVERSE_STAGE5's own
 # comment in data_infra/universe.py (ADR-0212).
+# ADR-0215: Tiingo calls the corporate-action loop leaves unused for
+# price bars of symbols Twelve Data does not serve (AVB today).
+TIINGO_PRICE_RESERVE = 8
+
 _UNIVERSES = {
     "PILOT_UNIVERSE": PILOT_UNIVERSE_V1,
     "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4,
@@ -234,7 +239,8 @@ def main() -> int:
     # TiingoRequestBudget's proactive 50/hour tracking shared between
     # them for free. Do not construct a second TiingoHttpTransport for
     # either path without explicitly sharing its budget.
-    tiingo = TiingoDataProvider(DEFAULT_TIINGO_CONFIG, TiingoHttpTransport(DEFAULT_TIINGO_CONFIG.base_url))
+    tiingo_budget = TiingoRequestBudget()
+    tiingo = TiingoDataProvider(DEFAULT_TIINGO_CONFIG, TiingoHttpTransport(DEFAULT_TIINGO_CONFIG.base_url, budget=tiingo_budget))
     # ADR-0164: Stooq (the original secondary, ADR-0025) is a confirmed
     # permanent dead end (ADR-0160 -- a JS bot-verification challenge
     # page on every real request, not fixable via headers) and is no
@@ -251,7 +257,15 @@ def main() -> int:
     # given symbol.
     twelvedata = TwelveDataDataProvider(DEFAULT_TWELVEDATA_CONFIG, TwelveDataHttpTransport(DEFAULT_TWELVEDATA_CONFIG.base_url))
     alphavantage = AlphaVantageDataProvider(DEFAULT_ALPHAVANTAGE_CONFIG, AlphaVantageHttpTransport(DEFAULT_ALPHAVANTAGE_CONFIG.base_url))
-    provider = tiingo if args.tiingo_only else FallbackDataProvider(tiingo, twelvedata, alphavantage)
+    # ADR-0215: Twelve Data first, Tiingo second for price bars. The
+    # corporate-action loop below claims Tiingo's hourly budget first,
+    # so with Tiingo first here it was exhausted by the time price
+    # fetching started anyway (run #47: every price bar already came
+    # from Twelve Data/Alpha Vantage) -- and a symbol Twelve Data does
+    # not serve (AVB: "not found") then had no working source left,
+    # failing the whole run as PARTIAL_SUCCESS every day. Trying Twelve
+    # Data first spends the reserved Tiingo calls only on such gaps.
+    provider = tiingo if args.tiingo_only else FallbackDataProvider(twelvedata, tiingo, alphavantage)
 
     engine = StorageEngine(StorageConfig(root_dir=args.db_path))
     repository = DuckDBDataRepository(engine)
@@ -283,6 +297,13 @@ def main() -> int:
         all_actions = []
         for symbol in symbols:
             try:
+                # ADR-0215: leave TIINGO_PRICE_RESERVE calls of the shared
+                # hourly budget for price bars Twelve Data cannot serve;
+                # Alpha Vantage takes over corporate actions past that.
+                if not args.tiingo_only and tiingo_budget.remaining() <= TIINGO_PRICE_RESERVE:
+                    raise PermanentProviderError(
+                        f"Tiingo budget held back for price-bar fallback ({TIINGO_PRICE_RESERVE} calls reserved, ADR-0215)"
+                    )
                 raw_actions = tiingo.fetch_corporate_actions(symbol, args.start, args.end)
                 actions = tiingo.normalize_corporate_actions(
                     symbol, raw_actions, retrieved_at=args.end, ingestion_time=args.end

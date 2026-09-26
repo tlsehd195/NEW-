@@ -442,8 +442,18 @@ class TestTiingoRequestBudgetSharedAcrossBothCallPaths:
     def test_the_same_tiingo_variable_backs_both_the_fallback_provider_and_the_direct_corporate_actions_call(self) -> None:
         # ADR-0164: Stooq (the original secondary) is gone from the
         # live chain -- Twelve Data/Alpha Vantage extend it into a flat
-        # 3-tier FallbackDataProvider instead, but `tiingo` must still
-        # be the chain's first tier.
+        # 3-tier FallbackDataProvider instead. ADR-0215 moved Twelve
+        # Data ahead of Tiingo so Tiingo's reserved calls only fill gaps.
         source = _source()
-        assert "FallbackDataProvider(tiingo, twelvedata, alphavantage)" in source
+        assert "FallbackDataProvider(twelvedata, tiingo, alphavantage)" in source
         assert "tiingo.fetch_corporate_actions(" in source
+
+    def test_corporate_actions_leave_a_tiingo_reserve_for_price_bars(self) -> None:
+        # ADR-0215 (run #47): the corporate-action loop used all 48
+        # Tiingo calls, leaving AVB (not served by Twelve Data) with no
+        # working price source. The loop must check the shared budget
+        # against TIINGO_PRICE_RESERVE before each Tiingo call.
+        source = _source()
+        assert "TiingoHttpTransport(DEFAULT_TIINGO_CONFIG.base_url, budget=tiingo_budget)" in source
+        reserve_check = source.index("tiingo_budget.remaining() <= TIINGO_PRICE_RESERVE")
+        assert reserve_check < source.index("tiingo.fetch_corporate_actions(")
