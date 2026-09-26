@@ -34,8 +34,9 @@ def test_manual_dispatch_only_with_read_default_and_write_only_on_the_publishing
     triggers = doc.get(True, doc.get("on"))
     assert set(triggers) == {"workflow_dispatch"}
     assert doc["permissions"]["contents"] == "read"
-    assert "permissions" not in doc["jobs"]["first-half"]
-    assert doc["jobs"]["second-half"]["permissions"]["contents"] == "write"
+    assert "permissions" not in doc["jobs"]["part-1"]
+    assert "permissions" not in doc["jobs"]["part-2"]
+    assert doc["jobs"]["part-3"]["permissions"]["contents"] == "write"
 
 
 def test_defaults_target_stage5_from_2000_and_end_is_required():
@@ -43,38 +44,63 @@ def test_defaults_target_stage5_from_2000_and_end_is_required():
     assert inputs["universe"]["default"] == "RESEARCH_UNIVERSE_STAGE5"
     assert inputs["start"]["default"] == "2000-01-01"
     assert inputs["end"]["required"] is True
+    assert inputs["resume_from_run_id"]["default"] == ""
 
 
-def test_every_shard_fits_one_tiingo_hour_and_both_halves_cover_every_shard():
+def _shard_runs(doc: dict) -> list[str]:
+    return [
+        s["run"] for job in ("part-1", "part-2", "part-3")
+        for s in doc["jobs"][job]["steps"] if "ingest_price_catalog_shards.sh" in s.get("run", "")
+    ]
+
+
+def test_every_shard_fits_one_tiingo_hour_and_the_jobs_cover_every_shard_then_sweep():
     doc = _load()
     shard_count = int(doc["env"]["SHARD_COUNT"])
     assert int(doc["env"]["SHARD_SLEEP_SECONDS"]) > 3600
     largest_shard = -(-len(RESEARCH_UNIVERSE_STAGE5.symbols) // shard_count) + 1  # + SPY on shard 0
     assert largest_shard * 2 <= _TIINGO_EFFECTIVE_HOURLY_CAP
-    runs = [
-        s["run"] for job in ("first-half", "second-half")
-        for s in doc["jobs"][job]["steps"] if "ingest_price_catalog_shards.sh" in s.get("run", "")
-    ]
-    assert runs == [
-        "bash scripts/ingest_price_catalog_shards.sh 0 4 no-initial-sleep",
-        "bash scripts/ingest_price_catalog_shards.sh 5 9 initial-sleep",
+    assert int(doc["env"]["SWEEP_MAX_SYMBOLS"]) * 2 <= _TIINGO_EFFECTIVE_HOURLY_CAP
+    assert _shard_runs(doc) == [
+        "bash scripts/ingest_price_catalog_shards.sh 0 3 no-initial-sleep",
+        "bash scripts/ingest_price_catalog_shards.sh 4 6 initial-sleep",
+        "bash scripts/ingest_price_catalog_shards.sh 7 9 initial-sleep sweep",
     ]
     assert shard_count == 10
 
 
-def test_each_half_fits_the_hosted_job_limit():
+def test_each_job_fits_the_hosted_job_limit():
     doc = _load()
     sleep_minutes = int(doc["env"]["SHARD_SLEEP_SECONDS"]) / 60
-    # 5 shards per half, the second half also sleeps before its first.
-    assert 5 * sleep_minutes < doc["jobs"]["second-half"]["timeout-minutes"] <= _GITHUB_HOSTED_JOB_LIMIT_MINUTES
-    assert doc["jobs"]["first-half"]["timeout-minutes"] <= _GITHUB_HOSTED_JOB_LIMIT_MINUTES
-    assert doc["jobs"]["second-half"]["needs"] == "first-half"
+    # part-3 sleeps before shard 7, 8, 9 and the sweep.
+    assert 4 * sleep_minutes < doc["jobs"]["part-3"]["timeout-minutes"] <= _GITHUB_HOSTED_JOB_LIMIT_MINUTES
+    for job in ("part-1", "part-2"):
+        assert 3 * sleep_minutes < doc["jobs"][job]["timeout-minutes"] <= _GITHUB_HOSTED_JOB_LIMIT_MINUTES
+    assert doc["jobs"]["part-2"]["needs"] == "part-1"
+    assert doc["jobs"]["part-3"]["needs"] == "part-2"
 
 
-def test_shard_script_is_tiingo_only():
+def test_every_job_uploads_the_catalog_even_on_failure_so_a_run_can_be_resumed():
+    doc = _load()
+    for job in ("part-1", "part-2", "part-3"):
+        uploads = [s for s in doc["jobs"][job]["steps"] if s.get("uses", "").startswith("actions/upload-artifact")]
+        assert len(uploads) == 1
+        assert uploads[0]["if"] == "always()"
+        assert uploads[0]["with"]["overwrite"] is True
+        assert uploads[0]["with"]["name"] == "${{ env.ARTIFACT_NAME }}"
+    resume = next(s for s in doc["jobs"]["part-1"]["steps"] if s.get("name", "").startswith("Resume"))
+    assert resume["with"]["run-id"] == "${{ inputs.resume_from_run_id }}"
+    assert doc["permissions"]["actions"] == "read"
+
+
+def test_shard_script_is_tiingo_only_skips_covered_symbols_and_uses_a_long_timeout():
     text = SHARD_SCRIPT.read_text()
     assert "--tiingo-only" in text
+    assert "--skip-symbols-with-bars" in text
+    assert '--tiingo-timeout-seconds "$TIINGO_TIMEOUT_SECONDS"' in text
     assert "--shard-index" in text and "--shard-count" in text
+    assert '--max-symbols "$SWEEP_MAX_SYMBOLS"' in text
+    assert float(_load()["env"]["TIINGO_TIMEOUT_SECONDS"]) > 10
 
 
 def test_inputs_never_interpolated_into_run_blocks_and_only_tiingo_key_is_passed():
@@ -88,10 +114,18 @@ def test_inputs_never_interpolated_into_run_blocks_and_only_tiingo_key_is_passed
 
 
 def test_coverage_report_gates_publishing():
-    steps = _load()["jobs"]["second-half"]["steps"]
+    steps = _load()["jobs"]["part-3"]["steps"]
     names = [s.get("name", "") for s in steps]
     coverage = next(i for i, n in enumerate(names) if n.startswith("Coverage report"))
     publish = next(i for i, n in enumerate(names) if n.startswith("Publish"))
     assert coverage < publish
     assert "if" not in steps[publish]
     assert "report_price_catalog_coverage.py" in steps[coverage]["run"]
+
+
+def test_shard_script_skip_marker_matches_the_ingest_scripts_own_message():
+    """The script skips the hourly wait after a shard that fetched
+    nothing, detected by this exact line in the ingest script's output."""
+    ingest_text = (REPO_ROOT / "scripts" / "ingest_real_market_data.py").read_text()
+    assert 'NOTHING_TO_DO="No symbols left to fetch"' in SHARD_SCRIPT.read_text()
+    assert 'print("No symbols left to fetch -- nothing to do.")' in ingest_text

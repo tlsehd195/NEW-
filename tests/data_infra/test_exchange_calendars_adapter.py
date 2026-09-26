@@ -118,3 +118,13 @@ class TestOutOfBoundsFailsLoudly:
         cal = build_xnys_calendar()
         with pytest.raises(Exception):
             cal.is_trading_day(date(2099, 1, 4))
+
+
+def test_xnys_calendar_covers_2000_onward_research_windows() -> None:
+    """ADR-0213: exchange_calendars' default only reaches back 20 years
+    from today, which made a 2000-01-01 ingestion crash with
+    DateOutOfBounds. build_xnys_calendar() now starts in 1990."""
+    calendar = build_xnys_calendar()
+    assert calendar.is_trading_day(date(2000, 1, 3)) is True
+    assert calendar.is_trading_day(date(2000, 1, 1)) is False  # Saturday + New Year's Day
+    assert calendar.is_trading_day(date(2001, 9, 11)) is False  # market closed after 9/11

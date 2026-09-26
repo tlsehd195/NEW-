@@ -166,3 +166,44 @@ def test_coverage_report_fails_until_every_shard_is_ingested(module, monkeypatch
     assert _run(module, monkeypatch, tmp_path, "--shard-index", "1", "--shard-count", "2") == 0
     monkeypatch.setattr(sys, "argv", argv)
     assert coverage.main() == 0
+
+
+def test_skip_symbols_with_bars_makes_a_rerun_cost_no_requests(module, monkeypatch, tmp_path) -> None:
+    assert _run(module, monkeypatch, tmp_path, "--shard-index", "0", "--shard-count", "2") == 0
+    _FakeTiingoTransport.calls = []
+    assert _run(module, monkeypatch, tmp_path, "--shard-index", "0", "--shard-count", "2", "--skip-symbols-with-bars") == 0
+    assert _FakeTiingoTransport.calls == []
+
+
+def test_skip_then_max_symbols_fetches_only_the_first_uncovered_symbols(module, monkeypatch, tmp_path) -> None:
+    """The retry sweep shape: whole universe, already-covered symbols
+    skipped, the rest capped to one hour's worth."""
+    assert _run(module, monkeypatch, tmp_path, "--shard-index", "0", "--shard-count", "2") == 0
+    _FakeTiingoTransport.calls = []
+    assert _run(module, monkeypatch, tmp_path, "--skip-symbols-with-bars", "--max-symbols", "1") == 0
+    assert _fetched_symbols() == {"DDD"}  # universe order DDD, AAA, CCC, BBB, EEE; AAA/CCC/EEE covered
+
+
+def test_tiingo_timeout_flag_reaches_the_provider_config(module, monkeypatch, tmp_path) -> None:
+    seen = []
+    real_provider = module.TiingoDataProvider
+
+    def _capture(config, transport):
+        seen.append(config.timeout_seconds)
+        return real_provider(config, transport)
+
+    monkeypatch.setattr(module, "TiingoDataProvider", _capture)
+    assert _run(module, monkeypatch, tmp_path, "--shard-index", "1", "--shard-count", "2", "--tiingo-timeout-seconds", "60") == 0
+    assert seen == [60.0]
+
+
+def test_a_2000_start_does_not_crash_on_the_trading_calendar(module, monkeypatch, tmp_path) -> None:
+    """ADR-0213: the first real Stage 5 run crashed every shard with
+    exchange_calendars' DateOutOfBounds (calendar started 2006) right
+    after persisting its bars."""
+    argv = [
+        "ingest_real_market_data.py", "--universe", "TEST_UNIVERSE", "--start", "2000-01-03", "--end", "2024-01-02",
+        "--db-path", str(tmp_path / "db"), "--tiingo-only", "--shard-index", "1", "--shard-count", "2",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    assert module.main() == 0

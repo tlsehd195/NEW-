@@ -454,6 +454,6 @@ class TestTiingoRequestBudgetSharedAcrossBothCallPaths:
         # working price source. The loop must check the shared budget
         # against TIINGO_PRICE_RESERVE before each Tiingo call.
         source = _source()
-        assert "TiingoHttpTransport(DEFAULT_TIINGO_CONFIG.base_url, budget=tiingo_budget)" in source
+        assert "TiingoHttpTransport(tiingo_config.base_url, budget=tiingo_budget)" in source
         reserve_check = source.index("tiingo_budget.remaining() <= TIINGO_PRICE_RESERVE")
         assert reserve_check < source.index("tiingo.fetch_corporate_actions(")
