@@ -182,6 +182,43 @@ Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직
   후보 없음, PBO 18.6%) — `docs/research/reports/
   full-validation-20260925T160732Z.json`.
 
+### 10차 권고 리포트 기반 추가 항목 (2026-09-26)
+
+10차(advisory, 스코어링 아님) 외부 검증 리포트가 권고한 항목 중, 이
+세션이 계정/키 없이 자체적으로 진행할 수 있는 부분(예: `exchange_
+calendars`/`purgedcv` 배선, `ADR-0207`)은 이미 처리했다. 남은 항목은
+전부 외부 서비스 계정 생성/키 발급이 필요해 계정 소유자가 직접
+해야 한다 — 아래 항목은 아직 구체적인 배선 설계(어떤 모듈이 호출할지,
+실패 시 fail-open/fail-closed 여부 등)를 하지 않은 **권고 단계**이며,
+위 KIS/colibri 항목처럼 이미 설계까지 끝난 상태가 아니다. 계정/키가
+준비되면 세션에 알려주면, 그때 구체 설계를 잡고 진행한다.
+
+- **healthchecks.io + Telegram 알림 연동**: 스케줄된 잡(예:
+  `run_paper_trading_cycle.yml` 등)이 죽었을 때 감지하는 데드맨 스위치용.
+  healthchecks.io 계정 생성 + 체크 URL 발급, Telegram Bot 토큰 발급(
+  `@BotFather`) 필요. 발급된 값은 채팅에 붙여넣지 말고 GitHub Secrets에
+  등록 — 위 KIS 항목과 동일한 패턴.
+- **FRED API key** (`fred.stlouisfed.org`): 매크로 경제 데이터(금리,
+  CPI 등) provider 후보. 무료 발급 가능 — 발급 후 `MARKET_DATA_API_KEY`
+  패턴과 동일하게 GitHub Secrets에 등록.
+- **Langfuse**: `ai_gateway`를 실제로 호출하는 provider가 아직 하나도
+  없는 상태(위 "Grounding Gate 배선 보류 결정" 참고)라 지금 당장은
+  관측할 실제 호출이 없다 — Langfuse 계정/키 자체는 미리 준비해둘 수
+  있지만, 실제 배선은 `ai_gateway`에 첫 실호출부가 생기는 시점과 함께
+  가는 게 자연스럽다.
+- **Uptime Kuma + rclone**: 둘 다 colibri용 Oracle Cloud VM(위 항목,
+  현재 재고 부족으로 자동 재시도 대기 중) 위에서 돌리는 것을 전제로
+  한 권고였다 — VM이 실제로 확보되기 전에는 독립적으로 진행할 대상이
+  없다. VM 확보 후 순서: (1) Uptime Kuma를 VM에 배포해 자체 상태
+  페이지로 사용, (2) rclone으로 DuckDB/리포트 백업을 클라우드 스토리지로
+  동기화하는 스케줄 설정.
+- **51개 전략/팩터 후보 사람 리뷰**: 계정/키 발급이 아니라 판단이
+  필요한 항목. `docs/research/reports/full-validation-20260925T160732Z.json`
+  결과(51개 전부 `INCONCLUSIVE`, PBO 18.6%)를 사람이 직접 훑어보고,
+  후보군을 더 좁히거나 가설을 다시 세울지, 아니면 이 유니버스/기간
+  설정 자체를 바꿔서 재검증할지 결정하는 것 — 세션이 대신 결론 내릴
+  수 없는 영역이다.
+
 ## Grounding Gate 배선 보류 결정 (2026-09-24)
 
 ADR-0191이 미해결로 남긴 "derived-value 체크를 실제 prompt/schema에
