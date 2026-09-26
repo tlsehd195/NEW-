@@ -18,6 +18,7 @@ from data_infra.universe import (
     RESEARCH_UNIVERSE_STAGE2,
     RESEARCH_UNIVERSE_STAGE3,
     RESEARCH_UNIVERSE_STAGE4,
+    RESEARCH_UNIVERSE_STAGE5,
     SymbolMetadata,
     UniverseDefinition,
     _real_symbol_metadata,
@@ -197,6 +198,48 @@ class TestResearchUniverseStage4:
         # catch, since UniverseDefinition builds via concatenation).
         new_symbols = set(RESEARCH_UNIVERSE_STAGE4.symbol_ids) - set(RESEARCH_UNIVERSE_STAGE3.symbol_ids)
         assert len(new_symbols) == len(RESEARCH_UNIVERSE_STAGE4.symbol_ids) - len(RESEARCH_UNIVERSE_STAGE3.symbol_ids)
+
+
+class TestResearchUniverseStage5:
+    """Stage 5 (ADR-0211) -- Stage 4 plus 116 symbols from one
+    pre-registered rule over the real fja05680/sp500 interval data
+    (current, uninterrupted S&P 500 interval starting on or before
+    2000-01-03), for a longer-history, broader price-factor run."""
+
+    def test_stage5_contains_all_of_stage4_in_order(self) -> None:
+        assert RESEARCH_UNIVERSE_STAGE5.symbol_ids[: len(RESEARCH_UNIVERSE_STAGE4.symbol_ids)] == RESEARCH_UNIVERSE_STAGE4.symbol_ids
+
+    def test_stage5_is_203_with_116_new_symbols(self) -> None:
+        new_symbols = set(RESEARCH_UNIVERSE_STAGE5.symbol_ids) - set(RESEARCH_UNIVERSE_STAGE4.symbol_ids)
+        assert len(new_symbols) == 116
+        assert len(RESEARCH_UNIVERSE_STAGE5.symbols) == 203
+
+    def test_stage5_has_no_duplicate_symbols_and_excludes_the_benchmark(self) -> None:
+        ids = RESEARCH_UNIVERSE_STAGE5.symbol_ids
+        assert len(ids) == len(set(ids))
+        assert BENCHMARK_SYMBOL not in ids
+
+    def test_stage5_excludes_class_share_ticker_bf_b(self) -> None:
+        assert not any("." in s or "-" in s or "/" in s for s in RESEARCH_UNIVERSE_STAGE5.symbol_ids)
+
+    def test_stage5_new_symbols_carry_their_own_selection_source(self) -> None:
+        stage4 = set(RESEARCH_UNIVERSE_STAGE4.symbol_ids)
+        for entry in RESEARCH_UNIVERSE_STAGE5.symbols:
+            expected = "manual_curation" if entry.symbol in stage4 else "sp500_pit_rule_since_2000"
+            assert entry.source == expected
+            # No fabricated membership dates: listed_from/listed_to only
+            # ever come from the existing confirmed tables.
+            assert (entry.listed_from is not None) == (entry.symbol in _SP500_PIT_CONFIRMED_LISTED_FROM)
+            assert (entry.listed_to is not None) == (entry.symbol in _SP500_PIT_CONFIRMED_LISTED_TO)
+
+    def test_stage5_is_a_distinct_version_of_the_same_named_universe(self) -> None:
+        assert RESEARCH_UNIVERSE_STAGE5.name == RESEARCH_UNIVERSE_STAGE4.name
+        assert RESEARCH_UNIVERSE_STAGE5.version == "stage5"
+
+    def test_stage5_full_ingestion_fits_one_day_of_the_confirmed_tiingo_cap(self) -> None:
+        """2 requests/symbol (price + corporate actions) against the
+        user-confirmed 1,000/day Tiingo free-tier cap."""
+        assert len(RESEARCH_UNIVERSE_STAGE5.symbols) * 2 <= 1000
 
 
 class TestRealSymbolMetadata:
