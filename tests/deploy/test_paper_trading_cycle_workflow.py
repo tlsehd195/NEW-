@@ -93,6 +93,36 @@ def test_commit_backup_job_has_contents_write_and_the_real_push():
     )
 
 
+def test_healthchecks_ping_url_is_wired_via_secrets_context_never_hardcoded():
+    """10th advisory report item (CLAUDE.md "사용자 액션 대기 항목"):
+    dead-man's-switch pings for this exact schedule, gated so an absent
+    secret is a no-op rather than a workflow-parse failure or a hard
+    dependency merging this change would introduce."""
+    doc = _load()
+    assert doc["env"].get("HEALTHCHECKS_PING_URL") == "${{ secrets.HEALTHCHECKS_PING_URL }}"
+
+    run_steps = _steps(doc)
+    start_step = next(s for s in run_steps if s.get("name") == "Ping healthchecks.io (start)")
+    assert start_step.get("if") == "env.HEALTHCHECKS_PING_URL != ''"
+    assert start_step.get("continue-on-error") is True
+    assert '"$HEALTHCHECKS_PING_URL/start"' in start_step["run"]
+    # Must run before any real work (checkout/ingestion/etc.) so a hang
+    # or crash later in the job still leaves a "started" ping recorded.
+    assert run_steps[0] is start_step
+
+    backup_steps = _backup_job_steps(doc)
+    finish_step = next(s for s in backup_steps if s.get("name") == "Ping healthchecks.io (finished)")
+    assert finish_step.get("if") == "always() && env.HEALTHCHECKS_PING_URL != ''"
+    assert finish_step.get("continue-on-error") is True
+    assert "needs.run-cycle.result" in finish_step["run"]
+    assert '"$HEALTHCHECKS_PING_URL/fail"' in finish_step["run"]
+    # The success branch pings the bare URL, distinct from the /fail path.
+    assert '"$HEALTHCHECKS_PING_URL" -o' in finish_step["run"]
+    # Must be the true last step -- commit-backup is `needs: run-cycle` +
+    # `if: always()`, so it is the last job to run regardless of outcome.
+    assert backup_steps[-1] is finish_step
+
+
 def test_no_secret_value_is_hardcoded():
     steps = _steps(_load())
     ingest_step = next(s for s in steps if "ingest_real_market_data.py" in s.get("run", ""))

@@ -17,7 +17,7 @@ from data_infra.provider import PermanentProviderError
 from data_infra.providers.tiingo_auth import resolve_api_key
 from data_infra.providers.tiingo_config import TiingoConfig
 
-_ALLOWED_AUTH_FILES = {"tiingo_auth.py", "twelvedata_auth.py", "alphavantage_auth.py"}
+_ALLOWED_AUTH_FILES = {"tiingo_auth.py", "twelvedata_auth.py", "alphavantage_auth.py", "fred_auth.py"}
 
 
 class TestSecretsOnlyResolvedInTiingoAuth:

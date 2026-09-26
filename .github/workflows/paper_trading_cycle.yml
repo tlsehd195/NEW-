@@ -85,12 +85,32 @@ env:
   # workflow level, makes `env.DISCORD_WEBHOOK_URL` readable by the
   # "Send Discord notification" step's own `if:` below.
   DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+  # 10th advisory report item (CLAUDE.md "사용자 액션 대기 항목"): a
+  # healthchecks.io dead-man's-switch check for this exact schedule
+  # (cron `0 22 * * 1-5`) -- catches a silently-stopped/never-fired
+  # scheduled run, which a "job failed" alert alone cannot (there is no
+  # job to report failure if the schedule never fires at all). Same
+  # workflow-level-env-for-step-if reasoning as DISCORD_WEBHOOK_URL
+  # above. Absent (empty string) resolves both ping steps below to a
+  # no-op via their own `if:` guards, so merging this does not require
+  # the secret to already exist.
+  HEALTHCHECKS_PING_URL: ${{ secrets.HEALTHCHECKS_PING_URL }}
 
 jobs:
   run-cycle:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      # Pinged as the very first step, before checkout -- marks the
+      # start of this scheduled run with healthchecks.io regardless of
+      # anything that happens afterward. `continue-on-error`: a
+      # healthchecks.io outage/network hiccup must never fail the real
+      # trading cycle it is only observing.
+      - name: Ping healthchecks.io (start)
+        if: env.HEALTHCHECKS_PING_URL != ''
+        continue-on-error: true
+        run: curl -fsS -m 10 --retry 5 --retry-connrefused "$HEALTHCHECKS_PING_URL/start" -o /dev/null
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
@@ -415,4 +435,25 @@ jobs:
             git push
           else
             echo "No change to the backup snapshot since last run -- nothing to commit"
+          fi
+
+      # `commit-backup` is `needs: run-cycle` + `if: always()`, so it is
+      # the true last step of every scheduled run regardless of outcome
+      # -- the right place for the closing healthchecks.io ping, unlike
+      # putting it inside "run-cycle" (which would miss the case where
+      # run-cycle itself never starts, e.g. a concurrency-group skip).
+      # Pings success only when "run-cycle" (the actual trading-cycle
+      # work) succeeded; a "run-cycle" failure pings /fail regardless of
+      # whether this backup job's own steps above succeeded, since a
+      # failed backup of a failed cycle is still "the cycle failed
+      # today," not a healthy run. `continue-on-error`: same reasoning
+      # as the start ping above.
+      - name: Ping healthchecks.io (finished)
+        if: always() && env.HEALTHCHECKS_PING_URL != ''
+        continue-on-error: true
+        run: |
+          if [ "${{ needs.run-cycle.result }}" = "success" ]; then
+            curl -fsS -m 10 --retry 5 --retry-connrefused "$HEALTHCHECKS_PING_URL" -o /dev/null
+          else
+            curl -fsS -m 10 --retry 5 --retry-connrefused "$HEALTHCHECKS_PING_URL/fail" -o /dev/null
           fi

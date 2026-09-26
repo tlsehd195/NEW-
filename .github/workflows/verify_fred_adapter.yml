@@ -1,0 +1,54 @@
+# One-time/on-demand verification that FredMacroProvider (ADR-0208)
+# actually reaches the real FRED API end to end. See
+# `scripts/verify_fred_adapter.py`'s own module docstring. FRED's public
+# rate limit is generous (no per-minute quota concern like Gemini's free
+# tier), but this is still `workflow_dispatch` only rather than a
+# recurring schedule -- no code in this repository consumes FRED data
+# yet (`data_infra.providers.fred`'s own docstring), so there is nothing
+# for a recurring run to feed.
+name: Verify FRED Adapter
+
+on:
+  workflow_dispatch:
+    inputs:
+      series_id:
+        description: "FRED series id to verify against (default: DGS3MO)"
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Verify FRED adapter (real API call)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # workflow_dispatch inputs are never interpolated directly into
+          # a `run:` block via `${{ }}` -- passed as an env var instead
+          # (tests/deploy/test_workflow_run_block_hygiene.py's own
+          # script-injection guard; verify_gemini_adapter.yml's identical
+          # precedent).
+          SERIES_ID_INPUT: ${{ inputs.series_id }}
+        run: |
+          if [ -n "$SERIES_ID_INPUT" ]; then
+            python3 scripts/verify_fred_adapter.py --series-id "$SERIES_ID_INPUT"
+          else
+            python3 scripts/verify_fred_adapter.py
+          fi
