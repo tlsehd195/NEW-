@@ -1,0 +1,76 @@
+# Builds the real, doubly-confirmed {ticker: cusip} map
+# scripts/backfill_institutional_holdings_from_sec_bulk.py needs --
+# see scripts/build_institutional_ownership_cusip_map.py's own module
+# docstring for the full "why" (no new unverified capability: reuses
+# the already-real company_tickers.json fetch + the already-real
+# CUSIP->ticker OpenFIGI direction, ADR-0131).
+#
+# This sandbox cannot reach www.sec.gov/api.openfigi.com directly --
+# workflow_dispatch-only. Commits its real output to the repo (a small,
+# durable reference artifact, not a DuckDB/parquet catalog -- this
+# project's existing *.duckdb/*.parquet exclusion is unaffected) so the
+# backfill workflow can read it straight from a checkout, no artifact
+# hand-off needed.
+name: Build Institutional Ownership CUSIP Map
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_agent:
+        description: "SEC fair-access contact string, e.g. 'ProjectName you@example.com'"
+        type: string
+        required: true
+      universe:
+        description: "Named universe from src/data_infra/universe.py"
+        type: choice
+        options: [RESEARCH_UNIVERSE, PILOT_UNIVERSE]
+        default: RESEARCH_UNIVERSE
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Build the real CUSIP map
+        env:
+          # workflow_dispatch inputs are never interpolated directly into
+          # a run: block via ${{ }} -- passed as env vars instead
+          # (tests/deploy/test_workflow_run_block_hygiene.py's own
+          # script-injection guard; verify_fred_adapter.yml's precedent).
+          USER_AGENT_INPUT: ${{ inputs.user_agent }}
+          UNIVERSE_INPUT: ${{ inputs.universe }}
+        run: |
+          mkdir -p docs/research/reference
+          python3 scripts/build_institutional_ownership_cusip_map.py \
+            --user-agent "$USER_AGENT_INPUT" \
+            --universe "$UNIVERSE_INPUT" \
+            --out docs/research/reference/institutional_ownership_cusip_map.json
+
+      - name: Commit the real CUSIP map
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain docs/research/reference/institutional_ownership_cusip_map.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add docs/research/reference/institutional_ownership_cusip_map.json
+            git commit -m "Update real institutional-ownership CUSIP map [skip ci]"
+            git push
+          else
+            echo "No change to the CUSIP map since last run -- nothing to commit"
+          fi

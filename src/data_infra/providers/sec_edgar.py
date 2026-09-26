@@ -609,6 +609,25 @@ def resolve_cik(ticker: str, ticker_map: dict) -> Optional[str]:
     return None
 
 
+def resolve_company_title(ticker: str, ticker_map: dict) -> Optional[str]:
+    """Identical lookup to `resolve_cik`, reading the real `title` field
+    the SAME already-fetched `company_tickers.json`-shaped dict carries
+    (confirmed real shape: `{"cik_str": 320193, "ticker": "AAPL",
+    "title": "Apple Inc."}`) -- added for `scripts/build_institutional_
+    ownership_cusip_map.py` (real SEC 13F name-matching, ADR pending)
+    to get a real company name for a ticker WITHOUT any new, unverified
+    OpenFIGI capability: this project already fetches this exact file
+    for `resolve_cik`, and the title was sitting in the same response
+    the whole time. Returns `None` (never fabricated) if `ticker` is
+    not present."""
+    ticker_upper = ticker.upper()
+    for entry in ticker_map.values():
+        if str(entry.get("ticker", "")).upper() == ticker_upper:
+            title = entry.get("title")
+            return str(title) if title else None
+    return None
+
+
 def _parse_edgar_date(raw: str) -> datetime:
     """EDGAR's XBRL dates are plain `"YYYY-MM-DD"` (no time component,
     Tier 2 documentation) -- interpreted as UTC midnight, matching this

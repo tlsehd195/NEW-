@@ -12,7 +12,7 @@ import pytest
 from helpers import utc
 
 from data_infra.provider import PermanentProviderError
-from data_infra.providers.sec_edgar import SecEdgarFundamentalsProvider, resolve_cik
+from data_infra.providers.sec_edgar import SecEdgarFundamentalsProvider, resolve_cik, resolve_company_title
 from data_infra.providers.sec_edgar_config import SecEdgarConfig
 from data_infra.providers.sec_edgar_transport import SecEdgarTransportResponse
 
@@ -389,6 +389,22 @@ class TestResolveCik:
 
     def test_unknown_ticker_returns_none(self) -> None:
         assert resolve_cik("NOPE", self._MAP) is None
+
+
+class TestResolveCompanyTitle:
+    _MAP = {
+        "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
+        "1": {"cik_str": 789019, "ticker": "MSFT", "title": "Microsoft Corp"},
+    }
+
+    def test_finds_ticker_and_returns_its_real_title(self) -> None:
+        assert resolve_company_title("AAPL", self._MAP) == "Apple Inc."
+
+    def test_is_case_insensitive(self) -> None:
+        assert resolve_company_title("aapl", self._MAP) == "Apple Inc."
+
+    def test_unknown_ticker_returns_none(self) -> None:
+        assert resolve_company_title("NOPE", self._MAP) is None
 
 
 class TestMetadata:
