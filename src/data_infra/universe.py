@@ -654,6 +654,96 @@ RESEARCH_UNIVERSE_STAGE4 = UniverseDefinition(
 )
 
 
+# -- RESEARCH_UNIVERSE Stage 5 (ADR-0211, 2026-09-26) -- the account
+# owner asked for factor research over a longer history AND more
+# symbols. Unlike Stages 2-4 (hand-curated per-sector additions), the
+# 116 new symbols here come from ONE mechanical, pre-registered rule
+# applied to the real, MIT-licensed `fja05680/sp500`
+# `sp500_ticker_start_end.csv` (the same source ADR-0120/ADR-0122
+# already use), fixed BEFORE any Stage 5 backtest is run (RULE 0.8):
+#
+#   a ticker whose CURRENT (open-ended, empty `end_date`) S&P 500
+#   interval started on or before 2000-01-03, and that is not already
+#   in Stage 4.
+#
+# That rule yields 117 tickers from the 2026-09-26 fetch of that CSV;
+# `BF.B` is the single deliberate exclusion, because class-share
+# tickers are spelled differently across this project's providers
+# (`BF.B`/`BF-B`/`BF/B`) and no provider mapping for that form exists
+# in `scripts/ingest_real_market_data.py` yet -- 116 remain. The
+# "current interval" condition (not "any interval") matters: it drops
+# tickers whose string was reused by a different company after a gap
+# (e.g. `CEG`, `HLT`, `AMP`), which the ticker-vs-corporate-identity
+# caveat above would otherwise silently mix in.
+#
+# Purpose: every new symbol has continuous index membership back to
+# 2000, so a price-based run starting 2000-01-01 (ADR-0211) has a
+# genuinely populated cross-section in its earliest folds rather than
+# one that fills in over time.
+#
+# **Survivorship bias is WORSE here, not better, and this is
+# deliberate and disclosed**: "still in the index today AND already in
+# it in 2000" is, by construction, a 26-year survivor filter. Nothing
+# in this stage corrects that -- delisted-price recovery
+# (`ingest_stockanalysis_wayback_delisted_prices.yml`) only covers
+# removals from 2020 onward. Any Stage 5 result over the 2000s must be
+# reported with that limitation (ADR-0211), and `--point-in-time-
+# universe-as-of` (ADR-0176) remains the tool for membership-correct
+# runs. `listed_from`/`listed_to` stay governed by
+# `_real_symbol_metadata` exactly as before: most new symbols are
+# left-censored at the dataset's 1996-01-02 start, so no join date is
+# recorded for them.
+#
+# Request-budget arithmetic (same confirmed Tiingo free-tier numbers
+# as every prior stage -- 50 requests/hour, 1,000/day): 116 new
+# symbols x 2 requests/symbol = 232 requests, i.e. 5 hourly windows
+# inside a single day's cap; a full 203-symbol from-scratch ingestion
+# is 406 requests, still under one day's cap. A longer date range
+# does not add requests (one price request per symbol returns the
+# whole range).
+#
+# NOT the active `RESEARCH_UNIVERSE` binding: `paper_trading_cycle.yml`
+# ingests `RESEARCH_UNIVERSE` every cycle, and 203 symbols would blow
+# its hourly Tiingo budget. Scripts opt in explicitly via the separate
+# `RESEARCH_UNIVERSE_STAGE5` name.
+_STAGE5_SP500_SINCE_2000_ADDITIONS: tuple[str, ...] = (
+    "ADI", "ADM", "ADP", "ADSK", "AEE", "AES", "AFL", "AIG", "ALL", "AMAT", "AMGN", "AON",
+    "APA", "AVY", "AZO", "BAX", "BBY", "BDX", "BEN", "BMY", "BSX", "C", "CAH", "CB",
+    "CCL", "CI", "CINF", "CL", "CLX", "CMCSA", "CMI", "CMS", "CNP", "COF", "CSX", "CVS",
+    "DHR", "DOV", "DRI", "DTE", "EFX", "EIX", "ETN", "ETR", "F", "FDX", "FE", "FITB",
+    "GD", "GIS", "GLW", "GPC", "GWW", "HAL", "HAS", "HBAN", "HIG", "HPQ", "HSY", "HUM",
+    "IFF", "INTC", "IP", "ITW", "JCI", "KEY", "KLAC", "KMB", "KR", "L", "LUV", "MAR",
+    "MAS", "MCK", "MCO", "MDT", "MMM", "MO", "MSI", "MU", "NOC", "NSC", "NTAP", "NTRS",
+    "OMC", "PAYX", "PCAR", "PEG", "PGR", "PH", "PHM", "PNC", "PNW", "PPG", "PPL", "RF",
+    "ROK", "SCHW", "SNA", "SPGI", "STT", "SWK", "SYY", "TAP", "TGT", "TJX", "TROW", "TRV",
+    "TXN", "TXT", "UNP", "USB", "VMC", "WM", "WY", "YUM",
+)
+
+RESEARCH_UNIVERSE_STAGE5 = UniverseDefinition(
+    name="RESEARCH_UNIVERSE",
+    version="stage5",
+    role="RESEARCH",
+    description=(
+        "Stage 5 of the research universe: Stage 4's 87 symbols plus 116 additional symbols selected "
+        "by one pre-registered rule over the real fja05680/sp500 interval data -- current "
+        "S&P 500 members whose current, uninterrupted index interval began on or before "
+        "2000-01-03 (BF.B excluded for provider ticker-format reasons). Built so a "
+        "2000-01-01-start price-factor run has a populated cross-section from its first "
+        "fold (ADR-0211). This selection is a 26-year survivor filter and makes "
+        "survivorship bias WORSE for the 2000s, not better; it addresses breadth and "
+        "history length only."
+    ),
+    symbols=RESEARCH_UNIVERSE_STAGE4.symbols
+    + tuple(
+        SymbolMetadata(
+            symbol=m.symbol, exchange=m.exchange, sector=m.sector,
+            listed_from=m.listed_from, listed_to=m.listed_to, source="sp500_pit_rule_since_2000",
+        )
+        for m in (_real_symbol_metadata(s) for s in _STAGE5_SP500_SINCE_2000_ADDITIONS)
+    ),
+)
+
+
 def build_universe_memberships(universe: UniverseDefinition, *, valid_from: datetime) -> list[UniverseMembership]:
     """Converts a `UniverseDefinition` into the `UniverseMembership`
     records `DataRepository.add_universe_membership`/`get_universe`

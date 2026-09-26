@@ -47,17 +47,17 @@ on:
         type: string
         required: true
       universe:
-        description: "Universe to validate (must match _UNIVERSES in run_long_horizon_validation.py)"
+        description: "Universe to validate (must match _UNIVERSES in run_long_horizon_validation.py; RESEARCH_UNIVERSE_STAGE5 = 203 symbols, ADR-0211)"
         type: string
         default: "RESEARCH_UNIVERSE"
       start:
-        description: "Range start (YYYY-MM-DD) -- must not overlap strategy_research.locked_windows.TEST_1"
+        description: "Range start (YYYY-MM-DD) -- 2010-01-01 when fundamentals candidates run; a price-only 2000-01-01 run needs a pre-2010 price catalog first (ADR-0211)"
         type: string
         default: "2010-01-01"
       end:
-        description: "Range end (YYYY-MM-DD) -- must not overlap TEST_1; default is TEST_1's own start, the boundary every prior real Stage-3/4 run has used"
+        description: "Range end (YYYY-MM-DD) -- must not overlap any strategy_research.locked_windows window; default is TEST_2's own start (earliest_locked_window_start(), ADR-0209/ADR-0211)"
         type: string
-        default: "2023-04-28"
+        default: "2020-08-28"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

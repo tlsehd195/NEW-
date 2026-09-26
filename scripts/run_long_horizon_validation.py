@@ -121,7 +121,7 @@ from data_infra.providers.sp500_index_constituent_history import (  # noqa: E402
     constituents_as_of,
     parse_ticker_intervals,
 )
-from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
+from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4, RESEARCH_UNIVERSE_STAGE5  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
 from storage.data_repository import DuckDBDataRepository  # noqa: E402
 from storage.engine import StorageEngine  # noqa: E402
@@ -210,7 +210,14 @@ from strategy_research.walk_forward_evaluation import run_walk_forward_evaluatio
 
 from data_infra.versioning import compute_data_version  # noqa: E402
 
-_UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4}
+# "RESEARCH_UNIVERSE_STAGE5" is an explicit opt-in name, not the
+# RESEARCH_UNIVERSE binding -- see RESEARCH_UNIVERSE_STAGE5's own
+# comment in data_infra/universe.py (ADR-0211).
+_UNIVERSES = {
+    "PILOT_UNIVERSE": PILOT_UNIVERSE_V1,
+    "RESEARCH_UNIVERSE": RESEARCH_UNIVERSE_STAGE4,
+    "RESEARCH_UNIVERSE_STAGE5": RESEARCH_UNIVERSE_STAGE5,
+}
 # Every real provider this project has ever integrated stamps exactly
 # this source name onto Provenance.source -- used by the Phase 28
 # REAL-provenance-plausibility check below. "stooq" is kept even though

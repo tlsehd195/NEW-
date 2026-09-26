@@ -6,6 +6,7 @@ cannot happen inside this test suite, see
 `tests/strategy_research/test_run_long_horizon_validation_wiring.py`
 for the real, executable coverage of the underlying script's own
 wiring."""
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -56,12 +57,18 @@ def test_required_inputs_present_with_sensible_defaults():
     assert inputs["release_tag"]["required"] is True
     assert inputs["universe"]["default"] == "RESEARCH_UNIVERSE"
     assert inputs["start"]["default"] == "2010-01-01"
-    # Default --end matches TEST_1's own start -- every prior real
-    # Stage-3/4 run used this exact boundary (see
-    # STRATEGY-VALIDATION-REPORT.md's Phase 33 addendum); this test
-    # exists so an accidental default change can't silently point a
-    # future run at a different, un-reviewed range.
-    assert inputs["end"]["default"] == "2023-04-28"
+    # Default --end is the earliest locked window's start (TEST_2's,
+    # ADR-0209/ADR-0211). The old 2023-04-28 default (TEST_1's start)
+    # overlapped TEST_2 once it was locked, so a default dispatch was
+    # refused by run_long_horizon_validation.py's own locked-window
+    # guard. Asserted against the registry itself so a future earlier
+    # TEST_3 fails this test instead of silently breaking the default.
+    from strategy_research.locked_windows import earliest_locked_window_start, overlaps_any_locked_window
+
+    end_default = datetime.strptime(inputs["end"]["default"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    start_default = datetime.strptime(inputs["start"]["default"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    assert end_default == earliest_locked_window_start()
+    assert overlaps_any_locked_window(start_default, end_default) == ()
 
 
 def test_downloads_required_catalogs_from_the_release_not_as_workflow_artifacts():
