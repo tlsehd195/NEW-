@@ -16,6 +16,8 @@ storage root (parquet_layer.py) -- see ADR-0010 for why.
 
 from __future__ import annotations
 
+import functools
+
 import duckdb
 
 DDL_STATEMENTS: tuple[str, ...] = (
@@ -915,3 +917,62 @@ DDL_STATEMENTS: tuple[str, ...] = (
 def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     for statement in DDL_STATEMENTS:
         conn.execute(statement)
+    _add_missing_columns(conn)
+
+
+@functools.lru_cache(maxsize=1)
+def _expected_columns() -> dict[str, tuple[tuple[str, str, bool], ...]]:
+    """(column, type, nullable) per table, as DDL_STATEMENTS defines them today.
+
+    Built once per process from a scratch in-memory database so the DDL
+    above stays the single source of truth for the schema.
+    """
+    scratch = duckdb.connect(":memory:")
+    try:
+        for statement in DDL_STATEMENTS:
+            scratch.execute(statement)
+        rows = scratch.execute(
+            "SELECT table_name, column_name, data_type, is_nullable "
+            "FROM information_schema.columns WHERE table_schema = 'main' "
+            "ORDER BY table_name, ordinal_position"
+        ).fetchall()
+    finally:
+        scratch.close()
+    expected: dict[str, list[tuple[str, str, bool]]] = {}
+    for table, column, data_type, is_nullable in rows:
+        expected.setdefault(table, []).append((column, data_type, is_nullable == "YES"))
+    return {table: tuple(cols) for table, cols in expected.items()}
+
+
+def _add_missing_columns(conn: duckdb.DuckDBPyConnection) -> None:
+    """Additive migration for databases created by an older DDL_STATEMENTS.
+
+    ``CREATE TABLE IF NOT EXISTS`` never touches a table that already
+    exists, so a column added to the DDL later (e.g. ADR-0203's
+    ``provenance_*`` columns on ``security_master``) is missing from any
+    on-disk database created before that change -- and every INSERT
+    naming it then fails with a Binder Error. A nullable column is added
+    in place (existing rows read NULL, the same as a new row that omits
+    it). A NOT NULL column cannot be backfilled honestly without a value,
+    so that case fails loudly instead of guessing one.
+    """
+    actual: dict[str, set[str]] = {}
+    for table, column in conn.execute(
+        "SELECT table_name, column_name FROM information_schema.columns "
+        "WHERE table_schema = 'main'"
+    ).fetchall():
+        actual.setdefault(table, set()).add(column)
+    for table, columns in _expected_columns().items():
+        present = actual.get(table)
+        if present is None:
+            continue
+        for column, data_type, nullable in columns:
+            if column in present:
+                continue
+            if not nullable:
+                raise RuntimeError(
+                    f"existing table {table!r} is missing NOT NULL column {column!r}; "
+                    "it cannot be added without a backfill value -- migrate this "
+                    "database explicitly"
+                )
+            conn.execute(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "{column}" {data_type}')
