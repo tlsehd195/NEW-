@@ -151,6 +151,9 @@ from strategy_research.factor_scores import (  # noqa: E402
     cashflow_yield_score,
     combined_factor_score,
     coskewness_score,
+    frog_in_the_pan_score,
+    intermediate_momentum_score,
+    price_delay_score,
     dividend_growth_score,
     downside_beta_score,
     earnings_yield_score,
@@ -325,6 +328,14 @@ _PRICE_FACTOR_CANDIDATES = (
     # asset-pricing literature, price-only, needing zero new data. Wired
     # in before any real walk-forward result exists, per RULE 0.8.
     ("coskewness", "Harvey & Siddique 2000 coskewness, price-only", coskewness_score),
+    # 2026-09-26 (새 팩터 탐색 재개, ADR-0214) -- the first S-tier search
+    # round since ADR-0107~0109. Three price-only candidates, zero new
+    # data, so the Stage 5 2000-onward price_only run (ADR-0212/0213)
+    # can include them. Wired in before any real result exists, per
+    # RULE 0.8.
+    ("intermediate_momentum", "Novy-Marx 2012 intermediate-horizon (12-7 month) momentum, price-only", intermediate_momentum_score),
+    ("price_delay", "Hou & Moskowitz 2005 price delay (D1), price-only", price_delay_score),
+    ("frog_in_the_pan", "Da, Gurun & Warachka 2014 frog-in-the-pan information discreteness, price-only", frog_in_the_pan_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),

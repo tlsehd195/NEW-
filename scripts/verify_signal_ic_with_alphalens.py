@@ -56,6 +56,9 @@ from strategy_research._dates import add_months  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
     bid_ask_spread_score,
     coskewness_score,
+    frog_in_the_pan_score,
+    intermediate_momentum_score,
+    price_delay_score,
     downside_beta_score,
     fifty_two_week_high_score,
     high_volume_return_premium_score,
@@ -93,6 +96,9 @@ _PRICE_ONLY_SCORES: dict[str, ScoreFn] = {
     "downside_beta": downside_beta_score,
     "high_volume_return_premium": high_volume_return_premium_score,
     "coskewness": coskewness_score,
+    "intermediate_momentum": intermediate_momentum_score,
+    "price_delay": price_delay_score,
+    "frog_in_the_pan": frog_in_the_pan_score,
 }
 
 

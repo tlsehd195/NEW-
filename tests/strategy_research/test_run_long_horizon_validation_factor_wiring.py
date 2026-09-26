@@ -184,7 +184,10 @@ class TestCandidateTables:
     before ADR-0051. Plus `guru_consensus` (ADR-0194, added well after
     ADR-0051 -- a SEVENTH, distinct DuckDB catalog, the account owner's
     own follow-up idea to institutional_ownership_change: curated
-    named-13F-filer agreement, not a published academic citation)."""
+    named-13F-filer agreement, not a published academic citation). Plus
+    `intermediate_momentum` (Novy-Marx 2012), `price_delay` (Hou &
+    Moskowitz 2005) and `frog_in_the_pan` (Da, Gurun & Warachka 2014),
+    the 2026-09-26 resumed S-tier search, ADR-0214 -- 49 total."""
 
     _EXPECTED_NAMES = {
         "long_term_reversal", "short_term_reversal", "low_beta", "illiquidity",
@@ -202,6 +205,7 @@ class TestCandidateTables:
         "high_volume_return_premium", "asset_turnover_change", "industry_momentum",
         "coskewness", "ohlson_o", "merton_dd",
         "guru_consensus",
+        "intermediate_momentum", "price_delay", "frog_in_the_pan",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
@@ -219,7 +223,7 @@ class TestCandidateTables:
             names.extend(name for name, _hypothesis, _score_fn in table)
         return names
 
-    def test_all_45_expected_names_present_exactly_once(self) -> None:
+    def test_all_expected_names_present_exactly_once(self) -> None:
         module = _load_script()
         names = self._all_new_candidate_names(module)
         assert len(names) == len(set(names)), "duplicate candidate name across the 6 tables"
