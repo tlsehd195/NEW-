@@ -91,6 +91,25 @@ additionally preserved under the branch `ruflo-features-review-backup`
 push-scope policy) against accidental branch deletion, per the same
 third-party report's recommendation.
 
+**Correction (2026-09-26):** the paragraph above is no longer true. Both
+`claude/ruflo-features-review-hqrvqa` and `ruflo-features-review-backup`
+were deleted during a later branch cleanup (the owner believed every
+branch had already been merged into `main`). The commits themselves were
+still reachable on GitHub by SHA (`04e4481baf6653e17ad57c3bf21d7cf5298c94eb`
+is the backup tip; fetched with `git fetch origin <full SHA>` on
+2026-09-26). From them, the archify skill (`b6578b2`,
+`.agents/skills/archify/` + the `.claude/skills/archify` symlink + an
+archify-only `skills-lock.json`) and the two surviving diagrams
+(`20eefa4`/`5efa3a4` core-trading-pipeline, `f310141`
+full-module-architecture, under `docs/architecture/`) were restored onto
+`main`. The workflow diagram added in `2298837` was already removed by
+`e2ee5ce` on the branch itself and is not restored. The other 9
+skill-tooling commits (`ddcf562`..`29aa3a3`: task-observer, ponytail,
+hooks, CLAUDE.md module map) were NOT restored and are reachable only by
+SHA; GitHub may garbage-collect unreferenced commits eventually, so
+treat them as at-risk. Note the diagrams reflect the codebase as of
+2026-09-12 and have not been regenerated against today's `src/`.
+
 The three ADOPTED libraries (skfolio, purgedcv, exchange_calendars)
 were independently re-installed and re-verified in THIS session's own
 environment rather than trusted from the original ADR's prose. The
