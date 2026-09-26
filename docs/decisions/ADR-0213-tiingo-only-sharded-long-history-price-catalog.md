@@ -68,3 +68,31 @@ Mon-Fri). Dispatch the backfill on a weekend or so it finishes before
   insert is idempotent (a fresh run starts from an empty catalog).
 - The survivorship-bias limitation from ADR-0212 applies unchanged to
   any result built on this catalog.
+
+## Addendum (same day): what the first real run found
+
+Run `36241935152` (2026-09-26, cancelled after its first job) showed
+two real problems. Neither lost data: each shard had already persisted
+its bars when it failed.
+
+1. **Every shard crashed on the trading calendar.** exchange_calendars'
+   default XNYS calendar covers only the 20 years before today (first
+   session 2006-09-26), so the ingest script's
+   `expected_trading_days_in_range` raised `DateOutOfBounds` for
+   `--start 2000-01-01`. `build_xnys_calendar()` now starts at
+   1990-01-01. The same rolling default would also have broken the
+   existing 2010-01-01 validation window once today passed 2030.
+2. **Shard 0 ran out of Tiingo budget for 16 of 22 symbols.** The
+   budget is client-side and counts every attempt, and
+   `IngestionRunner` retries a `TransientProviderError` up to three
+   times. The likely cause (inferred, not confirmed from the logs) is
+   the 10-second timeout on a 26-year response, whose retries spent
+   the hour. Shards 1-4 were not affected.
+
+Changes: `--tiingo-timeout-seconds` (the workflow uses 60),
+`--skip-symbols-with-bars` (already-covered symbols cost nothing, so a
+shard can be rerun or a run resumed), `--max-symbols`, a final retry
+sweep over symbols still without bars, three chained jobs (0-3, 4-6,
+7-9 + sweep), and a `resume_from_run_id` input. Every job uploads its
+catalog even on failure. A shard that fetched nothing does not wait an
+hour before the next one.

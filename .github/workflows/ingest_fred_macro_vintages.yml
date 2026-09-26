@@ -1,0 +1,64 @@
+# Ingests point-in-time (ALFRED vintage) FRED macro series into a fresh
+# DuckDB store and reports real coverage per series (ADR-0217). See
+# `scripts/ingest_fred_macro_vintages.py`'s own docstring.
+# `workflow_dispatch` only: nothing consumes this data on a schedule yet
+# (the macro filter itself is still a design, ADR-0217).
+name: Ingest FRED Macro Vintages
+
+on:
+  workflow_dispatch:
+    inputs:
+      series:
+        description: "Comma-separated FRED series ids (default: the whole MACRO_SERIES_CATALOG)"
+        type: string
+        default: ""
+      start:
+        description: "First observation date (YYYY-MM-DD)"
+        type: string
+        default: "1990-01-01"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Ingest ALFRED vintages (real API calls)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # Inputs go through env vars, never `${{ }}` inside `run:`
+          # (tests/deploy/test_workflow_run_block_hygiene.py).
+          SERIES_INPUT: ${{ inputs.series }}
+          START_INPUT: ${{ inputs.start }}
+        run: |
+          python3 scripts/ingest_fred_macro_vintages.py \
+            --db-path macro-store \
+            --start "${START_INPUT:-1990-01-01}" \
+            --series "$SERIES_INPUT" \
+            --summary-json macro_coverage.json
+
+      - name: Upload macro store and coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: fred-macro-vintages
+          path: |
+            macro-store/catalog.duckdb
+            macro_coverage.json
+          if-no-files-found: warn
+          retention-days: 90

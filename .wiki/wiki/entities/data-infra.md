@@ -24,3 +24,9 @@ Phase 1. ADR-0002(데이터 저장), ADR-0003(데이터 모델), ADR-0004(point-
 
 ## 경계
 다른 모든 Phase가 의존하는 기반 계층 — 여기서 point-in-time 위반(미래 데이터 누출)이 생기면 이후 전체 백테스트/학습 결과가 무효화됨.
+
+
+
+## Macro time series (ADR-0217, 2026-09-26)
+
+`data_infra/macro_models.py` defines `MacroObservationRecord` (one ALFRED vintage of one FRED observation) and `MACRO_SERIES_CATALOG` (rates, BAA10Y credit spread, broad dollar, payrolls/unemployment/claims, CPI, PCE, VIX, NFCI). `FredMacroProvider.fetch_series_vintages` fetches every vintage. `available_time = realtime_start + 1 day 06:00 UTC`, never the observation date, so release lags and later revisions cannot leak into backtests. Stored in `macro_observation_vintages` via `storage.macro_repository.DuckDBMacroRepository`. Nothing reads it yet; it feeds the planned portfolio-level macro filter.

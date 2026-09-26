@@ -129,6 +129,7 @@ non-exception response as a failure) was considered and rejected.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -207,6 +208,26 @@ def main() -> int:
     )
     parser.add_argument("--shard-index", type=int, default=None, help="ADR-0213: ingest only this shard of --universe (0-based); every universe symbol is still registered in security_master/universe_membership. Requires --shard-count.")
     parser.add_argument("--shard-count", type=int, default=None, help="ADR-0213: number of shards; assignment is sorted(universe)[shard_index::shard_count], same as scripts/select_universe_shard.py. The benchmark is ingested with shard 0 only.")
+    parser.add_argument(
+        "--skip-symbols-with-bars", action="store_true",
+        help=(
+            "ADR-0213: before fetching, drop every selected symbol that already has at least one bar in "
+            "[--start, --end] in --db-path. Makes re-running a shard (or resuming a partially-built "
+            "catalog) cost no requests for symbols already covered."
+        ),
+    )
+    parser.add_argument(
+        "--max-symbols", type=int, default=None,
+        help="ADR-0213: after --skip-symbols-with-bars, fetch at most this many symbols (keeps a retry sweep under Tiingo's hourly cap).",
+    )
+    parser.add_argument(
+        "--tiingo-timeout-seconds", type=float, default=None,
+        help=(
+            "ADR-0213: per-request Tiingo timeout (default: TiingoConfig's 10s). A 26-year daily "
+            "history is a much larger response than a daily incremental one; a timeout is retried and "
+            "each retry spends another call of the hourly budget."
+        ),
+    )
     parser.add_argument("--manifest-out", type=Path, default=None, help="Where to write the JSON reproducibility manifest (default: <db-path>/ingestion_manifest.json)")
     args = parser.parse_args()
 
@@ -219,6 +240,11 @@ def main() -> int:
             parser.error("--shard-index/--shard-count select from --universe and cannot be combined with --symbols")
         if args.shard_count <= 0 or not 0 <= args.shard_index < args.shard_count:
             parser.error("--shard-index must satisfy 0 <= shard_index < shard_count")
+
+    if args.max_symbols is not None and args.max_symbols <= 0:
+        parser.error("--max-symbols must be positive")
+    if args.tiingo_timeout_seconds is not None and args.tiingo_timeout_seconds <= 0:
+        parser.error("--tiingo-timeout-seconds must be positive")
 
     if args.symbols is not None:
         universe = None
@@ -240,7 +266,11 @@ def main() -> int:
     # them for free. Do not construct a second TiingoHttpTransport for
     # either path without explicitly sharing its budget.
     tiingo_budget = TiingoRequestBudget()
-    tiingo = TiingoDataProvider(DEFAULT_TIINGO_CONFIG, TiingoHttpTransport(DEFAULT_TIINGO_CONFIG.base_url, budget=tiingo_budget))
+    tiingo_config = (
+        DEFAULT_TIINGO_CONFIG if args.tiingo_timeout_seconds is None
+        else dataclasses.replace(DEFAULT_TIINGO_CONFIG, timeout_seconds=args.tiingo_timeout_seconds)
+    )
+    tiingo = TiingoDataProvider(tiingo_config, TiingoHttpTransport(tiingo_config.base_url, budget=tiingo_budget))
     # ADR-0164: Stooq (the original secondary, ADR-0025) is a confirmed
     # permanent dead end (ADR-0160 -- a JS bot-verification challenge
     # page on every real request, not fixable via headers) and is no
@@ -278,6 +308,19 @@ def main() -> int:
                 repository.add_security(record)
             for record in build_universe_memberships(universe, valid_from=args.start):
                 repository.add_universe_membership(record)
+
+        if args.skip_symbols_with_bars:
+            already_covered = [
+                s for s in symbols
+                if repository.get_bars(s, args.start, args.end, args.end + timedelta(days=1), include_quality_rejected=True)
+            ]
+            symbols = [s for s in symbols if s not in already_covered]
+            print(f"Skipping {len(already_covered)} symbol(s) that already have bars in range: {already_covered}")
+        if args.max_symbols is not None:
+            symbols = symbols[: args.max_symbols]
+        if not symbols:
+            print("No symbols left to fetch -- nothing to do.")
+            return 0
 
         # Run #44 (2026-09-25): corporate-action collection ran AFTER
         # price-bar ingestion and called Tiingo ONLY -- Tiingo's own

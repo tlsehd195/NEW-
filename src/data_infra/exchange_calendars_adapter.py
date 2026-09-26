@@ -74,10 +74,12 @@ class ExchangeCalendarsTradingCalendar:
     `US_EQUITY_NYSE`'s own docstring explicitly discloses it cannot
     cover."""
 
-    def __init__(self, xcal_name: str, *, market: str, timezone: str) -> None:
+    def __init__(self, xcal_name: str, *, market: str, timezone: str, start: Optional[str] = None) -> None:
         self.market = market
         self.timezone = timezone
-        self._xcal = xcals.get_calendar(xcal_name)
+        # `start=None` keeps exchange_calendars' own default, which is a
+        # ROLLING 20 years before today -- see `_XNYS_HISTORY_START`.
+        self._xcal = xcals.get_calendar(xcal_name) if start is None else xcals.get_calendar(xcal_name, start=start)
         # Protocol requires fixed open_time/close_time fallback fields --
         # sampled from one real, representative regular session (never
         # hardcoded), but session_hours() below always consults the real
@@ -101,12 +103,27 @@ class ExchangeCalendarsTradingCalendar:
         return open_local.time(), close_local.time()
 
 
+# Real bug found by the first 2000-onward Stage 5 ingestion run (ADR-0213,
+# 2026-09-26): exchange_calendars' default calendar only covers the 20
+# years before TODAY (first XNYS session 2006-09-26 on that date), so
+# `is_trading_day(2000-01-03)` raised `DateOutOfBounds` and every shard
+# of `ingest_real_market_data.py --start 2000-01-01` crashed after
+# persisting its bars. The same rolling default would also have broken
+# the existing 2010-01-01 validation window once today passed 2030.
+# A fixed start well before any research window this project uses.
+_XNYS_HISTORY_START = "1990-01-01"
+
+
 def build_xnys_calendar() -> ExchangeCalendarsTradingCalendar:
     """US equities (NYSE) -- same `market="US_EQUITY"` key every existing
     caller already uses for `data_infra.calendar.US_EQUITY`/
     `US_EQUITY_NYSE`, so this is a drop-in replacement at each
-    `calendars={"US_EQUITY": ...}` injection site."""
-    return ExchangeCalendarsTradingCalendar("XNYS", market="US_EQUITY", timezone="America/New_York")
+    `calendars={"US_EQUITY": ...}` injection site. Covers sessions from
+    `_XNYS_HISTORY_START`, not exchange_calendars' rolling 20-year
+    default."""
+    return ExchangeCalendarsTradingCalendar(
+        "XNYS", market="US_EQUITY", timezone="America/New_York", start=_XNYS_HISTORY_START
+    )
 
 
 def build_xkrx_calendar() -> ExchangeCalendarsTradingCalendar:
