@@ -54,6 +54,11 @@ from data_infra.provider import PermanentProviderError, TransientProviderError, 
 
 _SAFE_RESPONSE_HEADERS = {"content-type", "retry-after"}
 
+# FRED's own documented sentinels for "the whole real-time range" --
+# the earliest and latest real-time dates its API accepts.
+ALFRED_REALTIME_START = "1776-07-04"
+ALFRED_REALTIME_END = "9999-12-31"
+
 
 def _filter_headers(raw_headers) -> dict[str, str]:
     result = {}
@@ -90,8 +95,40 @@ class FredHttpTransport:
             "observation_start": observation_start,
             "observation_end": observation_end,
         }
+        return self._get("fred/series/observations", params, series_id=series_id, timeout=timeout)
+
+    def get_series_vintage_observations(
+        self, *, series_id: str, api_key: str, observation_start: str, observation_end: str,
+        offset: int, limit: int, timeout: float,
+    ) -> FredTransportResponse:
+        """ALFRED (archival FRED) request: the same `fred/series/
+        observations` endpoint, but over the WHOLE real-time range
+        (`realtime_start=1776-07-04`, `realtime_end=9999-12-31`, FRED's
+        own documented sentinels), so every vintage of every observation
+        comes back, each tagged with the `realtime_start`/`realtime_end`
+        period during which FRED published that value. `output_type=1`
+        (FRED's default: one row per observation per real-time period)
+        is sent explicitly so a future FRED default change cannot
+        silently change the row semantics. Paged with `offset`/`limit`
+        (FRED's own max `limit` is 100000)."""
+        params = {
+            "series_id": series_id,
+            "api_key": api_key,
+            "file_type": "json",
+            "observation_start": observation_start,
+            "observation_end": observation_end,
+            "realtime_start": ALFRED_REALTIME_START,
+            "realtime_end": ALFRED_REALTIME_END,
+            "output_type": "1",
+            "sort_order": "asc",
+            "offset": str(offset),
+            "limit": str(limit),
+        }
+        return self._get("fred/series/observations", params, series_id=series_id, timeout=timeout)
+
+    def _get(self, path: str, params: dict, *, series_id: str, timeout: float) -> FredTransportResponse:
         query = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{self._base_url}/fred/series/observations?{query}"
+        url = f"{self._base_url}/{path}?{query}"
         req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as raw_response:

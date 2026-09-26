@@ -117,3 +117,22 @@ class TestHttpErrorStatusCodes:
         monkeypatch.setattr("urllib.request.urlopen", self._http_error(500, {"error_message": "Internal Server Error"}))
         with pytest.raises(TransientProviderError):
             _call(FredHttpTransport("https://api.stlouisfed.org"))
+
+
+class TestVintageRequest:
+    def test_requests_the_whole_real_time_range_with_paging(self, monkeypatch) -> None:
+        captured_urls = []
+
+        def fake_urlopen(req, timeout):
+            captured_urls.append(req.full_url)
+            return _FakeHTTPResponse(200, {"observations": []}, {})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        FredHttpTransport("https://api.stlouisfed.org").get_series_vintage_observations(
+            series_id="CPIAUCSL", api_key="x", observation_start="2000-01-01", observation_end="2000-12-31",
+            offset=200, limit=100, timeout=5.0,
+        )
+        url = captured_urls[0]
+        assert url.startswith("https://api.stlouisfed.org/fred/series/observations?")
+        for part in ("realtime_start=1776-07-04", "realtime_end=9999-12-31", "output_type=1", "offset=200", "limit=100"):
+            assert part in url
