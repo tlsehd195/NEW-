@@ -48,6 +48,7 @@ class MacroCategory(str, Enum):
     INFLATION = "INFLATION"
     VOLATILITY = "VOLATILITY"
     FINANCIAL_CONDITIONS = "FINANCIAL_CONDITIONS"
+    CRYPTO = "CRYPTO"
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,9 @@ class MacroSeriesSpec:
 #   serves a rolling 3 years of it (ICE licensing), too short to
 #   backtest. BAA10Y (Moody's Baa minus 10-year Treasury, 1986+) is the
 #   long-history credit-spread stand-in.
+# - Gold: FRED removed the LBMA gold price series in January 2022 (ICE
+#   Benchmark Administration licensing). Gold enters through the price
+#   catalog as the GLD ETF (listed 2004-11-18) instead.
 MACRO_SERIES_CATALOG: tuple[MacroSeriesSpec, ...] = (
     MacroSeriesSpec("DFF", MacroCategory.RATES, "Effective federal funds rate", "D", False),
     MacroSeriesSpec("DGS3MO", MacroCategory.RATES, "3-month Treasury constant maturity yield", "D", False),
@@ -87,6 +91,8 @@ MACRO_SERIES_CATALOG: tuple[MacroSeriesSpec, ...] = (
     MacroSeriesSpec("PCEPI", MacroCategory.INFLATION, "PCE price index", "M", True),
     MacroSeriesSpec("PCEPILFE", MacroCategory.INFLATION, "Core PCE price index", "M", True),
     MacroSeriesSpec("VIXCLS", MacroCategory.VOLATILITY, "CBOE VIX close", "D", False),
+    # Coinbase BTC-USD, daily incl. weekends, from 2014-12-01 only.
+    MacroSeriesSpec("CBBTCUSD", MacroCategory.CRYPTO, "Coinbase Bitcoin price (USD)", "D", False),
     MacroSeriesSpec("NFCI", MacroCategory.FINANCIAL_CONDITIONS, "Chicago Fed National Financial Conditions Index", "W", True),
 )
 

@@ -73,6 +73,7 @@ it.
 | PCE | PCEPI, PCEPILFE |
 | VIX | VIXCLS |
 | Financial conditions | NFCI |
+| Bitcoin | CBBTCUSD (Coinbase, from 2014-12-01) |
 
 Left out on purpose:
 - **ICE DXY** is not on FRED. DTWEXBGS (Fed broad dollar index, from
@@ -82,6 +83,12 @@ Left out on purpose:
   (read 2026-09-26) says that since April 2026 it only includes 3 years
   of observations (ICE licensing). Too short to backtest; BAA10Y (from
   1986) is the long-history credit-spread stand-in.
+- **Gold price**: FRED removed the LBMA gold series in January 2022
+  (ICE Benchmark Administration licensing; `GOLDAMGBD228NLBM` now
+  redirects to FRED's removal notice). Gold comes in as the GLD ETF
+  (listed 2004-11-18) through the existing price catalog, which is
+  already point-in-time (a close is known at the close). No gold history
+  before 2004-11 from any source this project has.
 
 ### Open question the first real run answers
 
@@ -135,6 +142,19 @@ a new trial for the DSR/PBO penalty.
   very likely be **INCONCLUSIVE** on this sample however good it looks.
   A real `VALIDATED` claim would need either a longer history (pre-2000
   prices) or out-of-sample paper trading.
+
+### Gold and bitcoin as filter inputs (added at the account owner's request)
+
+- **Gold (GLD)**: usable across 2004-11 to 2020-08, about 16 years of
+  the research window. A plausible risk-off input is "gold outperforming
+  SPY over 3 months" (a flight-to-safety sign), added to the table above
+  only if pre-registered before the first backtest.
+- **Bitcoin (CBBTCUSD)**: stored, but not a filter input for now. The
+  research window only covers 2014-12 to 2020-08 (under six years, one
+  equity bear episode, the 2020 crash), and bitcoin's co-movement with
+  stocks changed a lot after 2020, so a rule fitted on that stretch
+  would say little about later years. It is kept for paper-trading
+  observation and a later re-evaluation.
 
 ## Decision 3 (research only): news and the fear & greed index
 
