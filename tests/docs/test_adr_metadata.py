@@ -25,6 +25,16 @@ def test_at_least_the_known_adrs_are_present() -> None:
     assert len(_adr_files()) >= 115
 
 
+def test_no_two_adr_files_share_a_number() -> None:
+    # ADR-0221: two sessions picking the same number merge cleanly in git
+    # (the file names differ), so only this catches the result on main.
+    by_number: dict[str, list[str]] = {}
+    for path in _adr_files():
+        by_number.setdefault(path.name[:8], []).append(path.name)
+    duplicates = {number: names for number, names in by_number.items() if len(names) > 1}
+    assert not duplicates, f"ADR numbers used by more than one file: {duplicates}"
+
+
 def test_every_adr_declares_a_status_field() -> None:
     missing = []
     for path in _adr_files():
