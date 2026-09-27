@@ -24,6 +24,9 @@ class FredConfig:
     # api_key_reference's identical "name, not value" discipline.
     api_key_reference: str = "FRED_API_KEY"
     timeout_seconds: float = 10.0
+    # ALFRED requests return far larger bodies (every vintage); a 10s
+    # limit timed out on NFCI in real run 36262966524.
+    vintage_timeout_seconds: float = 60.0
 
     def __post_init__(self) -> None:
         if not self.provider_id:
@@ -32,8 +35,8 @@ class FredConfig:
             raise ValueError("FredConfig.base_url must not be empty")
         if not self.api_key_reference:
             raise ValueError("FredConfig.api_key_reference must not be empty")
-        if self.timeout_seconds <= 0:
-            raise ValueError("FredConfig.timeout_seconds must be positive")
+        if self.timeout_seconds <= 0 or self.vintage_timeout_seconds <= 0:
+            raise ValueError("FredConfig timeouts must be positive")
 
     def configuration_version(self) -> str:
         return compute_data_version(asdict(self))

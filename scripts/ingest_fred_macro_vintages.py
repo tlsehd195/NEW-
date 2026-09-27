@@ -28,6 +28,7 @@ import argparse
 import json
 import statistics
 import sys
+import time
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -36,7 +37,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data_infra.macro_models import MACRO_SERIES_BY_ID, MACRO_SERIES_CATALOG  # noqa: E402
-from data_infra.provider import ProviderError  # noqa: E402
+from data_infra.provider import ProviderError, TransientProviderError  # noqa: E402
 from data_infra.providers.fred import (  # noqa: E402
     FredMacroProvider,
     FredVintageObservation,
@@ -89,6 +90,23 @@ def coverage_summary(series_id: str, observations: list[FredVintageObservation])
     }
 
 
+def _log(message: str) -> None:
+    # Flushed at once: a job killed by its timeout otherwise loses every
+    # buffered line (real run 36263810293 printed nothing in 30 minutes).
+    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {message}", flush=True)
+
+
+def _fetch_with_retry(provider, series_id: str, start: date, end: date, attempts: int = 3):
+    for attempt in range(1, attempts + 1):
+        try:
+            return provider.fetch_series_vintages(series_id, start, end, progress=_log)
+        except TransientProviderError as exc:
+            if attempt == attempts:
+                raise
+            print(f"{series_id}: transient failure (attempt {attempt}/{attempts}): {exc}", file=sys.stderr, flush=True)
+            time.sleep(10 * attempt)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--db-path", required=True, help="storage root directory (catalog.duckdb is created inside)")
@@ -119,16 +137,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         for series_id in series_ids:
             try:
-                observations = provider.fetch_series_vintages(series_id, start, end)
+                observations = _fetch_with_retry(provider, series_id, start, end)
             except ProviderError as exc:
-                print(f"{series_id}: FAILED {type(exc).__name__}: {exc}", file=sys.stderr)
+                print(f"{series_id}: FAILED {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
                 failed.append(series_id)
                 continue
             ingestion_time = datetime.now(timezone.utc)
             repo.add_macro_observations([vintage_to_macro_record(o, ingestion_time=ingestion_time) for o in observations])
             summary = coverage_summary(series_id, observations)
             summaries.append(summary)
-            print(json.dumps(summary, sort_keys=True))
+            print(json.dumps(summary, sort_keys=True), flush=True)
     finally:
         engine.close()
 

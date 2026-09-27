@@ -96,6 +96,10 @@ class DuckDBMacroRepository:
         series = self.get_series_as_of(series_id, as_of_time)
         return series[-1] if series else None
 
+    def list_series_ids(self) -> list[str]:
+        cur = self._engine.connection.execute("SELECT DISTINCT series_id FROM macro_observation_vintages ORDER BY series_id")
+        return [row[0] for row in cur.fetchall()]
+
     def get_all_vintages(self, series_id: str) -> list[MacroObservationRecord]:
         """Every stored vintage, for audits and coverage reports -- not
         point-in-time safe, never for backtest reads."""

@@ -1,0 +1,116 @@
+# Research-only Jev (TypeSafe AI) PoC, ADR-0218. See
+# `scripts/run_jev_news_poc.py`'s own module docstring for what is
+# measured and the pre-registered pass rule. Separate from every trading
+# pipeline: nothing here feeds predict/decision/risk/broker.
+#
+# mode=smoke : one real Jev call (confirms the JEV_API_KEY secret works).
+# mode=full  : smoke, then stream FNSPID's All_external.csv (~5.7 GB,
+#              Hugging Face, never stored whole on disk), sample headlines
+#              for RESEARCH_UNIVERSE_STAGE4 inside 2010-01-01 .. (first
+#              locked window - 30 days), join to the release price
+#              catalog, ask Jev, and commit the aggregate-only report.
+#              Headlines themselves are never committed or uploaded.
+#
+# workflow_dispatch only -- a one-off PoC, never scheduled.
+name: Jev News PoC
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "smoke = key check only; full = key check + news accuracy PoC"
+        type: choice
+        options: ["smoke", "full"]
+        default: "smoke"
+      release_tag:
+        description: "Release holding price_catalog.zip (full mode)"
+        type: string
+        default: "research-catalogs-v1"
+      sample_size:
+        description: "Headlines to evaluate (full mode; 3 Jev calls each)"
+        type: string
+        default: "2000"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  poc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Smoke test (one real Jev call)
+        env:
+          JEV_API_KEY: ${{ secrets.JEV_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 scripts/run_jev_news_poc.py smoke
+
+      - name: Download price catalog
+        if: ${{ inputs.mode == 'full' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p ./data
+          gh release download "$RELEASE_TAG_INPUT" \
+            --repo "${{ github.repository }}" \
+            --pattern "price_catalog.zip" --dir ./data --clobber
+          unzip -q ./data/price_catalog.zip -d ./data/price_catalog
+          test -f ./data/price_catalog/catalog.duckdb
+
+      - name: Stream FNSPID news and draw the headline sample
+        if: ${{ inputs.mode == 'full' }}
+        env:
+          SAMPLE_SIZE_INPUT: ${{ inputs.sample_size }}
+        run: |
+          set -euo pipefail
+          curl -sSfL --retry 3 \
+            "https://huggingface.co/datasets/Zihan1004/FNSPID/resolve/main/Stock_news/All_external.csv" \
+            | python3 scripts/run_jev_news_poc.py extract \
+                --out "$RUNNER_TEMP/jev_sample.jsonl" --sample-size "$SAMPLE_SIZE_INPUT"
+
+      - name: Evaluate with Jev
+        if: ${{ inputs.mode == 'full' }}
+        env:
+          JEV_API_KEY: ${{ secrets.JEV_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 scripts/run_jev_news_poc.py evaluate \
+            --sample "$RUNNER_TEMP/jev_sample.jsonl" \
+            --db-path ./data/price_catalog \
+            --report-out ./jev_news_poc_report.json
+
+      - name: Commit the aggregate report into the repo
+        if: ${{ always() && inputs.mode == 'full' }}
+        run: |
+          set -euo pipefail
+          if [ ! -f ./jev_news_poc_report.json ]; then
+            echo "No report produced this run -- nothing to commit."
+            exit 0
+          fi
+          mkdir -p docs/research/reports/jev_poc
+          DEST="docs/research/reports/jev_poc/jev-news-poc-$(date -u +%Y%m%dT%H%M%SZ).json"
+          cp ./jev_news_poc_report.json "$DEST"
+          if [ -f "$RUNNER_TEMP/jev_sample.jsonl.stats.json" ]; then
+            cp "$RUNNER_TEMP/jev_sample.jsonl.stats.json" "${DEST%.json}.sample-stats.json"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/research/reports/jev_poc
+          git commit -m "chore: record Jev news PoC report (ADR-0218)"
+          git push

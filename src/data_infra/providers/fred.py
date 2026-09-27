@@ -33,8 +33,8 @@ rows) is OHLCV-specific and does not fit a macro time series keyed by
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from typing import Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Callable, Optional
 
 from data_infra.macro_models import (
     MacroObservationRecord,
@@ -46,7 +46,7 @@ from data_infra.models import Provenance
 from data_infra.provider import PermanentProviderError
 from data_infra.providers.fred_auth import resolve_api_key
 from data_infra.providers.fred_config import FredConfig
-from data_infra.providers.fred_transport import ALFRED_REALTIME_END, FredHttpTransport
+from data_infra.providers.fred_transport import ALFRED_REALTIME_END, ALFRED_REALTIME_START, FredHttpTransport
 
 # FRED's own documented convention (this module's transport docstring,
 # point 1): a missing/unavailable observation's "value" is this literal
@@ -62,8 +62,56 @@ class FredObservation:
     retrieved_at: datetime
 
 
-# FRED's own max `limit` per observations page.
+# FRED's own max `limit` per observations page / vintage-dates page.
 _VINTAGE_PAGE_LIMIT = 100_000
+_VINTAGE_DATES_PAGE_LIMIT = 10_000
+# FRED's own cap is 2000 vintage dates per real-time window; stay under it.
+_VINTAGES_PER_WINDOW = 1_500
+
+
+def _realtime_windows(vintage_dates: list[date]) -> list[tuple[str, str]]:
+    """Contiguous real-time windows covering every vintage date, each
+    holding at most `_VINTAGES_PER_WINDOW` of them. One window with FRED's
+    whole-range sentinels when the series is short enough (or FRED
+    listed no vintage dates at all)."""
+    if len(vintage_dates) <= _VINTAGES_PER_WINDOW:
+        return [(ALFRED_REALTIME_START, ALFRED_REALTIME_END)]
+    starts = vintage_dates[::_VINTAGES_PER_WINDOW]
+    windows: list[tuple[str, str]] = []
+    for i, window_start in enumerate(starts):
+        lower = ALFRED_REALTIME_START if i == 0 else window_start.isoformat()
+        upper = ALFRED_REALTIME_END if i == len(starts) - 1 else (starts[i + 1] - timedelta(days=1)).isoformat()
+        windows.append((lower, upper))
+    return windows
+
+
+def _merge_window_splits(rows: list[FredVintageObservation]) -> list[FredVintageObservation]:
+    """Joins the pieces one value is cut into at window boundaries: same
+    observation date and value, the next piece starting the day after
+    the previous one ends (or an exact duplicate). Different values are
+    real revisions and stay separate rows."""
+    ordered = sorted(rows, key=lambda r: (r.observation_date, r.realtime_start))
+    merged: list[FredVintageObservation] = []
+    for row in ordered:
+        prev = merged[-1] if merged else None
+        if prev is not None and prev.observation_date == row.observation_date and prev.value == row.value and (
+            prev.realtime_start == row.realtime_start
+            or (prev.realtime_end is not None and prev.realtime_end + timedelta(days=1) == row.realtime_start)
+        ):
+            merged[-1] = FredVintageObservation(
+                series_id=prev.series_id,
+                observation_date=prev.observation_date,
+                value=prev.value,
+                realtime_start=prev.realtime_start,
+                realtime_end=row.realtime_end if prev.realtime_start != row.realtime_start else (
+                    None if prev.realtime_end is None or row.realtime_end is None
+                    else max(prev.realtime_end, row.realtime_end)
+                ),
+                retrieved_at=prev.retrieved_at,
+            )
+            continue
+        merged.append(row)
+    return merged
 
 
 @dataclass(frozen=True)
@@ -143,14 +191,63 @@ class FredMacroProvider:
             )
         return observations
 
-    def fetch_series_vintages(self, series_id: str, start: date, end: date) -> list[FredVintageObservation]:
+    def fetch_series_vintages(
+        self, series_id: str, start: date, end: date, *, progress: Optional[Callable[[str], None]] = None,
+    ) -> list[FredVintageObservation]:
         """Every vintage (ALFRED) of every observation of `series_id`
-        with `start <= observation_date <= end`, following FRED's
-        `count`/`offset` paging until all rows are read."""
+        with `start <= observation_date <= end`.
+
+        FRED refuses a real-time window with more than 2000 vintage
+        dates, which every daily series exceeds. The series' vintage
+        dates are therefore read first and split into contiguous windows
+        of at most `_VINTAGES_PER_WINDOW` each (window i ends the day
+        before window i+1 starts, so no real-time day is skipped).
+        A value that spans a window boundary comes back once per window;
+        `_merge_window_splits` joins those pieces back into one row."""
         if end < start:
             raise ValueError(f"end ({end}) must not be before start ({start})")
         api_key = resolve_api_key(self._config)
         retrieved_at = datetime.now(timezone.utc)
+        vintage_dates = self._fetch_vintage_dates(series_id, api_key)
+        windows = _realtime_windows(vintage_dates)
+        if progress is not None:
+            progress(f"{series_id}: {len(vintage_dates)} vintage dates, {len(windows)} real-time window(s)")
+        rows: list[FredVintageObservation] = []
+        for i, (realtime_start, realtime_end) in enumerate(windows, start=1):
+            window_rows = self._fetch_vintage_window(
+                series_id, api_key, start, end, realtime_start, realtime_end, retrieved_at
+            )
+            rows.extend(window_rows)
+            if progress is not None:
+                progress(f"{series_id}: window {i}/{len(windows)} {realtime_start}..{realtime_end}: {len(window_rows)} rows")
+        return _merge_window_splits(rows)
+
+    def _fetch_vintage_dates(self, series_id: str, api_key: str) -> list[date]:
+        dates: list[date] = []
+        offset = 0
+        while True:
+            response = self._transport.get_series_vintage_dates(
+                series_id=series_id, api_key=api_key, offset=offset, limit=_VINTAGE_DATES_PAGE_LIMIT,
+                timeout=self._config.vintage_timeout_seconds,
+            )
+            body = response.body
+            if not isinstance(body, dict) or not isinstance(body.get("vintage_dates"), list):
+                raise PermanentProviderError(
+                    f"unexpected FRED vintage-dates response shape for series {series_id!r}: {body!r}"
+                )
+            page = body["vintage_dates"]
+            dates.extend(_parse_observation_date(raw, series_id=series_id) for raw in page)
+            offset += len(page)
+            count = body.get("count")
+            if not page or (isinstance(count, int) and offset >= count) or (
+                not isinstance(count, int) and len(page) < _VINTAGE_DATES_PAGE_LIMIT
+            ):
+                return sorted(set(dates))
+
+    def _fetch_vintage_window(
+        self, series_id: str, api_key: str, start: date, end: date,
+        realtime_start: str, realtime_end: str, retrieved_at: datetime,
+    ) -> list[FredVintageObservation]:
         rows: list[FredVintageObservation] = []
         offset = 0
         while True:
@@ -161,7 +258,9 @@ class FredMacroProvider:
                 observation_end=end.isoformat(),
                 offset=offset,
                 limit=_VINTAGE_PAGE_LIMIT,
-                timeout=self._config.timeout_seconds,
+                timeout=self._config.vintage_timeout_seconds,
+                realtime_start=realtime_start,
+                realtime_end=realtime_end,
             )
             body = response.body
             if not isinstance(body, dict) or not isinstance(body.get("observations"), list):
