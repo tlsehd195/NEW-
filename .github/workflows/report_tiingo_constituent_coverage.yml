@@ -15,9 +15,6 @@ on:
         description: "Window end (default 2016-07-11, the first locked window)"
         type: string
         default: "2016-07-11"
-  push:
-    branches: [claude/project-thread-pemw8s]
-    paths: [.github/workflows/report_tiingo_constituent_coverage.yml, scripts/report_tiingo_constituent_coverage.py]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
