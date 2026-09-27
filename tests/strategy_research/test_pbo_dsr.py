@@ -223,3 +223,16 @@ class TestDeterminism:
         r1 = compute_dsr_for_all_candidates(candidates)
         r2 = compute_dsr_for_all_candidates(candidates)
         assert r1 == r2
+
+
+def test_zero_sharpe_trials_count_toward_the_deflation() -> None:
+    """ADR-0220: trials that never differed from the baseline (all-zero
+    excess) still count, so the winner is deflated more, never less."""
+    from strategy_research.pbo_dsr import compute_dsr_for_all_candidates
+
+    returns = {"a": [0.02, 0.01, 0.03, -0.01, 0.02, 0.01], "b": [0.0, 0.01, -0.02, 0.01, 0.0, -0.01]}
+    plain = compute_dsr_for_all_candidates(returns)
+    padded = compute_dsr_for_all_candidates(returns, zero_sharpe_trials=9)
+    assert padded["a"].num_trials == 11
+    assert padded["a"].expected_max_sharpe_under_null > plain["a"].expected_max_sharpe_under_null
+    assert padded["a"].deflated_sharpe_ratio < plain["a"].deflated_sharpe_ratio
