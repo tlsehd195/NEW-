@@ -51,3 +51,25 @@ def test_reports_listed_removed_and_reused_tickers(tmp_path: Path) -> None:
     assert report["no_longer_member_listed"] == 1
     assert report["not_listed"] == ["ANTM", "OLD"]
     assert report["rename_candidates"] == [{"old": "ANTM", "new": "ELV", "date": "2022-06-28"}]
+
+
+def test_renames_and_symbols_out(tmp_path: Path) -> None:
+    intervals = tmp_path / "sp500.csv"
+    intervals.write_text("ticker,start_date,end_date\nAAPL,1996-01-02,\nFB,2013-12-23,2022-06-09\nBSC,1996-01-02,2008-05-30\nBRK.B,2010-02-16,\n")
+    tiingo = tmp_path / "supported_tickers.csv"
+    tiingo.write_text(
+        "ticker,exchange,assetType,priceCurrency,startDate,endDate\n"
+        "AAPL,NASDAQ,Stock,USD,1980-12-12,2026-09-25\n"
+        "META,NASDAQ,Stock,USD,2012-05-18,2026-09-25\n"
+        "BSC,NYSE,Stock,USD,1990-01-02,2008-05-30\n"
+        "BRK-B,NYSE,Stock,USD,1996-05-09,2026-09-25\n"
+    )
+    renames = tmp_path / "renames.csv"
+    renames.write_text("old_ticker,new_ticker,rename_date,note\nFB,META,2022-06-09,x\n")
+    symbols = tmp_path / "symbols.txt"
+    assert _load().main([
+        "--sp500-intervals-csv", str(intervals), "--tiingo-supported-tickers-csv", str(tiingo),
+        "--start", "2000-01-01", "--end", "2016-07-11", "--renames-csv", str(renames), "--symbols-out", str(symbols),
+    ]) == 0
+    # FB is counted as META; BSC (left the index) comes first; BRK.B is skipped.
+    assert symbols.read_text().split() == ["BSC", "META", "AAPL"]

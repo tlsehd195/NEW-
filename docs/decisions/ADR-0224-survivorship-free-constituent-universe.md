@@ -99,6 +99,24 @@ walk-forward folds each with no integrity-excluded fold. This is the
 size of the survivorship gap in every result so far, before any new
 ingestion.
 
+## Decision 3: ingest the missing members with free Tiingo
+
+The account owner chose free Tiingo over the WIKI file and paid
+Sharadar (2026-09-27). `extend_research_price_catalog.yml` downloads
+the Stage 5 catalog, picks the members of 2000..2016-07-11 that Tiingo
+lists (renames applied, names that left the index first, class-share
+tickers skipped) and that the catalog lacks
+(`scripts/sp500_catalog_extension.py missing`), and ingests them
+`--tiingo-only`, 20 symbols an hour (`scripts/ingest_symbol_batches.sh`),
+in five chained jobs. It prints per-date member coverage and publishes
+to a new release, `research-price-catalog-sp500-pit-2000`, so reports
+built on `research-price-catalog-stage5-2000` stay reproducible.
+
+The free plan caps unique symbols at 500 a month and September 2026
+already spent part of that on Stage 5. Symbols past the cap fail one by
+one; a rerun with `resume_from_run_id` in October fetches only what is
+still missing.
+
 ## Consequences
 
 - Free Tiingo alone can remove about half of the removed-name gap, and
@@ -107,6 +125,6 @@ ingestion.
 - The free quota is 500 unique symbols a month. The ~414 listed names
   not already in the Stage 5 catalog fit in one month, but not in
   September 2026, which already spent symbols on the Stage 5 ingestion.
-- Next step, pending the account owner's choice of data source: ingest
-  prices for the listed members not yet in the catalog, then run
-  `run_full_validation.yml` with `sp500_point_in_time=true`.
+- After the extended catalog is published, run `run_full_validation.yml`
+  with `price_only=true`, `sp500_point_in_time=true` against
+  `research-price-catalog-sp500-pit-2000`.
