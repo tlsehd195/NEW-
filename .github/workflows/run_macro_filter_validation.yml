@@ -24,9 +24,9 @@ on:
         type: string
         default: "2000-01-01"
       end:
-        description: "Range end (YYYY-MM-DD); must stay before TEST_2 (2020-08-28)"
+        description: "Range end (YYYY-MM-DD); must stay before TEST_3 (2016-07-11, ADR-0222)"
         type: string
-        default: "2020-08-27"
+        default: "2016-07-10"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
