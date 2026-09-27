@@ -122,6 +122,48 @@ combined filter.
 - The fallback lags make pre-2005 yields and pre-2010 VIX usable but are a
   modelling choice, not archived vintages.
 
-## Results
+## Results (run 36310412611, 2026-09-27)
 
-Not run yet.
+Report: `docs/research/reports/macro-filter-validation-20260927T094725Z.json`
+(config `macro_filter_config_v1`, 5,197 daily checkpoints 2000-01-03 to
+2020-08-27, 39 of 39 walk-forward folds valid). The unfiltered baseline
+reproduces the SPY total-return benchmark (+252.0% vs. +251.3%).
+
+**Every rule is INCONCLUSIVE.** No rule reached the DSR bar; the highest
+is 0.25. PBO over the 12 rules is 28.6%.
+
+| Rule | CAGR | Sharpe | Max DD | Days de-risked | DSR (excess) |
+|---|---|---|---|---|---|
+| no_filter | 6.28% | 0.41 | -53.9% | 0% | — |
+| combined | 5.95% | 0.43 | -47.9% | 16% | 0.02 |
+| only_sahm_rule | 7.09% | 0.51 | -36.8% | 18% | 0.22 |
+| only_rate_shock | 6.52% | 0.42 | -52.4% | 0.6% | 0.25 |
+| only_credit_widening | 6.31% | 0.43 | -49.8% | 2% | 0.10 |
+| only_vix_high | 5.63% | 0.44 | -47.3% | 20% | 0.02 |
+| only_gold_flight | 4.99% | 0.40 | -46.5% | 34% | 0.00 |
+| only_curve_10y3m_inverted | 6.01% | 0.41 | -54.1% | 10% | 0.00 |
+| only_curve_10y2y_inverted | 5.74% | 0.39 | -53.9% | 9% | 0.00 |
+| only_claims_rise | 5.29% | 0.37 | -53.9% | 4% | 0.00 |
+| only_nfci_positive | 5.94% | 0.40 | -53.9% | 0.2% | 0.00 |
+| only_dollar_squeeze | 5.78% | 0.39 | -53.9% | 0.8% | 0.00 |
+
+What the numbers say, and what they do not:
+- The combined filter cut the worst drawdown by 6 points and nudged
+  Sharpe up, but gave up 0.3 point of CAGR and beat the baseline in only
+  7 of 39 folds. It does not add return.
+- The Sahm rule alone looks best: higher CAGR, Sharpe 0.51, max drawdown
+  -37% instead of -54%. But it changed exposure only 5 times in 20 years,
+  around the 2001, 2008 and 2020 recessions, so the whole edge rests on
+  two or three events.
+  That is why its DSR is 0.22, not 0.95. It is the one lead worth
+  watching in paper trading. The research window cannot confirm it.
+- VIX and gold reduce drawdowns but cost return (sold after the fall,
+  bought back late).
+- Curve inversions, claims, NFCI and the dollar did nothing useful here.
+  NFCI, claims and the dollar were also unavailable for most of the
+  window (point-in-time data only from 2011, 2009 and 2019).
+- Known bias against every de-risking rule: cash earned 0%.
+
+Consequence: no macro rule is wired into paper trading or any strategy
+by this ADR. Changing a threshold now and re-running would be a new
+trial and must be pre-registered as `macro_filter_config_v2`.
