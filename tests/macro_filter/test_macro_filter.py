@@ -265,3 +265,16 @@ def test_strategy_halves_the_position_when_the_flag_turns_on() -> None:
 def test_baseline_buys_once_and_holds() -> None:
     result, _ = _run(BASELINE_RULE, date(2019, 2, 15))
     assert [f.side.value for f in result.fills] == ["BUY"]
+
+
+def test_sahm_rule_tolerates_one_missing_month() -> None:
+    """FRED has no UNRATE for 2025-10 (BLS skipped it during the shutdown)."""
+    from macro_filter.signals import sahm_rule_reading
+
+    months = [(date(2025 + (i // 12), i % 12 + 1, 1), 4.0) for i in range(3, 21)]
+    gapped = [(d, v) for d, v in months if d != date(2025, 10, 1)]
+    reading = sahm_rule_reading(gapped, _utc(2026, 9, 27), _CONFIG)
+    assert reading is not None and reading.active is False and reading.gap == 0.0
+    # Two missing months in one 3-month window: no reading.
+    thin = [(d, v) for d, v in gapped if d != date(2025, 11, 1)]
+    assert sahm_rule_reading(thin, _utc(2026, 9, 27), _CONFIG) is None
