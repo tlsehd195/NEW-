@@ -41,9 +41,16 @@ count as trials with Sharpe 0, so the winners are not under-deflated.
 
 For never-revised series only (`revised=False`), an observation older
 than the series' first archived vintage counts as known
-`observation_date + lag` (then the usual next-day 06:00 UTC stamp). The
-lag is the series' maximum release lag seen in the vintage era, at least
-1 day: DFF 9, DGS3MO/DGS2/DGS10 11, T10Y2Y/T10Y3M 6, BAA10Y 1, VIXCLS 1.
+`observation_date + lag` (then the usual next-day 06:00 UTC stamp). DFF,
+DGS3MO/DGS2/DGS10 and T10Y2Y/T10Y3M use the maximum release lag seen in
+the vintage era: 9, 11 and 6 days. BAA10Y and VIXCLS use 1 day. Their
+measured maxima in the merged store's coverage report (run 36309849364)
+are 166 and 9,053 days, but those come from a few old observations first
+added to the archive years late, not from the daily release: the median
+lag is 1 and 0 days. So for these two, 1 day is a judgement about the
+daily publication schedule, not the worst case in the archive. Old
+observations that ALFRED added late keep their late `realtime_start`,
+because the fallback only touches rows stamped with the first vintage.
 Revised series (UNRATE, ICSA, NFCI, DTWEXBGS) get no fallback, so claims
 start in 2009-05, NFCI in 2011-06 and the broad dollar in 2019-02; before
 that those signals are unavailable and never count as risk-off.
