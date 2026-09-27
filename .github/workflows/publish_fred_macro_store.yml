@@ -1,0 +1,89 @@
+# Builds one merged point-in-time macro store (ADR-0217) from the per-series
+# artifacts of earlier ingest_fred_macro_vintages.yml runs and publishes it
+# as macro_store.zip on a GitHub Release, which does not expire (the
+# per-series artifacts are kept for 7 days only).
+#
+# `run_ids` lists ingest runs oldest first. For each series, the part from
+# the LAST listed run that has it wins, so a later single-series re-run
+# (e.g. NFCI, run 36305920713) replaces an earlier partial part of the
+# same series (NFCI in the cancelled run 36266048908).
+#
+# workflow_dispatch-only.
+name: Publish FRED macro store (Release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_ids:
+        description: "Space-separated ingest_fred_macro_vintages.yml run ids, oldest first"
+        type: string
+        required: true
+      release_tag:
+        description: "Release to publish macro_store.zip to (created if missing)"
+        type: string
+        default: "fred-macro-vintages-v1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Download per-series parts (last run wins per series)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Inputs go through env, never ${{ }} inside run:.
+          RUN_IDS_INPUT: ${{ inputs.run_ids }}
+        run: |
+          set -euo pipefail
+          mkdir -p runs selected
+          for run_id in $RUN_IDS_INPUT; do
+            case "$run_id" in (*[!0-9]*|'') echo "bad run id: $run_id"; exit 1;; esac
+            gh run download "$run_id" --repo "${{ github.repository }}" \
+              --pattern 'fred-macro-part-*' --dir "runs/$run_id"
+            for part in runs/"$run_id"/fred-macro-part-*; do
+              name="$(basename "$part")"
+              rm -rf "selected/$name"
+              cp -r "$part" "selected/$name"
+              echo "$name <- run $run_id"
+            done
+          done
+
+      - name: Merge
+        run: |
+          set -euo pipefail
+          python3 scripts/merge_macro_stores.py \
+            --out-db-path macro-store --summary-json macro_coverage.json selected/*/
+          cat macro_coverage.json
+          (cd macro-store && zip -q ../macro_store.zip catalog.duckdb)
+
+      - name: Publish to the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          RUN_IDS_INPUT: ${{ inputs.run_ids }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG_INPUT" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG_INPUT" --repo "${{ github.repository }}" \
+              --title "FRED macro vintages (ALFRED point-in-time, ADR-0217)" \
+              --notes "Merged from ingest_fred_macro_vintages.yml runs: $RUN_IDS_INPUT"
+          fi
+          gh release upload "$RELEASE_TAG_INPUT" macro_store.zip macro_coverage.json \
+            --repo "${{ github.repository }}" --clobber

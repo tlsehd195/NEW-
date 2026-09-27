@@ -222,6 +222,32 @@ class FredMacroProvider:
                 progress(f"{series_id}: window {i}/{len(windows)} {realtime_start}..{realtime_end}: {len(window_rows)} rows")
         return _merge_window_splits(rows)
 
+    def fetch_series_first_releases(
+        self, series_id: str, start: date, end: date, *, progress: Optional[Callable[[str], None]] = None,
+    ) -> list[FredVintageObservation]:
+        """Only the first print of each observation (ALFRED
+        `output_type=4`, "initial release only"), each with the
+        `realtime_start` it was first published on. `realtime_end` is
+        dropped (stored as `None`): the store then holds one vintage per
+        observation, so a point-in-time read returns the first print
+        forever, never a later revision -- stale but never look-ahead.
+        FRED's documentation does not spell out this response's shape;
+        a row without `realtime_start` fails loudly rather than being
+        stamped with a guessed date."""
+        if end < start:
+            raise ValueError(f"end ({end}) must not be before start ({start})")
+        api_key = resolve_api_key(self._config)
+        rows = self._fetch_vintage_window(
+            series_id, api_key, start, end, ALFRED_REALTIME_START, ALFRED_REALTIME_END,
+            datetime.now(timezone.utc), output_type="4",
+        )
+        if progress is not None:
+            progress(f"{series_id}: {len(rows)} first-release rows")
+        return [
+            FredVintageObservation(r.series_id, r.observation_date, r.value, r.realtime_start, None, r.retrieved_at)
+            for r in rows
+        ]
+
     def _fetch_vintage_dates(self, series_id: str, api_key: str) -> list[date]:
         dates: list[date] = []
         offset = 0
@@ -246,7 +272,7 @@ class FredMacroProvider:
 
     def _fetch_vintage_window(
         self, series_id: str, api_key: str, start: date, end: date,
-        realtime_start: str, realtime_end: str, retrieved_at: datetime,
+        realtime_start: str, realtime_end: str, retrieved_at: datetime, output_type: str = "1",
     ) -> list[FredVintageObservation]:
         rows: list[FredVintageObservation] = []
         offset = 0
@@ -261,6 +287,7 @@ class FredMacroProvider:
                 timeout=self._config.vintage_timeout_seconds,
                 realtime_start=realtime_start,
                 realtime_end=realtime_end,
+                output_type=output_type,
             )
             body = response.body
             if not isinstance(body, dict) or not isinstance(body.get("observations"), list):

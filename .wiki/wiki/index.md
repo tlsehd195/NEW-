@@ -21,6 +21,7 @@
 - [notifications](entities/notifications.md) — #module #notifications
 - [ml](entities/ml.md) — #module #ml #research
 - [strategy_research](entities/strategy-research.md) — #module #phase-23 #strategy #research
+- [macro-filter](entities/macro-filter.md) — #module #macro #point-in-time
 
 ## Concepts
 

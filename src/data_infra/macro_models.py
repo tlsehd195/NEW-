@@ -58,6 +58,11 @@ class MacroSeriesSpec:
     description: str
     frequency: str  # FRED's own frequency label: "D", "W", "M"
     revised: bool  # True when the published values are routinely revised after release
+    # Store only each observation's first print (ALFRED output_type=4)
+    # instead of every vintage: for series whose whole history is
+    # re-estimated at every release (NFCI), the all-vintages download is
+    # too large to finish (run 36266048908 was cancelled after ~1 hour).
+    first_release_only: bool = False
 
 
 # The first-stage macro-filter series (ADR-0217). Chosen for long daily/
@@ -93,7 +98,7 @@ MACRO_SERIES_CATALOG: tuple[MacroSeriesSpec, ...] = (
     MacroSeriesSpec("VIXCLS", MacroCategory.VOLATILITY, "CBOE VIX close", "D", False),
     # Coinbase BTC-USD, daily incl. weekends, from 2014-12-01 only.
     MacroSeriesSpec("CBBTCUSD", MacroCategory.CRYPTO, "Coinbase Bitcoin price (USD)", "D", False),
-    MacroSeriesSpec("NFCI", MacroCategory.FINANCIAL_CONDITIONS, "Chicago Fed National Financial Conditions Index", "W", True),
+    MacroSeriesSpec("NFCI", MacroCategory.FINANCIAL_CONDITIONS, "Chicago Fed National Financial Conditions Index", "W", True, first_release_only=True),
 )
 
 MACRO_SERIES_BY_ID: dict[str, MacroSeriesSpec] = {spec.series_id: spec for spec in MACRO_SERIES_CATALOG}

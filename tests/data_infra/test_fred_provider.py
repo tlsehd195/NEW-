@@ -118,9 +118,11 @@ class _StubVintageTransport:
 
     def get_series_vintage_observations(
         self, *, series_id, api_key, observation_start, observation_end, offset, limit, timeout,
-        realtime_start, realtime_end,
+        realtime_start, realtime_end, output_type="1",
     ):
-        self.calls.append({"offset": offset, "realtime_start": realtime_start, "realtime_end": realtime_end})
+        self.calls.append({
+            "offset": offset, "realtime_start": realtime_start, "realtime_end": realtime_end, "output_type": output_type,
+        })
         key = (realtime_start, realtime_end) if (realtime_start, realtime_end) in self._pages else None
         return FredTransportResponse(status_code=200, body=self._pages[key].pop(0))
 
@@ -192,3 +194,24 @@ class TestFetchSeriesVintages:
         transport = _StubVintageTransport([{"count": 1, "observations": [{"date": "2024-01-02", "value": "1"}]}])
         with pytest.raises(PermanentProviderError):
             FredMacroProvider(FredConfig(), transport).fetch_series_vintages("VIXCLS", date(2024, 1, 1), date(2024, 1, 31))
+
+
+class TestFetchSeriesFirstReleases:
+    def test_requests_initial_release_only_and_drops_realtime_end(self, monkeypatch) -> None:
+        monkeypatch.setenv("FRED_API_KEY", "test-key")
+        transport = _StubVintageTransport([
+            {"count": 1, "observations": [_vintage_row("2024-01-05", "-0.5", "2024-01-10", "2024-01-16")]},
+        ])
+        rows = FredMacroProvider(FredConfig(), transport).fetch_series_first_releases(
+            "NFCI", date(2024, 1, 1), date(2024, 1, 31)
+        )
+        assert transport.calls[0]["output_type"] == "4"
+        assert [(r.value, r.realtime_start, r.realtime_end) for r in rows] == [(-0.5, date(2024, 1, 10), None)]
+
+    def test_row_without_realtime_start_fails_loudly(self, monkeypatch) -> None:
+        monkeypatch.setenv("FRED_API_KEY", "test-key")
+        transport = _StubVintageTransport([{"count": 1, "observations": [{"date": "2024-01-05", "value": "-0.5"}]}])
+        with pytest.raises(PermanentProviderError):
+            FredMacroProvider(FredConfig(), transport).fetch_series_first_releases(
+                "NFCI", date(2024, 1, 1), date(2024, 1, 31)
+            )

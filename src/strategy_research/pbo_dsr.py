@@ -230,6 +230,8 @@ class DsrResult:
 
 def compute_dsr_for_all_candidates(
     fold_returns_by_candidate: Mapping[str, Sequence[float]],
+    *,
+    zero_sharpe_trials: int = 0,
 ) -> dict[str, DsrResult]:
     """Computes the Deflated Sharpe Ratio for every candidate in one
     call, since DSR for any one candidate requires the OTHER
@@ -246,7 +248,13 @@ def compute_dsr_for_all_candidates(
     definition throughout this module rather than mixing it with, say,
     the held-out single-TEST-window Sharpe already in the report --
     that would compare a multi-fold statistic to a single-window one
-    inside the same formula, which the papers do not define."""
+    inside the same formula, which the papers do not define.
+
+    `zero_sharpe_trials` (ADR-0220): extra trials that were evaluated but
+    whose return series is identically zero (e.g. a filter that never
+    fired, measured as excess over its baseline). Their Sharpe is 0; they
+    still count toward the trial count and the spread of trial Sharpes,
+    so leaving them out would under-deflate the winners."""
     names = tuple(sorted(fold_returns_by_candidate))
     if len(names) < 1:
         raise ValueError("need at least 1 candidate")
@@ -272,8 +280,10 @@ def compute_dsr_for_all_candidates(
             )
         observed_sharpe[name] = statistics.mean(returns) / stdev
 
-    num_trials = len(names)
-    sharpe_values = list(observed_sharpe.values())
+    if zero_sharpe_trials < 0:
+        raise ValueError("zero_sharpe_trials must be >= 0")
+    num_trials = len(names) + zero_sharpe_trials
+    sharpe_values = list(observed_sharpe.values()) + [0.0] * zero_sharpe_trials
     variance_of_trial_sharpes = statistics.pvariance(sharpe_values) if num_trials > 1 else 0.0
 
     if num_trials <= 1 or variance_of_trial_sharpes <= 0:
