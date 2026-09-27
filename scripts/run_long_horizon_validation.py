@@ -214,6 +214,13 @@ from strategy_research.risk_controlled_momentum import (  # noqa: E402
 from strategy_research.runner import run_gross_and_net  # noqa: E402
 from strategy_research.split_adjusted_institutional_holdings import SplitAdjustedInstitutionalHoldingRepository  # noqa: E402
 from strategy_research.splits import build_chronological_split  # noqa: E402
+from strategy_research.unseen_exam import (  # noqa: E402
+    EXAM_REPORT_KEY,
+    exam_already_taken,
+    exam_verdict,
+    locked_window_by_name,
+    seen_symbols,
+)
 from strategy_research.trend_volatility import TrendVolatilityParameters, TrendVolatilityStrategy  # noqa: E402
 from strategy_research.walk_forward_evaluation import run_walk_forward_evaluation  # noqa: E402
 
@@ -583,6 +590,63 @@ def _aggregate_dict(aggregate) -> dict:
 
 
 _DEFAULT_TICKER_RENAMES_CSV = Path(__file__).resolve().parent.parent / "docs" / "research" / "reference" / "sp500_ticker_renames.csv"
+_DEFAULT_REPORTS_DIR = Path(__file__).resolve().parent.parent / "docs" / "research" / "reports"
+
+
+def _run_unseen_names_exam(
+    repository, strategy_specs, security_ids, exam: dict, *, start, end, initial_capital,
+    benchmark_id, point_in_time_universe,
+) -> dict:
+    """ADR-0225: one gross/net backtest per pre-registered candidate and the
+    same-names buy_and_hold over the whole window, no walk-forward, no
+    tuning. A candidate PASSes only by beating that buy_and_hold on both
+    net CAGR and net Sharpe; an integrity-invalid run on either side is
+    INVALID. SPY (benchmark_id) is context only."""
+    results = {}
+    for name, hypothesis, factory in strategy_specs:
+        print(f"Examining: {name} ...", flush=True)
+        result = run_gross_and_net(
+            repository, factory, security_ids, start_date=start.date(), end_date=end.date(),
+            initial_capital=initial_capital, benchmark_id=benchmark_id,
+            point_in_time_universe=point_in_time_universe,
+        )
+        results[name] = {
+            "hypothesis": hypothesis,
+            "is_valid_performance": result.net.is_valid_performance,
+            "gross": _perf_dict(result.gross.performance),
+            "net": _perf_dict(result.net.performance),
+            "num_trades_net": len(result.net.fills),
+        }
+        net = results[name]["net"]
+        print(f"  net cagr={net['cagr']:+.2%} sharpe={net['sharpe_ratio']:.2f} trades={results[name]['num_trades_net']}")
+    baseline = results["buy_and_hold"]
+    verdicts = {}
+    for name in exam["candidates"]:
+        candidate = results[name]
+        if not (candidate["is_valid_performance"] and baseline["is_valid_performance"]):
+            verdicts[name] = "INVALID"
+        else:
+            verdicts[name] = exam_verdict(candidate["net"], baseline["net"])
+    return {
+        "note": (
+            "ADR-0225 unseen-names exam: a locked window re-used once, over S&P 500 members never "
+            "evaluated there. The market's path in this window is already known, so a PASS is a "
+            "half-new result, not a DSR-backed validation, and must not be used to tune anything."
+        ),
+        "universe": point_in_time_universe,
+        "security_ids": security_ids,
+        "overall_start": start.isoformat(),
+        "overall_end": end.isoformat(),
+        "initial_capital": initial_capital,
+        "benchmark_id": benchmark_id,
+        EXAM_REPORT_KEY: {
+            **exam,
+            "baseline": "buy_and_hold",
+            "verdict_rule": "PASS iff net cagr and net sharpe_ratio both exceed the same-names buy_and_hold",
+            "verdicts": verdicts,
+        },
+        "results": results,
+    }
 
 
 def main() -> int:
@@ -695,6 +759,24 @@ def main() -> int:
             "Run the held-out TEST once, for a short list of finalists."
         ),
     )
+    parser.add_argument(
+        "--unseen-names-exam", default=None, metavar="WINDOW",
+        help=(
+            "ADR-0225: sit the one-time half-new exam on this locked window (e.g. TEST-3). "
+            "--start/--end are replaced by the window's bounds, the universe is the window's "
+            "S&P 500 members with prices minus every name already evaluated over it, and only "
+            "--exam-candidates plus the same-names buy_and_hold run, once, with no walk-forward. "
+            "Requires --sp500-history-csv. Refused if --reports-dir already holds this window's exam."
+        ),
+    )
+    parser.add_argument(
+        "--exam-candidates", default=None,
+        help="Comma-separated candidate names to examine, fixed before the exam (ADR-0225)",
+    )
+    parser.add_argument(
+        "--reports-dir", type=Path, default=_DEFAULT_REPORTS_DIR,
+        help="Committed reports that define which names were already seen (ADR-0225)",
+    )
     parser.add_argument("--report-out", type=Path, default=None)
     parser.add_argument(
         "--data-status", choices=("REAL", "SYNTHETIC"), required=True,
@@ -738,8 +820,31 @@ def main() -> int:
         print("ERROR: --sp500-history-csv cannot be combined with --point-in-time-universe-as-of.", file=sys.stderr)
         return 1
 
+    # ADR-0225: the exam is the one sanctioned use of a locked window. It
+    # is taken at most once, on the window's exact bounds, over names never
+    # evaluated there; everything else stays refused below.
+    exam_window = None
+    if args.unseen_names_exam is not None:
+        if args.sp500_history_csv is None or not args.exam_candidates:
+            print("ERROR: --unseen-names-exam needs --sp500-history-csv and --exam-candidates.", file=sys.stderr)
+            return 1
+        try:
+            exam_window = locked_window_by_name(args.unseen_names_exam)
+        except KeyError as exc:
+            print(f"ERROR: {exc.args[0]}", file=sys.stderr)
+            return 1
+        taken = exam_already_taken(exam_window, args.reports_dir)
+        if taken is not None:
+            print(f"ERROR: the {exam_window.name} unseen-names exam was already taken ({taken}). "
+                  "Each window's exam runs once (ADR-0225).", file=sys.stderr)
+            return 1
+        if args.skip_held_out:
+            print("ERROR: --skip-held-out makes no sense with --unseen-names-exam.", file=sys.stderr)
+            return 1
+        args.start, args.end = exam_window.start, exam_window.end
+
     locked = overlaps_any_locked_window(args.start, args.end)
-    if locked:
+    if locked and exam_window is None:
         names = ", ".join(w.name for w in locked)
         print(
             f"ERROR: requested range [{args.start.date()}, {args.end.date()}] overlaps LOCKED "
@@ -806,10 +911,10 @@ def main() -> int:
     repository = DuckDBDataRepository(engine, calendars={"US_EQUITY": build_xnys_calendar()})
     point_in_time_sp500 = None
     dynamic_universe_name = None
+    unseen_names_exam = None
     if args.sp500_history_csv is not None:
-        sp500_intervals = apply_ticker_renames(
-            parse_ticker_intervals(args.sp500_history_csv), parse_ticker_renames(args.sp500_ticker_renames_csv),
-        )
+        ticker_renames = parse_ticker_renames(args.sp500_ticker_renames_csv)
+        sp500_intervals = apply_ticker_renames(parse_ticker_intervals(args.sp500_history_csv), ticker_renames)
         for membership in build_sp500_index_universe_memberships(sp500_intervals):
             repository.add_universe_membership(membership)
         security_ids, point_in_time_sp500 = point_in_time_members_with_prices(
@@ -820,6 +925,21 @@ def main() -> int:
             return 1
         dynamic_universe_name = SP500_INDEX_HISTORICAL_UNIVERSE_NAME
         print(f"S&P 500 point-in-time universe: {json.dumps(point_in_time_sp500['summary'])}", flush=True)
+        if exam_window is not None:
+            seen = seen_symbols(exam_window, args.reports_dir, ticker_renames)
+            excluded = sorted(set(security_ids) & seen)
+            security_ids = [sid for sid in security_ids if sid not in seen]
+            if not security_ids:
+                print(f"ERROR: every priced {exam_window.name} member was already evaluated there.", file=sys.stderr)
+                return 1
+            unseen_names_exam = {
+                "window": exam_window.name,
+                "window_start": exam_window.start.isoformat(), "window_end": exam_window.end.isoformat(),
+                "exam_names": len(security_ids),
+                "seen_names_excluded": excluded,
+            }
+            print(f"{exam_window.name} unseen-names exam: {len(security_ids)} unseen names, "
+                  f"{len(excluded)} already-seen members excluded", flush=True)
     fundamentals_engine = None
     fundamentals_repository = None
     if args.fundamentals_db_path is not None:
@@ -1127,6 +1247,15 @@ def main() -> int:
                     _fundamentals_factor_factory(security_ids, institutional_filer_repository, score_fn, f"{name}_v1"),
                 ))
 
+        if unseen_names_exam is not None:
+            wanted = {name.strip() for name in args.exam_candidates.split(",") if name.strip()} - {"buy_and_hold"}
+            unknown = sorted(wanted - {name for name, _, _ in strategy_specs})
+            if not wanted or unknown:
+                print(f"ERROR: --exam-candidates names no candidate this run builds: {unknown or '(empty)'}", file=sys.stderr)
+                return 1
+            strategy_specs = [spec for spec in strategy_specs if spec[0] == "buy_and_hold" or spec[0] in wanted]
+            unseen_names_exam["candidates"] = sorted(wanted)
+
         # experiment_id: deterministic from caller-supplied run
         # configuration only (never datetime.now()/utcnow() -- rule
         # 0-11) -- the SAME configuration run twice always yields the
@@ -1159,6 +1288,7 @@ def main() -> int:
                     args.point_in_time_universe_as_of.isoformat() if point_in_time_universe_used else None
                 ),
                 **({"sp500_point_in_time": True} if args.sp500_history_csv is not None else {}),
+                **({"unseen_names_exam": exam_window.name} if exam_window is not None else {}),
                 "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
                 "train_fraction": args.train_fraction, "validation_fraction": args.validation_fraction,
                 "train_window_months": args.train_window_months, "test_window_months": args.test_window_months,
@@ -1198,6 +1328,26 @@ def main() -> int:
                 "candidate_names": sorted(name for name, _, _ in strategy_specs),
             }
         )[:16]
+
+        if unseen_names_exam is not None:
+            report = _run_unseen_names_exam(
+                repository, strategy_specs, security_ids, unseen_names_exam,
+                start=args.start, end=args.end, initial_capital=args.initial_capital,
+                benchmark_id=benchmark_id, point_in_time_universe=dynamic_universe_name,
+            )
+            report.update({
+                "data_status": args.data_status, "experiment_id": experiment_id, "data_version": data_version,
+                "point_in_time_sp500": point_in_time_sp500,
+                "benchmark_status": (
+                    ("REAL" if is_real_data else "SYNTHETIC") + "_TOTAL_RETURN"
+                    if benchmark_id else "BENCHMARK_UNAVAILABLE"
+                ),
+            })
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps(report, indent=2, default=str))
+            print(f"\nExam verdicts: {json.dumps(report[EXAM_REPORT_KEY]['verdicts'])}")
+            print(f"Full report written to: {report_path}")
+            return 0
 
         report = {
             "note": (

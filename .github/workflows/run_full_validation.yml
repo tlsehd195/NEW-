@@ -70,6 +70,14 @@ on:
         description: "Survivorship-free universe (ADR-0224): every S&P 500 member in the window that the catalog has prices for, each date seeing only that date's members. Overrides universe"
         type: boolean
         default: false
+      unseen_names_exam:
+        description: "ADR-0225 one-time exam on a locked window (TEST-1/TEST-2/TEST-3) over never-evaluated S&P 500 names. Ignores start/end/final_exam; needs exam_candidates. Leave empty for a normal run"
+        type: string
+        default: ""
+      exam_candidates:
+        description: "Comma-separated finalists for unseen_names_exam, fixed before the run (ADR-0225)"
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -208,10 +216,20 @@ jobs:
           END_INPUT: ${{ inputs.end }}
           FINAL_EXAM_INPUT: ${{ inputs.final_exam }}
           SP500_PIT_INPUT: ${{ inputs.sp500_point_in_time }}
+          EXAM_WINDOW_INPUT: ${{ inputs.unseen_names_exam }}
+          EXAM_CANDIDATES_INPUT: ${{ inputs.exam_candidates }}
         run: |
           set -euo pipefail
           HELD_OUT_FLAG="--skip-held-out"
           if [ "$FINAL_EXAM_INPUT" = "true" ]; then HELD_OUT_FLAG=""; fi
+          EXAM_ARGS=()
+          if [ -n "$EXAM_WINDOW_INPUT" ]; then
+            # ADR-0225: the exam needs the point-in-time universe, runs no
+            # walk-forward, and the script pins start/end to the window.
+            HELD_OUT_FLAG=""
+            SP500_PIT_INPUT=true
+            EXAM_ARGS=(--unseen-names-exam "$EXAM_WINDOW_INPUT" --exam-candidates "$EXAM_CANDIDATES_INPUT")
+          fi
           SP500_FLAG=""
           if [ "$SP500_PIT_INPUT" = "true" ]; then
             curl -fsSL -o ./data/sp500_ticker_start_end.csv \
@@ -227,6 +245,7 @@ jobs:
             $INSTITUTIONAL_FLAG \
             $HELD_OUT_FLAG \
             $SP500_FLAG \
+            "${EXAM_ARGS[@]}" \
             --data-status REAL \
             --report-out ./validation_report.json
 
