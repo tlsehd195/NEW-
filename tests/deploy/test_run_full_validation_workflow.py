@@ -167,3 +167,9 @@ def test_price_only_downloads_only_the_price_catalog_and_skips_every_other_catal
     assert any("fundamentals" in name for name in skipped)
     assert any("insider" in name for name in skipped)
     assert any("institutional" in name for name in skipped)
+
+
+def test_report_commit_rebases_onto_the_moved_branch_before_pushing():
+    # A plain push failed twice when main moved during the run (ADR-0220).
+    step = next(s for s in _steps() if s.get("name", "").startswith("Commit the report"))
+    assert 'git pull --rebase origin "$GITHUB_REF_NAME" && git push' in step["run"]
