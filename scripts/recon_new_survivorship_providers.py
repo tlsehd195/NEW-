@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""One-shot reconnaissance: do Finnhub's and SiftingIO's real free-tier
-APIs return usable historical daily OHLCV for a DELISTED/bankrupt US
-stock, and how far back does the history actually go?
+"""One-shot reconnaissance: do Finnhub's, SiftingIO's, and Quotient's
+(RapidAPI) real free-tier APIs return usable historical daily OHLCV for
+a DELISTED/bankrupt US stock, and how far back does the history
+actually go?
 
 Context (2026-09-27): the account owner independently researched these
 as Tiingo-alternative candidates for the survivorship-bias price
@@ -24,8 +25,17 @@ Makes real network calls -- meant to run where egress is NOT blocked
 (this project's GitHub Actions runners), same caveat every other
 recon_*.py script in this directory documents.
 
+Quotient's real endpoint (`GET /equity/daily?symbol=...&from=...&to=...
+&adjust=...`, host `quotient.p.rapidapi.com`, auth via
+`x-rapidapi-key`/`x-rapidapi-host` headers) was obtained from the
+account owner's own RapidAPI console (2026-09-27) after the public
+RapidAPI page itself could not be read reliably in this session
+(JS-rendered) -- the account owner also pasted a real key into the
+project chat by mistake while getting this, which they were told to
+regenerate; this script only ever reads it from the environment.
+
 Usage:
-    FINNHUB_API_KEY=... SIFTINGIO_API_KEY=... \\
+    FINNHUB_API_KEY=... SIFTINGIO_API_KEY=... QUOTIENT_API_KEY=... \\
         python3 scripts/recon_new_survivorship_providers.py
 """
 
@@ -131,6 +141,18 @@ def _run_siftingio(api_key: str) -> None:
         time.sleep(1.1)
 
 
+def _run_quotient(api_key: str) -> None:
+    headers = {"x-rapidapi-key": api_key, "x-rapidapi-host": "quotient.p.rapidapi.com"}
+    for label, symbol in (("Quotient equity/daily (LEH, bankrupt, 2007-2008)", _BANKRUPT_SYMBOL), ("Quotient equity/daily (AAPL, control, 2007-2008)", _CONTROL_SYMBOL)):
+        url = f"https://quotient.p.rapidapi.com/equity/daily?symbol={symbol}&from={_OLD_START}&to={_OLD_END}&adjust=false"
+        print(f"=== {label} ===")
+        status, body = _fetch(url, headers=headers)
+        print(f"status: {status}")
+        print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
+        print()
+        time.sleep(1.1)
+
+
 def main() -> int:
     finnhub_key = os.environ.get("FINNHUB_API_KEY")
     if finnhub_key:
@@ -143,6 +165,12 @@ def main() -> int:
         _run_siftingio(siftingio_key)
     else:
         print("=== SIFTINGIO_API_KEY not set -- skipping ===\n")
+
+    quotient_key = os.environ.get("QUOTIENT_API_KEY")
+    if quotient_key:
+        _run_quotient(quotient_key)
+    else:
+        print("=== QUOTIENT_API_KEY not set -- skipping ===\n")
 
     return 0
 
