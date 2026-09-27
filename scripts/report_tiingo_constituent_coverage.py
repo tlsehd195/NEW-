@@ -35,7 +35,11 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from data_infra.providers.sp500_index_constituent_history import parse_ticker_intervals  # noqa: E402
+from data_infra.providers.sp500_index_constituent_history import (  # noqa: E402
+    apply_ticker_renames,
+    parse_ticker_intervals,
+    parse_ticker_renames,
+)
 
 _STOCK_TYPES = {"stock"}
 
@@ -120,12 +124,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", type=_parse_date, required=True)
     parser.add_argument("--end", type=_parse_date, required=True)
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--renames-csv", type=Path, default=None,
+        help="docs/research/reference/sp500_ticker_renames.csv: count a renamed member under the ticker Tiingo keeps its history under",
+    )
+    parser.add_argument(
+        "--symbols-out", type=Path, default=None,
+        help="Write the listed members, one per line, no-longer-members first (ADR-0224 ingestion order)",
+    )
     args = parser.parse_args(argv)
 
     intervals = parse_ticker_intervals(args.sp500_intervals_csv)
+    if args.renames_csv is not None:
+        intervals = apply_ticker_renames(intervals, parse_ticker_renames(args.renames_csv))
     report = coverage(intervals, load_tiingo_listings(args.tiingo_supported_tickers_csv), args.start, args.end)
     if args.output:
         args.output.write_text(json.dumps(report, indent=2))
+    if args.symbols_out:
+        # Names that left the index first: they are the survivorship gap,
+        # so they get the quota if it runs out. Class-share tickers
+        # ("BRK.B") are left out; Tiingo spells them differently from the
+        # catalog's security_id.
+        listed = [r for r in report["rows"] if r["listed"] and "." not in r["ticker"]]
+        ordered = [r["ticker"] for r in listed if not r["still_member"]] + [r["ticker"] for r in listed if r["still_member"]]
+        args.symbols_out.write_text("".join(f"{t}\n" for t in ordered))
     print("not listed:", " ".join(report["not_listed"]))
     print("rename candidates:", " ".join(f"{c['old']}->{c['new']}@{c['date']}" for c in report["rename_candidates"]))
     print(json.dumps({k: v for k, v in report.items() if k not in ("rows", "not_listed", "rename_candidates")}, indent=2))

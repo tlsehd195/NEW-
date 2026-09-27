@@ -1,0 +1,280 @@
+# Adds the historical S&P 500 members that Tiingo carries but the Stage 5
+# price catalog lacks (ADR-0224), and publishes the result as a NEW
+# release, so earlier reports stay reproducible against their catalog.
+#
+# 1. Downloads the source release's price_catalog.zip, fja05680/sp500
+#    and Tiingo's supported_tickers.zip (the last two cost no API quota).
+# 2. Picks listed members of [member_start, member_end] (renames applied,
+#    names that left the index first) that have no bars in the catalog.
+# 3. Ingests them --tiingo-only in batches of BATCH_SIZE symbols, one
+#    batch per hour (2 requests a symbol, under Tiingo's 50/hour), as
+#    five chained jobs of up to five batches each (GitHub's 6-hour job
+#    limit). 25 batches cover 500 symbols; resume_from_run_id continues a
+#    run that stopped or ran into the monthly cap.
+# 4. Prints per-date member coverage and publishes price_catalog.zip.
+#
+# Tiingo's free plan allows 500 unique symbols a month. Symbols past the
+# cap fail one by one; rerun with resume_from_run_id the next month and
+# --skip-symbols-with-bars fetches only what is still missing.
+# Quota is shared with paper_trading_cycle.yml (22:00 UTC Mon-Fri).
+#
+# workflow_dispatch-only -- a real, long, quota-consuming run.
+name: Extend research price catalog (historical S&P 500 members)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_release_tag:
+        description: "Release whose price_catalog.zip to extend"
+        type: string
+        default: "research-price-catalog-stage5-2000"
+      release_tag:
+        description: "Release to publish the extended price_catalog.zip to (created if missing)"
+        type: string
+        default: "research-price-catalog-sp500-pit-2000"
+      start:
+        description: "Price history start (YYYY-MM-DD)"
+        type: string
+        default: "2000-01-01"
+      end:
+        description: "Price history end / available_time (YYYY-MM-DD); keep the source catalog's end"
+        type: string
+        default: "2026-09-25"
+      member_end:
+        description: "Pick members up to this date (default: the first locked window's start, ADR-0222)"
+        type: string
+        default: "2016-07-11"
+      resume_from_run_id:
+        description: "Optional: id of an earlier run of this workflow whose sp500-extended-catalog-partial artifact to continue"
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BATCH_SIZE: "20"
+  BATCH_SLEEP_SECONDS: "3660"
+  TIINGO_TIMEOUT_SECONDS: "60"
+  CATALOG_DIR: data/research_price_catalog
+  SYMBOLS_FILE: data/research_price_catalog/extend_symbols.txt
+  ARTIFACT_NAME: sp500-extended-catalog-partial
+
+jobs:
+  part-1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: pip install -e '.[market-calendars]'
+      - name: Resume from an earlier run's catalog (optional)
+        if: ${{ inputs.resume_from_run_id != '' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+          run-id: ${{ inputs.resume_from_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download the source catalog (fresh run only)
+        if: ${{ inputs.resume_from_run_id == '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RELEASE_INPUT: ${{ inputs.source_release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$CATALOG_DIR"
+          gh release download "$SOURCE_RELEASE_INPUT" --repo "${{ github.repository }}" \
+            --pattern "price_catalog.zip" --dir ./data --clobber
+          unzip -q ./data/price_catalog.zip -d "$CATALOG_DIR"
+          test -f "$CATALOG_DIR/catalog.duckdb"
+      - name: Pick the members to fetch
+        env:
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+          MEMBER_END_INPUT: ${{ inputs.member_end }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o sp500_ticker_start_end.csv https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv
+          curl -fsSL -o supported_tickers.zip https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip
+          unzip -o -q supported_tickers.zip
+          python3 scripts/report_tiingo_constituent_coverage.py \
+            --sp500-intervals-csv sp500_ticker_start_end.csv \
+            --tiingo-supported-tickers-csv supported_tickers.csv \
+            --renames-csv docs/research/reference/sp500_ticker_renames.csv \
+            --start "$START_INPUT" --end "$MEMBER_END_INPUT" \
+            --symbols-out listed_symbols.txt
+          python3 scripts/sp500_catalog_extension.py missing \
+            --db-path "$CATALOG_DIR" --symbols-file listed_symbols.txt --out "$SYMBOLS_FILE" \
+            --start "$START_INPUT" --end "$END_INPUT"
+          cp sp500_ticker_start_end.csv "$CATALOG_DIR/sp500_ticker_start_end.csv"
+      - name: Ingest batches 0-4 (one per hour)
+        env:
+          MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+        run: bash scripts/ingest_symbol_batches.sh 0 4 no-initial-sleep
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: always()
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+          retention-days: 14
+          overwrite: true
+          if-no-files-found: error
+
+  part-2:
+    needs: part-1
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: pip install -e '.[market-calendars]'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+      - name: Ingest batches 5-9 (one per hour)
+        env:
+          MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+        run: bash scripts/ingest_symbol_batches.sh 5 9 initial-sleep
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: always()
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+          retention-days: 14
+          overwrite: true
+          if-no-files-found: error
+
+  part-3:
+    needs: part-2
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: pip install -e '.[market-calendars]'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+      - name: Ingest batches 10-14 (one per hour)
+        env:
+          MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+        run: bash scripts/ingest_symbol_batches.sh 10 14 initial-sleep
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: always()
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+          retention-days: 14
+          overwrite: true
+          if-no-files-found: error
+
+  part-4:
+    needs: part-3
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: pip install -e '.[market-calendars]'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+      - name: Ingest batches 15-19 (one per hour)
+        env:
+          MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+        run: bash scripts/ingest_symbol_batches.sh 15 19 initial-sleep
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: always()
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+          retention-days: 14
+          overwrite: true
+          if-no-files-found: error
+
+  part-5:
+    needs: part-4
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    permissions:
+      contents: write  # gh release create/upload only
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: pip install -e '.[market-calendars]'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+      - name: Ingest batches 20-24 (one per hour)
+        env:
+          MARKET_DATA_API_KEY: ${{ secrets.MARKET_DATA_API_KEY }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+        run: bash scripts/ingest_symbol_batches.sh 20 24 initial-sleep
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: always()
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.CATALOG_DIR }}
+          retention-days: 14
+          overwrite: true
+          if-no-files-found: error
+      - name: Member coverage by year
+        env:
+          START_INPUT: ${{ inputs.start }}
+          MEMBER_END_INPUT: ${{ inputs.member_end }}
+        run: |
+          python3 scripts/sp500_catalog_extension.py coverage \
+            --db-path "$CATALOG_DIR" --sp500-intervals-csv "$CATALOG_DIR/sp500_ticker_start_end.csv" \
+            --renames-csv docs/research/reference/sp500_ticker_renames.csv \
+            --start "$START_INPUT" --end "$MEMBER_END_INPUT"
+      - name: Publish price_catalog.zip to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          SOURCE_RELEASE_INPUT: ${{ inputs.source_release_tag }}
+          START_INPUT: ${{ inputs.start }}
+          END_INPUT: ${{ inputs.end }}
+        run: |
+          set -euo pipefail
+          (cd "$CATALOG_DIR" && zip -q -r ../../price_catalog.zip .)
+          if ! gh release view "$RELEASE_TAG_INPUT" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG_INPUT" --repo "${{ github.repository }}" \
+              --title "Research price catalog (Stage 5 + historical S&P 500 members, $START_INPUT..$END_INPUT)" \
+              --notes "Published by extend_research_price_catalog.yml (ADR-0224): $SOURCE_RELEASE_INPUT plus the historical S&P 500 members Tiingo lists. Run run_full_validation.yml with price_only=true and sp500_point_in_time=true against this tag."
+          fi
+          gh release upload "$RELEASE_TAG_INPUT" ./price_catalog.zip --repo "${{ github.repository }}" --clobber
