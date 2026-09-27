@@ -140,8 +140,12 @@ month for monthly series.) What this means for the research window
 | BAA10Y | 2014-01-27 | 6280 | 1 day | 0.14% |
 | CBBTCUSD | 2018-06-17 | 1295 | 0 / 2 days | 10.5% |
 
-NFCI (weekly, full history re-estimated every week) was still ingesting
-after 35 minutes and is recorded separately once it finishes.
+NFCI did not finish: the run was cancelled after about an hour while it
+was still downloading. The Chicago Fed re-estimates its whole history
+every week, so the all-vintages response is far larger than any other
+series. Next step for NFCI only: request `output_type=4` (initial
+release of each observation), which is point-in-time by construction and
+small, and use first prints for the signal.
 
 What this settles for the open question below: the daily market series
 are effectively never revised (≤0.14% of observations, BTC aside), but
