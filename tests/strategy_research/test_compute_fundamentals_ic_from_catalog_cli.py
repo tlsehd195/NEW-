@@ -107,7 +107,7 @@ class TestTest1Refusal:
 
 class TestEndToEndAgainstSyntheticCatalogs:
     def test_computes_an_ic_summary_against_real_universe_symbols(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         strong_closes = [100.0 * (1.0008**i) for i in range(len(days))]
         weak_closes = [100.0 * (0.9995**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
@@ -122,10 +122,10 @@ class TestEndToEndAgainstSyntheticCatalogs:
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
         for security_id, (income, equity) in {symbols[0]: (30.0, 100.0), symbols[1]: (3.0, 100.0)}.items():
             fundamentals_repo.add_fundamental(
-                _fy_record(security_id, f"{security_id}:ni", concept="NetIncomeLoss", value=income, period_end=datetime(2017, 12, 31, tzinfo=timezone.utc))
+                _fy_record(security_id, f"{security_id}:ni", concept="NetIncomeLoss", value=income, period_end=datetime(2011, 12, 31, tzinfo=timezone.utc))
             )
             fundamentals_repo.add_fundamental(
-                _fy_record(security_id, f"{security_id}:eq", concept="StockholdersEquity", value=equity, period_end=datetime(2017, 12, 31, tzinfo=timezone.utc))
+                _fy_record(security_id, f"{security_id}:eq", concept="StockholdersEquity", value=equity, period_end=datetime(2011, 12, 31, tzinfo=timezone.utc))
             )
         fundamentals_engine.close()
 
@@ -135,8 +135,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--fundamentals-db-path", str(tmp_path / "fundamentals"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "roe",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -146,7 +146,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         assert "Fundamentals Signal IC: roe" in out
 
     def test_the_other_three_score_options_also_run_end_to_end(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
 
@@ -157,7 +157,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals2")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
         for concept, value in (
             ("NetIncomeLoss", 15.0), ("StockholdersEquity", 100.0),
             ("Assets", 200.0), ("Liabilities", 100.0), ("Revenues", 150.0),
@@ -174,8 +174,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
                 "--fundamentals-db-path", str(tmp_path / "fundamentals2"),
                 "--universe", "PILOT_UNIVERSE",
                 "--score", score,
-                "--start", "2018-06-01",
-                "--end", "2019-01-01",
+                "--start", "2012-06-01",
+                "--end", "2013-01-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -187,7 +187,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         (unlike the loop above): `asset_growth_score` is a YoY change,
         so it needs two distinct fiscal years of `Assets`, not the one
         period the other three scores' shared fixture supplies."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
 
@@ -199,10 +199,10 @@ class TestEndToEndAgainstSyntheticCatalogs:
         fundamentals_engine = new_engine(tmp_path, name="fundamentals3")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
         fundamentals_repo.add_fundamental(
-            _fy_record(symbols[0], f"{symbols[0]}:assets_2016", concept="Assets", value=180.0, period_end=datetime(2016, 12, 31, tzinfo=timezone.utc))
+            _fy_record(symbols[0], f"{symbols[0]}:assets_2016", concept="Assets", value=180.0, period_end=datetime(2010, 12, 31, tzinfo=timezone.utc))
         )
         fundamentals_repo.add_fundamental(
-            _fy_record(symbols[0], f"{symbols[0]}:assets_2017", concept="Assets", value=200.0, period_end=datetime(2017, 12, 31, tzinfo=timezone.utc))
+            _fy_record(symbols[0], f"{symbols[0]}:assets_2017", concept="Assets", value=200.0, period_end=datetime(2011, 12, 31, tzinfo=timezone.utc))
         )
         fundamentals_engine.close()
 
@@ -212,8 +212,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--fundamentals-db-path", str(tmp_path / "fundamentals3"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "asset_growth",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -224,7 +224,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         """Session 36 -- ADR-0043 Decision 9. Needs its own fixture:
         9 concepts (8 of them across 2 fiscal years) rather than the
         single-period fixture the other scores share."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
         symbol = symbols[0]
@@ -236,8 +236,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals4")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        prior_end = datetime(2016, 12, 31, tzinfo=timezone.utc)
-        current_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        prior_end = datetime(2010, 12, 31, tzinfo=timezone.utc)
+        current_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
         two_year_values = {
             "NetIncomeLoss": (10.0, 20.0), "Assets": (100.0, 120.0), "LongTermDebtNoncurrent": (40.0, 20.0),
             "AssetsCurrent": (50.0, 90.0), "LiabilitiesCurrent": (40.0, 60.0), "CommonStockSharesOutstanding": (100.0, 100.0),
@@ -264,8 +264,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--fundamentals-db-path", str(tmp_path / "fundamentals4"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "piotroski",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -279,7 +279,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         this is the regression guard that the CLI's branching actually
         wires that path correctly end to end, not just that the two
         functions are individually correct in isolation."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
         symbol = symbols[0]
@@ -291,7 +291,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals5")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
         fundamentals_repo.add_fundamental(
             _fy_record(symbol, f"{symbol}:shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=period_end)
         )
@@ -306,8 +306,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--fundamentals-db-path", str(tmp_path / "fundamentals5"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "shareholder_yield",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -319,7 +319,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         two-fiscal-year-fixture shape asset_growth_score's own CLI test
         uses (they need zero new XBRL concepts beyond what earlier
         scores already ingest), so one fixture serves both."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
         symbol = symbols[0]
@@ -331,8 +331,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals6")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        prior_end = datetime(2016, 12, 31, tzinfo=timezone.utc)
-        current_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        prior_end = datetime(2010, 12, 31, tzinfo=timezone.utc)
+        current_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
         for concept, (prior_value, current_value) in {
             "NetIncomeLoss": (10.0, 20.0), "Assets": (180.0, 200.0), "PaymentsOfDividends": (30.0, 40.0),
         }.items():
@@ -354,8 +354,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
                 "--fundamentals-db-path", str(tmp_path / "fundamentals6"),
                 "--universe", "PILOT_UNIVERSE",
                 "--score", score,
-                "--start", "2018-06-01",
-                "--end", "2019-01-01",
+                "--start", "2012-06-01",
+                "--end", "2013-01-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -367,7 +367,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         through compute_hybrid_ic_series (after shareholder_yield) --
         regression guard that the CLI actually wires this path for
         earnings_yield too, not just shareholder_yield."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
         symbol = symbols[0]
@@ -379,7 +379,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals7")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
         fundamentals_repo.add_fundamental(
             _fy_record(symbol, f"{symbol}:ni", concept="NetIncomeLoss", value=5_000_000.0, period_end=period_end)
         )
@@ -394,8 +394,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--fundamentals-db-path", str(tmp_path / "fundamentals7"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "earnings_yield",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -405,7 +405,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
     def test_gross_profitability_score_option_runs_end_to_end(self, tmp_path, capsys) -> None:
         """Session 36 -- ADR-0043 Decision 15. A plain fundamentals-only
         score (no price data needed), same _SCORES branch as roe/roa."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
         symbol = symbols[0]
@@ -417,7 +417,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals10")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
         for concept, value in (("Revenues", 200.0), ("CostOfGoodsAndServicesSold", 120.0), ("Assets", 300.0)):
             fundamentals_repo.add_fundamental(
                 _fy_record(symbol, f"{symbol}:{concept}", concept=concept, value=value, period_end=period_end)
@@ -430,8 +430,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--fundamentals-db-path", str(tmp_path / "fundamentals10"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "gross_profitability",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -445,7 +445,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         and that the 2 new RetainedEarningsAccumulatedDeficit/
         OperatingIncomeLoss concepts round-trip through a real DuckDB
         catalog."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
         symbol = symbols[0]
@@ -457,7 +457,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals11")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
         for concept, value in (
             ("Assets", 1000.0), ("AssetsCurrent", 400.0), ("LiabilitiesCurrent", 200.0),
             ("RetainedEarningsAccumulatedDeficit", 300.0), ("OperatingIncomeLoss", 150.0),
@@ -474,8 +474,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--fundamentals-db-path", str(tmp_path / "fundamentals11"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "altman_z",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -488,7 +488,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         (book_to_market_score's own docstring even claimed it) but had
         no --score CLI option until this fix -- regression guard the
         CLI actually wires all 3 now."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
         symbol = symbols[0]
@@ -500,7 +500,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals12")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
         for concept, value in (
             ("StockholdersEquity", 500.0), ("Revenues", 200.0),
             ("NetCashProvidedByUsedInOperatingActivities", 60.0), ("CommonStockSharesOutstanding", 1_000_000.0),
@@ -517,8 +517,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
                 "--fundamentals-db-path", str(tmp_path / "fundamentals12"),
                 "--universe", "PILOT_UNIVERSE",
                 "--score", score,
-                "--start", "2018-06-01",
-                "--end", "2019-01-01",
+                "--start", "2012-06-01",
+                "--end", "2013-01-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -530,7 +530,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         through compute_hybrid_ic_series (after shareholder_yield/
         earnings_yield) -- regression guard that the CLI actually wires
         this path for size too."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
         symbol = symbols[0]
@@ -542,7 +542,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals9")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
         fundamentals_repo.add_fundamental(
             _fy_record(symbol, f"{symbol}:shares", concept="CommonStockSharesOutstanding", value=1_000_000.0, period_end=period_end)
         )
@@ -554,8 +554,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--fundamentals-db-path", str(tmp_path / "fundamentals9"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "size",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -569,7 +569,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         (unlike every earlier single-symbol CLI fixture), since both
         composites need a cross-section of at least 2 scorable
         securities to produce anything."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
 
@@ -581,8 +581,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals8")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
-        prior_end = datetime(2016, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
+        prior_end = datetime(2010, 12, 31, tzinfo=timezone.utc)
         for symbol in symbols:
             for concept, value in (
                 ("NetIncomeLoss", 50.0), ("StockholdersEquity", 500.0), ("Liabilities", 100.0),
@@ -607,8 +607,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
                 "--fundamentals-db-path", str(tmp_path / "fundamentals8"),
                 "--universe", "PILOT_UNIVERSE",
                 "--score", score,
-                "--start", "2018-06-01",
-                "--end", "2019-01-01",
+                "--start", "2012-06-01",
+                "--end", "2013-01-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -635,7 +635,7 @@ class TestCombinedFactorScoreOption:
     needed to prove an IC is actually computed."""
 
     def test_combined_factor_option_runs_end_to_end(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
         # Different daily drift per symbol -- both the fundamentals AND
         # the forward returns must differ between the two symbols, or
@@ -654,8 +654,8 @@ class TestCombinedFactorScoreOption:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals_combined")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2017, 12, 31, tzinfo=timezone.utc)
-        prior_end = datetime(2016, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
+        prior_end = datetime(2010, 12, 31, tzinfo=timezone.utc)
         # multiplier > 1.0 for the second symbol pushes every leg (all
         # of which are ratios/changes/market-cap-scaled quantities) to
         # a different rank, breaking the tie described above.
@@ -693,8 +693,8 @@ class TestCombinedFactorScoreOption:
             "--fundamentals-db-path", str(tmp_path / "fundamentals_combined"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "combined_factor",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -739,7 +739,7 @@ class TestInsiderBuyingScoreOption:
         assert "--insider-db-path" in capsys.readouterr().err
 
     def test_computes_an_ic_summary_from_the_insider_catalog(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
         daily_drifts = {symbols[0]: 1.0008, symbols[1]: 0.9995}
 
@@ -753,10 +753,10 @@ class TestInsiderBuyingScoreOption:
         insider_engine = new_engine(tmp_path, name="insider")
         insider_repo = DuckDBInsiderRepository(insider_engine)
         insider_repo.add_insider_transaction(
-            self._insider_txn(symbols[0], "buy1", transaction_date=datetime(2018, 5, 1, tzinfo=timezone.utc), transaction_code="P", shares=10_000.0)
+            self._insider_txn(symbols[0], "buy1", transaction_date=datetime(2012, 5, 1, tzinfo=timezone.utc), transaction_code="P", shares=10_000.0)
         )
         insider_repo.add_insider_transaction(
-            self._insider_txn(symbols[1], "sell1", transaction_date=datetime(2018, 5, 1, tzinfo=timezone.utc), transaction_code="S", shares=10_000.0)
+            self._insider_txn(symbols[1], "sell1", transaction_date=datetime(2012, 5, 1, tzinfo=timezone.utc), transaction_code="S", shares=10_000.0)
         )
         insider_engine.close()
 
@@ -767,8 +767,8 @@ class TestInsiderBuyingScoreOption:
             "--insider-db-path", str(tmp_path / "insider"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "insider_buying",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])

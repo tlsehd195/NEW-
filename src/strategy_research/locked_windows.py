@@ -113,7 +113,41 @@ TEST_2 = LockedWindow(
     ),
 )
 
-LOCKED_WINDOWS: tuple[LockedWindow, ...] = (TEST_1, TEST_2)
+# TEST-3: the chronological_split.test_start/test_end from
+# run_full_validation.yml's 2026-09-27 price-only walk-forward run
+# (RESEARCH_UNIVERSE_STAGE5, 203 symbols, overall range
+# 2000-01-01..2020-08-28, default 60/20/20 split), recorded verbatim
+# from that run's own report (docs/research/reports/
+# full-validation-20260927T065335Z.json) -- same discipline as TEST_1
+# and TEST_2. Ends exactly at TEST_2's start (adjacent, not
+# overlapping). Earlier stage4 runs (2010-01-01..2020-08-28) had
+# already observed 2018-07-11..2020-08-28 without locking it; this
+# window covers that range too.
+TEST_3 = LockedWindow(
+    name="TEST-3",
+    start=datetime(2016, 7, 11, tzinfo=timezone.utc),
+    end=datetime(2020, 8, 28, tzinfo=timezone.utc),
+    observed_by=(
+        "bid_ask_spread", "buy_and_hold", "coskewness", "downside_beta",
+        "fifty_two_week_high", "frog_in_the_pan", "high_volume_return_premium",
+        "idiosyncratic_skewness", "idiosyncratic_volatility", "illiquidity",
+        "intermediate_momentum", "long_term_momentum", "long_term_reversal",
+        "low_beta", "max_effect", "price_delay", "residual_momentum",
+        "return_seasonality", "risk_controlled_momentum", "rs_rating",
+        "short_term_reversal", "trend_volatility",
+    ),
+    note=(
+        "Observed once, real data, RESEARCH_UNIVERSE_STAGE5 (203 symbols, "
+        "price-only, 2000-01-01 start). All 22 candidates INCONCLUSIVE "
+        "(PBO=0.30); only illiquidity reached CANDIDATE on the walk-forward "
+        "folds and it underperformed SPY by 47.9pp on this window. Six "
+        "momentum-like candidates beat SPY here but none cleared "
+        "Deflated Sharpe >= 0.95. Survivorship bias of the Stage 5 "
+        "selection rule (ADR-0212) applies."
+    ),
+)
+
+LOCKED_WINDOWS: tuple[LockedWindow, ...] = (TEST_1, TEST_2, TEST_3)
 
 
 def overlaps_any_locked_window(start: datetime, end: datetime) -> tuple[LockedWindow, ...]:

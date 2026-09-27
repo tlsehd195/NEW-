@@ -78,7 +78,7 @@ class TestTest1Refusal:
 
 class TestEndToEndAgainstSyntheticCatalog:
     def test_computes_bucket_returns_against_real_universe_symbols(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         trendup_closes = [100.0 * (1.0008**i) for i in range(len(days))]
         trenddown_closes = [100.0 * (0.9995**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
@@ -93,8 +93,8 @@ class TestEndToEndAgainstSyntheticCatalog:
         exit_code = module.main([
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])

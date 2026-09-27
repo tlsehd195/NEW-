@@ -111,7 +111,7 @@ class TestTest1Refusal:
 
 class TestEndToEndAgainstSyntheticCatalog:
     def test_computes_an_ic_summary_against_real_universe_symbols(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         trendup_closes = [100.0 * (1.0008**i) for i in range(len(days))]
         trenddown_closes = [100.0 * (0.9995**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]  # real universe IDs, e.g. AAPL/MSFT
@@ -127,8 +127,8 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "long_term_momentum",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -139,7 +139,7 @@ class TestEndToEndAgainstSyntheticCatalog:
         assert "mean_ic=" in out
 
     def test_low_volatility_factor_option_also_runs_end_to_end(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         low_vol_closes = [100.0 + 0.5 * ((-1) ** i) for i in range(len(days))]
         high_vol_closes = [100.0 * (1.0 + 0.06 * ((-1) ** i)) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
@@ -155,8 +155,8 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "low_volatility",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -170,7 +170,7 @@ class TestEndToEndAgainstSyntheticCatalog:
         ScoreFn-shaped like low_volatility, so share one fixture (a
         3.5-year history so long_term_reversal's default 36-month
         lookback has enough trailing data)."""
-        days = trading_days(date(2015, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2009, 1, 2), date(2013, 6, 1))
         trendup_closes = [100.0 * (1.0003**i) for i in range(len(days))]
         trenddown_closes = [100.0 * (0.9998**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
@@ -187,8 +187,8 @@ class TestEndToEndAgainstSyntheticCatalog:
                 "--db-path", str(tmp_path / "store"),
                 "--universe", "PILOT_UNIVERSE",
                 "--strategy", strategy,
-                "--start", "2018-06-01",
-                "--end", "2019-01-01",
+                "--start", "2012-06-01",
+                "--end", "2013-01-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -201,7 +201,7 @@ class TestEndToEndAgainstSyntheticCatalog:
         repository. Price-only, like low_volatility/reversal above --
         needs >252 trading days of history, so reuses the same 3.5-year
         fixture shape as the reversal test."""
-        days = trading_days(date(2015, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2009, 1, 2), date(2013, 6, 1))
         trendup_closes = [100.0 * (1.0003**i) for i in range(len(days))]
         trenddown_closes = [100.0 * (0.9998**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
@@ -217,8 +217,8 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "rs_rating",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -232,7 +232,7 @@ class TestEndToEndAgainstSyntheticCatalog:
         (not just the in-memory unit fixtures in test_factor_scores.py)
         actually has SPY reachable via the same repository/get_bars
         path low_beta_score reads."""
-        days = trading_days(date(2015, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2009, 1, 2), date(2013, 6, 1))
         spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
         security_closes = [100.0 * (1.0006**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
@@ -248,8 +248,8 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "low_beta",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -260,7 +260,7 @@ class TestEndToEndAgainstSyntheticCatalog:
         """Session 36 -- literature search for a candidate distinct
         from everything already tested. Also needs BENCHMARK_SYMBOL
         ("SPY") bars in the same real catalog, like `low_beta` above."""
-        days = trading_days(date(2015, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2009, 1, 2), date(2013, 6, 1))
         spy_closes = [100.0 * (1.0003**i) for i in range(len(days))]
         security_closes = [100.0 * (1.0006**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
@@ -276,8 +276,8 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "idiosyncratic_volatility",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -291,7 +291,7 @@ class TestEndToEndAgainstSyntheticCatalog:
         regression guard that volume survives the catalog round-trip
         `illiquidity_score` now depends on for the first time in this
         module."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0 + 0.01 * ((-1) ** i)) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
 
@@ -305,8 +305,8 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "illiquidity",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -316,7 +316,7 @@ class TestEndToEndAgainstSyntheticCatalog:
     def test_fifty_two_week_high_and_max_effect_options_run_end_to_end(self, tmp_path, capsys) -> None:
         """Session 36 -- ADR-0043 Decision 16. Both are price-only
         ScoreFn-shaped like low_volatility, so share one fixture."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         closes = [100.0 * (1.0005**i) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
 
@@ -331,8 +331,8 @@ class TestEndToEndAgainstSyntheticCatalog:
                 "--db-path", str(tmp_path / "store"),
                 "--universe", "PILOT_UNIVERSE",
                 "--strategy", strategy,
-                "--start", "2018-06-01",
-                "--end", "2019-01-01",
+                "--start", "2012-06-01",
+                "--end", "2013-01-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
