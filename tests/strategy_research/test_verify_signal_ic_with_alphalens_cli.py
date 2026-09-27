@@ -83,7 +83,7 @@ class TestTest1Refusal:
 
 class TestEndToEndAgainstSyntheticCatalog:
     def test_cross_verifies_low_volatility_against_a_real_synthetic_catalog(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         low_vol_closes = [100.0 + 0.5 * ((-1) ** i) for i in range(len(days))]
         high_vol_closes = [100.0 * (1.0 + 0.06 * ((-1) ** i)) for i in range(len(days))]
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
@@ -99,8 +99,8 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "low_volatility",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
             "--quantiles", "2",
@@ -116,7 +116,7 @@ class TestEndToEndAgainstSyntheticCatalog:
         """Direct check of the pure adapter function, isolated from the
         CLI -- `factor` must be a MultiIndex (date, asset) Series,
         `prices` a wide date x asset DataFrame, both real, non-empty."""
-        days = trading_days(date(2018, 1, 2), date(2019, 6, 1))
+        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
 
         engine = new_engine(tmp_path)
@@ -127,7 +127,7 @@ class TestEndToEndAgainstSyntheticCatalog:
         module = _load_script()
         score_fn = module._PRICE_ONLY_SCORES["low_volatility"]
         factor, prices = module.build_factor_and_prices(
-            symbols, datetime(2018, 6, 1, tzinfo=timezone.utc), datetime(2019, 1, 1, tzinfo=timezone.utc),
+            symbols, datetime(2012, 6, 1, tzinfo=timezone.utc), datetime(2013, 1, 1, tzinfo=timezone.utc),
             score_fn, repo, horizon_days=20,
         )
         engine.close()
@@ -145,8 +145,8 @@ class TestInsufficientData:
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "low_volatility",
-            "--start", "2018-06-01",
-            "--end", "2019-01-01",
+            "--start", "2012-06-01",
+            "--end", "2013-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])

@@ -106,7 +106,7 @@ class TestTest1Refusal:
 
 class TestEndToEndAgainstSyntheticCatalogs:
     def test_fits_and_reports_a_validation_ic(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2010, 1, 4), date(2019, 6, 1))
+        days = trading_days(date(2004, 1, 4), date(2013, 6, 1))
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:3]
 
         price_engine = new_engine(tmp_path, name="price")
@@ -131,8 +131,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--price-db-path", str(tmp_path / "price"),
             "--fundamentals-db-path", str(tmp_path / "fundamentals"),
             "--universe", "PILOT_UNIVERSE",
-            "--start", "2011-01-04",
-            "--end", "2019-01-04",
+            "--start", "2005-01-04",
+            "--end", "2013-01-04",
             "--step-months", "2",
         ])
 
@@ -148,7 +148,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
         # No fundamentals data seeded at all -> every sample's feature
         # vector is None -> zero TRAIN samples -> honest failure, not a
         # fabricated fit.
-        days = trading_days(date(2010, 1, 4), date(2019, 6, 1))
+        days = trading_days(date(2004, 1, 4), date(2013, 6, 1))
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:1]
 
         price_engine = new_engine(tmp_path, name="price2")
@@ -164,8 +164,8 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--price-db-path", str(tmp_path / "price2"),
             "--fundamentals-db-path", str(tmp_path / "fundamentals2"),
             "--universe", "PILOT_UNIVERSE",
-            "--start", "2011-01-04",
-            "--end", "2019-01-04",
+            "--start", "2005-01-04",
+            "--end", "2013-01-04",
         ])
 
         assert exit_code == 1

@@ -79,7 +79,7 @@ Usage:
         --universe RESEARCH_UNIVERSE \\
         --score roe \\
         --start 2010-01-01 \\
-        [--end 2020-08-28]  # defaults to earliest_locked_window_start(); anything later is refused
+        [--end 2016-07-11]  # defaults to earliest_locked_window_start(); anything later is refused
 """
 
 from __future__ import annotations

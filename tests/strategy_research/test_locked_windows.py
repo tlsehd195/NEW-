@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from strategy_research.locked_windows import TEST_1, TEST_2, earliest_locked_window_start, overlaps_any_locked_window
+from strategy_research.locked_windows import TEST_1, TEST_2, TEST_3, earliest_locked_window_start, overlaps_any_locked_window
 
 
 def _utc(y, m, d, h=0, mi=0):
@@ -51,6 +51,24 @@ class TestTest2Constant:
             assert name in TEST_2.observed_by
 
 
+class TestTest3Constant:
+    """TEST-3: the held-out TEST of the 2026-09-27 price-only Stage 5
+    run (2000-01-01..2020-08-28), locked the same way TEST-2 was."""
+
+    def test_test_3_matches_the_actually_observed_report_values(self) -> None:
+        assert TEST_3.start == _utc(2016, 7, 11)
+        assert TEST_3.end == _utc(2020, 8, 28)
+
+    def test_test_3_ends_exactly_where_test_2_starts(self) -> None:
+        assert TEST_3.end == TEST_2.start
+
+    def test_test_3_lists_all_22_candidates_that_observed_it(self) -> None:
+        assert len(TEST_3.observed_by) == 22
+        assert len(set(TEST_3.observed_by)) == 22
+        for name in ("illiquidity", "price_delay", "downside_beta", "buy_and_hold"):
+            assert name in TEST_3.observed_by
+
+
 class TestEarliestLockedWindowStart:
     """Real bug this function fixes (2026-09-26, ADR-0209): five scripts
     hardcoded their default `--end` to `TEST_1.start` directly, which
@@ -58,9 +76,9 @@ class TestEarliestLockedWindowStart:
     added -- caught by their own tests failing. This function is the
     fix, and must itself track whichever window starts earliest."""
 
-    def test_returns_test_2_start_since_it_is_earlier_than_test_1(self) -> None:
-        assert TEST_2.start < TEST_1.start
-        assert earliest_locked_window_start() == TEST_2.start
+    def test_returns_test_3_start_since_it_is_the_earliest(self) -> None:
+        assert TEST_3.start < TEST_2.start < TEST_1.start
+        assert earliest_locked_window_start() == TEST_3.start
 
     def test_the_earliest_start_itself_does_not_overlap_any_locked_window(self) -> None:
         # The whole point: [anything, earliest_locked_window_start()) must
@@ -86,6 +104,11 @@ class TestOverlapDetection:
         overlapping = overlaps_any_locked_window(_utc(2021, 1, 1), _utc(2021, 6, 1))
         assert overlapping == (TEST_2,)
 
+    def test_a_range_inside_test_3_is_flagged(self) -> None:
+        # e.g. the 2018-07-11..2020-08-28 range earlier stage4 runs observed.
+        overlapping = overlaps_any_locked_window(_utc(2018, 7, 11), _utc(2020, 8, 28))
+        assert overlapping == (TEST_3,)
+
     def test_a_range_spanning_both_locked_windows_flags_both(self) -> None:
         overlapping = overlaps_any_locked_window(_utc(2022, 1, 1), _utc(2024, 1, 1))
         assert overlapping == (TEST_1, TEST_2)
@@ -94,11 +117,10 @@ class TestOverlapDetection:
         overlapping = overlaps_any_locked_window(_utc(2026, 1, 1), _utc(2027, 1, 1))
         assert overlapping == (TEST_1,)
 
-    def test_a_range_entirely_before_both_locked_windows_is_not_flagged(self) -> None:
-        # e.g. TRAIN+VALIDATION for a future study, or any of this
-        # project's existing walk-forward folds strictly before TEST-2
-        # starts (2020-08-28).
-        overlapping = overlaps_any_locked_window(_utc(2010, 1, 1), _utc(2020, 1, 1))
+    def test_a_range_entirely_before_every_locked_window_is_not_flagged(self) -> None:
+        # e.g. TRAIN+VALIDATION for a future study, strictly before
+        # TEST-3 starts (2016-07-11).
+        overlapping = overlaps_any_locked_window(_utc(2000, 1, 1), _utc(2016, 1, 1))
         assert overlapping == ()
 
     def test_a_range_entirely_after_test_1_is_not_flagged(self) -> None:

@@ -57,7 +57,8 @@ def test_required_inputs_present_with_sensible_defaults():
     assert inputs["release_tag"]["required"] is True
     assert inputs["universe"]["default"] == "RESEARCH_UNIVERSE"
     assert inputs["start"]["default"] == "2010-01-01"
-    # Default --end is the earliest locked window's start (TEST_2's,
+    # Default --end is the earliest locked window's start (TEST_3's since ADR-0222;
+    # before that TEST_2's,
     # ADR-0209/ADR-0212). The old 2023-04-28 default (TEST_1's start)
     # overlapped TEST_2 once it was locked, so a default dispatch was
     # refused by run_long_horizon_validation.py's own locked-window
@@ -166,3 +167,21 @@ def test_price_only_downloads_only_the_price_catalog_and_skips_every_other_catal
     assert any("fundamentals" in name for name in skipped)
     assert any("insider" in name for name in skipped)
     assert any("institutional" in name for name in skipped)
+
+
+def test_report_commit_rebases_onto_the_moved_branch_before_pushing():
+    # A plain push failed twice when main moved during the run (ADR-0222).
+    step = next(s for s in _steps() if s.get("name", "").startswith("Commit the report"))
+    assert 'git pull --rebase origin "$GITHUB_REF_NAME" && git push' in step["run"]
+
+
+def test_held_out_test_is_skipped_unless_final_exam_is_requested():
+    # ADR-0222: a screening run must not spend the held-out TEST window.
+    inputs = _dispatch_inputs()
+    assert inputs["final_exam"]["type"] == "boolean"
+    assert inputs["final_exam"]["default"] is False
+    step = next(s for s in _steps() if s.get("name", "").startswith("Run the full walk-forward"))
+    assert 'HELD_OUT_FLAG="--skip-held-out"' in step["run"]
+    assert '[ "$FINAL_EXAM_INPUT" = "true" ]' in step["run"]
+    assert "$HELD_OUT_FLAG" in step["run"]
+    assert step["env"]["FINAL_EXAM_INPUT"] == "${{ inputs.final_exam }}"

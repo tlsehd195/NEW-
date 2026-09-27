@@ -55,11 +55,15 @@ on:
         type: string
         default: "2010-01-01"
       end:
-        description: "Range end (YYYY-MM-DD) -- must not overlap any strategy_research.locked_windows window; default is TEST_2's own start (earliest_locked_window_start(), ADR-0209/ADR-0212)"
+        description: "Range end (YYYY-MM-DD) -- must not overlap any strategy_research.locked_windows window; default is the earliest locked window's start (earliest_locked_window_start(), TEST_3 since ADR-0222)"
         type: string
-        default: "2020-08-28"
+        default: "2016-07-11"
       price_only:
         description: "Price-derived candidates only (ADR-0213): the release needs only price_catalog.zip; fundamentals/insider/institutional catalogs are not loaded"
+        type: boolean
+        default: false
+      final_exam:
+        description: "Also backtest the held-out TEST window (ADR-0222). Leave off for screening; turn on once, for a short list of finalists, then lock that window"
         type: boolean
         default: false
 
@@ -198,8 +202,11 @@ jobs:
           UNIVERSE_INPUT: ${{ inputs.universe }}
           START_INPUT: ${{ inputs.start }}
           END_INPUT: ${{ inputs.end }}
+          FINAL_EXAM_INPUT: ${{ inputs.final_exam }}
         run: |
           set -euo pipefail
+          HELD_OUT_FLAG="--skip-held-out"
+          if [ "$FINAL_EXAM_INPUT" = "true" ]; then HELD_OUT_FLAG=""; fi
           python3 scripts/run_long_horizon_validation.py \
             --universe "$UNIVERSE_INPUT" \
             --start "$START_INPUT" --end "$END_INPUT" \
@@ -207,6 +214,7 @@ jobs:
             $FUNDAMENTALS_FLAG \
             $INSIDER_FLAG \
             $INSTITUTIONAL_FLAG \
+            $HELD_OUT_FLAG \
             --data-status REAL \
             --report-out ./validation_report.json
 
@@ -250,4 +258,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "$DEST"
           git commit -m "chore: record full validation report ($RELEASE_TAG_INPUT, ${START_INPUT}..${END_INPUT})"
-          git push
+          # The run takes ~15 minutes and main often moves meanwhile; a
+          # plain push was rejected twice on 2026-09-27 (ADR-0222). The
+          # report is a new, uniquely named file, so a rebase cannot conflict.
+          for attempt in 1 2 3; do
+            git pull --rebase origin "$GITHUB_REF_NAME" && git push && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1
