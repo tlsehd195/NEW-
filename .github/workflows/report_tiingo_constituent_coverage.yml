@@ -1,0 +1,67 @@
+# Which historical S&P 500 constituents does Tiingo list at all
+# (ADR-0224)? Downloads fja05680/sp500's interval CSV and Tiingo's
+# public supported_tickers.zip. Neither download uses the Tiingo API
+# key, a request, or the monthly unique-symbol quota.
+name: Report Tiingo Constituent Coverage
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Window start (default 2000-01-01)"
+        type: string
+        default: "2000-01-01"
+      end:
+        description: "Window end (default 2016-07-11, the first locked window)"
+        type: string
+        default: "2016-07-11"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Download inputs
+        run: |
+          curl -fsSL -o sp500_ticker_start_end.csv https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv
+          curl -fsSL -o supported_tickers.zip https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip
+          unzip -o supported_tickers.zip
+          head -3 supported_tickers.csv
+          wc -l supported_tickers.csv sp500_ticker_start_end.csv
+          grep -E '^(AAPL|BK|EQR|MMC|ANTM|ELV|BSC|LEHMQ|LEH|ENRNQ|WAMUQ|WM|GPS|BLL|DTV|YHOO|AABA),' supported_tickers.csv || true
+          grep -E '^(BK|EQR|MMC|ANTM|BSC|LEHMQ|YHOO|AABA),' sp500_ticker_start_end.csv || true
+
+      - name: Report coverage
+        env:
+          START_INPUT: ${{ inputs.start || '2000-01-01' }}
+          END_INPUT: ${{ inputs.end || '2016-07-11' }}
+        run: |
+          python3 scripts/report_tiingo_constituent_coverage.py \
+            --sp500-intervals-csv sp500_ticker_start_end.csv \
+            --tiingo-supported-tickers-csv supported_tickers.csv \
+            --start "$START_INPUT" --end "$END_INPUT" \
+            --output tiingo_constituent_coverage.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: tiingo-constituent-coverage
+          path: |
+            tiingo_constituent_coverage.json
+            sp500_ticker_start_end.csv
+          retention-days: 14
