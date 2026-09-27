@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "종목 1개당 매 틱 상세 호출 순서",
+    "subtitle": "orchestration.paper_runner.run_cycle 내부, 실제 함수/클래스 이름 그대로",
+    "output": "docs/architecture/paper-trading-cycle-sequence.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      930,
+      500
+    ]
+  },
+  "participants": [
+    {
+      "id": "orchestrator",
+      "type": "backend",
+      "label": "orchestration",
+      "sublabel": "run_cycle()"
+    },
+    {
+      "id": "predictor",
+      "type": "backend",
+      "label": "predict",
+      "sublabel": "Predictor"
+    },
+    {
+      "id": "regime",
+      "type": "backend",
+      "label": "regime",
+      "sublabel": "RegimeDetector"
+    },
+    {
+      "id": "decision",
+      "type": "backend",
+      "label": "decision",
+      "sublabel": "DecisionAgent"
+    },
+    {
+      "id": "risk",
+      "type": "backend",
+      "label": "risk",
+      "sublabel": "Sizer→RiskEngine"
+    },
+    {
+      "id": "broker",
+      "type": "messagebus",
+      "label": "broker",
+      "sublabel": "Paper+journal"
+    }
+  ],
+  "messages": [
+    {
+      "from": "orchestrator",
+      "to": "predictor",
+      "y": 180,
+      "label": "predict(view, security_id)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "predictor",
+      "to": "orchestrator",
+      "y": 208,
+      "label": "PredictionOutput",
+      "variant": "return",
+      "note": "prediction_repository.record()"
+    },
+    {
+      "from": "orchestrator",
+      "to": "regime",
+      "y": 236,
+      "label": "compute_composite(view, security_id)",
+      "variant": "default"
+    },
+    {
+      "from": "regime",
+      "to": "orchestrator",
+      "y": 264,
+      "label": "CompositeRegimeObservation",
+      "variant": "return",
+      "note": "regime_repository.record_composite()"
+    },
+    {
+      "from": "orchestrator",
+      "to": "decision",
+      "y": 292,
+      "label": "decide(prediction, regime, portfolio)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "decision",
+      "to": "orchestrator",
+      "y": 320,
+      "label": "BUY/SELL/HOLD/EXIT/NO_TRADE",
+      "variant": "return",
+      "note": "decision_repository.record()"
+    },
+    {
+      "from": "orchestrator",
+      "to": "risk",
+      "y": 348,
+      "label": "size() → assess(turnover, liquidity, sector)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "risk",
+      "to": "orchestrator",
+      "y": 376,
+      "label": "RiskCheckedPosition (승인/거부 + 사유)",
+      "variant": "return",
+      "note": "sizing/risk_repository.record() — 거부되면 다음 줄이 없음"
+    },
+    {
+      "from": "orchestrator",
+      "to": "broker",
+      "y": 404,
+      "label": "build_validated_order() → submit() → journal 기록",
+      "variant": "emphasis",
+      "note": "DecisionSnapshot + TradeRecord(realized_pnl 등)"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "predictor",
+      "from": 175,
+      "to": 213
+    },
+    {
+      "participant": "regime",
+      "from": 231,
+      "to": 269
+    },
+    {
+      "participant": "decision",
+      "from": 287,
+      "to": 325
+    },
+    {
+      "participant": "risk",
+      "from": 343,
+      "to": 381
+    },
+    {
+      "participant": "broker",
+      "from": 399,
+      "to": 409
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "각 단계가 자기 몫만 즉시 기록합니다",
+      "items": [
+        "predict/regime/decision/risk 매 응답 직후 자신의 결과를 storage(DuckDB)에 기록하고서야 다음 단계로 넘어갑니다"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "risk 거부 = 조용한 종료",
+      "items": [
+        "risk_engine.assess()가 거부하면 build_validated_order()가 검증된 주문을 만들지 않아 broker/journal 호출 자체가 일어나지 않습니다"
+      ]
+    }
+  ]
+}
