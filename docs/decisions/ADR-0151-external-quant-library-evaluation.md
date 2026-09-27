@@ -103,12 +103,46 @@ archify-only `skills-lock.json`) and the two surviving diagrams
 (`20eefa4`/`5efa3a4` core-trading-pipeline, `f310141`
 full-module-architecture, under `docs/architecture/`) were restored onto
 `main`. The workflow diagram added in `2298837` was already removed by
-`e2ee5ce` on the branch itself and is not restored. The other 9
-skill-tooling commits (`ddcf562`..`29aa3a3`: task-observer, ponytail,
-hooks, CLAUDE.md module map) were NOT restored and are reachable only by
-SHA; GitHub may garbage-collect unreferenced commits eventually, so
-treat them as at-risk. Note the diagrams reflect the codebase as of
-2026-09-12 and have not been regenerated against today's `src/`.
+`e2ee5ce` on the branch itself and is not restored. Note the diagrams
+reflect the codebase as of 2026-09-12 and have not been regenerated
+against today's `src/`.
+
+**Second correction (2026-09-27):** the rest of the 9 skill-tooling
+commits (`ddcf562`..`29aa3a3`) were also restored onto `main`, except
+for two things kept out deliberately:
+
+- **Restored:** the `codebase-design`, `diagnosing-bugs`,
+  `git-guardrails-claude-code`, `grill-me`, `grilling`, `handoff`,
+  `research`, `tdd`, `task-observer`, and `ponytail`/`ponytail-audit`/
+  `ponytail-debt`/`ponytail-gain`/`ponytail-help`/`ponytail-review`
+  skills under `.agents/skills/` (with `.claude/skills/*` symlinks), the
+  initial `skill-observations/` workspace content, and the
+  `block-dangerous-git.sh` / `protect-safety-files.sh` PreToolUse hooks
+  (blocks `git reset --hard`/force-push/etc., and blocks edits to
+  `configs/live/**`, the kill switch, safety gate, approval gate, or
+  `.env`) — these are self-contained and either inert (skills are
+  opt-in instructions) or purely defensive (the two hooks only ever
+  refuse a tool call, they never run anything).
+- **Not restored:** `session-start-tools.sh` (6d86a77), which
+  `npx`/`pip install`s `claude-mem`, `headroom`, and `context7` on every
+  session start. This is the same clone/build-per-session-start
+  anti-pattern the "llmwiki MCP 도구" section of `CLAUDE.md` already
+  documents hitting a stdio connection-timeout race for — restoring it
+  would reintroduce that risk, and none of those three tools exist in
+  this project's current toolset to begin with.
+- **Not restored:** the CLAUDE.md changes from `1f995e9`/`e989ed2`/
+  `29aa3a3` (tool-usage rules + task-observer activation block + `src/`
+  module map). They instruct sessions to use `smart-explore`, `context7`,
+  `headroom_compress`, and `mem-search` — none of which exist without
+  the skipped hook above — and the task-observer block hardcodes the
+  workspace path as `/home/user/NEW-/skill-observations`, which is
+  wrong in this container (`/home/claude/NEW-`). Applying this text
+  verbatim would leave `main`'s `CLAUDE.md` (already substantially
+  rewritten since these commits, in Korean, with its own rules) telling
+  future sessions to call tools that do not exist at paths that do not
+  exist. A future session should rewrite the task-observer activation
+  block against the actual current toolset and path before adding it,
+  rather than copy this one forward.
 
 The three ADOPTED libraries (skfolio, purgedcv, exchange_calendars)
 were independently re-installed and re-verified in THIS session's own
