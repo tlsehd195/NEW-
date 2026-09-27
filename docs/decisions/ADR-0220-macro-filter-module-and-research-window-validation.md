@@ -167,3 +167,14 @@ What the numbers say, and what they do not:
 Consequence: no macro rule is wired into paper trading or any strategy
 by this ADR. Changing a threshold now and re-running would be a new
 trial and must be pre-registered as `macro_filter_config_v2`.
+
+## Follow-up: observe-only Sahm log (2026-09-27, account owner's choice)
+
+The account owner chose to watch the Sahm rule going forward rather than
+change it. `observe_sahm_rule.yml` (weekdays 14:00 UTC) runs
+`scripts/record_sahm_observation.py`, which reads FRED's current UNRATE
+(what is known that day, so point-in-time by construction), computes the
+rule with the same `sahm_rule_reading` the backtest used, and appends to
+`docs/research/macro_observations/sahm_rule.jsonl` only on a new release
+or revision. A flip of the rule's state is posted to Discord. Nothing
+trades on it; paper trading is unchanged.

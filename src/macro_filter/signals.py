@@ -70,6 +70,35 @@ def _months_consecutive(dates: Sequence[date]) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class SahmReading:
+    latest_observation_date: date
+    latest_rate: float
+    three_month_average: float
+    prior_twelve_month_low: float
+    gap: float
+    active: bool
+
+
+def sahm_rule_reading(
+    values: Sequence[tuple[date, float]], as_of: datetime, config: MacroFilterConfig
+) -> Optional[SahmReading]:
+    """The 3-month average unemployment rate against its minimum over the
+    previous 12 months; active at a gap of at least 0.5 pt. `values` are
+    monthly (observation_date, rate) pairs as known at `as_of`, oldest
+    first. None when the last 15 months are incomplete or stale."""
+    if len(values) < 15 or not _fresh(values[-1][0], as_of, config.max_staleness_days_monthly):
+        return None
+    recent = values[-15:]
+    if not _months_consecutive([d for d, _ in recent]):
+        return None
+    rates = [v for _, v in recent]
+    averages = [statistics.fmean(rates[i - 2 : i + 1]) for i in range(2, len(rates))]
+    low = min(averages[-13:-1])
+    gap = averages[-1] - low
+    return SahmReading(recent[-1][0], rates[-1], averages[-1], low, gap, gap >= config.sahm_threshold_points)
+
+
 class MacroSignalEngine:
     """Computes every signal at a checkpoint; results are cached per
     `as_of`, so several exposure rules (and the gross and net runs of the
@@ -148,19 +177,11 @@ class MacroSignalEngine:
         return latest - prior[1] > threshold
 
     def _sahm(self, as_of: datetime) -> Optional[bool]:
-        """Real-time Sahm rule: the 3-month average unemployment rate is
-        at least 0.5 pt above its minimum over the previous 12 months,
-        using only the vintages known at `as_of`."""
+        """Real-time Sahm rule, using only the vintages known at `as_of`
+        (see `sahm_rule_reading`)."""
         c = self._config
-        values = self._values("UNRATE", as_of, 20 * 31)
-        if len(values) < 15 or not _fresh(values[-1][0], as_of, c.max_staleness_days_monthly):
-            return None
-        recent = values[-15:]
-        if not _months_consecutive([d for d, _ in recent]):
-            return None
-        rates = [v for _, v in recent]
-        averages = [statistics.fmean(rates[i - 2 : i + 1]) for i in range(2, len(rates))]
-        return averages[-1] - min(averages[-13:-1]) >= c.sahm_threshold_points
+        reading = sahm_rule_reading(self._values("UNRATE", as_of, 20 * 31), as_of, c)
+        return None if reading is None else reading.active
 
     def _claims_rise(self, as_of: datetime) -> Optional[bool]:
         """4-week average initial claims more than 20% above the lowest
