@@ -156,6 +156,20 @@ _DEEP_BANKRUPTCY_CASES = (
     ("BSC", _OLD_START, _OLD_END),  # Bear Stearns, JPM rescue 2008-03
 )
 
+# Second deep pass (2026-09-27, after the first deep pass showed only
+# LEH out of 5 bankruptcy names succeeded): ENE is Enron's REAL ticker
+# (the first pass's "ENRN" was this script's own mistake -- Enron never
+# traded under that symbol). WWY/EK/CC add removed-via-M&A and
+# liquidation cases, not just bankruptcy, spanning 2005-2012, to widen
+# the sample beyond "5 hand-picked famous bankruptcies" per the account
+# owner's own instruction to dig further.
+_SECOND_DEEP_CASES = (
+    ("ENE", "2000-06-01", "2001-12-31"),  # Enron, REAL ticker (NYSE), filed 2001-12-02
+    ("WWY", "2007-01-01", "2008-10-31"),  # Wrigley, acquired by Mars, delisted 2008-10
+    ("EK", "2005-01-01", "2006-12-31"),  # Eastman Kodak's pre-bankruptcy NYSE ticker (renamed KODK only after its 2013 Chapter 11 exit)
+    ("CC", "2008-01-01", "2009-03-31"),  # Circuit City, liquidated 2009-03
+)
+
 
 def _run_siftingio(api_key: str) -> None:
     headers = {"X-API-Key": api_key, "Accept-Encoding": "gzip"}
@@ -172,6 +186,18 @@ def _run_siftingio(api_key: str) -> None:
 
     print("--- SiftingIO deep pass: more bankruptcies, older window ---\n")
     for symbol, start, end in _DEEP_BANKRUPTCY_CASES:
+        url = f"https://api.sifting.io/v1/hist/stocks/{symbol}/bars?start={start}&end={end}&interval=1d"
+        print(f"=== SiftingIO bars ({symbol}, {start}..{end}) ===")
+        status, body, rl = _fetch(url, headers=headers)
+        print(f"status: {status}")
+        print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
+        if rl:
+            print(f"rate-limit headers: {rl}")
+        print()
+        time.sleep(1.1)
+
+    print("--- SiftingIO second deep pass: corrected Enron ticker + M&A/liquidation cases ---\n")
+    for symbol, start, end in _SECOND_DEEP_CASES:
         url = f"https://api.sifting.io/v1/hist/stocks/{symbol}/bars?start={start}&end={end}&interval=1d"
         print(f"=== SiftingIO bars ({symbol}, {start}..{end}) ===")
         status, body, rl = _fetch(url, headers=headers)
