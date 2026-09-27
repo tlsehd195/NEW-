@@ -99,6 +99,8 @@ def _log(message: str) -> None:
 def _fetch_with_retry(provider, series_id: str, start: date, end: date, attempts: int = 3):
     for attempt in range(1, attempts + 1):
         try:
+            if MACRO_SERIES_BY_ID[series_id].first_release_only:
+                return provider.fetch_series_first_releases(series_id, start, end, progress=_log)
             return provider.fetch_series_vintages(series_id, start, end, progress=_log)
         except TransientProviderError as exc:
             if attempt == attempts:

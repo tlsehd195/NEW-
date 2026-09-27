@@ -14,6 +14,10 @@ on:
         description: "First observation date (YYYY-MM-DD)"
         type: string
         default: "1990-01-01"
+      only_series:
+        description: "Run a single series from the matrix (blank = all)"
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -45,6 +49,7 @@ jobs:
         run: pip install -e .
 
       - name: Ingest ALFRED vintages (real API calls)
+        if: inputs.only_series == '' || inputs.only_series == matrix.series
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           # Inputs go through env vars, never `${{ }}` inside `run:`
@@ -59,7 +64,7 @@ jobs:
             --summary-json macro_coverage.json
 
       - name: Upload per-series store
-        if: always()
+        if: always() && (inputs.only_series == '' || inputs.only_series == matrix.series)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: fred-macro-part-${{ matrix.series }}
