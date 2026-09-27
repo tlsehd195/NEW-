@@ -1,8 +1,9 @@
-# One-shot reconnaissance: do Finnhub and SiftingIO's real free-tier
-# APIs return usable historical daily OHLCV for a delisted/bankrupt US
-# stock (LEH) inside the 2000-2016-07-11 survivorship-bias research
-# window? See scripts/recon_new_survivorship_providers.py's own module
-# docstring for the full "why".
+# One-shot reconnaissance: do Finnhub, SiftingIO and Quotient's real
+# free-tier APIs return usable historical daily OHLCV for a
+# delisted/bankrupt US stock (LEH) inside the 2000-2016-07-11
+# survivorship-bias research window? See
+# scripts/recon_new_survivorship_providers.py's own module docstring
+# for the full "why".
 #
 # workflow_dispatch-only, one-shot -- delete or repurpose once the real
 # answer is known and the actual provider-wiring approach is decided.
@@ -33,4 +34,5 @@ jobs:
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           SIFTINGIO_API_KEY: ${{ secrets.SIFTINGIO_API_KEY }}
+          QUOTIENT_API_KEY: ${{ secrets.QUOTIENT_API_KEY }}
         run: python3 scripts/recon_new_survivorship_providers.py
