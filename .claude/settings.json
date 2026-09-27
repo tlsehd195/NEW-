@@ -42,6 +42,15 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-safety-files.sh"
           }
         ]
+      },
+      {
+        "matcher": "mcp__github__merge_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/check-adr-numbers-before-merge.sh"
+          }
+        ]
       }
     ]
   }
