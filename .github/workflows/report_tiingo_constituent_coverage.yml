@@ -47,6 +47,8 @@ jobs:
           unzip -o supported_tickers.zip
           head -3 supported_tickers.csv
           wc -l supported_tickers.csv sp500_ticker_start_end.csv
+          grep -E '^(AAPL|BK|EQR|MMC|ANTM|ELV|BSC|LEHMQ|LEH|ENRNQ|WAMUQ|WM|GPS|BLL|DTV|YHOO|AABA),' supported_tickers.csv || true
+          grep -E '^(BK|EQR|MMC|ANTM|BSC|LEHMQ|YHOO|AABA),' sp500_ticker_start_end.csv || true
 
       - name: Report coverage
         env:

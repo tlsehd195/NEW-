@@ -106,8 +106,8 @@ def main(argv: list[str] | None = None) -> int:
     report = coverage(intervals, load_tiingo_listings(args.tiingo_supported_tickers_csv), args.start, args.end)
     if args.output:
         args.output.write_text(json.dumps(report, indent=2))
-    summary = {k: v for k, v in report.items() if k != "rows"}
-    print(json.dumps(summary, indent=2))
+    print("not listed:", " ".join(report["not_listed"]))
+    print(json.dumps({k: v for k, v in report.items() if k not in ("rows", "not_listed")}, indent=2))
     return 0
 
 
