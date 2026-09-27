@@ -13,7 +13,7 @@ from typing import Optional, Sequence
 
 from data_infra.models import CorporateAction
 
-from backtest.enums import IntegritySeverity, IntegrityStatus
+from backtest.enums import IntegritySeverity, IntegrityStatus, OrderSide
 from backtest.fills import Fill
 from backtest.portfolio import PortfolioView
 from backtest.strategy import OrderIntent
@@ -76,8 +76,16 @@ class BacktestIntegrityChecker:
             )
         self._last_checkpoint = checkpoint
 
-    def check_universe(self, intents: Sequence[OrderIntent], universe: set[str], as_of_time: datetime) -> None:
+    def check_universe(
+        self, intents: Sequence[OrderIntent], universe: set[str], as_of_time: datetime,
+        held: Optional[set[str]] = None,
+    ) -> None:
+        """Selling a held name that has since left the universe is
+        allowed (an index fund sells its removals); buying one is not."""
+        held = held or set()
         for intent in intents:
+            if intent.side == OrderSide.SELL and intent.security_id in held:
+                continue
             if intent.security_id not in universe:
                 self.record(
                     "universe_correctness", IntegritySeverity.ERROR,

@@ -56,3 +56,20 @@ class AsOfDataView:
         # Not point-in-time sensitive (Phase 1 spec section 12) — passed
         # through unchanged.
         return self._repository.get_trading_calendar(market)
+
+
+class MembershipFilteredDataView(AsOfDataView):
+    """An AsOfDataView that shows a Strategy price bars only for the
+    securities in `members`, which the engine resets to the as-of
+    universe at every checkpoint (ADR-0224). A strategy built over every
+    name that was ever in the index then ranks only the names that were
+    members on that date, without knowing about membership itself."""
+
+    def __init__(self, repository: DataRepository, clock: BacktestClock) -> None:
+        super().__init__(repository, clock)
+        self.members: frozenset[str] = frozenset()
+
+    def get_bars(self, security_id: str, start: datetime, end: datetime) -> list[PriceBar]:
+        if security_id not in self.members:
+            return []
+        return super().get_bars(security_id, start, end)

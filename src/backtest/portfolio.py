@@ -176,6 +176,28 @@ class PortfolioAccounting:
             CashFlowRecord(as_of_time=as_of_time, security_id=security_id, amount=credit, reason="dividend")
         )
 
+    def settle_position(self, security_id: str, price: float, as_of_time: datetime) -> None:
+        """Closes a position that can no longer trade (ADR-0224) at
+        `price`, with no commission: an acquisition pays holders cash and
+        a delisting leaves the last traded price as the best observed
+        value. Recorded as a closed trade and a cash flow, not a fill."""
+        pos = self.positions.pop(security_id, None)
+        if pos is None or pos.quantity == 0:
+            return
+        proceeds = pos.quantity * price
+        realized = (price - pos.average_cost) * pos.quantity
+        self.cash += proceeds
+        self.realized_pnl += realized
+        self.closed_trades.append(
+            ClosedTradeRecord(
+                security_id=security_id, quantity=pos.quantity, average_cost=pos.average_cost,
+                exit_price=price, realized_pnl=realized, execution_time=as_of_time,
+            )
+        )
+        self.cash_flows.append(
+            CashFlowRecord(as_of_time=as_of_time, security_id=security_id, amount=proceeds, reason="stale_position_settlement")
+        )
+
     def mark_to_market(self, prices: dict[str, float], as_of_time: datetime) -> tuple[ValuationPoint, list[str]]:
         """Values every open position using `prices` (typically that
         day's own close — see Phase 2 spec section 8.3 for why this is

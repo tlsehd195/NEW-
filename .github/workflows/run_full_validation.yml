@@ -66,6 +66,10 @@ on:
         description: "Also backtest the held-out TEST window (ADR-0222). Leave off for screening; turn on once, for a short list of finalists, then lock that window"
         type: boolean
         default: false
+      sp500_point_in_time:
+        description: "Survivorship-free universe (ADR-0224): every S&P 500 member in the window that the catalog has prices for, each date seeing only that date's members. Overrides universe"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -203,10 +207,17 @@ jobs:
           START_INPUT: ${{ inputs.start }}
           END_INPUT: ${{ inputs.end }}
           FINAL_EXAM_INPUT: ${{ inputs.final_exam }}
+          SP500_PIT_INPUT: ${{ inputs.sp500_point_in_time }}
         run: |
           set -euo pipefail
           HELD_OUT_FLAG="--skip-held-out"
           if [ "$FINAL_EXAM_INPUT" = "true" ]; then HELD_OUT_FLAG=""; fi
+          SP500_FLAG=""
+          if [ "$SP500_PIT_INPUT" = "true" ]; then
+            curl -fsSL -o ./data/sp500_ticker_start_end.csv \
+              https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv
+            SP500_FLAG="--sp500-history-csv ./data/sp500_ticker_start_end.csv"
+          fi
           python3 scripts/run_long_horizon_validation.py \
             --universe "$UNIVERSE_INPUT" \
             --start "$START_INPUT" --end "$END_INPUT" \
@@ -215,6 +226,7 @@ jobs:
             $INSIDER_FLAG \
             $INSTITUTIONAL_FLAG \
             $HELD_OUT_FLAG \
+            $SP500_FLAG \
             --data-status REAL \
             --report-out ./validation_report.json
 

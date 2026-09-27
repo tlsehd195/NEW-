@@ -118,8 +118,13 @@ from backtest.strategy import buy_and_hold_baseline  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
 from data_infra.exchange_calendars_adapter import build_xnys_calendar  # noqa: E402
 from data_infra.providers.sp500_index_constituent_history import (  # noqa: E402
+    SP500_INDEX_HISTORICAL_UNIVERSE_NAME,
+    apply_ticker_renames,
+    build_sp500_index_universe_memberships,
     constituents_as_of,
     parse_ticker_intervals,
+    parse_ticker_renames,
+    point_in_time_members_with_prices,
 )
 from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4, RESEARCH_UNIVERSE_STAGE5  # noqa: E402
 from storage.config import StorageConfig  # noqa: E402
@@ -577,6 +582,9 @@ def _aggregate_dict(aggregate) -> dict:
     }
 
 
+_DEFAULT_TICKER_RENAMES_CSV = Path(__file__).resolve().parent.parent / "docs" / "research" / "reference" / "sp500_ticker_renames.csv"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="PILOT_UNIVERSE")
@@ -602,6 +610,21 @@ def main() -> int:
             "scripts/select_point_in_time_universe.py's own input). Required together with "
             "--point-in-time-universe-as-of; providing only one of the pair is an error."
         ),
+    )
+    parser.add_argument(
+        "--sp500-history-csv", type=Path, default=None,
+        help=(
+            "ADR-0224: a fja05680/sp500 sp500_ticker_start_end.csv. Evaluates every name that "
+            "was an S&P 500 member at any point in [--start, --end] and has price bars in "
+            "--db-path, with each backtest date seeing only that date's members, and settles a "
+            "held name that stops trading to cash. Overrides --universe's security_ids; cannot "
+            "be combined with --point-in-time-universe-as-of."
+        ),
+    )
+    parser.add_argument(
+        "--sp500-ticker-renames-csv", type=Path, default=_DEFAULT_TICKER_RENAMES_CSV,
+        help="old_ticker,new_ticker map applied to --sp500-history-csv so a renamed company's "
+             "membership points at the ticker its prices are stored under (ADR-0224)",
     )
     parser.add_argument("--start", required=True, type=_parse_date)
     parser.add_argument("--end", required=True, type=_parse_date)
@@ -711,6 +734,10 @@ def main() -> int:
     # outright, before any repository is opened -- this script builds a
     # NEW chronological split from that exact range every run, so it
     # can conflict with TEST-1 exactly like the Signal-IC scripts can.
+    if args.sp500_history_csv is not None and args.point_in_time_universe_as_of is not None:
+        print("ERROR: --sp500-history-csv cannot be combined with --point-in-time-universe-as-of.", file=sys.stderr)
+        return 1
+
     locked = overlaps_any_locked_window(args.start, args.end)
     if locked:
         names = ", ".join(w.name for w in locked)
@@ -777,6 +804,22 @@ def main() -> int:
     # 2006-09-25..2027-09-24). --start/--end below must stay within that
     # window; a real production run already does (2010-01-01 onward).
     repository = DuckDBDataRepository(engine, calendars={"US_EQUITY": build_xnys_calendar()})
+    point_in_time_sp500 = None
+    dynamic_universe_name = None
+    if args.sp500_history_csv is not None:
+        sp500_intervals = apply_ticker_renames(
+            parse_ticker_intervals(args.sp500_history_csv), parse_ticker_renames(args.sp500_ticker_renames_csv),
+        )
+        for membership in build_sp500_index_universe_memberships(sp500_intervals):
+            repository.add_universe_membership(membership)
+        security_ids, point_in_time_sp500 = point_in_time_members_with_prices(
+            sp500_intervals, repository, start=args.start, end=args.end,
+        )
+        if not security_ids:
+            print("ERROR: no S&P 500 member in the window has price bars in --db-path.", file=sys.stderr)
+            return 1
+        dynamic_universe_name = SP500_INDEX_HISTORICAL_UNIVERSE_NAME
+        print(f"S&P 500 point-in-time universe: {json.dumps(point_in_time_sp500['summary'])}", flush=True)
     fundamentals_engine = None
     fundamentals_repository = None
     if args.fundamentals_db_path is not None:
@@ -1115,6 +1158,7 @@ def main() -> int:
                 "point_in_time_universe_as_of": (
                     args.point_in_time_universe_as_of.isoformat() if point_in_time_universe_used else None
                 ),
+                **({"sp500_point_in_time": True} if args.sp500_history_csv is not None else {}),
                 "overall_start": args.start.isoformat(), "overall_end": args.end.isoformat(),
                 "train_fraction": args.train_fraction, "validation_fraction": args.validation_fraction,
                 "train_window_months": args.train_window_months, "test_window_months": args.test_window_months,
@@ -1188,6 +1232,9 @@ def main() -> int:
             "point_in_time_universe_as_of": (
                 args.point_in_time_universe_as_of.isoformat() if point_in_time_universe_used else None
             ),
+            # ADR-0224: per-date member coverage when --sp500-history-csv
+            # is used; None otherwise.
+            "point_in_time_sp500": point_in_time_sp500,
             "security_ids": security_ids,
             "overall_start": args.start.isoformat(),
             "overall_end": args.end.isoformat(),
@@ -1248,7 +1295,7 @@ def main() -> int:
                 overall_start=split.train_start, overall_end=split.validation_end,
                 train_window_months=args.train_window_months, test_window_months=args.test_window_months,
                 step_months=args.step_months, initial_capital=args.initial_capital, benchmark_id=benchmark_id,
-                regime_subject_id=BENCHMARK_SYMBOL,
+                regime_subject_id=BENCHMARK_SYMBOL, point_in_time_universe=dynamic_universe_name,
             )
             fold_counts_by_strategy[name] = aggregate.fold_count
             aggregates_by_name[name] = aggregate
@@ -1259,6 +1306,7 @@ def main() -> int:
                     repository, factory, security_ids,
                     start_date=split.test_start.date(), end_date=split.test_end.date(),
                     initial_capital=args.initial_capital, benchmark_id=benchmark_id,
+                    point_in_time_universe=dynamic_universe_name,
                 )
                 # ADR-0194 addendum (external audit, 2026-09-24):
                 # compute_contribution_report_from_fills now REQUIRES the
