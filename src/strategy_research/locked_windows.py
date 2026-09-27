@@ -138,12 +138,14 @@ TEST_3 = LockedWindow(
     ),
     note=(
         "Observed once, real data, RESEARCH_UNIVERSE_STAGE5 (203 symbols, "
-        "price-only, 2000-01-01 start). All 22 candidates INCONCLUSIVE "
-        "(PBO=0.30); only illiquidity reached CANDIDATE on the walk-forward "
-        "folds and it underperformed SPY by 47.9pp on this window. Six "
-        "momentum-like candidates beat SPY here but none cleared "
-        "Deflated Sharpe >= 0.95. Survivorship bias of the Stage 5 "
-        "selection rule (ADR-0212) applies."
+        "price-only, 2000-01-01 start), then re-run once on the same split "
+        "after the ADR-0219 sizing fix. Post-fix: all 22 candidates "
+        "INCONCLUSIVE (PBO=0.23); only illiquidity reached CANDIDATE on the "
+        "walk-forward folds and it trailed SPY by 41.2pp on this window. "
+        "Nine candidates beat SPY here but none cleared Deflated Sharpe "
+        ">= 0.95. Survivorship bias of the Stage 5 selection rule "
+        "(ADR-0212) applies. See docs/research/reports/"
+        "full-validation-20260927T091846Z.json."
     ),
 )
 
