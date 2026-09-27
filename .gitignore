@@ -50,6 +50,8 @@ logs/*
 *.db
 *.parquet
 *.csv
+# Committed reference data (ADR-0224): the S&P 500 ticker rename map.
+!docs/research/reference/sp500_ticker_renames.csv
 
 # Local overrides
 *.local
