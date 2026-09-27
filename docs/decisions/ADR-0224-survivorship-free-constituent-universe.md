@@ -128,3 +128,26 @@ still missing.
 - After the extended catalog is published, run `run_full_validation.yml`
   with `price_only=true`, `sp500_point_in_time=true` against
   `research-price-catalog-sp500-pit-2000`.
+
+## Other sources checked (2026-09-27)
+
+These sources were checked before accepting the Tiingo quota delay.
+
+- Twelve Data (free, 800 calls/day) does not return splits (ADR-0203).
+  It also returns at most 5,000 bars per series, which would truncate a
+  2000-start history.
+- Alpha Vantage allows only 25 calls a day.
+- FMP's free plan gates `historical-price-eod/full` by an undocumented
+  per-symbol whitelist (ADR-0128).
+- EODHD's free plan, probed with the owner's key on a GitHub Actions
+  runner (8 calls), serves only the past year of end-of-day prices.
+  Requests for 2000, 2008 or 2023 return "Data is limited by one year
+  as you have free subscription". The plan allows 20 calls a day.
+- EODHD's delisted US symbol list (60,303 rows) does include `LEH`,
+  `WAMUQ`, `BSC`, `CFC`, `MER` and `SPLK`, but not `ENE`. Splits and
+  dividends work on the free plan.
+- The paid "EOD Historical Data — All World" plan costs $19.99 a month.
+  EODHD's FAQ says delisted tickers are in every paid package, mostly
+  from January 2000. That claim is unverified here.
+- The owner chose to stay on the free plan. Bankrupt names therefore
+  remain missing, and the known upward bias stays documented above.
