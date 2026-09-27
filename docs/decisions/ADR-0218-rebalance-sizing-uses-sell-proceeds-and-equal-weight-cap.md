@@ -56,4 +56,27 @@ harness correctness fix, not a parameter change after seeing results
 
 ## Results (post-fix re-run)
 
-_Filled in below after the re-run._
+`run_full_validation.yml` run 36263989797 on this branch, with the same
+release, universe and range as ADR-0216. Report:
+`docs/research/reports/full-validation-20260926T200629Z.json`, compared
+against `full-validation-20260926T183155Z.json`. This re-runs an
+already-seen window to measure the fix only (RULE 0.8).
+
+- **Walk-forward folds are unchanged** for every candidate: the same
+  positive-fold counts and median returns. A 2-month fold has one
+  rebalance, so no idle cash ever carried into a second one. PBO is
+  unchanged at 0.314. Evidence levels are unchanged except
+  `value_composite`, which moved CANDIDATE → ROBUSTNESS_PENDING on its
+  held-out-dependent DSR input.
+- **Held-out results (2 years, many rebalances) moved:**
+  `sloan_accruals` went from +306% to +90.3%. Its concentration report
+  now agrees with the return (total P&L +$8,666 on $10k) and shows TSLA
+  as 61% of positive P&L. `abnormal_investment` is +83% (TSLA 84%) and
+  `long_term_momentum` is +62.5% (TSLA 49%). These are single-name
+  results from TSLA's 2019-2020 run, not diversified factor evidence.
+- `institutional_ownership_change` held-out: +3.8% → +19.8%, against SPY's
+  +30.9%. The conclusion is still no alpha.
+- 30 of 56 entries beat SPY on this held-out window, but it has now been
+  read several times, and the TSLA concentration explains the largest
+  wins. ADR-0209's conclusion on the locked TEST window is untouched.
+
