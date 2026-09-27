@@ -273,6 +273,45 @@ def price_data_coverage_for_removed_securities(
     )
 
 
+def point_in_time_members_with_prices(
+    intervals: Sequence[TickerMembershipInterval],
+    repository,
+    *,
+    start: datetime,
+    end: datetime,
+) -> tuple[list[str], dict]:
+    """ADR-0224: every ticker that was a member at any point in
+    [start, end] AND has at least one bar there in `repository`, plus a
+    coverage report. On each Jan 1 inside the window the report counts
+    that day's members and how many of them have price data at all, so
+    a result built on this universe shows how much of the index (and
+    therefore how much survivorship bias) is still missing."""
+    in_window = sorted({
+        iv.ticker for iv in intervals
+        if iv.start_date <= end.date() and (iv.end_date is None or iv.end_date >= start.date())
+    })
+    with_prices = [t for t in in_window if repository.get_bars(t, start, end, as_of_time=end)]
+    have = set(with_prices)
+    by_year = []
+    for year in range(start.year, end.year + 1):
+        day = date(year, 1, 1)
+        if not start.date() <= day <= end.date():
+            continue
+        members = constituents_as_of(intervals, day)
+        by_year.append({"date": day.isoformat(), "members": len(members), "with_price_data": len(members & have)})
+    ratios = [row["with_price_data"] / row["members"] for row in by_year if row["members"]]
+    report = {
+        "summary": {
+            "members_in_window": len(in_window),
+            "with_price_data": len(with_prices),
+            "min_member_coverage": min(ratios) if ratios else None,
+        },
+        "coverage_by_year": by_year,
+        "members_without_price_data": sorted(set(in_window) - have),
+    }
+    return with_prices, report
+
+
 def _to_utc_datetime(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
 

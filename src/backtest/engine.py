@@ -14,7 +14,7 @@ from data_infra.enums import SecurityStatus
 from data_infra.repository import DataRepository
 from data_infra.versioning import compute_data_version
 
-from backtest.asof import AsOfDataView
+from backtest.asof import AsOfDataView, MembershipFilteredDataView
 from backtest.benchmark import BenchmarkEngine, BenchmarkResult
 from backtest.broker import BacktestBroker
 from backtest.clock import BacktestClock, build_daily_checkpoints
@@ -42,6 +42,12 @@ class BacktestConfig:
     cost_model: TransactionCostModel = DEFAULT_TRANSACTION_COST_MODEL
     slippage_model: SlippageModel = DEFAULT_SLIPPAGE_MODEL
     max_participation: float = 0.10
+    # ADR-0224, both only meaningful with a dynamic `universe`: hide
+    # non-members' bars from the strategy, and turn a held position whose
+    # security has had no bar for this many checkpoints in a row (it
+    # stopped trading: acquired, delisted) into cash at its last close.
+    restrict_strategy_to_universe: bool = False
+    settle_after_missing_checkpoints: Optional[int] = None
     checkpoint_time: time = time(20, 0)
     risk_free_rate: float = 0.0
     periods_per_year: int = 252
@@ -54,6 +60,10 @@ class BacktestConfig:
             raise ValueError("BacktestConfig requires either security_ids or universe")
         if self.initial_capital <= 0:
             raise ValueError("initial_capital must be positive")
+        if self.restrict_strategy_to_universe and self.universe is None:
+            raise ValueError("restrict_strategy_to_universe requires a dynamic universe")
+        if self.settle_after_missing_checkpoints is not None and self.settle_after_missing_checkpoints < 1:
+            raise ValueError("settle_after_missing_checkpoints must be >= 1")
 
 
 @dataclass(frozen=True)
@@ -92,6 +102,11 @@ class BacktestEngine:
         )
         clock = BacktestClock(checkpoints)
         data_view = AsOfDataView(self._repository, clock)
+        strategy_view = (
+            MembershipFilteredDataView(self._repository, clock) if config.restrict_strategy_to_universe else data_view
+        )
+        last_close: dict[str, float] = {}
+        missing_streak: dict[str, int] = {}
         portfolio = PortfolioAccounting(config.initial_capital)
         order_simulator = OrderSimulator(config.cost_model)
         fill_simulator = FillSimulator(
@@ -110,6 +125,8 @@ class BacktestEngine:
             integrity.check_checkpoint_order(checkpoint)
 
             universe_today = self._resolve_universe(checkpoint)
+            if isinstance(strategy_view, MembershipFilteredDataView):
+                strategy_view.members = frozenset(universe_today)
             tracked_ids = universe_today | set(portfolio.positions.keys())
 
             for security_id in sorted(tracked_ids):
@@ -131,7 +148,35 @@ class BacktestEngine:
                     todays_prices[security_id] = bars[-1].close
                     data_versions_used.add(bars[-1].provenance.data_version)
 
-            _, missing = portfolio.mark_to_market(todays_prices, checkpoint)
+            last_close.update(todays_prices)
+            marking_prices = todays_prices
+            if config.settle_after_missing_checkpoints is not None:
+                marking_prices = dict(todays_prices)
+                for security_id in sorted(portfolio.positions):
+                    if security_id in todays_prices:
+                        missing_streak.pop(security_id, None)
+                        continue
+                    missing_streak[security_id] = missing_streak.get(security_id, 0) + 1
+                    if security_id not in last_close:
+                        continue
+                    if missing_streak[security_id] >= config.settle_after_missing_checkpoints:
+                        quantity = portfolio.positions[security_id].quantity
+                        portfolio.settle_position(security_id, last_close[security_id], checkpoint)
+                        missing_streak.pop(security_id, None)
+                        integrity.record(
+                            "stale_position_settled", IntegritySeverity.WARNING,
+                            f"{security_id}: no bar for {config.settle_after_missing_checkpoints} checkpoints; "
+                            f"{quantity:g} shares settled to cash at last close {last_close[security_id]:.4f}",
+                            checkpoint, security_id,
+                        )
+                    else:
+                        # Mark a name that has stopped printing at its last
+                        # close, not at cost; it is still reported missing.
+                        marking_prices[security_id] = last_close[security_id]
+
+            _, missing = portfolio.mark_to_market(marking_prices, checkpoint)
+            if marking_prices is not todays_prices:
+                missing = sorted(set(missing) | {sid for sid in portfolio.positions if sid not in todays_prices})
             # Independent audit finding (Step 2, P2): a held position
             # whose security is CONFIRMED delisted (real SecurityMaster
             # status, never guessed) gets a dedicated, ERROR-severity
@@ -149,8 +194,8 @@ class BacktestEngine:
             integrity.check_delisted_position_marked_at_cost(missing_delisted, checkpoint)
 
             portfolio_view = portfolio.snapshot_view(checkpoint)
-            intents = self._strategy.generate_orders(checkpoint, data_view, portfolio_view)
-            integrity.check_universe(intents, universe_today, checkpoint)
+            intents = self._strategy.generate_orders(checkpoint, strategy_view, portfolio_view)
+            integrity.check_universe(intents, universe_today, checkpoint, held=set(portfolio.positions))
             integrity.check_duplicate_intents(intents, checkpoint)
 
             next_checkpoint = checkpoints[index + 1] if index + 1 < len(checkpoints) else None
@@ -283,6 +328,12 @@ class BacktestEngine:
                 "slippage_model": asdict(config.slippage_model) if hasattr(config.slippage_model, "__dataclass_fields__") else str(config.slippage_model),
                 "risk_free_rate": config.risk_free_rate,
                 "periods_per_year": config.periods_per_year,
+                # Added only when set, so every existing run keeps its hash.
+                **({"restrict_strategy_to_universe": True} if config.restrict_strategy_to_universe else {}),
+                **(
+                    {"settle_after_missing_checkpoints": config.settle_after_missing_checkpoints}
+                    if config.settle_after_missing_checkpoints is not None else {}
+                ),
             }
         )
         experiment = self._experiment_tracker.record(

@@ -81,6 +81,25 @@ def coverage(intervals, listings, window_start: date, window_end: date) -> dict:
                     {"start": start.isoformat() if start else None, "end": end.isoformat() if end else None, "exchange": exchange}
                 )
     rows = sorted(by_ticker.values(), key=lambda r: r["ticker"])
+
+    # Rename candidates: an unlisted ticker X leaves on day d, a ticker Y
+    # joins on the same day, and Tiingo's history for Y starts no later
+    # than X's own membership did. A same-day swap between two unrelated
+    # companies can match too, so these are candidates to check, not a map.
+    starts_by_day: dict[date, list[str]] = {}
+    for interval in intervals:
+        starts_by_day.setdefault(interval.start_date, []).append(interval.ticker)
+    rename_candidates = []
+    unlisted = {r["ticker"] for r in rows if not r["listed"]}
+    for interval in intervals:
+        if interval.ticker not in unlisted or interval.end_date is None:
+            continue
+        for new_ticker in starts_by_day.get(interval.end_date, []):
+            listed_since = [start for start, _, _ in listings.get(_tiingo_key(new_ticker), []) if start is not None]
+            if listed_since and min(listed_since) <= interval.start_date:
+                rename_candidates.append(
+                    {"old": interval.ticker, "new": new_ticker, "date": interval.end_date.isoformat()}
+                )
     removed = [r for r in rows if not r["still_member"]]
     return {
         "window": [window_start.isoformat(), window_end.isoformat()],
@@ -89,6 +108,7 @@ def coverage(intervals, listings, window_start: date, window_end: date) -> dict:
         "no_longer_member": len(removed),
         "no_longer_member_listed": sum(r["listed"] for r in removed),
         "not_listed": [r["ticker"] for r in rows if not r["listed"]],
+        "rename_candidates": rename_candidates,
         "rows": rows,
     }
 
@@ -107,7 +127,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.write_text(json.dumps(report, indent=2))
     print("not listed:", " ".join(report["not_listed"]))
-    print(json.dumps({k: v for k, v in report.items() if k not in ("rows", "not_listed")}, indent=2))
+    print("rename candidates:", " ".join(f"{c['old']}->{c['new']}@{c['date']}" for c in report["rename_candidates"]))
+    print(json.dumps({k: v for k, v in report.items() if k not in ("rows", "not_listed", "rename_candidates")}, indent=2))
     return 0
 
 

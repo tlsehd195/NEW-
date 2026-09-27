@@ -44,6 +44,8 @@ def run_gross_and_net(
     benchmark_id: Optional[str] = None,
     market: str = "US_EQUITY",
     code_version: str = "phase23_strategy_research",
+    point_in_time_universe: Optional[str] = None,
+    settle_after_missing_checkpoints: int = 5,
 ) -> GrossNetResult:
     """Runs the SAME strategy specification twice against the SAME data
     window: once under `ZERO_TRANSACTION_COST_MODEL`/`ZERO_SLIPPAGE_MODEL`
@@ -53,18 +55,31 @@ def run_gross_and_net(
     (a `Strategy` implementation in this codebase holds internal
     rebalance-timing state -- reusing one instance across two runs would
     let the second run's timing depend on the first run's, breaking
-    reproducibility)."""
+    reproducibility).
+
+    `point_in_time_universe` (ADR-0224): the name of a dynamic universe
+    in `repository` (e.g. `SP500_INDEX_HISTORICAL`). The strategy then
+    sees only that date's members, and a held name with no bar for
+    `settle_after_missing_checkpoints` checkpoints is settled to cash.
+    `security_ids` should list every name that is ever a member."""
+    universe_kwargs = {}
+    if point_in_time_universe is not None:
+        universe_kwargs = {
+            "universe": (market, point_in_time_universe),
+            "restrict_strategy_to_universe": True,
+            "settle_after_missing_checkpoints": settle_after_missing_checkpoints,
+        }
     gross_config = BacktestConfig(
         market=market, start_date=start_date, end_date=end_date, initial_capital=initial_capital,
         security_ids=tuple(security_ids), benchmark_id=benchmark_id,
         cost_model=ZERO_TRANSACTION_COST_MODEL, slippage_model=ZERO_SLIPPAGE_MODEL,
-        code_version=code_version,
+        code_version=code_version, **universe_kwargs,
     )
     net_config = BacktestConfig(
         market=market, start_date=start_date, end_date=end_date, initial_capital=initial_capital,
         security_ids=tuple(security_ids), benchmark_id=benchmark_id,
         cost_model=DEFAULT_TRANSACTION_COST_MODEL, slippage_model=DEFAULT_SLIPPAGE_MODEL,
-        code_version=code_version,
+        code_version=code_version, **universe_kwargs,
     )
 
     gross_result = BacktestEngine(repository, gross_config, strategy_factory()).run()
