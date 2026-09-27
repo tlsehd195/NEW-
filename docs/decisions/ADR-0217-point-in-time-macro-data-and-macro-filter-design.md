@@ -129,6 +129,37 @@ month for monthly series.) What this means for the research window
   vintage (fewer years), or use a traded proxy for the dollar (UUP ETF,
   2007+, from the price catalog).
 
+### Daily series (run 36266048908, one matrix job per series)
+
+| Series | First archived vintage | Obs. before it | Median / max lag | Revised share |
+|---|---|---|---|---|
+| DFF | 2005-06-28 | 5656 | 2 / 9 days | 0.14% |
+| DGS3MO, DGS2, DGS10 | 2005-06-28 | 4040 | 1 / 11 days | ≤0.04% |
+| VIXCLS | 2010-11-22 | 5264 | 0 days | 0.11% |
+| T10Y2Y, T10Y3M | 2014-01-27 | 6280 | 0 / 6 days | 0.02% |
+| BAA10Y | 2014-01-27 | 6280 | 1 day | 0.14% |
+| CBBTCUSD | 2018-06-17 | 1295 | 0 / 2 days | 10.5% |
+
+NFCI did not finish: the run was cancelled after about an hour while it
+was still downloading. The Chicago Fed re-estimates its whole history
+every week, so the all-vintages response is far larger than any other
+series. Next step for NFCI only: request `output_type=4` (initial
+release of each observation), which is point-in-time by construction and
+small, and use first prints for the signal.
+
+What this settles for the open question below: the daily market series
+are effectively never revised (≤0.14% of observations, BTC aside), but
+ALFRED only archived their vintages from 2005–2014. Under the strict
+vintage rule, yields and the fed funds rate start in mid-2005, VIX at
+the end of 2010, and the 10y−2y / 10y−3m / Baa spreads in 2014, which
+would drop the 2001–02 and 2008–09 bear markets from most signals.
+Stage 2 therefore needs the fallback rule for `revised=False` series:
+`available_time = observation_date + max observed release lag` (from the
+vintage era, e.g. 11 days for Treasury yields), applied only before the
+first archived vintage. The yield-curve spreads can also be computed
+from DGS10 − DGS2 / DGS10 − DGS3MO, which gets them back to 2005 under
+the strict rule alone.
+
 ### Open question the first real run answers
 
 For daily market series (VIX, Treasury yields) ALFRED may only have

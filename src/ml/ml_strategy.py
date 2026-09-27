@@ -86,7 +86,7 @@ from typing import Optional, Sequence
 from backtest.asof import AsOfDataView
 from backtest.enums import OrderSide, OrderType
 from backtest.portfolio import PortfolioView
-from backtest.strategy import OrderIntent
+from backtest.strategy import OrderIntent, new_position_cash
 
 from ml.dataset import MLSample
 from ml.features import FEATURE_IDS, FUNDAMENTALS_FEATURE_FNS, build_price_feature_fns, compute_feature_vector
@@ -343,7 +343,7 @@ class MLStrategy:
 
         to_buy = [sid for sid in target if portfolio.quantity_of(sid) == 0]
         if to_buy:
-            per_symbol_cash = portfolio.cash * (1.0 - self.COST_SAFETY_MARGIN) / len(to_buy)
+            per_symbol_cash = new_position_cash(portfolio, data, as_of_time, target, len(to_buy), self.COST_SAFETY_MARGIN)
             for security_id in to_buy:
                 bars = data.get_bars(security_id, as_of_time - timedelta(days=14), as_of_time)
                 if not bars:

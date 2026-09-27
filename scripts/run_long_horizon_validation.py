@@ -829,8 +829,13 @@ def main() -> int:
         # for the held-out TEST's concentration/contribution report
         # below (backtest.contribution), to value any still-open
         # position at the end of that period. Not used anywhere else.
+        # RAW close (ADR-0219): the report replays raw-price fills plus
+        # the real corporate actions, like BacktestEngine's own marks.
+        # Tiingo's adjusted_close is restated for every LATER split too
+        # (TSLA 2020/2022, AMZN 2022), which turned a +$27k TSLA gain
+        # into a loss and hid the concentration this report exists to show.
         final_prices = {
-            sid: (bars[-1].adjusted_close or bars[-1].close)
+            sid: bars[-1].close
             for sid, bars in bars_by_symbol.items() if bars
         }
         # When fundamentals are included, `leverage`'s report content
