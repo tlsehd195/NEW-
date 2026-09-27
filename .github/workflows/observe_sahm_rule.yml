@@ -1,0 +1,57 @@
+# Observe-only log of the real-time Sahm rule (ADR-0220 follow-up,
+# account owner's choice 2026-09-27). Weekdays at 14:00 UTC (23:00 KST),
+# after the 08:30 ET employment release. Appends to
+# docs/research/macro_observations/sahm_rule.jsonl only when FRED's
+# unemployment rate has a new release or revision, and posts to Discord
+# when the rule's state flips. Trading is not affected.
+name: Observe Sahm Rule (observe-only)
+
+on:
+  schedule:
+    - cron: "0 14 * * 1-5"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Record the Sahm rule reading
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          python3 scripts/record_sahm_observation.py \
+            --log docs/research/macro_observations/sahm_rule.jsonl --discord-on-flip
+
+      - name: Commit the log if it changed
+        run: |
+          set -euo pipefail
+          LOG=docs/research/macro_observations/sahm_rule.jsonl
+          if git diff --quiet -- "$LOG" && git ls-files --error-unmatch "$LOG" >/dev/null 2>&1; then
+            echo "log unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$LOG"
+          git commit -m "chore: record Sahm rule observation"
+          git push
