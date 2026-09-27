@@ -28,7 +28,7 @@ from backtest.asof import AsOfDataView
 from backtest.enums import OrderSide, OrderType
 from backtest.metrics import annualized_volatility, compute_returns
 from backtest.portfolio import PortfolioView
-from backtest.strategy import OrderIntent
+from backtest.strategy import OrderIntent, new_position_cash
 
 from strategy_research._dates import TRADING_DAYS_PER_MONTH, add_months, trim_to_lookback
 
@@ -153,7 +153,7 @@ class TrendVolatilityStrategy:
 
         to_buy = [sid for sid in target if portfolio.quantity_of(sid) == 0]
         if to_buy:
-            per_symbol_cash = portfolio.cash * (1.0 - self.COST_SAFETY_MARGIN) / len(to_buy)
+            per_symbol_cash = new_position_cash(portfolio, data, as_of_time, target, len(to_buy), self.COST_SAFETY_MARGIN)
             for security_id in to_buy:
                 bars = data.get_bars(security_id, as_of_time - timedelta(days=14), as_of_time)
                 if not bars:
