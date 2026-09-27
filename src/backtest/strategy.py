@@ -43,7 +43,7 @@ def new_position_cash(
     cost_safety_margin: float,
 ) -> float:
     """Cash to put into each NEW position of an equal-weight rebalance
-    toward `target` (ADR-0218).
+    toward `target` (ADR-0219).
 
     Counts this rebalance's own SELL proceeds (held names leaving
     `target`, at their latest close), since the engine fills those sells

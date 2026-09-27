@@ -1,4 +1,4 @@
-# ADR-0218: Rebalance sizing uses sell proceeds and an equal-weight cap
+# ADR-0219: Rebalance sizing uses sell proceeds and an equal-weight cap
 
 **Status:** Accepted
 **Date:** 2026-09-26

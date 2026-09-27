@@ -1,4 +1,4 @@
-"""`backtest.strategy.new_position_cash` (ADR-0218): new positions of an
+"""`backtest.strategy.new_position_cash` (ADR-0219): new positions of an
 equal-weight rebalance are sized with this rebalance's own sell proceeds
 and capped at an equal share of the portfolio."""
 
