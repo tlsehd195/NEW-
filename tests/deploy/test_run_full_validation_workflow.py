@@ -57,7 +57,7 @@ def test_required_inputs_present_with_sensible_defaults():
     assert inputs["release_tag"]["required"] is True
     assert inputs["universe"]["default"] == "RESEARCH_UNIVERSE"
     assert inputs["start"]["default"] == "2010-01-01"
-    # Default --end is the earliest locked window's start (TEST_3's since ADR-0219;
+    # Default --end is the earliest locked window's start (TEST_3's since ADR-0220;
     # before that TEST_2's,
     # ADR-0209/ADR-0212). The old 2023-04-28 default (TEST_1's start)
     # overlapped TEST_2 once it was locked, so a default dispatch was

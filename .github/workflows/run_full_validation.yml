@@ -55,7 +55,7 @@ on:
         type: string
         default: "2010-01-01"
       end:
-        description: "Range end (YYYY-MM-DD) -- must not overlap any strategy_research.locked_windows window; default is the earliest locked window's start (earliest_locked_window_start(), TEST_3 since ADR-0219)"
+        description: "Range end (YYYY-MM-DD) -- must not overlap any strategy_research.locked_windows window; default is the earliest locked window's start (earliest_locked_window_start(), TEST_3 since ADR-0220)"
         type: string
         default: "2016-07-11"
       price_only:
