@@ -52,7 +52,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from backtest.strategy import BuyAndHoldStrategy  # noqa: E402
+from backtest.strategy import buy_and_hold_baseline  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
 from data_infra.exchange_calendars_adapter import build_xnys_calendar  # noqa: E402
 from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
@@ -132,7 +132,7 @@ def main() -> int:
         )
 
         strategy_specs = [
-            ("buy_and_hold", "reference baseline, not alpha (Phase 22)", lambda: BuyAndHoldStrategy(security_ids)),
+            ("buy_and_hold", "reference baseline, not alpha (Phase 22)", lambda: buy_and_hold_baseline(security_ids, args.initial_capital)),
             ("long_term_momentum", "cross-sectional trailing-return momentum (see src/strategy_research/long_term_momentum.py)", lambda: LongTermMomentumStrategy(security_ids, LongTermMomentumParameters())),
             ("trend_volatility", "trend + realized-volatility filter (see src/strategy_research/trend_volatility.py)", lambda: TrendVolatilityStrategy(security_ids, TrendVolatilityParameters())),
             ("risk_controlled_momentum", "momentum + inverse-vol sizing + position cap (see src/strategy_research/risk_controlled_momentum.py)", lambda: RiskControlledMomentumStrategy(security_ids, RiskControlledMomentumParameters())),

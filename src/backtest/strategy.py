@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Protocol, Sequence
 
 from backtest.asof import AsOfDataView
+from backtest.costs import DEFAULT_TRANSACTION_COST_MODEL, TransactionCostModel
 from backtest.enums import OrderSide, OrderType
 from backtest.portfolio import PortfolioView
 
@@ -98,11 +99,30 @@ class BuyAndHoldStrategy:
     # strategy.
     COST_SAFETY_MARGIN = 0.02
 
-    def __init__(self, security_ids: Sequence[str], cash_buffer: float = 0.0) -> None:
+    def __init__(
+        self,
+        security_ids: Sequence[str],
+        cash_buffer: float = 0.0,
+        *,
+        fractional: bool = False,
+        cost_safety_margin: Optional[float] = None,
+    ) -> None:
+        """`fractional=True` buys fractional shares and splits the cash
+        only across symbols that have a price at the buy checkpoint
+        (ADR-0223). With whole shares, $10k over 203 symbols is ~$48 a
+        name, so every name priced above that got 0 shares, and names
+        not yet listed kept their slice as cash for the whole run: the
+        research baseline was mostly cash. `cost_safety_margin`
+        overrides COST_SAFETY_MARGIN for callers that know the cost
+        model (the strategy itself never does)."""
         if not 0.0 <= cash_buffer < 1.0:
             raise ValueError("cash_buffer must be in [0, 1)")
+        if cost_safety_margin is not None and not 0.0 <= cost_safety_margin < 1.0:
+            raise ValueError("cost_safety_margin must be in [0, 1)")
         self._security_ids = list(security_ids)
         self._cash_buffer = cash_buffer
+        self._fractional = fractional
+        self._cost_safety_margin = self.COST_SAFETY_MARGIN if cost_safety_margin is None else cost_safety_margin
         self._invested = False
 
     def generate_orders(
@@ -111,20 +131,22 @@ class BuyAndHoldStrategy:
         if self._invested or not self._security_ids:
             return []
 
-        investable_cash = portfolio.cash * (1.0 - self._cash_buffer) * (1.0 - self.COST_SAFETY_MARGIN)
-        per_symbol_cash = investable_cash / len(self._security_ids)
+        investable_cash = portfolio.cash * (1.0 - self._cash_buffer) * (1.0 - self._cost_safety_margin)
 
-        intents: list[OrderIntent] = []
+        prices: dict[str, float] = {}
         for security_id in self._security_ids:
             bars = data.get_bars(security_id, as_of_time - timedelta(days=14), as_of_time)
-            if not bars:
-                continue
-            price = bars[-1].close
-            if price <= 0:
-                continue
-            quantity = math.floor(per_symbol_cash / price)
+            if bars and bars[-1].close > 0:
+                prices[security_id] = bars[-1].close
+        if not prices:
+            return []
+        per_symbol_cash = investable_cash / (len(prices) if self._fractional else len(self._security_ids))
+
+        intents: list[OrderIntent] = []
+        for security_id, price in prices.items():
+            quantity = per_symbol_cash / price if self._fractional else float(math.floor(per_symbol_cash / price))
             if quantity > 0:
-                intents.append(OrderIntent(security_id, OrderSide.BUY, float(quantity)))
+                intents.append(OrderIntent(security_id, OrderSide.BUY, quantity))
         # Only commit to "already invested" once a real attempt actually
         # produced at least one order -- a checkpoint where no symbol
         # has data yet must not permanently disable every later,
@@ -132,6 +154,19 @@ class BuyAndHoldStrategy:
         if intents:
             self._invested = True
         return intents
+
+
+def buy_and_hold_baseline(
+    security_ids: Sequence[str],
+    initial_capital: float,
+    cost_model: TransactionCostModel = DEFAULT_TRANSACTION_COST_MODEL,
+) -> BuyAndHoldStrategy:
+    """The research baseline: fractional, equal-weight buy-and-hold whose
+    cash margin also covers one fixed commission per name (ADR-0223).
+    Without that, $1 x 203 names ate the 2% margin and the last orders
+    were rejected for cash."""
+    margin = BuyAndHoldStrategy.COST_SAFETY_MARGIN + len(security_ids) * cost_model.fixed_per_trade / initial_capital
+    return BuyAndHoldStrategy(security_ids, fractional=True, cost_safety_margin=min(margin, 0.5))
 
 
 class SimpleMomentumStrategy:
