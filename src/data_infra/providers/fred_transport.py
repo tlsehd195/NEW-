@@ -101,6 +101,7 @@ class FredHttpTransport:
         self, *, series_id: str, api_key: str, observation_start: str, observation_end: str,
         offset: int, limit: int, timeout: float,
         realtime_start: str = ALFRED_REALTIME_START, realtime_end: str = ALFRED_REALTIME_END,
+        output_type: str = "1",
     ) -> FredTransportResponse:
         """ALFRED (archival FRED) request: the same `fred/series/
         observations` endpoint over a real-time window (by default the
@@ -123,7 +124,7 @@ class FredHttpTransport:
             "observation_end": observation_end,
             "realtime_start": realtime_start,
             "realtime_end": realtime_end,
-            "output_type": "1",
+            "output_type": output_type,
             "sort_order": "asc",
             "offset": str(offset),
             "limit": str(limit),
