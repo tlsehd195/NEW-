@@ -173,3 +173,15 @@ def test_report_commit_rebases_onto_the_moved_branch_before_pushing():
     # A plain push failed twice when main moved during the run (ADR-0222).
     step = next(s for s in _steps() if s.get("name", "").startswith("Commit the report"))
     assert 'git pull --rebase origin "$GITHUB_REF_NAME" && git push' in step["run"]
+
+
+def test_held_out_test_is_skipped_unless_final_exam_is_requested():
+    # ADR-0222: a screening run must not spend the held-out TEST window.
+    inputs = _dispatch_inputs()
+    assert inputs["final_exam"]["type"] == "boolean"
+    assert inputs["final_exam"]["default"] is False
+    step = next(s for s in _steps() if s.get("name", "").startswith("Run the full walk-forward"))
+    assert 'HELD_OUT_FLAG="--skip-held-out"' in step["run"]
+    assert '[ "$FINAL_EXAM_INPUT" = "true" ]' in step["run"]
+    assert "$HELD_OUT_FLAG" in step["run"]
+    assert step["env"]["FINAL_EXAM_INPUT"] == "${{ inputs.final_exam }}"

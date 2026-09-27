@@ -173,6 +173,12 @@ class TestChronologicalBoundaryWiring:
         assert isinstance(start_call, ast.Call) and start_call.func.value.attr == "test_start"
         assert isinstance(end_call, ast.Call) and end_call.func.value.attr == "test_end"
 
+    def test_held_out_test_is_gated_on_skip_held_out(self) -> None:
+        # ADR-0222: a screening run (--skip-held-out) never backtests TEST.
+        source = _source()
+        assert "if split.test_end > split.test_start and not args.skip_held_out:" in source
+        assert '"held_out_skipped": args.skip_held_out' in source
+
 
 class TestEqualBenchmarkConditions:
     """Category D: every strategy must be evaluated against the same

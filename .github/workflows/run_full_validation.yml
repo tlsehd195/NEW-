@@ -62,6 +62,10 @@ on:
         description: "Price-derived candidates only (ADR-0213): the release needs only price_catalog.zip; fundamentals/insider/institutional catalogs are not loaded"
         type: boolean
         default: false
+      final_exam:
+        description: "Also backtest the held-out TEST window (ADR-0222). Leave off for screening; turn on once, for a short list of finalists, then lock that window"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -198,8 +202,11 @@ jobs:
           UNIVERSE_INPUT: ${{ inputs.universe }}
           START_INPUT: ${{ inputs.start }}
           END_INPUT: ${{ inputs.end }}
+          FINAL_EXAM_INPUT: ${{ inputs.final_exam }}
         run: |
           set -euo pipefail
+          HELD_OUT_FLAG="--skip-held-out"
+          if [ "$FINAL_EXAM_INPUT" = "true" ]; then HELD_OUT_FLAG=""; fi
           python3 scripts/run_long_horizon_validation.py \
             --universe "$UNIVERSE_INPUT" \
             --start "$START_INPUT" --end "$END_INPUT" \
@@ -207,6 +214,7 @@ jobs:
             $FUNDAMENTALS_FLAG \
             $INSIDER_FLAG \
             $INSTITUTIONAL_FLAG \
+            $HELD_OUT_FLAG \
             --data-status REAL \
             --report-out ./validation_report.json
 

@@ -664,6 +664,14 @@ def main() -> int:
     parser.add_argument("--train-window-months", type=int, default=6, help="Walk-forward fold TRAIN length, run across the TRAIN+VALIDATION region only")
     parser.add_argument("--test-window-months", type=int, default=2, help="Walk-forward fold TEST length")
     parser.add_argument("--step-months", type=int, default=2, help="Walk-forward rolling step")
+    parser.add_argument(
+        "--skip-held-out", action="store_true",
+        help=(
+            "ADR-0222: run only the walk-forward folds over TRAIN+VALIDATION and never "
+            "backtest the held-out TEST window, so a screening run does not spend it. "
+            "Run the held-out TEST once, for a short list of finalists."
+        ),
+    )
     parser.add_argument("--report-out", type=Path, default=None)
     parser.add_argument(
         "--data-status", choices=("REAL", "SYNTHETIC"), required=True,
@@ -1194,6 +1202,7 @@ def main() -> int:
                 "step_months": args.step_months,
                 "region": "TRAIN+VALIDATION only (chronological_split.train_start .. validation_end)",
             },
+            "held_out_skipped": args.skip_held_out,
             "initial_capital": args.initial_capital,
             "benchmark_id": benchmark_id,
             "benchmark_status": (
@@ -1245,7 +1254,7 @@ def main() -> int:
             aggregates_by_name[name] = aggregate
 
             held_out_test = None
-            if split.test_end > split.test_start:
+            if split.test_end > split.test_start and not args.skip_held_out:
                 held_out_result = run_gross_and_net(
                     repository, factory, security_ids,
                     start_date=split.test_start.date(), end_date=split.test_end.date(),

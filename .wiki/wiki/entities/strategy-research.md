@@ -25,3 +25,8 @@ Phase 23. ADR-0029(전략 연구 프레임워크). 참고: `docs/research/STRATE
 
 ## 경계
 가장 큰 전략 모듈(20+ 파일) — `backtest` 엔진을 재사용만 하고 자체 실행 엔진은 없음.
+
+
+
+## 봉인된 시험 구간 (locked_windows, RULE 0.8)
+`locked_windows.py`에 등록된 구간은 어떤 새 전략의 TRAIN/VALIDATION/TEST로도 다시 쓸 수 없다: TEST_1(2023-04-28~2026-08-27, ADR-0041), TEST_2(2020-08-28~2023-04-28, ADR-0209), TEST_3(2016-07-11~2020-08-28, ADR-0222). `earliest_locked_window_start()`가 스크립트 기본 `--end`를 정한다(현재 2016-07-11). ADR-0222부터 `run_long_horizon_validation.py --skip-held-out`(워크플로 `final_exam=false` 기본값)로 스크리닝 실행은 held-out TEST를 건드리지 않고, 후보를 좁힌 뒤 한 번만 `final_exam=true`로 시험한 다음 그 구간을 봉인한다.
