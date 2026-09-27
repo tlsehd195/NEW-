@@ -2,52 +2,15 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "aiinvest — 전체 모듈 아키텍처 (16개 패키지)",
-    "subtitle": "Phase 1-14 + Phase 23. 실제 import 관계로 확인된 연결만 표시",
+    "title": "aiinvest — 전체 모듈 아키텍처 (19개 패키지)",
+    "subtitle": "Phase 1-14 + Phase 23 + orchestration/ml/notifications. 실제 import 관계로 확인된 연결만 표시",
     "output": "docs/architecture/full-module-architecture.html",
-    "visual_preset": "blueprint",
     "quality_profile": "showcase",
-    "views": [
-      {
-        "id": "decision-path",
-        "label": "실시간 결정 경로",
-        "focus": [
-          "data_infra",
-          "regime",
-          "predict",
-          "decision",
-          "risk",
-          "broker_paper",
-          "broker_live"
-        ],
-        "note": "Regime과 Prediction을 각각 거쳐 Decision에서 합쳐지고, Risk가 사이즈를 정한 뒤 브로커로 갑니다."
-      },
-      {
-        "id": "safety-gate",
-        "label": "실거래 게이트",
-        "focus": [
-          "risk",
-          "broker_live",
-          "storage",
-          "trade_journal",
-          "monitoring"
-        ],
-        "note": "broker_live는 kill switch + human approval을 통과해야만 실제 주문을 냅니다."
-      },
-      {
-        "id": "research-and-learning",
-        "label": "리서치 + 오프라인 학습",
-        "focus": [
-          "backtest",
-          "baseline",
-          "strategy_research",
-          "counterfactual",
-          "learning",
-          "evolution"
-        ],
-        "note": "backtest는 공유 자료형/엔진, 나머지는 전부 기록된 이력만 오프라인으로 읽습니다."
-      }
-    ]
+    "repository": {
+      "url": "https://github.com/tlsehd195/NEW-",
+      "provider": "github",
+      "revision": "4e07eaf8c98cd0b44c7de4a1e38e8083b9ee6088"
+    }
   },
   "components": [
     {
@@ -56,6 +19,12 @@
       "label": "data_infra",
       "sublabel": "수집 + 공급자",
       "tag": "Phase 1",
+      "sources": [
+        {
+          "path": "src/data_infra/repository.py",
+          "label": "DataRepository"
+        }
+      ],
       "pos": [
         40,
         300
@@ -71,6 +40,12 @@
       "label": "regime",
       "sublabel": "시점 안전 분류",
       "tag": "Phase 5",
+      "sources": [
+        {
+          "path": "src/regime/detector.py",
+          "label": "RegimeDetector"
+        }
+      ],
       "pos": [
         220,
         140
@@ -86,12 +61,39 @@
       "label": "predict",
       "sublabel": "수익률/변동성/신뢰도",
       "tag": "Phase 6",
+      "sources": [
+        {
+          "path": "src/predict/predictor.py",
+          "label": "Predictor"
+        }
+      ],
       "pos": [
         220,
-        380
+        360
       ],
       "size": [
         140,
+        64
+      ]
+    },
+    {
+      "id": "orchestration",
+      "type": "backend",
+      "label": "orchestration",
+      "sublabel": "매 틱 파이프라인 조율",
+      "tag": "구성 계층",
+      "sources": [
+        {
+          "path": "src/orchestration/paper_runner.py",
+          "label": "run_cycle"
+        }
+      ],
+      "pos": [
+        400,
+        40
+      ],
+      "size": [
+        150,
         64
       ]
     },
@@ -101,9 +103,15 @@
       "label": "decision",
       "sublabel": "거래 신호 결정",
       "tag": "Phase 7",
+      "sources": [
+        {
+          "path": "src/decision/agent.py",
+          "label": "DecisionAgent"
+        }
+      ],
       "pos": [
         400,
-        260
+        250
       ],
       "size": [
         150,
@@ -116,9 +124,15 @@
       "label": "risk",
       "sublabel": "포지션 사이징",
       "tag": "Phase 8",
+      "sources": [
+        {
+          "path": "src/risk/sizing.py",
+          "label": "PositionSizer"
+        }
+      ],
       "pos": [
         590,
-        260
+        250
       ],
       "size": [
         140,
@@ -131,6 +145,12 @@
       "label": "broker / paper",
       "sublabel": "모의 체결",
       "tag": "Phase 13",
+      "sources": [
+        {
+          "path": "src/broker/paper/session.py",
+          "label": "PaperTradingSession"
+        }
+      ],
       "pos": [
         780,
         140
@@ -146,9 +166,15 @@
       "label": "broker / live",
       "sublabel": "kill switch + 승인",
       "tag": "Phase 13",
+      "sources": [
+        {
+          "path": "src/broker/live/kill_switch.py",
+          "label": "kill_switch"
+        }
+      ],
       "pos": [
         780,
-        380
+        360
       ],
       "size": [
         150,
@@ -161,6 +187,12 @@
       "label": "storage",
       "sublabel": "DuckDB + Parquet",
       "tag": "Phase 4",
+      "sources": [
+        {
+          "path": "src/storage/engine.py",
+          "label": "StorageEngine"
+        }
+      ],
       "pos": [
         980,
         140
@@ -176,9 +208,15 @@
       "label": "trade_journal",
       "sublabel": "거래 + 결과 기록",
       "tag": "Phase 3",
+      "sources": [
+        {
+          "path": "src/trade_journal/models.py",
+          "label": "TradeRecord"
+        }
+      ],
       "pos": [
         980,
-        380
+        360
       ],
       "size": [
         140,
@@ -191,9 +229,15 @@
       "label": "learning",
       "sublabel": "오프라인 모델 학습",
       "tag": "Phase 9",
+      "sources": [
+        {
+          "path": "src/learning/pipeline.py",
+          "label": "run_learning_pipeline"
+        }
+      ],
       "pos": [
         1180,
-        260
+        250
       ],
       "size": [
         140,
@@ -206,9 +250,14 @@
       "label": "evolution",
       "sublabel": "신규 모델 후보",
       "tag": "Phase 11",
+      "sources": [
+        {
+          "path": "src/evolution/pipeline.py"
+        }
+      ],
       "pos": [
         1180,
-        460
+        440
       ],
       "size": [
         140,
@@ -221,9 +270,15 @@
       "label": "backtest",
       "sublabel": "공유 자료형 + 엔진",
       "tag": "Phase 2",
+      "sources": [
+        {
+          "path": "src/backtest/engine.py",
+          "label": "BacktestEngine"
+        }
+      ],
       "pos": [
         40,
-        620
+        560
       ],
       "size": [
         140,
@@ -236,9 +291,15 @@
       "label": "baseline",
       "sublabel": "베이스라인 실행",
       "tag": "Phase 4",
+      "sources": [
+        {
+          "path": "src/baseline/runner.py",
+          "label": "run_baseline"
+        }
+      ],
       "pos": [
         220,
-        620
+        560
       ],
       "size": [
         140,
@@ -251,12 +312,38 @@
       "label": "strategy_research",
       "sublabel": "전략 리서치",
       "tag": "Phase 23",
+      "sources": [
+        {
+          "path": "src/strategy_research/runner.py"
+        }
+      ],
       "pos": [
         400,
-        620
+        560
       ],
       "size": [
         150,
+        64
+      ]
+    },
+    {
+      "id": "ml",
+      "type": "backend",
+      "label": "ml",
+      "sublabel": "리서치용 ML 모델",
+      "tag": "Track B",
+      "sources": [
+        {
+          "path": "src/ml/linear_model.py",
+          "label": "LinearRegressionModel"
+        }
+      ],
+      "pos": [
+        590,
+        560
+      ],
+      "size": [
+        130,
         64
       ]
     },
@@ -266,9 +353,14 @@
       "label": "monitoring",
       "sublabel": "관측 대시보드",
       "tag": "Phase 14",
+      "sources": [
+        {
+          "path": "src/monitoring/health.py"
+        }
+      ],
       "pos": [
-        590,
-        620
+        780,
+        560
       ],
       "size": [
         140,
@@ -281,9 +373,15 @@
       "label": "ai_gateway",
       "sublabel": "AI 프로바이더 호출",
       "tag": "Phase 12",
+      "sources": [
+        {
+          "path": "src/ai_gateway/gateway.py",
+          "label": "AIGateway"
+        }
+      ],
       "pos": [
-        780,
-        620
+        980,
+        560
       ],
       "size": [
         150,
@@ -296,12 +394,38 @@
       "label": "counterfactual",
       "sublabel": "성과 귀인 분석",
       "tag": "Phase 10",
+      "sources": [
+        {
+          "path": "src/counterfactual/attribution.py"
+        }
+      ],
       "pos": [
-        980,
-        620
+        1180,
+        560
       ],
       "size": [
         140,
+        64
+      ]
+    },
+    {
+      "id": "notifications",
+      "type": "external",
+      "label": "notifications",
+      "sublabel": "일일 리포트 발송",
+      "tag": "Session 38",
+      "sources": [
+        {
+          "path": "src/notifications/discord_webhook.py",
+          "label": "format_paper_trading_cycle_report"
+        }
+      ],
+      "pos": [
+        1180,
+        40
+      ],
+      "size": [
+        150,
         64
       ]
     }
@@ -313,7 +437,7 @@
       "wraps": [
         "broker_live"
       ],
-      "pad": 16
+      "pad": 10
     },
     {
       "kind": "region",
@@ -322,11 +446,12 @@
         "backtest",
         "baseline",
         "strategy_research",
+        "ml",
         "monitoring",
         "ai_gateway",
         "counterfactual"
       ],
-      "pad": 18
+      "pad": 12
     }
   ],
   "connections": [
@@ -349,6 +474,22 @@
       "to": "decision"
     },
     {
+      "from": "orchestration",
+      "to": "decision",
+      "variant": "dashed",
+      "label": "매 틱 호출",
+      "labelAt": [
+        475,
+        118
+      ]
+    },
+    {
+      "from": "orchestration",
+      "to": "broker_paper",
+      "variant": "dashed",
+      "label": "체결 세션 구동"
+    },
+    {
       "from": "decision",
       "to": "risk",
       "label": "신호"
@@ -362,7 +503,11 @@
       "from": "risk",
       "to": "broker_live",
       "label": "사이즈 주문",
-      "variant": "security"
+      "variant": "security",
+      "labelAt": [
+        845,
+        438
+      ]
     },
     {
       "from": "broker_paper",
@@ -376,7 +521,7 @@
       "label": "체결 기록",
       "labelAt": [
         915,
-        458
+        438
       ]
     },
     {
@@ -407,7 +552,17 @@
       "label": "공유 자료형",
       "labelAt": [
         200,
-        700
+        640
+      ]
+    },
+    {
+      "from": "strategy_research",
+      "to": "ml",
+      "variant": "dashed",
+      "label": "피처/전략 재사용",
+      "labelAt": [
+        560,
+        640
       ]
     },
     {
@@ -421,48 +576,34 @@
       "variant": "dashed"
     },
     {
+      "from": "storage",
+      "to": "notifications",
+      "variant": "dashed",
+      "label": "일일 성과 리포트"
+    },
+    {
       "from": "trade_journal",
       "to": "counterfactual",
       "label": "이력 분석",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "labelAt": [
-        1050,
-        458
-      ]
+      "fromSide": "right",
+      "toSide": "left"
     }
   ],
   "cards": [
     {
       "dot": "cyan",
-      "title": "독립적인 두 읽기 경로",
+      "title": "orchestration이 매 틱 predict→regime→decision→risk→broker를 조립",
       "items": [
-        "Regime과 Prediction은 둘 다 data_infra에서 직접 읽습니다",
-        "서로 의존하지 않으며, Decision에서 처음 합쳐집니다"
-      ]
-    },
-    {
-      "dot": "rose",
-      "title": "게이트를 절대 건너뛰지 않음",
-      "items": [
-        "broker_live는 kill switch + safety_gate + 명시적 승인을 통과해야만 실행됩니다",
-        "risk는 브로커를 직접 호출하지 않습니다 — 사이징과 실행은 별개 모듈입니다"
+        "Regime/Prediction은 data_infra에서 독립적으로 읽고 orchestration.paper_runner.run_cycle이 이 순서로 직접 호출해 합칩니다",
+        "broker_live 실행은 kill switch + safety_gate + 명시적 승인을 통과해야만 나갑니다"
       ]
     },
     {
       "dot": "emerald",
       "title": "backtest는 거의 모든 모듈의 공유 기반",
       "items": [
-        "실제로는 regime/predict/risk/decision/broker/storage/trade_journal/baseline/counterfactual/strategy_research 전부 backtest의 공유 자료형(bar/fill/clock)을 import합니다",
-        "다이어그램이 복잡해지지 않도록 대표 연결(data_infra→backtest→baseline)만 그렸고, strategy_research도 backtest+regime을 직접 import합니다"
-      ]
-    },
-    {
-      "dot": "amber",
-      "title": "monitoring / counterfactual는 그린 것보다 더 넓게 읽습니다",
-      "items": [
-        "monitoring은 실제로 predict/decision/learning/evolution/trade_journal/data_infra/ai_gateway까지 직접 import합니다 — 여기서는 risk→monitoring→ai_gateway 대표 경로만 표시",
-        "counterfactual의 분석 결과는 evolution이 import해서 다음 모델 후보 평가에 반영합니다"
+        "regime/predict/risk/decision/broker/storage/baseline/ml 대부분이 backtest의 공유 자료형을 import — 대표 연결만 표시",
+        "monitoring/ml은 그린 것보다 더 넓게 읽습니다"
       ]
     }
   ]
