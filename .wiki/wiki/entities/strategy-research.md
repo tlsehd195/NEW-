@@ -30,3 +30,8 @@ Phase 23. ADR-0029(전략 연구 프레임워크). 참고: `docs/research/STRATE
 
 ## 봉인된 시험 구간 (locked_windows, RULE 0.8)
 `locked_windows.py`에 등록된 구간은 어떤 새 전략의 TRAIN/VALIDATION/TEST로도 다시 쓸 수 없다: TEST_1(2023-04-28~2026-08-27, ADR-0041), TEST_2(2020-08-28~2023-04-28, ADR-0209), TEST_3(2016-07-11~2020-08-28, ADR-0222). `earliest_locked_window_start()`가 스크립트 기본 `--end`를 정한다(현재 2016-07-11). ADR-0222부터 `run_long_horizon_validation.py --skip-held-out`(워크플로 `final_exam=false` 기본값)로 스크리닝 실행은 held-out TEST를 건드리지 않고, 후보를 좁힌 뒤 한 번만 `final_exam=true`로 시험한 다음 그 구간을 봉인한다.
+
+
+
+## 봉인 구간의 유일한 예외: 새 종목 시험 (unseen_exam, ADR-0225)
+`unseen_exam.py` + `run_long_horizon_validation.py --unseen-names-exam TEST-n --exam-candidates a,b` (워크플로 입력 `unseen_names_exam`/`exam_candidates`). 봉인 구간에서 한 번도 평가하지 않은 S&P 500 편입 이력 종목만으로(ADR-0224 point-in-time 유니버스 − 이름 붙은 연구 유니버스 − SPY − 그 구간과 겹치는 `docs/research/reports/*.json`의 `security_ids`), 미리 정한 최종 후보만, 구간당 한 번 시험한다. 기준은 같은 종목의 균등 매수보유(ADR-0223)이며, 순 CAGR과 순 Sharpe를 둘 다 이겨야 PASS다. 리포트가 커밋되면 그 구간의 재시험은 거부되고 그 종목들도 "본 종목"이 된다. PASS는 "반쯤 새로운" 결과일 뿐 DSR 검증이 아니다.
