@@ -64,12 +64,6 @@ def _value_on_or_before(values: Sequence[tuple[date, float]], target: date) -> O
     return found
 
 
-def _months_consecutive(dates: Sequence[date]) -> bool:
-    return all(
-        (b.year * 12 + b.month) - (a.year * 12 + a.month) == 1 for a, b in zip(dates, dates[1:])
-    )
-
-
 @dataclass(frozen=True)
 class SahmReading:
     latest_observation_date: date
@@ -86,17 +80,26 @@ def sahm_rule_reading(
     """The 3-month average unemployment rate against its minimum over the
     previous 12 months; active at a gap of at least 0.5 pt. `values` are
     monthly (observation_date, rate) pairs as known at `as_of`, oldest
-    first. None when the last 15 months are incomplete or stale."""
-    if len(values) < 15 or not _fresh(values[-1][0], as_of, config.max_staleness_days_monthly):
+    first.
+
+    Averages are over calendar months. A month FRED has no value for (the
+    BLS skipped October 2025 during the government shutdown) is left out
+    of its 3-month windows; each window needs at least 2 of its 3 months,
+    else there is no reading. With no gaps this is the plain rule.
+    None when the latest value is stale or a window is too thin."""
+    if not values or not _fresh(values[-1][0], as_of, config.max_staleness_days_monthly):
         return None
-    recent = values[-15:]
-    if not _months_consecutive([d for d, _ in recent]):
-        return None
-    rates = [v for _, v in recent]
-    averages = [statistics.fmean(rates[i - 2 : i + 1]) for i in range(2, len(rates))]
-    low = min(averages[-13:-1])
+    by_month = {d.year * 12 + d.month - 1: v for d, v in values}
+    last = values[-1][0].year * 12 + values[-1][0].month - 1
+    averages = []
+    for m in range(last - 12, last + 1):
+        window = [by_month[k] for k in (m - 2, m - 1, m) if k in by_month]
+        if len(window) < 2:
+            return None
+        averages.append(statistics.fmean(window))
+    low = min(averages[:-1])
     gap = averages[-1] - low
-    return SahmReading(recent[-1][0], rates[-1], averages[-1], low, gap, gap >= config.sahm_threshold_points)
+    return SahmReading(values[-1][0], values[-1][1], averages[-1], low, gap, gap >= config.sahm_threshold_points)
 
 
 class MacroSignalEngine:

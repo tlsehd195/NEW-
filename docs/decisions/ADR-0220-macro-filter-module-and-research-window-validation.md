@@ -178,3 +178,11 @@ rule with the same `sahm_rule_reading` the backtest used, and appends to
 `docs/research/macro_observations/sahm_rule.jsonl` only on a new release
 or revision. A flip of the rule's state is posted to Discord. Nothing
 trades on it; paper trading is unchanged.
+
+The first observation run (36313455609) found FRED has no UNRATE value
+for 2025-10 (the BLS skipped that month during the government shutdown),
+and the rule, which required 15 consecutive months, returned no reading.
+`sahm_rule_reading` now averages over calendar months, leaving a missing
+month out of its 3-month windows and requiring at least 2 of 3 months per
+window. With no gap it is the same computation, and UNRATE has no gaps in
+2000–2020, so the results above are unchanged.
