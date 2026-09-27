@@ -31,6 +31,7 @@ Usage:
 
 from __future__ import annotations
 
+import gzip
 import os
 import sys
 import time
@@ -50,19 +51,38 @@ _OLD_START = "2007-01-01"
 _OLD_END = "2008-12-31"
 
 
+def _decode_body(raw: bytes, content_encoding: str | None) -> str:
+    # SiftingIO always gzip-compresses its response body regardless of
+    # what urllib's default Accept-Encoding negotiates (confirmed
+    # 2026-09-27: the first real run against it returned raw gzip magic
+    # bytes (1f 8b) as "body preview" garbage because urllib does not
+    # auto-decompress -- unlike `requests`/browsers, `urllib.request`
+    # never transparently decodes Content-Encoding).
+    if content_encoding and "gzip" in content_encoding.lower():
+        try:
+            raw = gzip.decompress(raw)
+        except OSError:
+            pass  # not actually gzip despite the header -- fall through and decode as-is
+    return raw.decode("utf-8", errors="replace")
+
+
 def _fetch(url: str, headers: dict[str, str] | None = None) -> tuple[int | None, str]:
     """Returns (status, body_preview). Never raises -- a real network
     failure or an HTTP error status is itself part of the answer this
     script exists to observe, same discipline as
-    `recon_corporate_action_providers.py::_fetch`."""
+    `recon_corporate_action_providers.py::_fetch`. Decompresses a gzip
+    Content-Encoding before truncating to the preview cap, so the cap
+    applies to readable text, not opaque compressed bytes."""
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            body = response.read(_MAX_BODY_PREVIEW_BYTES).decode("utf-8", errors="replace")
-            return response.status, body
+            raw = response.read(_MAX_BODY_PREVIEW_BYTES * 4)  # compressed bytes decode to more text
+            body = _decode_body(raw, response.headers.get("Content-Encoding"))
+            return response.status, body[:_MAX_BODY_PREVIEW_BYTES]
     except urllib.error.HTTPError as exc:
-        body = exc.read(_MAX_BODY_PREVIEW_BYTES).decode("utf-8", errors="replace") if exc.fp is not None else ""
-        return exc.code, body
+        raw = exc.read(_MAX_BODY_PREVIEW_BYTES * 4) if exc.fp is not None else b""
+        body = _decode_body(raw, exc.headers.get("Content-Encoding") if exc.headers else None)
+        return exc.code, body[:_MAX_BODY_PREVIEW_BYTES]
     except urllib.error.URLError as exc:
         return None, f"URLError: {exc.reason}"
 
@@ -80,6 +100,16 @@ def _run_finnhub(api_key: str) -> None:
         print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
         print()
         time.sleep(1.1)
+    # Control check: is the key itself valid, or is /stock/candle
+    # specifically gated to a paid plan? /quote is Finnhub's own
+    # documented always-free real-time-quote endpoint -- if THIS also
+    # 403s, the key/account itself is the problem, not just candles.
+    quote_url = f"https://finnhub.io/api/v1/quote?symbol={_CONTROL_SYMBOL}&token={api_key}"
+    print("=== Finnhub quote (AAPL, control endpoint -- documented free) ===")
+    status, body = _fetch(quote_url)
+    print(f"status: {status}")
+    print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
+    print()
 
 
 def _run_siftingio(api_key: str) -> None:
