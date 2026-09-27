@@ -145,8 +145,23 @@ class TestTest1LockEnforced:
         source = _source()
         locked_idx = source.index("locked = overlaps_any_locked_window(args.start, args.end)")
         tail = source[locked_idx:locked_idx + 1200]
-        assert "if locked:" in tail
+        # ADR-0225: the only exception is the one-time unseen-names exam,
+        # which pins --start/--end to the window's own bounds.
+        assert "if locked and exam_window is None:" in tail
         assert "return 1" in tail
+
+    def test_unseen_names_exam_refusals_happen_before_any_repository_is_opened(self) -> None:
+        source = _source()
+        storage_engine_idx = source.index("StorageEngine(StorageConfig(root_dir=args.db_path))")
+        assert source.index("exam_already_taken(exam_window, args.reports_dir)") < storage_engine_idx
+        assert source.index("args.start, args.end = exam_window.start, exam_window.end") < storage_engine_idx
+
+    def test_unseen_names_exam_report_records_its_names_and_window(self) -> None:
+        source = _source()
+        exam_fn = source[source.index("def _run_unseen_names_exam("):source.index("def main() -> int:")]
+        assert '"security_ids": security_ids' in exam_fn
+        assert '"overall_start": start.isoformat()' in exam_fn
+        assert "EXAM_REPORT_KEY:" in exam_fn
 
 
 class TestChronologicalBoundaryWiring:
@@ -164,8 +179,10 @@ class TestChronologicalBoundaryWiring:
         assert isinstance(kwargs["overall_end"], ast.Attribute) and kwargs["overall_end"].attr == "validation_end"
 
     def test_held_out_test_uses_test_start_to_test_end_only(self) -> None:
-        tree = _tree()
-        calls = _find_calls(tree, "run_gross_and_net")
+        # main()'s own call; the ADR-0225 exam helper's call is pinned to
+        # the locked window's bounds and checked separately.
+        main_fn = next(n for n in _tree().body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        calls = _find_calls(main_fn, "run_gross_and_net")
         assert len(calls) == 1
         kwargs = {kw.arg: kw.value for kw in calls[0].keywords}
         start_call = kwargs["start_date"]
