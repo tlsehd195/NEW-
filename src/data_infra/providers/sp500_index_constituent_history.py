@@ -76,7 +76,7 @@ from __future__ import annotations
 
 import csv
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional, Sequence
@@ -270,6 +270,26 @@ def price_data_coverage_for_removed_securities(
         as_of_time=as_of_time,
         covered_tickers=tuple(covered),
         not_covered_tickers=tuple(not_covered),
+    )
+
+
+def parse_ticker_renames(csv_path: Path) -> dict[str, str]:
+    """`old_ticker,new_ticker,...` rows -> {old: new} (ADR-0224). Price
+    providers keep a renamed company's whole history under its current
+    ticker, while `fja05680/sp500` records the old ticker for the years
+    it was used (FB until 2022-06-09, then META)."""
+    with Path(csv_path).open(newline="") as handle:
+        return {row["old_ticker"].strip(): row["new_ticker"].strip() for row in csv.DictReader(handle)}
+
+
+def apply_ticker_renames(
+    intervals: Sequence[TickerMembershipInterval], renames: dict[str, str]
+) -> tuple[TickerMembershipInterval, ...]:
+    """Relabels each interval of a renamed ticker with the ticker its
+    price history is stored under. FB's 2013-2022 interval becomes a
+    META interval, contiguous with META's own from 2022-06-09."""
+    return tuple(
+        replace(iv, ticker=renames[iv.ticker]) if iv.ticker in renames else iv for iv in intervals
     )
 
 

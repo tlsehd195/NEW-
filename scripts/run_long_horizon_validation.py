@@ -119,9 +119,11 @@ from backtest.total_return import build_total_return_benchmark_points  # noqa: E
 from data_infra.exchange_calendars_adapter import build_xnys_calendar  # noqa: E402
 from data_infra.providers.sp500_index_constituent_history import (  # noqa: E402
     SP500_INDEX_HISTORICAL_UNIVERSE_NAME,
+    apply_ticker_renames,
     build_sp500_index_universe_memberships,
     constituents_as_of,
     parse_ticker_intervals,
+    parse_ticker_renames,
     point_in_time_members_with_prices,
 )
 from data_infra.universe import BENCHMARK_SYMBOL, PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4, RESEARCH_UNIVERSE_STAGE5  # noqa: E402
@@ -580,6 +582,9 @@ def _aggregate_dict(aggregate) -> dict:
     }
 
 
+_DEFAULT_TICKER_RENAMES_CSV = Path(__file__).resolve().parent.parent / "docs" / "research" / "reference" / "sp500_ticker_renames.csv"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="PILOT_UNIVERSE")
@@ -615,6 +620,11 @@ def main() -> int:
             "held name that stops trading to cash. Overrides --universe's security_ids; cannot "
             "be combined with --point-in-time-universe-as-of."
         ),
+    )
+    parser.add_argument(
+        "--sp500-ticker-renames-csv", type=Path, default=_DEFAULT_TICKER_RENAMES_CSV,
+        help="old_ticker,new_ticker map applied to --sp500-history-csv so a renamed company's "
+             "membership points at the ticker its prices are stored under (ADR-0224)",
     )
     parser.add_argument("--start", required=True, type=_parse_date)
     parser.add_argument("--end", required=True, type=_parse_date)
@@ -797,7 +807,9 @@ def main() -> int:
     point_in_time_sp500 = None
     dynamic_universe_name = None
     if args.sp500_history_csv is not None:
-        sp500_intervals = parse_ticker_intervals(args.sp500_history_csv)
+        sp500_intervals = apply_ticker_renames(
+            parse_ticker_intervals(args.sp500_history_csv), parse_ticker_renames(args.sp500_ticker_renames_csv),
+        )
         for membership in build_sp500_index_universe_memberships(sp500_intervals):
             repository.add_universe_membership(membership)
         security_ids, point_in_time_sp500 = point_in_time_members_with_prices(

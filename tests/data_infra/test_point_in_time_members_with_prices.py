@@ -41,3 +41,25 @@ def test_members_with_prices_and_yearly_coverage(tmp_path: Path) -> None:
     assert report["members_without_price_data"] == ["NODATA"]
     assert report["coverage_by_year"] == [{"date": "2021-01-01", "members": 3, "with_price_data": 2}]
     assert report["summary"]["min_member_coverage"] == 2 / 3
+
+
+def test_renamed_ticker_membership_points_at_the_current_ticker(tmp_path: Path) -> None:
+    from data_infra.providers.sp500_index_constituent_history import apply_ticker_renames, parse_ticker_renames
+
+    intervals_csv = tmp_path / "sp500.csv"
+    intervals_csv.write_text("ticker,start_date,end_date\nFB,2013-12-23,2022-06-09\nMETA,2022-06-09,\n")
+    renames_csv = tmp_path / "renames.csv"
+    renames_csv.write_text("old_ticker,new_ticker,rename_date,note\nFB,META,2022-06-09,rename\n")
+
+    renamed = apply_ticker_renames(parse_ticker_intervals(intervals_csv), parse_ticker_renames(renames_csv))
+
+    assert [(iv.ticker, iv.start_date.isoformat()) for iv in renamed] == [("META", "2013-12-23"), ("META", "2022-06-09")]
+
+
+def test_committed_rename_map_parses() -> None:
+    from data_infra.providers.sp500_index_constituent_history import parse_ticker_renames
+
+    path = Path(__file__).resolve().parents[2] / "docs" / "research" / "reference" / "sp500_ticker_renames.csv"
+    renames = parse_ticker_renames(path)
+    assert renames["FB"] == "META"
+    assert all(old != new for old, new in renames.items())

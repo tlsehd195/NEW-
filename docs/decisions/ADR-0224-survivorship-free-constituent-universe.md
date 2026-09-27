@@ -1,6 +1,6 @@
 # ADR-0224: Point-in-time S&P 500 universe with delisted names
 
-**Status:** Proposed (step 1 of several: measure coverage)
+**Status:** Accepted (coverage measured, backtest plumbing built; price ingestion pending)
 **Date:** 2026-09-27
 **Deciders:** account owner (asked to fix the known weaknesses), Claude Code session
 
@@ -56,6 +56,49 @@ on 2026-09-27) raises the quota (500 to 110,110 unique symbols a month)
 but not this coverage, because `supported_tickers.zip` is the same list
 for every plan.
 
+## Decision 2: backtest plumbing for a point-in-time universe
+
+- `BacktestConfig.restrict_strategy_to_universe` (needs a dynamic
+  `universe`): the strategy receives a `MembershipFilteredDataView` that
+  returns no bars for names outside that checkpoint's universe. Every
+  ranking strategy already skips names without bars, so a strategy built
+  over every name ever in the index ranks only that date's members,
+  with no per-strategy change.
+- `BacktestIntegrityChecker.check_universe` no longer flags a SELL of a
+  held name that has left the universe (an index fund sells its
+  removals). A BUY outside the universe is still an ERROR.
+- `BacktestConfig.settle_after_missing_checkpoints`: a held name with no
+  bar for N checkpoints in a row is settled to cash at its last close
+  (`PortfolioAccounting.settle_position`, a WARNING
+  `stale_position_settled`). Until then it is marked at its last close,
+  not at cost. Nothing after the last bar is used, so no look-ahead.
+  The last close is the right value for a cash acquisition. For a
+  bankruptcy the real delisting return is usually worse than the last
+  close; that is a known optimistic bias of this rule.
+- `run_gross_and_net` / `run_walk_forward_evaluation` take
+  `point_in_time_universe`; it turns both options on (N=5).
+- `run_long_horizon_validation.py --sp500-history-csv` stores the
+  fja05680 intervals as `SP500_INDEX_HISTORICAL`, evaluates every member
+  in the window that has bars in the catalog, and writes
+  `point_in_time_sp500` (per-Jan-1 member coverage, members without
+  data) into the report. `run_full_validation.yml` exposes it as the
+  `sp500_point_in_time` input. Renamed tickers are mapped to the ticker
+  their prices are stored under by
+  `docs/research/reference/sp500_ticker_renames.csv` (18 hand-checked
+  renames picked from the coverage report's same-day rename candidates;
+  the candidate list itself is noisy and is not used directly).
+- The ADR-0120 docstring said `SP500_INDEX_HISTORICAL` is never a
+  strategy's universe. It now is, through the dynamic-universe path
+  above, which is the use that docstring was guarding against doing
+  without membership filtering.
+
+Smoke run on the current Stage 5 catalog, 2008-01-01..2009-12-31: 561
+names were members in the window, 191 have prices; on 2008-01-01 only
+186 of 497 members (37%) have data. All 22 price candidates ran 6
+walk-forward folds each with no integrity-excluded fold. This is the
+size of the survivorship gap in every result so far, before any new
+ingestion.
+
 ## Consequences
 
 - Free Tiingo alone can remove about half of the removed-name gap, and
@@ -64,7 +107,6 @@ for every plan.
 - The free quota is 500 unique symbols a month. The ~414 listed names
   not already in the Stage 5 catalog fit in one month, but not in
   September 2026, which already spent symbols on the Stage 5 ingestion.
-- Next steps, pending the account owner's choice of data source: a
-  rename map, delisting settlement in `BacktestEngine` (today a held
-  name that stops trading is marked at cost and flagged as an ERROR),
-  and a point-in-time membership filter for the strategies.
+- Next step, pending the account owner's choice of data source: ingest
+  prices for the listed members not yet in the catalog, then run
+  `run_full_validation.yml` with `sp500_point_in_time=true`.
