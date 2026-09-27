@@ -76,11 +76,18 @@ def _fetch(url: str, headers: dict[str, str] | None = None) -> tuple[int | None,
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            raw = response.read(_MAX_BODY_PREVIEW_BYTES * 4)  # compressed bytes decode to more text
+            # Read the WHOLE body -- a partial read of a gzip stream is
+            # not itself valid gzip (confirmed 2026-09-27: truncating to
+            # a fixed byte cap before decompressing raised
+            # "Compressed file ended before the end-of-stream marker").
+            # This is a one-shot recon script fetching a handful of
+            # single-day bar responses, not a bulk job, so an unbounded
+            # read here is bounded in practice by what the API returns.
+            raw = response.read()
             body = _decode_body(raw, response.headers.get("Content-Encoding"))
             return response.status, body[:_MAX_BODY_PREVIEW_BYTES]
     except urllib.error.HTTPError as exc:
-        raw = exc.read(_MAX_BODY_PREVIEW_BYTES * 4) if exc.fp is not None else b""
+        raw = exc.read() if exc.fp is not None else b""
         body = _decode_body(raw, exc.headers.get("Content-Encoding") if exc.headers else None)
         return exc.code, body[:_MAX_BODY_PREVIEW_BYTES]
     except urllib.error.URLError as exc:
