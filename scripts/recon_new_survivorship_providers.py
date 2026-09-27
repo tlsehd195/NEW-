@@ -76,13 +76,22 @@ def _decode_body(raw: bytes, content_encoding: str | None) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _fetch(url: str, headers: dict[str, str] | None = None) -> tuple[int | None, str]:
-    """Returns (status, body_preview). Never raises -- a real network
-    failure or an HTTP error status is itself part of the answer this
-    script exists to observe, same discipline as
+def _rate_limit_headers(headers) -> dict[str, str]:
+    if headers is None:
+        return {}
+    return {k: v for k, v in headers.items() if "rate" in k.lower() or "quota" in k.lower() or "limit" in k.lower()}
+
+
+def _fetch(url: str, headers: dict[str, str] | None = None) -> tuple[int | None, str, dict[str, str]]:
+    """Returns (status, body_preview, rate_limit_headers). Never raises --
+    a real network failure or an HTTP error status is itself part of the
+    answer this script exists to observe, same discipline as
     `recon_corporate_action_providers.py::_fetch`. Decompresses a gzip
     Content-Encoding before truncating to the preview cap, so the cap
-    applies to readable text, not opaque compressed bytes."""
+    applies to readable text, not opaque compressed bytes. Also surfaces
+    any response header whose name mentions rate/quota/limit, since a
+    provider's real request budget is exactly what a one-shot recon
+    can't see from public docs alone."""
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -95,13 +104,13 @@ def _fetch(url: str, headers: dict[str, str] | None = None) -> tuple[int | None,
             # read here is bounded in practice by what the API returns.
             raw = response.read()
             body = _decode_body(raw, response.headers.get("Content-Encoding"))
-            return response.status, body[:_MAX_BODY_PREVIEW_BYTES]
+            return response.status, body[:_MAX_BODY_PREVIEW_BYTES], _rate_limit_headers(response.headers)
     except urllib.error.HTTPError as exc:
         raw = exc.read() if exc.fp is not None else b""
         body = _decode_body(raw, exc.headers.get("Content-Encoding") if exc.headers else None)
-        return exc.code, body[:_MAX_BODY_PREVIEW_BYTES]
+        return exc.code, body[:_MAX_BODY_PREVIEW_BYTES], _rate_limit_headers(exc.headers)
     except urllib.error.URLError as exc:
-        return None, f"URLError: {exc.reason}"
+        return None, f"URLError: {exc.reason}", {}
 
 
 def _run_finnhub(api_key: str) -> None:
@@ -112,9 +121,11 @@ def _run_finnhub(api_key: str) -> None:
     for label, symbol in (("Finnhub candle (LEH, bankrupt, 2007-2008)", _BANKRUPT_SYMBOL), ("Finnhub candle (AAPL, control, 2007-2008)", _CONTROL_SYMBOL)):
         url = f"https://finnhub.io/api/v1/stock/candle?symbol={symbol}&resolution=D&from={from_ts}&to={to_ts}&token={api_key}"
         print(f"=== {label} ===")
-        status, body = _fetch(url)
+        status, body, rl = _fetch(url)
         print(f"status: {status}")
         print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
+        if rl:
+            print(f"rate-limit headers: {rl}")
         print()
         time.sleep(1.1)
     # Control check: is the key itself valid, or is /stock/candle
@@ -123,10 +134,27 @@ def _run_finnhub(api_key: str) -> None:
     # 403s, the key/account itself is the problem, not just candles.
     quote_url = f"https://finnhub.io/api/v1/quote?symbol={_CONTROL_SYMBOL}&token={api_key}"
     print("=== Finnhub quote (AAPL, control endpoint -- documented free) ===")
-    status, body = _fetch(quote_url)
+    status, body, rl = _fetch(quote_url)
     print(f"status: {status}")
     print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
+    if rl:
+        print(f"rate-limit headers: {rl}")
     print()
+
+
+# Deep pass (2026-09-27, after SiftingIO alone survived the first-pass
+# check): the account owner's own bankruptcy test set, reused from this
+# project's existing survivorship-pit-universe-status memory --
+# ENRN/WCOM predate LEH's 2008 crash and probe the OLDER end of the
+# 2000-2016-07-11 research window, since a provider's free tier could
+# plausibly cap history at "the last N years from whenever it was
+# built" rather than a fixed calendar date.
+_DEEP_BANKRUPTCY_CASES = (
+    ("ENRN", "2000-06-01", "2001-12-31"),  # Enron, filed 2001-12-02
+    ("WCOM", "2000-06-01", "2002-07-31"),  # WorldCom, filed 2002-07-21
+    ("WAMUQ", _OLD_START, _OLD_END),  # Washington Mutual, seized 2008-09-25
+    ("BSC", _OLD_START, _OLD_END),  # Bear Stearns, JPM rescue 2008-03
+)
 
 
 def _run_siftingio(api_key: str) -> None:
@@ -134,11 +162,37 @@ def _run_siftingio(api_key: str) -> None:
     for label, symbol in (("SiftingIO bars (LEH, bankrupt, 2007-2008)", _BANKRUPT_SYMBOL), ("SiftingIO bars (AAPL, control, 2007-2008)", _CONTROL_SYMBOL)):
         url = f"https://api.sifting.io/v1/hist/stocks/{symbol}/bars?start={_OLD_START}&end={_OLD_END}&interval=1d"
         print(f"=== {label} ===")
-        status, body = _fetch(url, headers=headers)
+        status, body, rl = _fetch(url, headers=headers)
         print(f"status: {status}")
         print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
+        if rl:
+            print(f"rate-limit headers: {rl}")
         print()
         time.sleep(1.1)
+
+    print("--- SiftingIO deep pass: more bankruptcies, older window ---\n")
+    for symbol, start, end in _DEEP_BANKRUPTCY_CASES:
+        url = f"https://api.sifting.io/v1/hist/stocks/{symbol}/bars?start={start}&end={end}&interval=1d"
+        print(f"=== SiftingIO bars ({symbol}, {start}..{end}) ===")
+        status, body, rl = _fetch(url, headers=headers)
+        print(f"status: {status}")
+        print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
+        if rl:
+            print(f"rate-limit headers: {rl}")
+        print()
+        time.sleep(1.1)
+    # AAPL at the research window's earliest edge (2000-01) -- separate
+    # from the bankruptcy set, this is purely a "does free-tier history
+    # go back to 2000 at all" check, on a symbol guaranteed to have real
+    # data if the provider's history depth allows it.
+    url = f"https://api.sifting.io/v1/hist/stocks/{_CONTROL_SYMBOL}/bars?start=2000-01-01&end=2000-03-31&interval=1d"
+    print(f"=== SiftingIO bars (AAPL, research-window earliest edge, 2000-01..2000-03) ===")
+    status, body, rl = _fetch(url, headers=headers)
+    print(f"status: {status}")
+    print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
+    if rl:
+        print(f"rate-limit headers: {rl}")
+    print()
 
 
 def _run_quotient(api_key: str) -> None:
@@ -146,9 +200,11 @@ def _run_quotient(api_key: str) -> None:
     for label, symbol in (("Quotient equity/daily (LEH, bankrupt, 2007-2008)", _BANKRUPT_SYMBOL), ("Quotient equity/daily (AAPL, control, 2007-2008)", _CONTROL_SYMBOL)):
         url = f"https://quotient.p.rapidapi.com/equity/daily?symbol={symbol}&from={_OLD_START}&to={_OLD_END}&adjust=false"
         print(f"=== {label} ===")
-        status, body = _fetch(url, headers=headers)
+        status, body, rl = _fetch(url, headers=headers)
         print(f"status: {status}")
         print(f"body preview (cap {_MAX_BODY_PREVIEW_BYTES} bytes): {body}")
+        if rl:
+            print(f"rate-limit headers: {rl}")
         print()
         time.sleep(1.1)
 
