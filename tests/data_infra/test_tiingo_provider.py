@@ -339,3 +339,10 @@ class TestReuseEodResponse:
         provider.fetch_corporate_actions("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
         provider.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
         assert len(transport.calls) == 2
+
+
+def test_a_non_array_body_reports_tiingo_detail(monkeypatch) -> None:
+    detail = "Error: You have run over your 500 symbol look up for this month."
+    provider, _ = _provider({"detail": detail}, monkeypatch)
+    with pytest.raises(PermanentProviderError, match="500 symbol look up"):
+        provider.fetch("X", utc(2024, 1, 1), utc(2024, 1, 3))

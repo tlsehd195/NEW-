@@ -84,8 +84,12 @@ class TiingoDataProvider:
             timeout=self._config.timeout_seconds,
         )
         if not isinstance(response.body, list):
+            # Tiingo answers some refusals (e.g. the free plan's monthly
+            # unique-symbol cap) with HTTP 200 and {"detail": "..."}.
+            detail = response.body.get("detail") if isinstance(response.body, dict) else None
             raise PermanentProviderError(
                 f"unexpected Tiingo response shape for {security_id}: expected a JSON array"
+                + (f"; Tiingo said: {str(detail)[:300]}" if detail else "")
             )
         if self._reuse_eod_response:
             self._unconsumed_eod[key] = response.body
