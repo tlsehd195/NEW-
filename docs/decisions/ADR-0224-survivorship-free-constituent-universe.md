@@ -151,3 +151,31 @@ These sources were checked before accepting the Tiingo quota delay.
   from January 2000. That claim is unverified here.
 - The owner chose to stay on the free plan. Bankrupt names therefore
   remain missing, and the known upward bias stays documented above.
+
+A second probe (2026-09-27, run 36357090428) covered the owner's existing
+Twelve Data and Alpha Vantage keys:
+
+- Twelve Data's free plan refused `LEH`, `BSC`, `CFC`, `MDP` and `XLNX`
+  ("available starting with the Grow/Venture plan").
+- Twelve Data's `WM` data for 2007 was Waste Management, the ticker's
+  current owner, not Washington Mutual. Mixing sources by ticker would
+  have added wrong prices silently.
+- Twelve Data's free prices are split-adjusted and reach back to 2000.
+- Alpha Vantage rejected `LEH`. For `XLNX` it returned only the last
+  100 days.
+
+No free source adds removed names beyond Tiingo.
+
+## Throughput fix (2026-09-28)
+
+The owner noticed that each hourly batch left about 10 of Tiingo's 50
+requests unused. `--tiingo-only` ingestion fetched corporate actions and
+then prices from the same EOD endpoint and range, which cost 2 requests
+a symbol. `TiingoDataProvider(reuse_eod_response=True)` now serves the
+second call from the first response, so each symbol costs 1 request.
+`ingest_real_market_data.py` turns this on for `--tiingo-only`.
+
+`extend_research_price_catalog.yml` batches go from 20 to 36 symbols an
+hour: 36 requests of the 50/hour limit, and 864 a day, which leaves room
+for `paper_trading_cycle.yml` under Tiingo's 1,000/day. The monthly cap
+of 500 unique symbols is unchanged.

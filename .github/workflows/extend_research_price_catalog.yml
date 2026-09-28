@@ -7,10 +7,12 @@
 # 2. Picks listed members of [member_start, member_end] (renames applied,
 #    names that left the index first) that have no bars in the catalog.
 # 3. Ingests them --tiingo-only in batches of BATCH_SIZE symbols, one
-#    batch per hour (2 requests a symbol, under Tiingo's 50/hour), as
-#    five chained jobs of up to five batches each (GitHub's 6-hour job
-#    limit). 25 batches cover 500 symbols; resume_from_run_id continues a
-#    run that stopped or ran into the monthly cap.
+#    batch per hour, as five chained jobs of up to five batches each
+#    (GitHub's 6-hour job limit). A symbol costs one request (prices and
+#    corporate actions share one response), so 36 a batch stays under
+#    Tiingo's 50/hour and, with paper_trading_cycle.yml's share, under
+#    its 1,000/day. 25 batches cover 900 symbols; resume_from_run_id
+#    continues a run that stopped or ran into the monthly cap.
 # 4. Prints per-date member coverage and publishes price_catalog.zip.
 #
 # Tiingo's free plan allows 500 unique symbols a month. Symbols past the
@@ -58,7 +60,7 @@ permissions:
   actions: read
 
 env:
-  BATCH_SIZE: "20"
+  BATCH_SIZE: "36"
   BATCH_SLEEP_SECONDS: "3660"
   TIINGO_TIMEOUT_SECONDS: "60"
   CATALOG_DIR: data/research_price_catalog

@@ -302,3 +302,40 @@ class TestSymbolMetadata:
         metadata = provider.normalize_symbol_metadata("AAPL", raw)
         assert metadata.exchange is None
         assert metadata.listed_from is None
+
+
+class TestReuseEodResponse:
+    """--tiingo-only ingestion calls fetch_corporate_actions and then fetch
+    for the same symbol and range; with reuse_eod_response the second call
+    costs no request."""
+
+    _ROW = {"date": "2024-01-02T00:00:00.000Z", "open": "185.0", "high": "186.0", "low": "184.0",
+            "close": "185.5", "volume": "1000000", "adjClose": "185.5", "divCash": "0.24", "splitFactor": "1.0"}
+
+    def _reusing(self, monkeypatch):
+        monkeypatch.setenv("MARKET_DATA_API_KEY", "test-key")
+        transport = _StubTransport([self._ROW])
+        return TiingoDataProvider(TiingoConfig(), transport, reuse_eod_response=True), transport
+
+    def test_second_call_for_same_symbol_and_range_makes_no_request(self, monkeypatch) -> None:
+        provider, transport = self._reusing(monkeypatch)
+        actions = provider.fetch_corporate_actions("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        bars = provider.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        assert len(transport.calls) == 1
+        assert actions[0]["divCash"] == "0.24" and "_fetched_as_of" not in actions[0]
+        assert bars[0]["close"] == "185.5" and bars[0]["_fetched_as_of"] == utc(2024, 1, 3)
+
+    def test_response_is_consumed_once_and_other_ranges_fetch_again(self, monkeypatch) -> None:
+        provider, transport = self._reusing(monkeypatch)
+        provider.fetch_corporate_actions("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        provider.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        provider.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        provider.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 4))
+        provider.fetch_corporate_actions("MSFT", utc(2024, 1, 1), utc(2024, 1, 3))
+        assert len(transport.calls) == 4
+
+    def test_off_by_default(self, monkeypatch) -> None:
+        provider, transport = _provider([self._ROW], monkeypatch)
+        provider.fetch_corporate_actions("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        provider.fetch("AAPL", utc(2024, 1, 1), utc(2024, 1, 3))
+        assert len(transport.calls) == 2
