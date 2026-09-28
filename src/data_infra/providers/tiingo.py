@@ -56,9 +56,40 @@ class TiingoDataProvider:
     be supplied explicitly by the caller (never `datetime.now()`/
     `datetime.utcnow()` -- instruction section 13)."""
 
-    def __init__(self, config: TiingoConfig, transport: TiingoHttpTransport) -> None:
+    def __init__(
+        self, config: TiingoConfig, transport: TiingoHttpTransport, *, reuse_eod_response: bool = False,
+    ) -> None:
+        """`reuse_eod_response`: `fetch` and `fetch_corporate_actions` hit
+        the same EOD endpoint with the same range, so a caller that makes
+        both calls per symbol (ingest_real_market_data.py --tiingo-only)
+        can have the second one served from the first one's response
+        instead of spending a second request of Tiingo's hourly/daily
+        quota. Each response is held until the other call consumes it,
+        so leave this off for a caller that makes only one of the two."""
         self._config = config
         self._transport = transport
+        self._reuse_eod_response = reuse_eod_response
+        self._unconsumed_eod: dict[tuple[str, str, str], list] = {}
+
+    def _get_eod_body(self, path_template: str, security_id: str, start: datetime, end: datetime) -> list:
+        key = (security_id, start.date().isoformat(), end.date().isoformat())
+        if self._reuse_eod_response and key in self._unconsumed_eod:
+            return self._unconsumed_eod.pop(key)
+        params = dict(self._auth_params())
+        params["startDate"] = key[1]
+        params["endDate"] = key[2]
+        response = self._transport.get(
+            path_template.format(ticker=security_id),
+            params=params,
+            timeout=self._config.timeout_seconds,
+        )
+        if not isinstance(response.body, list):
+            raise PermanentProviderError(
+                f"unexpected Tiingo response shape for {security_id}: expected a JSON array"
+            )
+        if self._reuse_eod_response:
+            self._unconsumed_eod[key] = response.body
+        return response.body
 
     def _auth_params(self) -> dict[str, str]:
         # Tiingo authenticates via a `token` query parameter, not a
@@ -71,18 +102,7 @@ class TiingoDataProvider:
     # -- DataProvider Protocol --------------------------------------
 
     def fetch(self, security_id: str, start: datetime, end: datetime) -> list[dict]:
-        params = dict(self._auth_params())
-        params["startDate"] = start.date().isoformat()
-        params["endDate"] = end.date().isoformat()
-        response = self._transport.get(
-            _DAILY_PRICES_PATH_TEMPLATE.format(ticker=security_id),
-            params=params,
-            timeout=self._config.timeout_seconds,
-        )
-        if not isinstance(response.body, list):
-            raise PermanentProviderError(
-                f"unexpected Tiingo response shape for {security_id}: expected a JSON array"
-            )
+        body = self._get_eod_body(_DAILY_PRICES_PATH_TEMPLATE, security_id, start, end)
         # `end` -- the caller's own explicit as-of instant for this whole
         # ingestion call (never datetime.now()/utcnow()) -- is stamped
         # onto each raw record here, so normalize() (whose signature the
@@ -91,7 +111,7 @@ class TiingoDataProvider:
         # read it back without a wall-clock call or a Protocol change.
         # Mirrors MockDataProvider.normalize()'s identical
         # `record.get("retrieved_at", ...)` pattern.
-        return [dict(row, security_id=security_id, _fetched_as_of=end) for row in response.body]
+        return [dict(row, security_id=security_id, _fetched_as_of=end) for row in body]
 
     def validate(self, raw_records: Sequence[dict]) -> list[str]:
         issues: list[str] = []
@@ -198,19 +218,8 @@ class TiingoDataProvider:
         assumption (see the module docstring's "Honesty about evidence
         tier") -- a future session with real access must confirm or
         correct it."""
-        params = dict(self._auth_params())
-        params["startDate"] = start.date().isoformat()
-        params["endDate"] = end.date().isoformat()
-        response = self._transport.get(
-            _ACTIONS_PATH_TEMPLATE.format(ticker=security_id),
-            params=params,
-            timeout=self._config.timeout_seconds,
-        )
-        if not isinstance(response.body, list):
-            raise PermanentProviderError(
-                f"unexpected Tiingo response shape for {security_id}: expected a JSON array"
-            )
-        return [dict(row, security_id=security_id) for row in response.body]
+        body = self._get_eod_body(_ACTIONS_PATH_TEMPLATE, security_id, start, end)
+        return [dict(row, security_id=security_id) for row in body]
 
     def normalize_corporate_actions(
         self, security_id: str, raw_records: Sequence[dict], *, retrieved_at: datetime, ingestion_time: datetime,

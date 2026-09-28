@@ -270,7 +270,13 @@ def main() -> int:
         DEFAULT_TIINGO_CONFIG if args.tiingo_timeout_seconds is None
         else dataclasses.replace(DEFAULT_TIINGO_CONFIG, timeout_seconds=args.tiingo_timeout_seconds)
     )
-    tiingo = TiingoDataProvider(tiingo_config, TiingoHttpTransport(tiingo_config.base_url, budget=tiingo_budget))
+    # --tiingo-only fetches corporate actions and then prices for every
+    # symbol from the same Tiingo EOD endpoint and range, so the second
+    # call reuses the first one's response: 1 request a symbol, not 2.
+    tiingo = TiingoDataProvider(
+        tiingo_config, TiingoHttpTransport(tiingo_config.base_url, budget=tiingo_budget),
+        reuse_eod_response=args.tiingo_only,
+    )
     # ADR-0164: Stooq (the original secondary, ADR-0025) is a confirmed
     # permanent dead end (ADR-0160 -- a JS bot-verification challenge
     # page on every real request, not fixable via headers) and is no

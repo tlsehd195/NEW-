@@ -188,9 +188,9 @@ def test_tiingo_timeout_flag_reaches_the_provider_config(module, monkeypatch, tm
     seen = []
     real_provider = module.TiingoDataProvider
 
-    def _capture(config, transport):
+    def _capture(config, transport, **kwargs):
         seen.append(config.timeout_seconds)
-        return real_provider(config, transport)
+        return real_provider(config, transport, **kwargs)
 
     monkeypatch.setattr(module, "TiingoDataProvider", _capture)
     assert _run(module, monkeypatch, tmp_path, "--shard-index", "1", "--shard-count", "2", "--tiingo-timeout-seconds", "60") == 0
@@ -207,3 +207,11 @@ def test_a_2000_start_does_not_crash_on_the_trading_calendar(module, monkeypatch
     ]
     monkeypatch.setattr(sys, "argv", argv)
     assert module.main() == 0
+
+
+def test_tiingo_only_spends_one_request_per_symbol(module, monkeypatch, tmp_path) -> None:
+    """Corporate actions and prices come from the same Tiingo EOD response,
+    so --tiingo-only uses one request of the hourly/daily quota a symbol."""
+    assert _run(module, monkeypatch, tmp_path, "--shard-index", "1", "--shard-count", "2") == 0
+    paths = [path for path in _FakeTiingoTransport.calls if path.endswith("/prices")]
+    assert sorted(paths) == ["/tiingo/daily/BBB/prices", "/tiingo/daily/DDD/prices"]
