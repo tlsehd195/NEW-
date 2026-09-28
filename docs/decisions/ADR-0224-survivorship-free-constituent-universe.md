@@ -179,3 +179,17 @@ second call from the first response, so each symbol costs 1 request.
 hour: 36 requests of the 50/hour limit, and 864 a day, which leaves room
 for `paper_trading_cycle.yml` under Tiingo's 1,000/day. The monthly cap
 of 500 unique symbols is unchanged.
+
+## Monthly cap hit (2026-09-28)
+
+Extension run 36316763832 fetched 297 of the 432 missing members, then
+X, XEC and XL came back as a JSON object instead of a price array. The
+Tiingo account page still showed hourly and daily requests left, but it
+does not show the monthly unique-symbol count. A one-shot probe (run
+36373252105) asked again: AAPL, already fetched this month, returned
+prices, and all three failed names returned HTTP 200 with
+`{"detail": "You have run over your 500 symbol look up for this month. ..."}`.
+So the stop was the 500-symbols-a-month cap. The run was cancelled with
+its part-3 artifact kept, and the remaining symbols resume on 2026-10-01
+with `resume_from_run_id=36316763832`. Ingestion errors now include
+Tiingo's `detail` text, so this shows in the log directly next time.
