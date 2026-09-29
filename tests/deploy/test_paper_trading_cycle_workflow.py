@@ -366,3 +366,18 @@ def test_the_flatten_logic_actually_promotes_a_wrapped_subfolders_contents():
         result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         assert (root / "catalog.duckdb").read_text() == "already at top level"
+
+
+def test_a_fresh_paper_store_is_an_opt_in_manual_input_only():
+    """ADR-0226: a manual run can rebuild the ledger; a scheduled run
+    (no inputs, so `inputs.fresh_paper_store` is empty) always restores."""
+    doc = _load()
+    triggers = doc.get(True, doc.get("on"))
+    fresh = triggers["workflow_dispatch"]["inputs"]["fresh_paper_store"]
+    assert fresh["type"] == "boolean"
+    assert fresh["default"] is False
+
+    restore = next(s for s in _steps(doc) if s.get("name") == "Restore previous paper-trading-store artifact")
+    assert restore["if"] == "${{ !inputs.fresh_paper_store }}"
+    market = next(s for s in _steps(doc) if s.get("name") == "Restore previous market-data catalog artifact")
+    assert "if" not in market

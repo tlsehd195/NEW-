@@ -416,13 +416,21 @@ def main(argv=None) -> int:
         return 1
 
     print(f"Fetching real bars for {len(security_ids)} symbols from {args.db_path} (shared across {len(strategy_names)} strategy(ies)) ...", flush=True)
+    # ADR-0226: same two fixes as scripts/run_paper_trading_cycle.py --
+    # bars as of the last checkpoint (not `--end`'s midnight), and no
+    # checkpoint later than the newest bar.
     bars = []
     for security_id in security_ids:
-        bars.extend(repository.get_bars(security_id, args.start, args.end, as_of_time=args.end))
+        bars.extend(repository.get_bars(security_id, args.start, args.end, as_of_time=checkpoints[-1]))
     if not bars:
         print("FATAL: no real bars found for this universe in the requested range -- has ingestion run?", file=sys.stderr)
         return 1
     print(f"Fetched {len(bars)} real bars.", flush=True)
+    latest_bar_time = max(b.available_time for b in bars)
+    checkpoints = [c for c in checkpoints if c <= latest_bar_time]
+    if not checkpoints:
+        print("FATAL: no checkpoint in the requested range has a bar yet", file=sys.stderr)
+        return 1
 
     risk_config = RiskConfig(
         max_sector_weight=args.max_sector_weight, max_order_notional=args.max_order_notional,

@@ -50,7 +50,18 @@ on:
     # the latest possible US market close (21:00 UTC during EST)
     # year-round, rather than assuming a specific DST offset.
     - cron: "0 22 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      fresh_paper_store:
+        # ADR-0226: rebuild the paper ledger from $START_DATE with the
+        # fixed fill/checkpoint code instead of resuming the last
+        # artifact. Older artifacts and backups/paper_trading_store's git
+        # history keep the previous ledger. A rebuild that outlasts this
+        # job's timeout still uploads what it got (the upload steps are
+        # `if: always()`), and the next scheduled run resumes from there.
+        description: "Start a new paper ledger instead of restoring the last one"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -161,6 +172,7 @@ jobs:
           fi
 
       - name: Restore previous paper-trading-store artifact
+        if: ${{ !inputs.fresh_paper_store }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
