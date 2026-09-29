@@ -378,6 +378,91 @@ class TestResume:
         assert second["value_history_length"] == first["value_history_length"] + second["checkpoints_run"]
 
 
+class TestCheckpointsWithoutBarsYet:
+    """The 2026-09-29 scheduled run started at 01:39 UTC, so `--end
+    "$(date -u +%F)"` asked for 2026-09-29 -- a US session that had not
+    opened yet. Its 20:00 UTC checkpoint was processed on 09-28's bar
+    (T+1 fills landed on the same bar their orders were decided on), and
+    `--resume` then treated 09-29 as done for good. A checkpoint with no
+    bar at or after it in the catalog must wait for the next run."""
+
+    def _run(self, module, db_path, paper_store, out_path, *, end, resume=True):
+        argv = [
+            "--universe", "TEST_UNIVERSE",
+            "--db-path", str(db_path),
+            "--paper-store", str(paper_store),
+            "--start", "2024-04-22", "--end", end,
+            "--out", str(out_path),
+        ]
+        if resume:
+            argv.append("--resume")
+        assert module.main(argv) == 0
+        return json.loads(out_path.read_text())
+
+    def test_a_trading_day_with_no_bar_yet_is_left_for_the_next_run(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_catalog(db_path)  # last bar: 2024-04-30
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        first = self._run(module, db_path, paper_store, tmp_path / "first.json", end="2024-05-02")
+
+        expected = len(trading_days(date(2024, 4, 22), date(2024, 4, 30), calendar=build_xnys_calendar()))
+        assert first["checkpoints_run"] == expected
+        store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        latest = max(r.as_of_time for r in DuckDBPredictionRepository(store_engine).list_all(security_id="AAA"))
+        store_engine.close()
+        assert latest.date() == date(2024, 4, 30)
+
+        # The missing sessions' bars arrive; the next --resume run picks them up.
+        engine = StorageEngine(StorageConfig(root_dir=db_path))
+        new_days = trading_days(date(2024, 5, 1), date(2024, 5, 2))
+        DuckDBDataRepository(engine).append_bars(make_bars("AAA", new_days, [120.0] * len(new_days)))
+        engine.close()
+
+        second = self._run(module, db_path, paper_store, tmp_path / "second.json", end="2024-05-02")
+        assert second["checkpoints_run"] == len(new_days)
+
+    def test_nothing_new_to_process_yet_exits_cleanly(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        self._run(module, db_path, paper_store, tmp_path / "first.json", end="2024-04-30")
+        second = self._run(module, db_path, paper_store, tmp_path / "second.json", end="2024-05-02")
+        assert second["checkpoints_run"] == 0
+
+    def test_daily_resume_runs_fill_on_the_execution_days_bar_not_the_decision_days(self, tmp_path) -> None:
+        """Production runs one new checkpoint per `--resume` invocation, so
+        every fill lands on a run's LAST checkpoint. Bars used to be read
+        as of `--end`'s midnight, which left that day's own bar out and
+        filled T+1 orders on the bar they were decided on (ADR-0154's
+        same-bar leak, back through the side door)."""
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_long_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+
+        for day in trading_days(date(2024, 6, 17), date(2024, 6, 21), calendar=build_xnys_calendar()):
+            argv = [
+                "--universe", "TEST_UNIVERSE", "--db-path", str(db_path), "--paper-store", str(paper_store),
+                "--start", "2024-06-14", "--end", day.isoformat(), "--out", str(tmp_path / "out.json"), "--resume",
+            ]
+            assert module.main(argv) == 0
+
+        store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        fills = [r.fill for r in DuckDBPaperFillRepository(store_engine).list_all()]
+        store_engine.close()
+        assert fills
+        for fill in fills:
+            assert fill.execution_time > fill.decision_time
+            assert fill.data_version == f"v-{fill.execution_time.date().isoformat()}"
+
+
 class TestFractionalShareSizing:
     """Session 38: `--lot-size` was not previously a flag at all --
     `risk.sizing.DeterministicPositionSizer` already floors to a

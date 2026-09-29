@@ -275,13 +275,36 @@ def main(argv=None) -> int:
         return 1
 
     print(f"Fetching real bars for {len(security_ids)} symbols from {args.db_path} ...", flush=True)
+    # ADR-0226: as of the last checkpoint, not `--end`'s midnight. At
+    # midnight the `--end` day's own bar (available at 20:00 UTC) was left
+    # out, so that checkpoint's T+1 fills fell back to the previous bar --
+    # the one the orders had been decided on. With one new checkpoint per
+    # daily `--resume` run, that was every production fill.
     bars = []
     for security_id in security_ids:
-        bars.extend(repository.get_bars(security_id, args.start, args.end, as_of_time=args.end))
+        bars.extend(repository.get_bars(security_id, args.start, args.end, as_of_time=checkpoints[-1]))
     if not bars:
         print("FATAL: no real bars found for this universe in the requested range -- has ingestion run?", file=sys.stderr)
         return 1
     print(f"Fetched {len(bars)} real bars.", flush=True)
+
+    # ADR-0226: a checkpoint later than the newest bar is a session that
+    # has not closed (or not been ingested) yet -- e.g. a scheduled run
+    # that starts after 00:00 UTC asks for a `--end` whose market has not
+    # opened. Processing it would decide on stale bars and let `--resume`
+    # mark the day done for good; leave it for the next run instead.
+    latest_bar_time = max(b.available_time for b in bars)
+    not_yet_available = [c for c in checkpoints if c > latest_bar_time]
+    if not_yet_available:
+        checkpoints = [c for c in checkpoints if c <= latest_bar_time]
+        print(
+            f"Leaving {len(not_yet_available)} checkpoint(s) with no bar yet for a later run: "
+            f"{', '.join(c.date().isoformat() for c in not_yet_available)}",
+            flush=True,
+        )
+    if not checkpoints:
+        print("FATAL: no checkpoint in the requested range has a bar yet", file=sys.stderr)
+        return 1
 
     market_data_source = InMemoryPaperMarketDataSource(bars)
     paper_config = PaperTradingConfig(
