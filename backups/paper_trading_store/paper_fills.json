@@ -16443,5 +16443,82 @@
     "security_id": "OXY",
     "seq": 1495,
     "side": "SELL"
+  },
+  {
+    "client_order_id": "CID-0a277ca41c3626c4a98b1af9",
+    "fill_id": "PAPERFILL-001496",
+    "payload_json": "{\"client_order_id\": \"CID-0a277ca41c3626c4a98b1af9\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.045985468591925, \"data_version\": \"68b45c0511a204c363aa2e7be1c9da4d110e2f6e35df8d661cb135bb90a2a9b9\", \"decision_time\": \"2026-09-28T20:00:00+00:00\", \"execution_time\": \"2026-09-29T20:00:00+00:00\", \"order_id\": \"CID-0a277ca41c3626c4a98b1af9\", \"price\": 108.7952440325717, \"quantity\": 9.197093718384991, \"reference_price\": 108.73, \"security_id\": \"WMT\", \"side\": \"BUY\", \"slippage_cost\": 0.5000554821272363, \"spread_cost\": 0.10000000000003391}, \"fill_id\": \"PAPERFILL-001496\", \"recorded_at\": \"2026-09-29T20:00:00+00:00\"}",
+    "price": 108.7952440325717,
+    "quantity": 9.197093718384991,
+    "recorded_at": "2026-09-29T20:00:00",
+    "security_id": "WMT",
+    "seq": 1496,
+    "side": "BUY"
+  },
+  {
+    "client_order_id": "CID-53a99b45a29db16e7d2066db",
+    "fill_id": "PAPERFILL-001497",
+    "payload_json": "{\"client_order_id\": \"CID-53a99b45a29db16e7d2066db\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.0638162093171666, \"data_version\": \"fa84b89eb9555174daf518a36ac8878712ff23c38f09a1c860e38d4e04ca476b\", \"decision_time\": \"2026-09-28T20:00:00+00:00\", \"execution_time\": \"2026-09-29T20:00:00+00:00\", \"order_id\": \"CID-53a99b45a29db16e7d2066db\", \"price\": 87.12769559037754, \"quantity\": 12.763241863433313, \"reference_price\": 87.18, \"security_id\": \"KO\", \"side\": \"SELL\", \"slippage_cost\": 0.5563038879701775, \"spread_cost\": 0.11126994256543433}, \"fill_id\": \"PAPERFILL-001497\", \"recorded_at\": \"2026-09-29T20:00:00+00:00\"}",
+    "price": 87.12769559037754,
+    "quantity": 12.763241863433313,
+    "recorded_at": "2026-09-29T20:00:00",
+    "security_id": "KO",
+    "seq": 1497,
+    "side": "SELL"
+  },
+  {
+    "client_order_id": "CID-a622669a9835799191de9543",
+    "fill_id": "PAPERFILL-001498",
+    "payload_json": "{\"client_order_id\": \"CID-a622669a9835799191de9543\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.021641274238227, \"data_version\": \"0f278a08a14672c664fd69ece949f4aa82f545c0698cc91196490c0734edf90d\", \"decision_time\": \"2026-09-28T20:00:00+00:00\", \"execution_time\": \"2026-09-29T20:00:00+00:00\", \"order_id\": \"CID-a622669a9835799191de9543\", \"price\": 220.53760722559002, \"quantity\": 4.328254847645429, \"reference_price\": 220.67, \"security_id\": \"IBM\", \"side\": \"SELL\", \"slippage_cost\": 0.47751806791019796, \"spread_cost\": 0.09551159972296022}, \"fill_id\": \"PAPERFILL-001498\", \"recorded_at\": \"2026-09-29T20:00:00+00:00\"}",
+    "price": 220.53760722559002,
+    "quantity": 4.328254847645429,
+    "recorded_at": "2026-09-29T20:00:00",
+    "security_id": "IBM",
+    "seq": 1498,
+    "side": "SELL"
+  },
+  {
+    "client_order_id": "CID-ba80387961be606204fea31a",
+    "fill_id": "PAPERFILL-001499",
+    "payload_json": "{\"client_order_id\": \"CID-ba80387961be606204fea31a\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.0289017341040463, \"data_version\": \"1f6d8592d592caadc0846c092fea7e331a1cc289a84463cb343fe41013b6f515\", \"decision_time\": \"2026-09-28T20:00:00+00:00\", \"execution_time\": \"2026-09-29T20:00:00+00:00\", \"order_id\": \"CID-ba80387961be606204fea31a\", \"price\": 167.8992053365937, \"quantity\": 5.78034682080925, \"reference_price\": 168.0, \"security_id\": \"AMT\", \"side\": \"SELL\", \"slippage_cost\": 0.4855182855856379, \"spread_cost\": 0.09710982658953336}, \"fill_id\": \"PAPERFILL-001499\", \"recorded_at\": \"2026-09-29T20:00:00+00:00\"}",
+    "price": 167.8992053365937,
+    "quantity": 5.78034682080925,
+    "recorded_at": "2026-09-29T20:00:00",
+    "security_id": "AMT",
+    "seq": 1499,
+    "side": "SELL"
+  },
+  {
+    "client_order_id": "CID-571460c810036209d88b2d23",
+    "fill_id": "PAPERFILL-001500",
+    "payload_json": "{\"client_order_id\": \"CID-571460c810036209d88b2d23\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.047943235209512, \"data_version\": \"0306cd5b8159ac2d596d57fef1c6199130084cb54ec3de862ae4a361b199f52b\", \"decision_time\": \"2026-09-28T20:00:00+00:00\", \"execution_time\": \"2026-09-29T20:00:00+00:00\", \"order_id\": \"CID-571460c810036209d88b2d23\", \"price\": 115.98037717694078, \"quantity\": 9.588647041902389, \"reference_price\": 116.050003, \"security_id\": \"NEM\", \"side\": \"SELL\", \"slippage_cost\": 0.5563411905190552, \"spread_cost\": 0.11127625179781493}, \"fill_id\": \"PAPERFILL-001500\", \"recorded_at\": \"2026-09-29T20:00:00+00:00\"}",
+    "price": 115.98037717694078,
+    "quantity": 9.588647041902389,
+    "recorded_at": "2026-09-29T20:00:00",
+    "security_id": "NEM",
+    "seq": 1500,
+    "side": "SELL"
+  },
+  {
+    "client_order_id": "CID-d34687fa4366cd1ade321aab",
+    "fill_id": "PAPERFILL-001501",
+    "payload_json": "{\"client_order_id\": \"CID-d34687fa4366cd1ade321aab\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.0420910851081742, \"data_version\": \"4680211525fc5d7b0fe07b05a09e605dbe409e55bc75140b70b59e7b7ee1d0f8\", \"decision_time\": \"2026-09-28T20:00:00+00:00\", \"execution_time\": \"2026-09-29T20:00:00+00:00\", \"order_id\": \"CID-d34687fa4366cd1ade321aab\", \"price\": 125.96438158343263, \"quantity\": 8.418217021634817, \"reference_price\": 126.040001, \"security_id\": \"COP\", \"side\": \"SELL\", \"slippage_cost\": 0.530477451531103, \"spread_cost\": 0.10610320818248882}, \"fill_id\": \"PAPERFILL-001501\", \"recorded_at\": \"2026-09-29T20:00:00+00:00\"}",
+    "price": 125.96438158343263,
+    "quantity": 8.418217021634817,
+    "recorded_at": "2026-09-29T20:00:00",
+    "security_id": "COP",
+    "seq": 1501,
+    "side": "SELL"
+  },
+  {
+    "client_order_id": "CID-f98fe5079777aed7978de474",
+    "fill_id": "PAPERFILL-001502",
+    "payload_json": "{\"client_order_id\": \"CID-f98fe5079777aed7978de474\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.0313695965869878, \"data_version\": \"fbd388297b063254ce9a68445f00297cbfacad9d2fe73562fefcc6625cea3240\", \"decision_time\": \"2026-09-28T20:00:00+00:00\", \"execution_time\": \"2026-09-29T20:00:00+00:00\", \"order_id\": \"CID-f98fe5079777aed7978de474\", \"price\": 159.48564668408625, \"quantity\": 6.273919317397579, \"reference_price\": 159.39, \"security_id\": \"EMR\", \"side\": \"BUY\", \"slippage_cost\": 0.5000795789338022, \"spread_cost\": 0.10000000000001905}, \"fill_id\": \"PAPERFILL-001502\", \"recorded_at\": \"2026-09-29T20:00:00+00:00\"}",
+    "price": 159.48564668408625,
+    "quantity": 6.273919317397579,
+    "recorded_at": "2026-09-29T20:00:00",
+    "security_id": "EMR",
+    "seq": 1502,
+    "side": "BUY"
   }
 ]
