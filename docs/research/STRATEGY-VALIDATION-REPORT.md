@@ -3150,36 +3150,21 @@ before any real result exists. No real result recorded yet.
 
 ## Outstanding real results not yet received (tracked so they are not lost)
 
-Two real-data runs remain outstanding in the account owner's own
-Codespace environment, explicitly deferred as of this session ("코드스페이스에서
-하는거 오늘 안에 못 끝내니까 난중에 보네도 되지?" -- confirmed OK to send
-later, not blocking):
+**Resolved (checked 2026-10-01).** The three items that were listed here
+are done, except `short_interest`:
 
-1. **`insider_buying_score` real raw IC** -- per the addendum above
-   ("Session 36 continued Addendum -- insider trading"), the account
-   owner still needs to re-run the now-corrected (`start`-offset-based
-   pagination, ADR-0089) `ingest_insider_transactions.py` and then
-   `compute_fundamentals_ic_from_catalog.py --score insider_buying`
-   before this factor has any real IC result at all.
-2. **Full `run_long_horizon_validation.py` walk-forward/PBO/DSR run**
-   including all factors added since the last real 28-candidate run
-   (`sue`, `insider_buying`, `rs_rating`, `residual_momentum`,
-   `rd_expenditure`, `return_seasonality`, `short_interest`,
-   `net_stock_issuance`, `net_operating_assets`, `operating_leverage`,
-   `abnormal_investment`, `cash_holdings`, `bid_ask_spread`,
-   `institutional_ownership_change`, `idiosyncratic_skewness`,
-   `downside_beta`, `share_turnover`, `high_volume_return_premium`,
-   `asset_turnover_change`, `industry_momentum`, `coskewness`,
-   `ohlson_o`, `merton_dd`) -- not yet executed for real against the
-   account owner's own DuckDB catalogs.
-3. **`institutional_ownership_change_score` needs its own new data
-   acquisition first** -- unlike every other pending factor above (a
-   re-run of an existing pipeline), this one needs the account owner to
-   actually acquire SEC Form 13F data, resolve CUSIPs for their universe
-   securities, and aggregate/preprocess it into
-   `ingest_institutional_holdings.py`'s CSV schema before any ingestion
-   can happen at all.
+1. `insider_buying` -- the SEC Form 4 catalog was collected for the full
+   universe (ADR-0171, ADR-0172) and the factor is part of the 2026-09-26
+   walk-forward run below.
+2. The full walk-forward/PBO/DSR run including every factor added since
+   the 28-candidate run was executed by `run_full_validation.yml`
+   (ADR-0193): `docs/research/reports/full-validation-20260926T200629Z.json`
+   has 56 candidates and contains all 23 names that were listed here
+   except `short_interest`. Human review of that report: ADR-0209.
+3. `institutional_ownership_change` -- the multi-quarter, all-filer 13F
+   backfill (ADR-0210) ran successfully on 2026-09-26 and is wired into
+   the validation workflow; the factor is in the same report.
 
-Recorded here explicitly (per the account owner's own request) so
-neither item is silently dropped while this session continues other
-work in parallel.
+Still open: `short_interest` has never been evaluated on real data
+because its DuckDB catalog has never been populated (FINRA data is not
+ingested by any workflow).
