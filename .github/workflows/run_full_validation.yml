@@ -55,9 +55,9 @@ on:
         type: string
         default: "2010-01-01"
       end:
-        description: "Range end (YYYY-MM-DD) -- must not overlap any strategy_research.locked_windows window; default is the earliest locked window's start (earliest_locked_window_start(), TEST_3 since ADR-0222)"
+        description: "Range end (YYYY-MM-DD) -- must not overlap any strategy_research.locked_windows window; default is the earliest locked window's start (earliest_locked_window_start(), TEST_4 since ADR-0228)"
         type: string
-        default: "2016-07-11"
+        default: "2013-03-21"
       price_only:
         description: "Price-derived candidates only (ADR-0213): the release needs only price_catalog.zip; fundamentals/insider/institutional catalogs are not loaded"
         type: boolean

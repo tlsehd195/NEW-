@@ -85,3 +85,25 @@ unseen names remains the stronger test.
   (`TestVerdict`, `TestCandidateList`),
   `tests/strategy_research/test_run_long_horizon_validation_wiring.py`,
   `tests/deploy/test_run_full_validation_workflow.py::test_final_exam_needs_named_finalists`.
+
+## Result (2026-10-02, workflow run 36902629473)
+
+`docs/research/reports/full-validation-20261001T193219Z.json`, held-out
+TEST 2013-03-21..2016-07-11, 602 point-in-time names, Sharpe with the
+ADR-0227 risk-free rate. Buy-and-hold gross: CAGR 11.7%, Sharpe 0.96
+(SPY 12.4%).
+
+| finalist | net CAGR | net Sharpe | verdict |
+|---|---|---|---|
+| price_delay | 17.4% | 1.32 | PASS |
+| max_effect | 11.6% | 1.15 | FAIL (CAGR) |
+| low_beta | 11.1% | 0.99 | FAIL (CAGR) |
+| high_volume_return_premium | 9.6% | 0.65 | FAIL |
+| illiquidity | 7.2% | 0.50 | FAIL |
+
+price_delay's gain is spread out (56 names, largest share of profit
+10%). It still has DSR 0.38 from the screen, so this is one more piece of
+evidence, not a validation. The window is now locked as `TEST_4`
+(`strategy_research.locked_windows`), so the research window is
+2000-01-01..2013-03-21. price_delay alone goes on to the ADR-0225
+unseen-names exams on TEST-3, TEST-2 and TEST-1, one window at a time.

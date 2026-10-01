@@ -71,7 +71,7 @@ class TestTest1Refusal:
         exit_code = module.main([
             "--db-path", str(tmp_path / "store"),
             "--start", "2010-01-01",
-            "--end", "2015-01-01",
+            "--end", "2013-01-01",
         ])
         assert exit_code == 0
 

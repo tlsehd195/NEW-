@@ -29,7 +29,7 @@ Phase 23. ADR-0029(전략 연구 프레임워크). 참고: `docs/research/STRATE
 
 
 ## 봉인된 시험 구간 (locked_windows, RULE 0.8)
-`locked_windows.py`에 등록된 구간은 어떤 새 전략의 TRAIN/VALIDATION/TEST로도 다시 쓸 수 없다: TEST_1(2023-04-28~2026-08-27, ADR-0041), TEST_2(2020-08-28~2023-04-28, ADR-0209), TEST_3(2016-07-11~2020-08-28, ADR-0222). `earliest_locked_window_start()`가 스크립트 기본 `--end`를 정한다(현재 2016-07-11). ADR-0222부터 `run_long_horizon_validation.py --skip-held-out`(워크플로 `final_exam=false` 기본값)로 스크리닝 실행은 held-out TEST를 건드리지 않고, 후보를 좁힌 뒤 한 번만 `final_exam=true`로 시험한 다음 그 구간을 봉인한다. ADR-0228부터 `final_exam`에는 `final_exam_candidates`(스크립트 `--held-out-candidates`)가 필수라 held-out은 지정한 결승 후보와 buy_and_hold만 응시하고(walk-forward·PBO/DSR은 전체 후보 그대로), 각 후보에 `verdict_vs_buy_and_hold`가 붙는다.
+`locked_windows.py`에 등록된 구간은 어떤 새 전략의 TRAIN/VALIDATION/TEST로도 다시 쓸 수 없다: TEST_1(2023-04-28~2026-08-27, ADR-0041), TEST_2(2020-08-28~2023-04-28, ADR-0209), TEST_3(2016-07-11~2020-08-28, ADR-0222), TEST_4(2013-03-21~2016-07-11, ADR-0228: 결승 후보 5개의 held-out, price_delay만 PASS). `earliest_locked_window_start()`가 스크립트 기본 `--end`를 정한다(현재 2013-03-21). ADR-0222부터 `run_long_horizon_validation.py --skip-held-out`(워크플로 `final_exam=false` 기본값)로 스크리닝 실행은 held-out TEST를 건드리지 않고, 후보를 좁힌 뒤 한 번만 `final_exam=true`로 시험한 다음 그 구간을 봉인한다. ADR-0228부터 `final_exam`에는 `final_exam_candidates`(스크립트 `--held-out-candidates`)가 필수라 held-out은 지정한 결승 후보와 buy_and_hold만 응시하고(walk-forward·PBO/DSR은 전체 후보 그대로), 각 후보에 `verdict_vs_buy_and_hold`가 붙는다.
 
 
 

@@ -104,7 +104,7 @@ class TestTest1Refusal:
             "--db-path", str(tmp_path / "store"),
             "--strategy", "long_term_momentum",
             "--start", "2010-01-01",
-            "--end", "2015-01-01",
+            "--end", "2013-01-01",
         ])
         assert exit_code == 0
 
