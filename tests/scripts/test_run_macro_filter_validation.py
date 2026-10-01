@@ -30,7 +30,7 @@ def _load():
     return module
 
 
-def _stores(tmp_path: Path) -> tuple[Path, Path]:
+def _stores(tmp_path: Path, *, tbill_percent: float | None = None) -> tuple[Path, Path]:
     price_dir, macro_dir = tmp_path / "price", tmp_path / "macro"
     days = trading_days(date(1999, 6, 1), date(2001, 6, 29))
     spy = [100.0 * (1 + 0.1 * math.sin(i / 20)) for i in range(len(days))]
@@ -46,6 +46,10 @@ def _stores(tmp_path: Path) -> tuple[Path, Path]:
     while d <= date(2001, 6, 29):
         vix = 20.0 + 15.0 * math.sin(i / 30)
         records.append(vintage_to_macro_record(FredVintageObservation("VIXCLS", d, vix, d, None, _NOW), ingestion_time=_NOW))
+        if tbill_percent is not None:
+            records.append(vintage_to_macro_record(
+                FredVintageObservation("DGS3MO", d, tbill_percent, d, None, _NOW), ingestion_time=_NOW,
+            ))
         d += timedelta(days=1)
         i += 1
     DuckDBMacroRepository(engine).add_macro_observations(records)
@@ -81,3 +85,26 @@ def test_refuses_a_locked_window(tmp_path) -> None:
         "--start", "2019-01-01", "--end", "2021-01-01", "--report-json", str(tmp_path / "r.json"),
     ])
     assert rc == 2
+
+
+def test_cash_interest_raises_the_return_of_a_rule_that_holds_cash(tmp_path) -> None:
+    """ADR-0229: with --cash-interest the de-risked periods earn the T-bill yield."""
+    price_dir, macro_dir = _stores(tmp_path, tbill_percent=5.0)
+    module = _load()
+    reports = {}
+    for flag in (False, True):
+        report_path = tmp_path / f"report-{flag}.json"
+        rc = module.main([
+            "--price-db-path", str(price_dir), "--macro-db-path", str(macro_dir),
+            "--start", "2000-01-03", "--end", "2001-06-29",
+            "--train-window-months", "1", "--test-window-months", "1", "--step-months", "1",
+            "--report-json", str(report_path), *(["--cash-interest"] if flag else []),
+        ])
+        assert rc == 0
+        reports[flag] = json.loads(report_path.read_text())
+    assert reports[False]["cash_interest"] is None
+    assert reports[True]["cash_interest"]["series_id"] == "DGS3MO"
+    with_interest = reports[True]["continuous"]["only_vix_high"]["cumulative_return"]
+    without = reports[False]["continuous"]["only_vix_high"]["cumulative_return"]
+    assert with_interest > without
+    assert reports[True]["continuous"]["no_filter"]["beta"] is not None

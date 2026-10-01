@@ -6,8 +6,9 @@ holds, exactly like `BuyAndHoldStrategy`.
 Uses the unmodified `BacktestEngine` through the `Strategy` protocol;
 prices come from the engine's own `AsOfDataView`, macro values from the
 point-in-time `MacroSignalEngine` evaluated at the same checkpoint time.
-Cash earns nothing (the engine's `risk_free_rate=0.0`, ADR-0208), which
-understates a filter that sits in cash.
+Cash earns nothing unless the engine is given `cash_interest` (ADR-0229;
+`run_macro_filter_validation.py --cash-interest`); at 0% it understates a
+filter that sits in cash.
 """
 
 from __future__ import annotations

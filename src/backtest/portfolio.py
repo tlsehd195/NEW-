@@ -176,6 +176,15 @@ class PortfolioAccounting:
             CashFlowRecord(as_of_time=as_of_time, security_id=security_id, amount=credit, reason="dividend")
         )
 
+    def accrue_cash_interest(self, amount: float, as_of_time: datetime) -> None:
+        """Credits interest earned on idle cash (ADR-0229)."""
+        if amount == 0:
+            return
+        self.cash += amount
+        self.cash_flows.append(
+            CashFlowRecord(as_of_time=as_of_time, security_id="CASH", amount=amount, reason="cash_interest")
+        )
+
     def settle_position(self, security_id: str, price: float, as_of_time: datetime) -> None:
         """Closes a position that can no longer trade (ADR-0224) at
         `price`, with no commission: an acquisition pays holders cash and

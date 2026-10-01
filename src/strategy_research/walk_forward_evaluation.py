@@ -117,6 +117,7 @@ def run_walk_forward_evaluation(
     market: str = "US_EQUITY",
     point_in_time_universe: Optional[str] = None,
     risk_free: Optional[RiskFreeRates] = None,
+    cash_interest: Optional[RiskFreeRates] = None,
 ) -> WalkForwardAggregate:
     """Runs one strategy across every rolling window
     `generate_walk_forward_windows` produces for `[overall_start,
@@ -139,6 +140,7 @@ def run_walk_forward_evaluation(
             start_date=window.test_start.date(), end_date=window.test_end.date(),
             initial_capital=initial_capital, benchmark_id=benchmark_id, market=market,
             point_in_time_universe=point_in_time_universe, risk_free=risk_free,
+            cash_interest=cash_interest,
         )
         regime_state = "UNKNOWN"
         if regime_subject_id is not None:

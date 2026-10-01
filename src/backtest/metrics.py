@@ -294,6 +294,58 @@ class PerformanceReport:
     conditional_value_at_risk_95: Optional[float] = None
     max_consecutive_wins: int = 0
     max_consecutive_losses: int = 0
+    # ADR-0229 (gs-quant comparison): excess return alone cannot tell
+    # alpha from leverage. Daily returns of the portfolio and the
+    # benchmark on their common dates; None without a benchmark or with
+    # fewer than two common return days.
+    beta: Optional[float] = None
+    tracking_error: Optional[float] = None
+    information_ratio: Optional[float] = None
+    jensen_alpha: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class BenchmarkRelativeMetrics:
+    beta: Optional[float]
+    tracking_error: Optional[float]
+    information_ratio: Optional[float]
+    jensen_alpha: Optional[float]
+
+
+def benchmark_relative_metrics(
+    portfolio_values: Sequence[tuple[datetime, float]],
+    benchmark_values: Sequence[tuple[datetime, float]],
+    *,
+    risk_free_rate: float = 0.0,
+    periods_per_year: int = 252,
+) -> BenchmarkRelativeMetrics:
+    """Beta, annualized tracking error, information ratio and annualized
+    Jensen's alpha of the portfolio against the benchmark. Both series are
+    matched by calendar date (the benchmark stamps the start of its day,
+    the portfolio its end-of-day checkpoint), and returns are taken
+    between consecutive common dates."""
+    none = BenchmarkRelativeMetrics(None, None, None, None)
+    bench_by_day = {t.date(): v for t, v in benchmark_values}
+    pairs = [(v, bench_by_day[t.date()]) for t, v in portfolio_values if t.date() in bench_by_day]
+    rp, rb = [], []
+    for (p0, b0), (p1, b1) in zip(pairs, pairs[1:]):
+        if p0 > 0 and b0 > 0:
+            rp.append(p1 / p0 - 1.0)
+            rb.append(b1 / b0 - 1.0)
+    n = len(rp)
+    if n < 2:
+        return none
+    mean_p, mean_b = sum(rp) / n, sum(rb) / n
+    var_b = sum((x - mean_b) ** 2 for x in rb) / (n - 1)
+    cov = sum((x - mean_p) * (y - mean_b) for x, y in zip(rp, rb)) / (n - 1)
+    beta = cov / var_b if var_b > 0 else None
+    active = [x - y for x, y in zip(rp, rb)]
+    mean_active = sum(active) / n
+    te = (sum((a - mean_active) ** 2 for a in active) / (n - 1)) ** 0.5 * periods_per_year**0.5
+    ir = mean_active * periods_per_year / te if te > 0 else None
+    period_rf = risk_free_rate / periods_per_year
+    alpha = ((mean_p - period_rf) - beta * (mean_b - period_rf)) * periods_per_year if beta is not None else None
+    return BenchmarkRelativeMetrics(beta=beta, tracking_error=te, information_ratio=ir, jensen_alpha=alpha)
 
 
 def compute_performance_report(
@@ -360,9 +412,14 @@ def compute_performance_report(
         benchmark_max_dd = benchmark.max_drawdown
         excess_return = cumulative - benchmark_cumulative
         annualized_excess_return = cagr_value - benchmark_cagr
+        relative = benchmark_relative_metrics(
+            [(p.as_of_time, p.portfolio_value) for p in series], benchmark.value_series,
+            risk_free_rate=risk_free_rate, periods_per_year=periods_per_year,
+        )
     else:
         benchmark_cumulative = benchmark_cagr = benchmark_max_dd = None
         excess_return = annualized_excess_return = None
+        relative = BenchmarkRelativeMetrics(None, None, None, None)
 
     return PerformanceReport(
         cumulative_return=cumulative,
@@ -389,4 +446,8 @@ def compute_performance_report(
         benchmark_max_drawdown=benchmark_max_dd,
         excess_return=excess_return,
         annualized_excess_return=annualized_excess_return,
+        beta=relative.beta,
+        tracking_error=relative.tracking_error,
+        information_ratio=relative.information_ratio,
+        jensen_alpha=relative.jensen_alpha,
     )
