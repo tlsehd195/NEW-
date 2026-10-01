@@ -58,6 +58,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data_infra.institutional_holding_models import THIRTEEN_F_FILING_DEADLINE_DAYS  # noqa: E402
+from data_infra.providers.sec_13f_cusip_history import load_cusip_to_ticker  # noqa: E402
 from data_infra.providers.sec_13f_bulk_dataset import (  # noqa: E402
     SubmissionRecord,
     aggregate_holdings,
@@ -94,13 +95,17 @@ def _read_tsv_from_zip(zf: zipfile.ZipFile, filename_upper: str) -> list[dict]:
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--user-agent", required=True, help="SEC fair-access contact string (real, reachable identifier)")
-    parser.add_argument("--cusip-map", required=True, type=Path, help="JSON {ticker: cusip} from build_institutional_ownership_cusip_map.py")
+    parser.add_argument("--cusip-map", required=True, type=Path, help="JSON {ticker: [cusip, ...]} (or the older {ticker: cusip}) from build_institutional_ownership_cusip_map.py; every CUSIP of a ticker is summed per quarter (ADR-0231)")
     parser.add_argument("--start-year", required=True, type=int, help="Earliest calendar year to request filing windows for (windows are generated from 01mar of this year)")
     parser.add_argument("--through-date", required=True, type=str, help="YYYY-MM-DD -- generate windows up through whichever window covers this date")
     parser.add_argument("--out", required=True, type=Path, help="Where to write the combined CSV (security_id,quarter_end,institutional_shares,num_institutions)")
     args = parser.parse_args(argv)
 
-    cusip_to_ticker: dict[str, str] = {v: k for k, v in json.loads(args.cusip_map.read_text()).items()}
+    try:
+        cusip_to_ticker = load_cusip_to_ticker(args.cusip_map.read_text())
+    except ValueError as exc:
+        print(f"FATAL: {args.cusip_map}: {exc}", file=sys.stderr)
+        return 1
     if not cusip_to_ticker:
         print(f"FATAL: {args.cusip_map} contains no entries", file=sys.stderr)
         return 1
