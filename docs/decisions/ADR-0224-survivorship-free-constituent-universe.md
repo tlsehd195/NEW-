@@ -193,3 +193,44 @@ So the stop was the 500-symbols-a-month cap. The run was cancelled with
 its part-3 artifact kept, and the remaining symbols resume on 2026-10-01
 with `resume_from_run_id=36316763832`. Ingestion errors now include
 Tiingo's `detail` text, so this shows in the log directly next time.
+
+## First point-in-time run and a fix (2026-10-01)
+
+The resumed extension (run 36827840347) fetched the last 137 names, and
+only MDP and NYX came back empty. Members with prices: 37% → 81% on
+2008-01-01 (401/497) and 92% on 2016-01-01 (463/502). The rest are
+mostly bankruptcies that Tiingo does not carry.
+
+`run_full_validation.yml` with `sp500_point_in_time=true` over
+2000-01-01..2016-07-11 (report `full-validation-20261001T122226Z.json`,
+602 names) exposed a plumbing bug. `MembershipFilteredDataView` hid
+every non-member, including SPY, so the seven scores that read SPY
+(`low_beta`, `idiosyncratic_volatility`, `residual_momentum`,
+`idiosyncratic_skewness`, `downside_beta`, `coskewness`, `price_delay`)
+returned no score and never traded. The view now always shows the
+benchmark. It stays untradable, because strategies only rank the
+security_ids they were built over, and SPY is never an S&P member. That
+report's numbers for those seven are void. A local 2000..2002-07 run on
+the same catalog shows all seven trading.
+
+For the other candidates, the report shows what removing survivorship
+does. Median gross excess return over SPY per two-month fold, 203 names
+→ point-in-time universe:
+
+| candidate | 203 names | point-in-time |
+|---|---|---|
+| illiquidity | +2.98% | +1.44% |
+| high_volume_return_premium | +2.23% | +2.03% |
+| rs_rating | +2.27% | +0.59% |
+| risk_controlled_momentum | +2.18% | +0.34% |
+| frog_in_the_pan | +2.15% | +0.86% |
+| long_term_momentum | +1.77% | +0.13% |
+| fifty_two_week_high | +0.97% | +0.98% |
+| max_effect | +0.90% | +1.07% |
+
+Most of the edge the 203-name runs showed came from picking today's
+survivors. `buy_and_hold`'s net figures (median net excess −3.1%) are
+dominated by costs, not data: it buys about 450 names with $10,000, so
+the per-order minimum commission is about $357 per fold. Its gross
+excess is +0.55%. Re-run the point-in-time validation after this fix
+before re-judging any candidate.
