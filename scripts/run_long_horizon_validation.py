@@ -161,6 +161,8 @@ from strategy_research.factor_scores import (  # noqa: E402
     frog_in_the_pan_score,
     intermediate_momentum_score,
     price_delay_score,
+    betting_against_correlation_score,
+    low_volatility_score,
     dividend_growth_score,
     downside_beta_score,
     earnings_yield_score,
@@ -352,6 +354,12 @@ _PRICE_FACTOR_CANDIDATES = (
     ("intermediate_momentum", "Novy-Marx 2012 intermediate-horizon (12-7 month) momentum, price-only", intermediate_momentum_score),
     ("price_delay", "Hou & Moskowitz 2005 price delay (D1), price-only", price_delay_score),
     ("frog_in_the_pan", "Da, Gurun & Warachka 2014 frog-in-the-pan information discreteness, price-only", frog_in_the_pan_score),
+    # 2026-10-02 (ADR-0230): the account owner asked for new candidates
+    # in place of short_interest/guru_consensus (no data before 2013)
+    # and alpha101 (day-scale signals, not a monthly-rebalance fit).
+    # Wired in before any result exists, per RULE 0.8.
+    ("low_volatility", "Ang, Hodrick, Xing & Zhang 2006 / Blitz & van Vliet 2007 low total volatility, price-only", low_volatility_score),
+    ("betting_against_correlation", "Asness, Frazzini, Gormsen & Pedersen 2020 betting against correlation, price-only", betting_against_correlation_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),
