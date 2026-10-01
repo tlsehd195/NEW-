@@ -67,3 +67,31 @@ always restore.
   TestCheckpointsWithoutBarsYet` (all three fail on the old code) and
   `tests/deploy/test_paper_trading_cycle_workflow.py::
   test_a_fresh_paper_store_is_an_opt_in_manual_input_only`.
+
+## Follow-up (2026-10-01): runtime budget for long catch-ups
+
+The account owner chose to rebuild (run 36522599726, `fresh_paper_store`
+on). Ingestion took 14 minutes and the cycle step was still going when
+the job hit its 60-minute timeout. The `if: always()` upload then copied
+the paper store while the killed run's python process was still alive
+(the runner only reaped it afterwards as an orphan), so the newest
+`paper-trading-store` artifact held a half-written WAL. The 2026-09-30
+and 2026-10-01 scheduled runs restored it and failed inside DuckDB's
+`WriteAheadLogReplayer`, as did their `commit-backup` jobs. The git
+snapshot in `backups/paper_trading_store/` was not overwritten.
+
+- `run_paper_trading_cycle.py` gains `--max-runtime-minutes`. Once the
+  budget is used up it stops before the next checkpoint (at least one
+  always runs), closes the store and writes a report covering only the
+  checkpoints it ran. `--resume` picks up the rest next time.
+- The workflow passes `--max-runtime-minutes 30`, leaving room for
+  ingestion and the upload steps inside the 60-minute job timeout. A
+  rebuild from `START_DATE` now completes over several runs.
+- The cycle step gets `id: cycle`, and the paper-trading-store upload
+  runs only when `steps.cycle.outcome != 'cancelled'`. A run killed
+  mid-cycle no longer replaces the last good artifact, so the next run
+  restores that one.
+- Tests: `tests/orchestration/test_run_paper_trading_cycle_cli.py::
+  TestMaxRuntimeMinutes` and `tests/deploy/
+  test_paper_trading_cycle_workflow.py::
+  test_a_cancelled_cycle_is_stopped_cleanly_and_never_uploads_a_store_mid_write`.

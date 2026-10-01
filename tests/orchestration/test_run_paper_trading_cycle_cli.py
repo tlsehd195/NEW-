@@ -463,6 +463,42 @@ class TestCheckpointsWithoutBarsYet:
             assert fill.data_version == f"v-{fill.execution_time.date().isoformat()}"
 
 
+class TestMaxRuntimeMinutes:
+    """ADR-0226 follow-up: a fresh_paper_store rebuild ran into the job's
+    60-minute timeout and was killed mid-write, leaving a paper store no
+    later run could open. With a runtime budget the cycle stops between
+    checkpoints, closes the store, and the next --resume run continues."""
+
+    def _argv(self, db_path, paper_store, out_path, *extra):
+        return [
+            "--universe", "TEST_UNIVERSE", "--db-path", str(db_path), "--paper-store", str(paper_store),
+            "--start", "2024-04-22", "--end", "2024-04-30", "--out", str(out_path), "--resume", *extra,
+        ]
+
+    def test_an_exhausted_budget_stops_after_one_checkpoint_and_resume_finishes_the_rest(self, tmp_path) -> None:
+        db_path = tmp_path / "market_data"
+        paper_store = tmp_path / "paper_store"
+        _seed_catalog(db_path)
+        module = _load_module()
+        module._UNIVERSES["TEST_UNIVERSE"] = _tiny_universe()
+        total = len(trading_days(date(2024, 4, 22), date(2024, 4, 30), calendar=build_xnys_calendar()))
+
+        first_out = tmp_path / "first.json"
+        assert module.main(self._argv(db_path, paper_store, first_out, "--max-runtime-minutes", "0")) == 0
+        first = json.loads(first_out.read_text())
+        assert first["checkpoints_run"] == 1
+
+        second_out = tmp_path / "second.json"
+        assert module.main(self._argv(db_path, paper_store, second_out)) == 0
+        second = json.loads(second_out.read_text())
+        assert second["checkpoints_run"] == total - 1
+
+        store_engine = StorageEngine(StorageConfig(root_dir=paper_store))
+        as_of_days = {r.as_of_time.date() for r in DuckDBPredictionRepository(store_engine).list_all(security_id="AAA")}
+        store_engine.close()
+        assert len(as_of_days) == total
+
+
 class TestFractionalShareSizing:
     """Session 38: `--lot-size` was not previously a flag at all --
     `risk.sizing.DeterministicPositionSizer` already floors to a
