@@ -107,3 +107,19 @@ evidence, not a validation. The window is now locked as `TEST_4`
 (`strategy_research.locked_windows`), so the research window is
 2000-01-01..2013-03-21. price_delay alone goes on to the ADR-0225
 unseen-names exams on TEST-3, TEST-2 and TEST-1, one window at a time.
+
+## Unseen-names exam on TEST-3 (2026-10-02, workflow run 36916567330)
+
+`docs/research/reports/full-validation-20261001T200421Z.json`: 357 S&P
+500 names never evaluated over 2016-07-11..2020-08-28, release
+`research-price-catalog-sp500-pit-2000-full`. price_delay **FAIL**: net
+CAGR 6.8% against the buy-and-hold's gross 6.7%, net Sharpe 0.382 against
+0.386 (SPY 14.7%). It roughly matched holding the same names and did not
+beat them.
+
+TEST-2 and TEST-1 exams are **not** taken for price_delay. ADR-0225 reads
+a FAIL as strong evidence against a candidate, and each window's exam
+can be taken only once, so spending the two remaining windows on a
+candidate that just failed would leave nothing for a future one. They
+stay available for the next finalist. Conclusion: no candidate in this
+project has beaten a same-names buy-and-hold out of sample.
