@@ -1,5 +1,5 @@
 # One-time/on-demand provisioning of an Oracle Cloud Always Free
-# Ampere A1 (ARM, VM.Standard.A1.Flex, 4 OCPU / 24GB RAM) instance that
+# Ampere A1 (ARM, VM.Standard.A1.Flex, 2 OCPU / 12GB RAM) instance that
 # hosts a GitHub Actions self-hosted runner -- account owner's own
 # request, 2026-09-24, for running colibri
 # (EXTERNAL_REPO_APPLICABILITY_REPORT.md priority 10; this container
@@ -256,11 +256,16 @@ jobs:
         if: env.SKIP_LAUNCH != 'true'
         run: |
           set -euo pipefail
+          # 2 OCPU / 12GB, not the full 4 / 24 Always Free allowance: 43
+          # launches at 4 / 24 (2026-09-24 .. 2026-10-01) all failed with
+          # "Out of host capacity", and a smaller request fits into more
+          # partially-free hosts. The instance can be resized up to 4 / 24
+          # later, still inside the Always Free limit.
           INSTANCE_ID=$(oci compute instance launch \
             --compartment-id "$TENANCY_OCID" \
             --availability-domain "$AD_NAME" \
             --shape "VM.Standard.A1.Flex" \
-            --shape-config '{"ocpus": 4, "memoryInGBs": 24}' \
+            --shape-config '{"ocpus": 2, "memoryInGBs": 12}' \
             --image-id "$IMAGE_ID" \
             --subnet-id "$SUBNET_ID" \
             --assign-public-ip true \
