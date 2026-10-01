@@ -1,6 +1,6 @@
 # ADR-0131: Real SEC Form 13F Information Table Format + Free CUSIP-to-Ticker Resolution (OpenFIGI)
 
-**Status:** Accepted
+**Status:** Accepted (point-in-time CUSIP caveat addressed by ADR-0231)
 **Date:** 2026-09-12
 **Deciders:** Claude Code (session continued), pending project owner review
 **Related documents:** `docs/decisions/ADR-0104-institutional-ownership-change-factor.md`,
