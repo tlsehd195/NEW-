@@ -66,6 +66,10 @@ on:
         description: "Also backtest the held-out TEST window (ADR-0222). Leave off for screening; turn on once, for a short list of finalists, then lock that window"
         type: boolean
         default: false
+      final_exam_candidates:
+        description: "Comma-separated finalists for final_exam (ADR-0228); required with final_exam. Only these and buy_and_hold see the held-out TEST"
+        type: string
+        default: ""
       sp500_point_in_time:
         description: "Survivorship-free universe (ADR-0224): every S&P 500 member in the window that the catalog has prices for, each date seeing only that date's members. Overrides universe"
         type: boolean
@@ -228,14 +232,23 @@ jobs:
           START_INPUT: ${{ inputs.start }}
           END_INPUT: ${{ inputs.end }}
           FINAL_EXAM_INPUT: ${{ inputs.final_exam }}
+          FINAL_EXAM_CANDIDATES_INPUT: ${{ inputs.final_exam_candidates }}
           SP500_PIT_INPUT: ${{ inputs.sp500_point_in_time }}
           EXAM_WINDOW_INPUT: ${{ inputs.unseen_names_exam }}
           EXAM_CANDIDATES_INPUT: ${{ inputs.exam_candidates }}
         run: |
           set -euo pipefail
           HELD_OUT_FLAG="--skip-held-out"
-          if [ "$FINAL_EXAM_INPUT" = "true" ]; then HELD_OUT_FLAG=""; fi
           EXAM_ARGS=()
+          if [ "$FINAL_EXAM_INPUT" = "true" ]; then
+            # ADR-0228: the held-out TEST is spent once, on named finalists only.
+            if [ -z "$FINAL_EXAM_CANDIDATES_INPUT" ]; then
+              echo "final_exam needs final_exam_candidates (ADR-0228)" >&2
+              exit 1
+            fi
+            HELD_OUT_FLAG=""
+            EXAM_ARGS=(--held-out-candidates "$FINAL_EXAM_CANDIDATES_INPUT")
+          fi
           if [ -n "$EXAM_WINDOW_INPUT" ]; then
             # ADR-0225: the exam needs the point-in-time universe, runs no
             # walk-forward, and the script pins start/end to the window.
