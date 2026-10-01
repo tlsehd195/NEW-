@@ -234,3 +234,15 @@ dominated by costs, not data: it buys about 450 names with $10,000, so
 the per-order minimum commission is about $357 per fold. Its gross
 excess is +0.55%. Re-run the point-in-time validation after this fix
 before re-judging any candidate.
+
+## Members after 2016 (2026-10-01)
+
+Run 36861460578 added the members up to 2026-08-27 (`member_end`),
+about 200 names, and published release
+`research-price-catalog-sp500-pit-2000-full`. The 2000..2016 release is
+unchanged. Of the 1,080 members in 2000..2026-08-27, 812 now have
+prices. Coverage on 1 January is 97% in 2017 (490/506) and rises to
+99.4% in 2026 (500/503). This is the catalog the ADR-0225 TEST-1/TEST-2
+exams need. Earlier years also rose a little (2008: 401 → 424 of 497);
+the cause was not checked.
+This month's Tiingo use stayed under the 500-symbol cap.
