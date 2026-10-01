@@ -239,7 +239,14 @@ jobs:
       # invented for this workflow, so this is enabling the project's
       # already-ratified risk tolerance in its one remaining unwired
       # spot, not choosing a new one.
+      #
+      # ADR-0226 follow-up: --max-runtime-minutes stops the cycle cleanly
+      # (store closed, report written) well before the job's 60-minute
+      # timeout. A long catch-up, such as a fresh_paper_store rebuild,
+      # then finishes over several runs via --resume instead of being
+      # killed mid-write, which left a corrupt paper-trading-store.
       - name: Run paper trading cycle (--resume)
+        id: cycle
         run: |
           python3 scripts/run_paper_trading_cycle.py \
             --universe "$UNIVERSE" --db-path "$MARKET_DATA_DIR" \
@@ -247,6 +254,7 @@ jobs:
             --start "$START_DATE" --end "$(date -u +%F)" \
             --max-sector-weight 0.25 --max-order-notional 1000 \
             --max-drawdown 0.20 --max-portfolio-volatility 0.30 \
+            --max-runtime-minutes 30 \
             --out paper_trading_cycle_report.json
 
       # Independent audit finding (Step 10, P2, ADR-0183): `monitoring.*`
@@ -343,8 +351,13 @@ jobs:
           path: ${{ env.MARKET_DATA_DIR }}
           retention-days: 90
 
+      # Not after a cancelled cycle (job timeout or manual cancel): the
+      # python process may still be writing, and uploading a store
+      # mid-write replaced the last good artifact with a corrupt one
+      # (ADR-0226 follow-up). The next run then restores the previous
+      # good store instead.
       - name: Upload updated paper-trading store
-        if: always()
+        if: always() && steps.cycle.outcome != 'cancelled'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: paper-trading-store

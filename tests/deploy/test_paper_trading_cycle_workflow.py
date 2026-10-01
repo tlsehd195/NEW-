@@ -6,6 +6,7 @@ checkable without running it: the YAML is well-formed, it invokes the
 same scripts with the ratified flags, and no secret value is ever
 hardcoded into the file.
 """
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -283,6 +284,10 @@ def test_both_state_directories_are_restored_and_reuploaded():
     assert "market-data-catalog" in uploaded_names
     assert "paper-trading-store" in uploaded_names
     for step in upload_steps:
+        if step["with"]["name"] == "paper-trading-store":
+            # ADR-0226 follow-up: see test_a_cancelled_cycle_is_stopped_
+            # cleanly_and_never_uploads_a_store_mid_write.
+            continue
         assert step.get("if") == "always()", (
             f"{step.get('name')} must upload with if: always() so a failed "
             "run does not silently lose already-written state"
@@ -381,3 +386,24 @@ def test_a_fresh_paper_store_is_an_opt_in_manual_input_only():
     assert restore["if"] == "${{ !inputs.fresh_paper_store }}"
     market = next(s for s in _steps(doc) if s.get("name") == "Restore previous market-data catalog artifact")
     assert "if" not in market
+
+
+def test_a_cancelled_cycle_is_stopped_cleanly_and_never_uploads_a_store_mid_write():
+    """ADR-0226 follow-up: a rebuild hit the 60-minute job timeout, the
+    always() upload copied the paper store while python was still
+    writing it, and every later run failed replaying its WAL."""
+    doc = _load()
+    steps = _steps(doc)
+    cycle = next(s for s in steps if s.get("name") == "Run paper trading cycle (--resume)")
+    assert cycle["id"] == "cycle"
+    budget = re.search(r"--max-runtime-minutes (\d+)", cycle["run"])
+    assert budget is not None
+    # Ingestion (~15 min) + budget + post-steps must stay inside the job timeout.
+    assert int(budget.group(1)) <= doc["jobs"]["run-cycle"]["timeout-minutes"] - 25
+
+    store_upload = next(
+        s for s in steps
+        if s.get("uses", "").startswith("actions/upload-artifact")
+        and s["with"]["name"] == "paper-trading-store"
+    )
+    assert store_upload["if"] == "always() && steps.cycle.outcome != 'cancelled'"

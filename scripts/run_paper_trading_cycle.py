@@ -105,6 +105,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -258,8 +259,19 @@ def main(argv=None) -> int:
             "guessed. Without this flag, re-running an already-processed range double-submits."
         ),
     )
+    parser.add_argument(
+        "--max-runtime-minutes", type=float, default=None,
+        help=(
+            "ADR-0226 follow-up: stop starting new checkpoints once this much wall-clock time has passed "
+            "(at least one checkpoint always runs), then finish normally -- report, performance, store "
+            "closed cleanly. With --resume the next invocation continues where this one stopped. Keeps a "
+            "long catch-up (e.g. a rebuilt --paper-store) inside a CI job's time limit instead of being "
+            "killed mid-write. Default: no limit."
+        ),
+    )
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     universe = _UNIVERSES[args.universe]
     security_ids = list(universe.symbol_ids)
@@ -468,6 +480,17 @@ def main(argv=None) -> int:
     # field.
     submitted_client_order_ids: list[str] = []
     for i, checkpoint in enumerate(checkpoints):
+        if (
+            i > 0 and args.max_runtime_minutes is not None
+            and time.monotonic() - started >= args.max_runtime_minutes * 60
+        ):
+            print(
+                f"--max-runtime-minutes {args.max_runtime_minutes} reached after {i}/{len(checkpoints)} "
+                f"checkpoint(s); {len(checkpoints) - i} left for the next --resume run.",
+                flush=True,
+            )
+            checkpoints = checkpoints[:i]
+            break
         clock.index = i
         outcomes = run_cycle(
             security_ids, checkpoint, view, session, state=state,
