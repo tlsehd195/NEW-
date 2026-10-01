@@ -89,4 +89,5 @@ def simulate_fill(
         reference_price=reference_price, price=price_after_slippage, commission=commission,
         spread_cost=spread_cost, slippage_cost=slippage_cost, decision_time=decision_time,
         execution_time=execution_time, data_version=bar.provenance.data_version,
+        reference_bar_available_time=bar.available_time,
     )

@@ -596,6 +596,9 @@ def fill_to_dict(fill: Fill) -> dict:
         "decision_time": fill.decision_time.isoformat(),
         "execution_time": fill.execution_time.isoformat(),
         "data_version": fill.data_version,
+        "reference_bar_available_time": (
+            fill.reference_bar_available_time.isoformat() if fill.reference_bar_available_time else None
+        ),
     }
 
 
@@ -613,6 +616,10 @@ def dict_to_fill(data: dict) -> Fill:
         decision_time=datetime.fromisoformat(data["decision_time"]),
         execution_time=datetime.fromisoformat(data["execution_time"]),
         data_version=data["data_version"],
+        reference_bar_available_time=(
+            datetime.fromisoformat(data["reference_bar_available_time"])
+            if data.get("reference_bar_available_time") else None
+        ),
     )
 
 
@@ -2110,6 +2117,9 @@ def fill_to_payload(fill: Fill) -> dict:
         "decision_time": _dt_iso(fill.decision_time),
         "execution_time": _dt_iso(fill.execution_time),
         "data_version": fill.data_version,
+        "reference_bar_available_time": (
+            _dt_iso(fill.reference_bar_available_time) if fill.reference_bar_available_time else None
+        ),
     }
 
 
@@ -2127,6 +2137,9 @@ def payload_to_fill(data: dict) -> Fill:
         decision_time=_dt_from_iso(data["decision_time"]),
         execution_time=_dt_from_iso(data["execution_time"]),
         data_version=data["data_version"],
+        reference_bar_available_time=(
+            _dt_from_iso(data["reference_bar_available_time"]) if data.get("reference_bar_available_time") else None
+        ),
     )
 
 

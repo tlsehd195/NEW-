@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from datetime import timedelta
 
 from learning_helpers import build_journal_with_closed_trades, build_journal_with_open_trade, utc
 
@@ -27,6 +28,27 @@ class TestValidSamples:
         assert all(r.status == SampleStatus.VALID for r in results)
         assert all(r.reason == "ok" for r in results)
         assert all(r.sample_as_of_time is not None for r in results)
+
+
+class TestFillPricedOnDecisionBar:
+    """ADR-0226: a fill priced on a bar that was already available at
+    decision time is not a real T+1 outcome and must not train a model."""
+
+    def test_fill_on_a_bar_available_at_decision_time_is_invalid(self) -> None:
+        journal, records = build_journal_with_closed_trades(3, fill_bar_available_offset=timedelta(0))
+        results = DataCleaner().clean(records, journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert all(r.status == SampleStatus.INVALID for r in results)
+        assert all(r.reason == "fill_priced_on_decision_bar" for r in results)
+
+    def test_fill_on_an_earlier_bar_is_invalid(self) -> None:
+        journal, records = build_journal_with_closed_trades(1, fill_bar_available_offset=timedelta(days=-1))
+        results = DataCleaner().clean(records, journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert results[0].reason == "fill_priced_on_decision_bar"
+
+    def test_fill_on_a_later_bar_is_valid(self) -> None:
+        journal, records = build_journal_with_closed_trades(3, fill_bar_available_offset=timedelta(days=1))
+        results = DataCleaner().clean(records, journal, provenance=TradeProvenance.HISTORICAL_SIMULATION)
+        assert all(r.status == SampleStatus.VALID for r in results)
 
 
 class TestMissingOutcome:

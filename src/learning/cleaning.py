@@ -84,6 +84,23 @@ class DataCleaner:
                 continue
             sample_as_of_time = decision.decision_time
 
+            # A fill priced on a bar that was already available when the
+            # decision was made used the decision's own information as its
+            # execution price (the same-bar fill ADR-0154 forbids and
+            # ADR-0226 found in daily paper runs). Its outcome is not a real
+            # T+1 outcome, so it must not train a model. Fills recorded
+            # before `reference_bar_available_time` existed cannot be
+            # checked and pass through.
+            trade = journal.get_trade(record.trade_id)
+            bar_time = trade.fill.reference_bar_available_time if trade is not None else None
+            if bar_time is not None and bar_time <= decision.decision_time:
+                results.append(CleaningResult(
+                    trade_id=record.trade_id, experience_id=record.experience_id,
+                    status=SampleStatus.INVALID, reason="fill_priced_on_decision_bar",
+                    sample_as_of_time=sample_as_of_time, provenance=record.provenance,
+                ))
+                continue
+
             if record.reward is not None and not _finite(record.reward):
                 results.append(CleaningResult(
                     trade_id=record.trade_id, experience_id=record.experience_id,

@@ -34,6 +34,11 @@ class Fill:
     decision_time: datetime
     execution_time: datetime
     data_version: str  # provenance.data_version of the bar used for pricing
+    # When the pricing bar became available. A fill whose bar was already
+    # available at `decision_time` was priced on the decision bar (the
+    # ADR-0226 bug); the learning DataCleaner rejects those. None for
+    # fills recorded before this field existed and for Live fills.
+    reference_bar_available_time: Optional[datetime] = None
 
     @property
     def total_cost(self) -> float:
@@ -128,6 +133,7 @@ class FillSimulator:
             decision_time=order.decision_time,
             execution_time=execution_time,
             data_version=execution_bar.provenance.data_version,
+            reference_bar_available_time=execution_bar.available_time,
         )
         status = OrderStatus.FILLED if fill_quantity == order.quantity else OrderStatus.PARTIALLY_FILLED
         updated = replace(order, status=status)
