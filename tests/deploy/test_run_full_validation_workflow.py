@@ -185,3 +185,14 @@ def test_held_out_test_is_skipped_unless_final_exam_is_requested():
     assert '[ "$FINAL_EXAM_INPUT" = "true" ]' in step["run"]
     assert "$HELD_OUT_FLAG" in step["run"]
     assert step["env"]["FINAL_EXAM_INPUT"] == "${{ inputs.final_exam }}"
+
+
+def test_sharpe_uses_the_macro_store_risk_free_rate():
+    """ADR-0227: the macro store is downloaded (required, no fallback) and
+    passed as --risk-free-db-path."""
+    steps = _steps()
+    download = next(s for s in steps if "risk-free rate" in s.get("name", ""))
+    assert "fred-macro-vintages-v1" in download["run"]
+    assert "if" not in download
+    run_step = next(s for s in steps if "run_long_horizon_validation.py" in s.get("run", ""))
+    assert "--risk-free-db-path ./data/macro_store" in run_step["run"]

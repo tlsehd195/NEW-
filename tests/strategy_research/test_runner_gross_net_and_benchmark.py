@@ -10,6 +10,7 @@ from datetime import date
 
 from research_helpers import synthetic_multi_year_repository
 
+from backtest.risk_free import RiskFreeRates
 from backtest.strategy import BuyAndHoldStrategy
 
 from strategy_research.long_term_momentum import LongTermMomentumParameters, LongTermMomentumStrategy
@@ -85,3 +86,24 @@ class TestReproducibility:
         result1, result2 = build(), build()
         assert result1.gross.performance == result2.gross.performance
         assert result1.net.performance == result2.net.performance
+
+
+class TestRiskFreeRate:
+    """ADR-0227: Sharpe uses the window's average 3-month T-bill yield."""
+
+    def test_a_positive_risk_free_rate_lowers_sharpe_and_leaves_returns_alone(self) -> None:
+        universe = ("TRENDUP", "CYCLICAL")
+        repo = synthetic_multi_year_repository(date(2020, 1, 2), date(2021, 6, 1), symbols=universe)
+        rates = RiskFreeRates([(date(2020, 1, 2), 5.0), (date(2021, 6, 1), 5.0)], source="test")
+
+        def run(risk_free):
+            return run_gross_and_net(
+                repo, lambda: BuyAndHoldStrategy(list(universe)), universe,
+                start_date=date(2020, 1, 2), end_date=date(2021, 6, 1), initial_capital=50_000.0,
+                risk_free=risk_free,
+            )
+
+        zero, five = run(None), run(rates)
+        assert five.net.experiment.configuration_version != zero.net.experiment.configuration_version
+        assert five.net.performance.cumulative_return == zero.net.performance.cumulative_return
+        assert five.net.performance.sharpe_ratio < zero.net.performance.sharpe_ratio

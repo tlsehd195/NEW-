@@ -22,6 +22,7 @@ from backtest.costs import (
     ZERO_TRANSACTION_COST_MODEL,
 )
 from backtest.engine import BacktestConfig, BacktestEngine, BacktestResult
+from backtest.risk_free import RiskFreeRates
 from backtest.strategy import Strategy
 from data_infra.repository import DataRepository
 
@@ -46,6 +47,7 @@ def run_gross_and_net(
     code_version: str = "phase23_strategy_research",
     point_in_time_universe: Optional[str] = None,
     settle_after_missing_checkpoints: int = 5,
+    risk_free: Optional[RiskFreeRates] = None,
 ) -> GrossNetResult:
     """Runs the SAME strategy specification twice against the SAME data
     window: once under `ZERO_TRANSACTION_COST_MODEL`/`ZERO_SLIPPAGE_MODEL`
@@ -61,7 +63,10 @@ def run_gross_and_net(
     in `repository` (e.g. `SP500_INDEX_HISTORICAL`). The strategy then
     sees only that date's members, and a held name with no bar for
     `settle_after_missing_checkpoints` checkpoints is settled to cash.
-    `security_ids` should list every name that is ever a member."""
+    `security_ids` should list every name that is ever a member.
+
+    `risk_free` (ADR-0227): when given, Sharpe/Sortino use the average
+    3-month T-bill yield over this window; when None they use 0%."""
     universe_kwargs = {}
     if point_in_time_universe is not None:
         universe_kwargs = {
@@ -69,17 +74,18 @@ def run_gross_and_net(
             "restrict_strategy_to_universe": True,
             "settle_after_missing_checkpoints": settle_after_missing_checkpoints,
         }
+    risk_free_rate = risk_free.average_annual_rate(start_date, end_date) if risk_free is not None else 0.0
     gross_config = BacktestConfig(
         market=market, start_date=start_date, end_date=end_date, initial_capital=initial_capital,
         security_ids=tuple(security_ids), benchmark_id=benchmark_id,
         cost_model=ZERO_TRANSACTION_COST_MODEL, slippage_model=ZERO_SLIPPAGE_MODEL,
-        code_version=code_version, **universe_kwargs,
+        risk_free_rate=risk_free_rate, code_version=code_version, **universe_kwargs,
     )
     net_config = BacktestConfig(
         market=market, start_date=start_date, end_date=end_date, initial_capital=initial_capital,
         security_ids=tuple(security_ids), benchmark_id=benchmark_id,
         cost_model=DEFAULT_TRANSACTION_COST_MODEL, slippage_model=DEFAULT_SLIPPAGE_MODEL,
-        code_version=code_version, **universe_kwargs,
+        risk_free_rate=risk_free_rate, code_version=code_version, **universe_kwargs,
     )
 
     gross_result = BacktestEngine(repository, gross_config, strategy_factory()).run()

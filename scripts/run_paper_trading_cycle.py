@@ -103,6 +103,7 @@ populated by scripts/ingest_real_market_data.py):
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 import time
@@ -114,13 +115,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from backtest.asof import AsOfDataView  # noqa: E402
 from backtest.clock import BacktestClock, build_daily_checkpoints  # noqa: E402
+from backtest.risk_free import RISK_FREE_SERIES_ID, RiskFreeRates  # noqa: E402
 
 from broker.paper.config import PaperTradingConfig  # noqa: E402
 from broker.paper.market_data import InMemoryPaperMarketDataSource  # noqa: E402
-from broker.paper.performance import compute_paper_performance_report  # noqa: E402
+from broker.paper.performance import (  # noqa: E402
+    DEFAULT_PAPER_PERFORMANCE_CONFIG,
+    PaperPerformanceConfig,
+    compute_paper_performance_report,
+)
 from broker.paper.session import PaperTradingSession  # noqa: E402
 
 from data_infra.exchange_calendars_adapter import build_xnys_calendar  # noqa: E402
+from data_infra.provider import ProviderError  # noqa: E402
+from data_infra.providers.fred import FredMacroProvider  # noqa: E402
+from data_infra.providers.fred_config import DEFAULT_FRED_CONFIG  # noqa: E402
+from data_infra.providers.fred_transport import FredHttpTransport  # noqa: E402
 from data_infra.universe import PILOT_UNIVERSE_V1, RESEARCH_UNIVERSE_STAGE4  # noqa: E402
 from data_infra.versioning import compute_data_version  # noqa: E402
 
@@ -200,6 +210,31 @@ def _reconstruct_value_history(risk_repository, representative_security_id: str,
     return [value for _, value in equity_history_from_risk_repository(risk_repository, representative_security_id, up_to=up_to)]
 
 
+def _performance_config(enabled: bool, equity_history) -> tuple[PaperPerformanceConfig, dict]:
+    """ADR-0227: the risk-free rate for this report, and how it was got.
+    A reporting input only, so a FRED failure falls back to 0% loudly
+    instead of failing the paper cycle."""
+    if not enabled:
+        return DEFAULT_PAPER_PERFORMANCE_CONFIG, {"source": "none", "annual_rate": 0.0}
+    if not equity_history:
+        return DEFAULT_PAPER_PERFORMANCE_CONFIG, {"source": "none (no equity history yet)", "annual_rate": 0.0}
+    start, end = equity_history[0][0].date(), equity_history[-1][0].date()
+    try:
+        provider = FredMacroProvider(DEFAULT_FRED_CONFIG, FredHttpTransport(DEFAULT_FRED_CONFIG.base_url))
+        observations = provider.fetch_series(RISK_FREE_SERIES_ID, start, end)
+        rate = RiskFreeRates(
+            ((o.observation_date, o.value) for o in observations), source="FRED API",
+        ).average_annual_rate(start, end)
+    except (ProviderError, ValueError, OSError) as exc:
+        print(f"WARNING: risk-free rate unavailable ({type(exc).__name__}: {exc}); Sharpe/Sortino use 0%", file=sys.stderr)
+        return DEFAULT_PAPER_PERFORMANCE_CONFIG, {"source": f"unavailable: {type(exc).__name__}", "annual_rate": 0.0}
+    print(f"Risk-free rate: {rate:.4%} ({RISK_FREE_SERIES_ID} mean {start}..{end})", flush=True)
+    return (
+        dataclasses.replace(DEFAULT_PAPER_PERFORMANCE_CONFIG, risk_free_rate=rate),
+        {"source": f"FRED {RISK_FREE_SERIES_ID} mean {start}..{end}", "annual_rate": rate},
+    )
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--universe", choices=sorted(_UNIVERSES), default="PILOT_UNIVERSE")
@@ -267,6 +302,14 @@ def main(argv=None) -> int:
             "closed cleanly. With --resume the next invocation continues where this one stopped. Keeps a "
             "long catch-up (e.g. a rebuilt --paper-store) inside a CI job's time limit instead of being "
             "killed mid-write. Default: no limit."
+        ),
+    )
+    parser.add_argument(
+        "--risk-free-from-fred", action="store_true",
+        help=(
+            "Sharpe/Sortino use the average 3-month T-bill yield (FRED DGS3MO, needs FRED_API_KEY) "
+            "over the reported equity history (ADR-0227). If FRED cannot be read the report uses 0%% "
+            "and says so; the trading cycle itself never depends on it."
         ),
     )
     parser.add_argument("--out", required=True, type=Path)
@@ -405,8 +448,10 @@ def main(argv=None) -> int:
                 trades = trade_journal_repository.list_trades(
                     provenance=TradeProvenance.PAPER_TRADING, start=args.start, end=args.end,
                 )
+                performance_config, risk_free_info = _performance_config(args.risk_free_from_fred, equity_history)
                 performance_report = compute_paper_performance_report(
                     report_id="PAPERPERF-DISPLAY-ONLY",
+                    config=performance_config,
                     paper_session_id=f"paper-session-{args.universe.lower()}",
                     equity_history=equity_history,
                     trades=trades,
@@ -414,6 +459,7 @@ def main(argv=None) -> int:
                     strategy_version="baseline_rule",
                 )
                 report["performance"] = paper_performance_report_to_payload(performance_report)
+                report["risk_free_rate"] = risk_free_info
                 args.out.parent.mkdir(parents=True, exist_ok=True)
                 args.out.write_text(json.dumps(report, indent=2))
                 data_engine.close()
@@ -572,8 +618,10 @@ def main(argv=None) -> int:
     next_performance_report_id = _next_starting_id(
         r.report_id for r in performance_repository.list_for_session(paper_session_id)
     )
+    performance_config, risk_free_info = _performance_config(args.risk_free_from_fred, equity_history)
     performance_report = compute_paper_performance_report(
         report_id=f"PAPERPERF-{next_performance_report_id:06d}",
+        config=performance_config,
         paper_session_id=paper_session_id,
         equity_history=equity_history,
         trades=trades,
@@ -660,6 +708,7 @@ def main(argv=None) -> int:
             for as_of, skipped in state.skipped_delayed_fills
         ],
         "performance": paper_performance_report_to_payload(performance_report),
+        "risk_free_rate": risk_free_info,
         "content_checksum": checksum,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
