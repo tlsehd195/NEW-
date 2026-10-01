@@ -149,7 +149,32 @@ TEST_3 = LockedWindow(
     ),
 )
 
-LOCKED_WINDOWS: tuple[LockedWindow, ...] = (TEST_1, TEST_2, TEST_3)
+# ADR-0228: the held-out TEST of the point-in-time (ADR-0224) screen over
+# 2000-01-01..2016-07-11 (chronological split TEST 2013-03-21 19:12 UTC
+# ..2016-07-11), run once for five pre-registered finalists. Locked from
+# the start of that day so the window is a superset of what was seen.
+# Ends exactly at TEST_3's start.
+TEST_4 = LockedWindow(
+    name="TEST-4",
+    start=datetime(2013, 3, 21, tzinfo=timezone.utc),
+    end=datetime(2016, 7, 11, tzinfo=timezone.utc),
+    observed_by=(
+        "buy_and_hold", "high_volume_return_premium", "illiquidity", "low_beta",
+        "max_effect", "price_delay",
+    ),
+    note=(
+        "Observed once, real data, point-in-time S&P 500 (602 names with "
+        "prices). Verdict against the same-names cost-free buy-and-hold "
+        "(net CAGR and net Sharpe both higher, ADR-0228): price_delay PASS "
+        "(net CAGR 17.4% vs 11.7%, Sharpe 1.32 vs 0.96; SPY 12.4%); "
+        "low_beta, max_effect, illiquidity, high_volume_return_premium "
+        "FAIL. A PASS here is not DSR-backed (price_delay DSR 0.38). Earlier "
+        "203-name runs had covered these dates. See docs/research/reports/"
+        "full-validation-20261001T193219Z.json."
+    ),
+)
+
+LOCKED_WINDOWS: tuple[LockedWindow, ...] = (TEST_1, TEST_2, TEST_3, TEST_4)
 
 
 def overlaps_any_locked_window(start: datetime, end: datetime) -> tuple[LockedWindow, ...]:

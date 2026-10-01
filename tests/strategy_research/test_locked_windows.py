@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from strategy_research.locked_windows import TEST_1, TEST_2, TEST_3, earliest_locked_window_start, overlaps_any_locked_window
+from strategy_research.locked_windows import TEST_1, TEST_2, TEST_3, TEST_4, earliest_locked_window_start, overlaps_any_locked_window
 
 
 def _utc(y, m, d, h=0, mi=0):
@@ -69,6 +69,15 @@ class TestTest3Constant:
             assert name in TEST_3.observed_by
 
 
+class TestTest4Constant:
+    def test_test_4_covers_the_finalists_held_out_window_and_meets_test_3(self) -> None:
+        # ADR-0228: held-out TEST 2013-03-21 19:12 UTC..2016-07-11, locked
+        # from the start of that day.
+        assert TEST_4.start == _utc(2013, 3, 21)
+        assert TEST_4.end == TEST_3.start
+        assert "price_delay" in TEST_4.observed_by
+
+
 class TestEarliestLockedWindowStart:
     """Real bug this function fixes (2026-09-26, ADR-0209): five scripts
     hardcoded their default `--end` to `TEST_1.start` directly, which
@@ -76,9 +85,9 @@ class TestEarliestLockedWindowStart:
     added -- caught by their own tests failing. This function is the
     fix, and must itself track whichever window starts earliest."""
 
-    def test_returns_test_3_start_since_it_is_the_earliest(self) -> None:
-        assert TEST_3.start < TEST_2.start < TEST_1.start
-        assert earliest_locked_window_start() == TEST_3.start
+    def test_returns_test_4_start_since_it_is_the_earliest(self) -> None:
+        assert TEST_4.start < TEST_3.start < TEST_2.start < TEST_1.start
+        assert earliest_locked_window_start() == TEST_4.start
 
     def test_the_earliest_start_itself_does_not_overlap_any_locked_window(self) -> None:
         # The whole point: [anything, earliest_locked_window_start()) must
@@ -119,8 +128,8 @@ class TestOverlapDetection:
 
     def test_a_range_entirely_before_every_locked_window_is_not_flagged(self) -> None:
         # e.g. TRAIN+VALIDATION for a future study, strictly before
-        # TEST-3 starts (2016-07-11).
-        overlapping = overlaps_any_locked_window(_utc(2000, 1, 1), _utc(2016, 1, 1))
+        # TEST-4 starts (2013-03-21, ADR-0228).
+        overlapping = overlaps_any_locked_window(_utc(2000, 1, 1), _utc(2013, 1, 1))
         assert overlapping == ()
 
     def test_a_range_entirely_after_test_1_is_not_flagged(self) -> None:

@@ -100,7 +100,7 @@ class TestTest1Refusal:
             "--price-db-path", str(tmp_path / "price"),
             "--fundamentals-db-path", str(tmp_path / "fundamentals"),
             "--start", "2010-01-01",
-            "--end", "2015-01-01",
+            "--end", "2013-01-01",
         ])
         assert exit_code == 0
 
