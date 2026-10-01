@@ -8,7 +8,7 @@ the failure must be inspectable, not silently discarded or crashed on.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from backtest_helpers import build_repository, checkpoint, make_bars, make_security, trading_days, utc
 
@@ -76,6 +76,54 @@ class TestDuplicateOrder:
         result = BacktestEngine(repo, config, _DuplicateIntentStrategy()).run()
         assert any(i.check == "duplicate_trades" for i in result.integrity.issues)
         assert result.is_valid_performance is False
+
+    @staticmethod
+    def _buy_once_run(repo, days, **config_kwargs):
+        class _BuyOnceAndHoldStrategy:
+            version = "buy_once_and_hold_v1"
+
+            def __init__(self) -> None:
+                self._bought = False
+
+            def generate_orders(self, as_of_time, data, portfolio):
+                if self._bought:
+                    return []
+                self._bought = True
+                return [OrderIntent("AAA", OrderSide.BUY, 1.0)]
+
+        config = BacktestConfig(
+            market="US_EQUITY", start_date=days[0], end_date=days[-1],
+            initial_capital=10_000.0, security_ids=("AAA",), **config_kwargs,
+        )
+        return BacktestEngine(repo, config, _BuyOnceAndHoldStrategy()).run()
+
+    def test_gate_fires_when_the_delisted_record_has_already_ended(self) -> None:
+        """ADR-0187's open R2 finding: a real delisted record ends at its
+        `valid_to`, so `get_security` returns None after the delisting --
+        the gate must still see the DELISTED status it saw while held."""
+        days = trading_days(date(2024, 1, 2), date(2024, 1, 10))
+        repo = build_repository(
+            bars=make_bars("AAA", days[:3], [100.0, 101.0, 102.0]),
+            securities=[make_security(
+                "AAA", "AAA", status=SecurityStatus.DELISTED,
+                valid_to=datetime(days[3].year, days[3].month, days[3].day, tzinfo=timezone.utc),
+            )],
+        )
+        result = self._buy_once_run(repo, days)
+        assert any(i.check == "delisted_position_marked_at_cost" for i in result.integrity.issues)
+        assert result.is_valid_performance is False
+
+    def test_a_delisted_name_marked_at_its_last_close_is_not_flagged_as_at_cost(self) -> None:
+        """ADR-0224 marks a name that stopped printing at its last close
+        and settles it; that is not "valued at average cost"."""
+        days = trading_days(date(2024, 1, 2), date(2024, 1, 10))
+        repo = build_repository(
+            bars=make_bars("AAA", days[:3], [100.0, 101.0, 102.0]),
+            securities=[make_security("AAA", "AAA", status=SecurityStatus.DELISTED)],
+        )
+        result = self._buy_once_run(repo, days, settle_after_missing_checkpoints=3)
+        assert not any(i.check == "delisted_position_marked_at_cost" for i in result.integrity.issues)
+        assert any(i.check == "stale_position_settled" for i in result.integrity.issues)
 
     def test_engine_level_confirmed_delisted_held_position_invalidates_the_result(self) -> None:
         """Independent audit finding (Step 2, P2), proven end to end

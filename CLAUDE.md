@@ -170,7 +170,8 @@ Claude 세션이 자체적으로 처리할 수 없어서 계정 소유자가 직
   어댑터 작성 + 실제 모의투자 API 검증 진행.
 - **colibri 실행용 Oracle Cloud 서버** (`EXTERNAL_REPO_APPLICABILITY_
   REPORT.md` priority 10): Oracle Cloud Always Free 계정 생성(완료,
-  2026-09-24) → `VM.Standard.A1.Flex`(ARM, 4 OCPU/24GB RAM) 인스턴스
+  2026-09-24) → `VM.Standard.A1.Flex`(ARM, 2 OCPU/12GB RAM — 2026-10-01 PR #200에서
+  4 OCPU/24GB 요청을 낮춤, 재고 확보 확률을 높이려고) 인스턴스
   생성 → 그 VM에 GitHub Actions self-hosted runner 설치·등록(SSH 키를
   세션과 주고받지 않는 방법 — `runs-on: self-hosted`로 원격 작업 위임
   가능). 러너 등록되면 colibri ARM 빌드 가능 여부 확인 + 워크플로 작성
@@ -251,8 +252,10 @@ calendars`/`purgedcv` 배선, `ADR-0207`)은 이미 처리했다. 남은 항목�
   TEST 구간(2020-08-28~2023-04-28)이 `locked_windows.py`에 등록 안
   돼 있던 걸 `TEST_2`로 소급 등록 완료 — 앞으로 어떤 새 전략도 이
   구간을 다시 TEST로 재사용 못 하게 막음(RULE 0.8). **남은 부분**:
-  새 S급 팩터 탐색(`ADR-0107~0109` 라운드 이후 재개 안 됨)은 아직
-  진행 전 — 별도로 이어서 할 예정.
+  새 S급 팩터 탐색은 `ADR-0214`로 재개함(intermediate momentum,
+  price delay, frog-in-the-pan). 2026-09-28 예비 결과는 3개 모두
+  `INCONCLUSIVE`이고, 생존편향을 없앤 PIT 유니버스(`ADR-0224`)로 다시
+  판정하는 중.
 
 ## Grounding Gate 배선 보류 결정 (2026-09-24)
 
@@ -274,3 +277,7 @@ ADR-0191이 미해결로 남긴 "derived-value 체크를 실제 prompt/schema에
   다시 꺼내서, 그때 (1) 어떤 필드를 "derived"로 취급할지, (2) 검증
   실패 시 재시도할지 전체 응답을 fail-closed 시킬지 두 가지를 함께
   결정한다.
+- **2026-09-25 재검토(`ADR-0206`)**: Gemini 주가 방향 예측 실험이
+  `response_schema`를 쓰는 첫 호출부였지만, 실거래 파이프라인과 분리된
+  연구 실험이고 공식으로 다시 계산할 수 있는 파생 숫자 필드가 없어서
+  재개 조건을 충족하지 않는다고 결론냄. 보류 유지.

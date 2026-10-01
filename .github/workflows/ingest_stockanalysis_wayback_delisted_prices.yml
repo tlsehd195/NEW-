@@ -85,13 +85,18 @@ jobs:
             echo "symbols=$(python3 scripts/select_delisted_candidates_since.py --sp500-intervals-csv sp500_ticker_start_end.csv --since 2020-01-01)" >> "$GITHUB_OUTPUT"
           fi
 
+      # --max-runtime-minutes: a full run (~142 symbols) is longer than
+      # the 60-minute job timeout. The script stops starting new symbols at
+      # 45 minutes and saves what it has; the manifest's not_attempted list
+      # is the `symbols` input for the next run (ADR-0187 open R2 finding).
       - name: Ingest real Wayback-recovered prices
         run: |
           python3 scripts/ingest_stockanalysis_wayback_delisted_prices.py \
             --symbols ${{ steps.symbols.outputs.symbols }} \
             --as-of "$(date -u +%F)" \
             --db-path ./data/wayback_delisted_prices \
-            --manifest-out wayback_ingestion_manifest.json
+            --manifest-out wayback_ingestion_manifest.json \
+            --max-runtime-minutes 45
 
       - name: Upload the recovered-price catalog
         if: always()

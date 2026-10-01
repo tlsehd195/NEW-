@@ -245,8 +245,14 @@ jobs:
       # timeout. A long catch-up, such as a fresh_paper_store rebuild,
       # then finishes over several runs via --resume instead of being
       # killed mid-write, which left a corrupt paper-trading-store.
+      #
+      # ADR-0227: --risk-free-from-fred scores Sharpe/Sortino against the
+      # 3-month T-bill yield (FRED DGS3MO). Report-only; if FRED is
+      # unreachable the report says so and uses 0%, the cycle still runs.
       - name: Run paper trading cycle (--resume)
         id: cycle
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
           python3 scripts/run_paper_trading_cycle.py \
             --universe "$UNIVERSE" --db-path "$MARKET_DATA_DIR" \
@@ -255,6 +261,7 @@ jobs:
             --max-sector-weight 0.25 --max-order-notional 1000 \
             --max-drawdown 0.20 --max-portfolio-volatility 0.30 \
             --max-runtime-minutes 30 \
+            --risk-free-from-fred \
             --out paper_trading_cycle_report.json
 
       # Independent audit finding (Step 10, P2, ADR-0183): `monitoring.*`

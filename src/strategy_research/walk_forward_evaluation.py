@@ -48,6 +48,7 @@ from regime.config import RegimeConfig
 from regime.detector import RegimeDetector, make_single_point_view
 from regime.enums import RegimeAxis, SubjectKind
 
+from backtest.risk_free import RiskFreeRates
 from strategy_research.runner import GrossNetResult, run_gross_and_net
 from strategy_research.splits import WalkForwardWindow, generate_walk_forward_windows
 
@@ -115,6 +116,7 @@ def run_walk_forward_evaluation(
     regime_subject_id: Optional[str] = None,
     market: str = "US_EQUITY",
     point_in_time_universe: Optional[str] = None,
+    risk_free: Optional[RiskFreeRates] = None,
 ) -> WalkForwardAggregate:
     """Runs one strategy across every rolling window
     `generate_walk_forward_windows` produces for `[overall_start,
@@ -136,7 +138,7 @@ def run_walk_forward_evaluation(
             repository, strategy_factory, security_ids,
             start_date=window.test_start.date(), end_date=window.test_end.date(),
             initial_capital=initial_capital, benchmark_id=benchmark_id, market=market,
-            point_in_time_universe=point_in_time_universe,
+            point_in_time_universe=point_in_time_universe, risk_free=risk_free,
         )
         regime_state = "UNKNOWN"
         if regime_subject_id is not None:

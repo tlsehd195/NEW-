@@ -796,3 +796,21 @@ class TestPointInTimeUniverseOptIn:
                 if isinstance(key, ast.Constant) and key.value == "point_in_time_universe_as_of":
                     found = True
         assert found, "compute_data_version's experiment_id payload must include point_in_time_universe_as_of"
+
+
+class TestRiskFreeRateWiring:
+    """ADR-0227: every evaluation path (walk-forward, held-out TEST, the
+    ADR-0225 exam) scores Sharpe with the same `risk_free` table, and the
+    report says which rate was used."""
+
+    def test_every_evaluation_call_passes_the_shared_risk_free_table(self) -> None:
+        tree = _tree()
+        calls = _find_calls(tree, "run_gross_and_net") + _find_calls(tree, "run_walk_forward_evaluation")
+        assert len(calls) >= 3
+        for call in calls:
+            kwargs = {kw.arg: kw.value for kw in call.keywords}
+            assert isinstance(kwargs.get("risk_free"), ast.Name) and kwargs["risk_free"].id == "risk_free"
+
+    def test_both_report_shapes_record_the_risk_free_rate(self) -> None:
+        source = _source()
+        assert source.count('"risk_free_rate": risk_free_report') == 2

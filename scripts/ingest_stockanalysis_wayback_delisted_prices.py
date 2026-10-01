@@ -194,6 +194,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--as-of", required=True, type=_parse_date, help="YYYY-MM-DD, stands in for this run's real-world timestamp (retrieved_at/ingestion_time/available_time) -- never derived from wall-clock time")
     parser.add_argument("--db-path", required=True, type=Path, help="Directory for the DuckDB catalog + Parquet store (created if it does not exist)")
     parser.add_argument("--manifest-out", type=Path, default=None, help="Where to write the JSON reproducibility manifest (default: <db-path>/wayback_ingestion_manifest.json)")
+    parser.add_argument(
+        "--max-runtime-minutes", type=float, default=None,
+        help=(
+            "Stop starting new symbols after this long, then save what was fetched and the manifest "
+            "(symbols not reached are listed under not_attempted). Keeps a full ~142-symbol run from "
+            "being killed by the job timeout with nothing saved (ADR-0187 open R2 finding)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     manifest_path = args.manifest_out or (args.db_path / "wayback_ingestion_manifest.json")
@@ -203,8 +211,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         per_symbol_results = []
         all_bars: list[PriceBar] = []
+        not_attempted: list[str] = []
+        started = time.monotonic()
 
         for i, ticker in enumerate(args.symbols, start=1):
+            if args.max_runtime_minutes is not None and time.monotonic() - started >= args.max_runtime_minutes * 60:
+                not_attempted = list(args.symbols[i - 1:])
+                print(f"  runtime budget reached; {len(not_attempted)} symbol(s) not attempted", flush=True)
+                break
             print(f"  [{i}/{len(args.symbols)}] {ticker}: fetching Wayback snapshot list...", flush=True)
             try:
                 snapshots = fetch_snapshot_list(ticker)
@@ -265,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
             "symbol_count": len(args.symbols),
             "as_of": args.as_of.isoformat(),
             "per_symbol_results": per_symbol_results,
+            "not_attempted": not_attempted,
             "total_bars_written": written,
             "db_path": str(args.db_path),
             "content_checksum": checksum,
@@ -278,8 +293,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Failed symbols (fetch error): {failed_symbols}")
         print(f"Total bars written: {written}")
         print(f"Content checksum: {checksum}")
+        print(f"Not attempted (runtime budget): {not_attempted}")
         print(f"Manifest written to: {manifest_path}")
-        return 0 if not failed_symbols else 1
+        return 0 if not failed_symbols and not not_attempted else 1
     finally:
         engine.close()
 

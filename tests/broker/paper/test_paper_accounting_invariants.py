@@ -226,3 +226,18 @@ class TestEquityEqualsCashPlusMarketValue:
         positions = adapter.get_positions(as_of=utc(2024, 1, 2))
         cost_basis_value = sum(p.quantity * p.average_cost for p in positions)
         assert abs((account.cash + cost_basis_value + fill.commission) - config.initial_cash) < 1e-6
+
+
+class TestFillRecordsItsPricingBar:
+    def test_fill_carries_the_pricing_bars_available_time(self) -> None:
+        """ADR-0226 follow-up: the learning DataCleaner compares this with
+        the decision time to reject fills priced on the decision bar."""
+        mds = InMemoryPaperMarketDataSource([
+            make_bar(available_time=utc(2024, 1, 2)), make_bar(available_time=utc(2024, 1, 3)),
+        ])
+        adapter = PaperBrokerAdapter(make_paper_config(), mds)
+        order = make_validated_order(quantity=10.0)
+        adapter.submit_order(order, requested_at=utc(2024, 1, 2))
+        adapter.advance_simulation(utc(2024, 1, 3))
+        _, _, fill = adapter.pop_new_fills()[0]
+        assert fill.reference_bar_available_time == utc(2024, 1, 3)

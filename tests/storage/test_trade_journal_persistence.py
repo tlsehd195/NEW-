@@ -44,6 +44,26 @@ class TestPersistenceAndRestart:
         assert reloaded_trade.fill == fill
         engine2.close()
 
+    def test_fill_reference_bar_available_time_survives_restart(self, tmp_path) -> None:
+        """ADR-0226 follow-up: the learning DataCleaner reads this field
+        back from the journal to reject fills priced on the decision bar."""
+        config = StorageConfig(tmp_path / "store")
+        engine1 = StorageEngine(config)
+        journal1 = DuckDBTradeJournalRepository(engine1)
+        order = make_order()
+        decision = journal1.record_decision(
+            decision_time=order.decision_time, security_id="AAA", decision=DecisionAction.BUY, order=order,
+        )
+        fill = dataclasses.replace(make_fill(), reference_bar_available_time=utc(2024, 1, 3, 20))
+        trade = journal1.record_trade(decision_id=decision.snapshot_id, fill=fill, position_after=10.0)
+        engine1.close()
+
+        engine2 = StorageEngine(config)
+        reloaded = DuckDBTradeJournalRepository(engine2).get_trade(trade.trade_id)
+        assert reloaded is not None
+        assert reloaded.fill.reference_bar_available_time == utc(2024, 1, 3, 20)
+        engine2.close()
+
     def test_order_features_and_decision_features_both_survive_restart(self, tmp_path) -> None:
         """Session 36 (ADR-0048): DecisionSnapshot.features and its
         nested order.features are two separate copies of the same

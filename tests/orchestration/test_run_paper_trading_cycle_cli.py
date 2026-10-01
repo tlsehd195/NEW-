@@ -722,3 +722,46 @@ class TestPerformanceReportWiring:
         persisted = performance_repository.list_for_session("paper-session-test_universe")
         store_engine.close()
         assert len(persisted) == 2
+
+
+class TestRiskFreeRateForThePerformanceReport:
+    """ADR-0227: Sharpe/Sortino use the FRED 3-month T-bill yield when
+    asked; any FRED failure falls back to 0% and says so."""
+
+    _HISTORY = [
+        (datetime(2024, 1, 2, 20, tzinfo=timezone.utc), 100.0),
+        (datetime(2024, 1, 5, 20, tzinfo=timezone.utc), 101.0),
+    ]
+
+    def test_disabled_uses_zero(self) -> None:
+        module = _load_module()
+        config, info = module._performance_config(False, self._HISTORY)
+        assert config.risk_free_rate == 0.0
+        assert info["source"] == "none"
+
+    def test_missing_fred_key_falls_back_to_zero_and_says_so(self, monkeypatch) -> None:
+        module = _load_module()
+        monkeypatch.delenv("FRED_API_KEY", raising=False)
+        config, info = module._performance_config(True, self._HISTORY)
+        assert config.risk_free_rate == 0.0
+        assert info["source"].startswith("unavailable")
+
+    def test_fred_yields_are_averaged_over_the_equity_history(self, monkeypatch) -> None:
+        module = _load_module()
+
+        class _Obs:
+            def __init__(self, day, value):
+                self.observation_date, self.value = day, value
+
+        class _FakeProvider:
+            def __init__(self, *_args):
+                pass
+
+            def fetch_series(self, series_id, start, end):
+                assert (series_id, start, end) == ("DGS3MO", date(2024, 1, 2), date(2024, 1, 5))
+                return [_Obs(date(2024, 1, 2), 5.0), _Obs(date(2024, 1, 3), None), _Obs(date(2024, 1, 4), 4.0)]
+
+        monkeypatch.setattr(module, "FredMacroProvider", _FakeProvider)
+        config, info = module._performance_config(True, self._HISTORY)
+        assert config.risk_free_rate == 0.045
+        assert info["annual_rate"] == 0.045

@@ -153,6 +153,19 @@ jobs:
         # historical backtest. Idempotent; a no-op on a newer catalog.
         run: python3 scripts/repair_corporate_action_available_time.py --db-path ./data/price_catalog --apply
 
+      - name: Download the macro store for the risk-free rate (ADR-0227)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Sharpe/Sortino use each window's average 3-month T-bill yield
+          # (DGS3MO) from publish_fred_macro_store.yml's Release. Required:
+          # a missing store fails the run instead of silently using 0%.
+          gh release download "fred-macro-vintages-v1" --repo "${{ github.repository }}" \
+            --pattern "macro_store.zip" --dir ./data --clobber
+          unzip -q ./data/macro_store.zip -d ./data/macro_store
+          test -f ./data/macro_store/catalog.duckdb
+
       - name: Download insider catalog (optional -- tries the given release, then the auto-published one)
         if: ${{ !inputs.price_only }}
         env:
@@ -246,6 +259,7 @@ jobs:
             $HELD_OUT_FLAG \
             $SP500_FLAG \
             "${EXAM_ARGS[@]}" \
+            --risk-free-db-path ./data/macro_store \
             --data-status REAL \
             --report-out ./validation_report.json
 

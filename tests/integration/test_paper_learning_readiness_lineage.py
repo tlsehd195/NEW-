@@ -221,11 +221,15 @@ class TestScenarioD_BrokerFailureNeverFabricatesATradeAndIsNeverBlindlyRetried:
 class TestScenarioE_CompletedTradeReachesPostTradeAnalysisCounterfactualAndLearningDataset:
     def test_e_full_chain_buy_then_closing_sell_reaches_a_labeled_training_sample(self) -> None:
         buy_day, sell_day = utc(2024, 6, 1), utc(2024, 6, 10)
+        # Each order is decided the session before its fill bar (T+1,
+        # ADR-0154): a fill on the decision's own bar is rejected by the
+        # DataCleaner (ADR-0227).
+        buy_decided, sell_decided = buy_day - timedelta(days=1), sell_day - timedelta(days=1)
         journal = InMemoryTradeJournalRepository()
 
         buy_risk, buy_validation = _risk_and_order(quantity=10.0, risk_id="RISK-E1")
         buy_order = buy_validation.validated_order
-        buy_decision = journal.record_decision(decision_time=buy_day, security_id=buy_order.security_id, decision=DecisionAction.BUY)
+        buy_decision = journal.record_decision(decision_time=buy_decided, security_id=buy_order.security_id, decision=DecisionAction.BUY)
 
         config = make_paper_config(initial_cash=1_000_000.0, max_participation=1.0)
         mds = InMemoryPaperMarketDataSource([
@@ -234,7 +238,7 @@ class TestScenarioE_CompletedTradeReachesPostTradeAnalysisCounterfactualAndLearn
         ])
         session = PaperTradingSession(config, mds)
 
-        session.submit(buy_order, requested_at=buy_day)
+        session.submit(buy_order, requested_at=buy_decided)
         _, buy_fills = session.advance(buy_day)  # ADR-0154: fill is deferred -- attempt it now
         buy_trade = journal.record_trade(
             decision_id=buy_decision.snapshot_id, fill=buy_fills[0].fill, position_after=10.0,
@@ -248,9 +252,9 @@ class TestScenarioE_CompletedTradeReachesPostTradeAnalysisCounterfactualAndLearn
         sell_validation = build_validated_order(sell_risk, current_quantity=10.0, configuration_version="cfg-v1")
         sell_order = sell_validation.validated_order
         assert sell_order.side == OrderSide.SELL
-        sell_decision = journal.record_decision(decision_time=sell_day, security_id=sell_order.security_id, decision=DecisionAction.SELL)
+        sell_decision = journal.record_decision(decision_time=sell_decided, security_id=sell_order.security_id, decision=DecisionAction.SELL)
 
-        session.submit(sell_order, requested_at=sell_day)
+        session.submit(sell_order, requested_at=sell_decided)
         _, sell_fills = session.advance(sell_day)  # ADR-0154: fill is deferred -- attempt it now
         sell_trade = journal.record_trade(
             decision_id=sell_decision.snapshot_id, fill=sell_fills[0].fill, position_after=0.0,
@@ -299,11 +303,13 @@ class TestPaperToLearningProvenanceSafety:
         for i, provenance in enumerate((TradeProvenance.PAPER_TRADING, TradeProvenance.LIVE_TRADING, TradeProvenance.HISTORICAL_SIMULATION)):
             risk, validation = _risk_and_order(quantity=10.0, risk_id=f"RISK-PROV{i}")
             order = validation.validated_order
-            decision = journal.record_decision(decision_time=as_of, security_id=order.security_id, decision=DecisionAction.BUY)
+            # Decided the session before the fill bar (T+1, ADR-0154/0227).
+            decided = as_of - timedelta(days=1)
+            decision = journal.record_decision(decision_time=decided, security_id=order.security_id, decision=DecisionAction.BUY)
             config = make_paper_config(initial_cash=1_000_000.0, max_participation=1.0)
             mds = InMemoryPaperMarketDataSource([make_bar(security_id=order.security_id, available_time=as_of, volume=1_000_000.0)])
             session = PaperTradingSession(config, mds)
-            session.submit(order, requested_at=as_of)
+            session.submit(order, requested_at=decided)
             _, fills = session.advance(as_of)  # ADR-0154: fill is deferred -- attempt it now
             journal.record_trade(
                 decision_id=decision.snapshot_id, fill=fills[0].fill, position_after=10.0,

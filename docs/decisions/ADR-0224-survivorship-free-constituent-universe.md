@@ -1,6 +1,6 @@
 # ADR-0224: Point-in-time S&P 500 universe with delisted names
 
-**Status:** Accepted (coverage measured, backtest plumbing built; price ingestion pending)
+**Status:** Accepted (coverage measured, backtest plumbing built; removed-member prices for 2000..2016-07-11 ingested 2026-10-01, post-2016 joiners being ingested)
 **Date:** 2026-09-27
 **Deciders:** account owner (asked to fix the known weaknesses), Claude Code session
 

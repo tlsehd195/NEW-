@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -18,6 +19,7 @@ def build_journal_with_closed_trades(
     count: int, *, start: datetime = utc(2024, 1, 2), realized_return_fn=None,
     features_fn: Optional[object] = None,
     provenance: TradeProvenance = TradeProvenance.HISTORICAL_SIMULATION,
+    fill_bar_available_offset: Optional[timedelta] = None,
 ) -> tuple[TradeJournalRepository, list[ExperienceRecord]]:
     """Builds a journal with `count` fully-closed (SELL) trades, one per
     day starting at `start`, each with a distinct, deterministic
@@ -28,7 +30,10 @@ def build_journal_with_closed_trades(
     each trade and threaded through as `DecisionSnapshot.features`
     (ADR-0048) -- used by tests exercising `learning.linear_trainer.
     LinearRegressionTrainer`, which needs a real feature vector per
-    sample to fit against, unlike `MeanRewardBaselineTrainer`."""
+    sample to fit against, unlike `MeanRewardBaselineTrainer`.
+
+    `fill_bar_available_offset`, if given, stamps each fill's
+    `reference_bar_available_time` at decision time + this offset."""
     journal = InMemoryTradeJournalRepository()
     realized_return_fn = realized_return_fn or (lambda i: 0.01 * ((i % 5) - 2))
     for i in range(count):
@@ -39,9 +44,12 @@ def build_journal_with_closed_trades(
             order=make_order(oid, side=OrderSide.SELL, decision_time=day), provenance=provenance,
             features=features_fn(i) if features_fn is not None else None,
         )
+        fill = make_fill(oid, side=OrderSide.SELL, decision_time=day, execution_time=day + timedelta(hours=1))
+        if fill_bar_available_offset is not None:
+            fill = dataclasses.replace(fill, reference_bar_available_time=day + fill_bar_available_offset)
         journal.record_trade(
             decision_id=decision.snapshot_id,
-            fill=make_fill(oid, side=OrderSide.SELL, decision_time=day, execution_time=day + timedelta(hours=1)),
+            fill=fill,
             position_after=0.0, realized_pnl=100.0 * realized_return_fn(i), realized_return=realized_return_fn(i),
             provenance=provenance,
         )

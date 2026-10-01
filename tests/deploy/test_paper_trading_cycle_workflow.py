@@ -407,3 +407,10 @@ def test_a_cancelled_cycle_is_stopped_cleanly_and_never_uploads_a_store_mid_writ
         and s["with"]["name"] == "paper-trading-store"
     )
     assert store_upload["if"] == "always() && steps.cycle.outcome != 'cancelled'"
+
+
+def test_paper_report_scores_sharpe_against_the_fred_risk_free_rate():
+    """ADR-0227: --risk-free-from-fred, with the key from secrets."""
+    cycle = next(s for s in _steps(_load()) if s.get("id") == "cycle")
+    assert "--risk-free-from-fred" in cycle["run"]
+    assert cycle["env"]["FRED_API_KEY"] == "${{ secrets.FRED_API_KEY }}"

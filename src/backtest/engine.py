@@ -11,6 +11,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Optional
 
 from data_infra.enums import SecurityStatus
+from data_infra.models import SecurityMaster
 from data_infra.repository import DataRepository
 from data_infra.versioning import compute_data_version
 
@@ -107,6 +108,12 @@ class BacktestEngine:
         )
         last_close: dict[str, float] = {}
         missing_streak: dict[str, int] = {}
+        # Last SecurityMaster seen per held name. A delisted name's record
+        # stops being valid at its `valid_to`, so `get_security` at a later
+        # checkpoint returns None exactly when the delisting matters
+        # (ADR-0187's open R2 finding); the remembered record still says
+        # DELISTED.
+        known_security: dict[str, SecurityMaster] = {}
         portfolio = PortfolioAccounting(config.initial_capital)
         order_simulator = OrderSimulator(config.cost_model)
         fill_simulator = FillSimulator(
@@ -184,9 +191,16 @@ class BacktestEngine:
             # position_marked_at_cost's own docstring for why) -- every
             # OTHER missing-price case (an ordinary temporary data gap)
             # keeps its existing WARNING-severity treatment, unchanged.
+            for sid in [*(p for p in portfolio.positions if p not in known_security), *missing]:
+                if (sm := self._repository.get_security(sid, checkpoint)) is not None:
+                    known_security[sid] = sm
+            # Only names actually valued at average cost: a name marked at
+            # its last close (settle_after_missing_checkpoints, ADR-0224)
+            # is not "marked at cost".
             missing_delisted = [
                 sid for sid in missing
-                if (sm := self._repository.get_security(sid, checkpoint)) is not None
+                if sid not in marking_prices
+                and (sm := known_security.get(sid)) is not None
                 and sm.status == SecurityStatus.DELISTED
             ]
             missing_other = [sid for sid in missing if sid not in missing_delisted]

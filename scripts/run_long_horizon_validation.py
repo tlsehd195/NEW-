@@ -114,6 +114,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from backtest.contribution import compute_contribution_report_from_fills  # noqa: E402
+from backtest.risk_free import RISK_FREE_SERIES_ID, RiskFreeRates  # noqa: E402
 from backtest.strategy import buy_and_hold_baseline  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
 from data_infra.exchange_calendars_adapter import build_xnys_calendar  # noqa: E402
@@ -134,6 +135,7 @@ from storage.fundamentals_repository import DuckDBFundamentalsRepository  # noqa
 from storage.insider_repository import DuckDBInsiderRepository  # noqa: E402
 from storage.institutional_filer_holding_repository import DuckDBInstitutionalFilerHoldingRepository  # noqa: E402
 from storage.institutional_holding_repository import DuckDBInstitutionalHoldingRepository  # noqa: E402
+from storage.macro_repository import DuckDBMacroRepository  # noqa: E402
 from storage.short_interest_repository import DuckDBShortInterestRepository  # noqa: E402
 
 from strategy_research.classification import (  # noqa: E402
@@ -595,7 +597,7 @@ _DEFAULT_REPORTS_DIR = Path(__file__).resolve().parent.parent / "docs" / "resear
 
 def _run_unseen_names_exam(
     repository, strategy_specs, security_ids, exam: dict, *, start, end, initial_capital,
-    benchmark_id, point_in_time_universe,
+    benchmark_id, point_in_time_universe, risk_free=None,
 ) -> dict:
     """ADR-0225: one gross/net backtest per pre-registered candidate and the
     same-names buy_and_hold over the whole window, no walk-forward, no
@@ -608,7 +610,7 @@ def _run_unseen_names_exam(
         result = run_gross_and_net(
             repository, factory, security_ids, start_date=start.date(), end_date=end.date(),
             initial_capital=initial_capital, benchmark_id=benchmark_id,
-            point_in_time_universe=point_in_time_universe,
+            point_in_time_universe=point_in_time_universe, risk_free=risk_free,
         )
         results[name] = {
             "hypothesis": hypothesis,
@@ -778,6 +780,14 @@ def main() -> int:
         help="Committed reports that define which names were already seen (ADR-0225)",
     )
     parser.add_argument("--report-out", type=Path, default=None)
+    parser.add_argument(
+        "--risk-free-db-path", type=Path, default=None,
+        help=(
+            "Macro store (ingest_fred_macro_vintages / publish_fred_macro_store) holding DGS3MO. "
+            "Sharpe/Sortino then use each window's average 3-month T-bill yield (ADR-0227); "
+            "without it they use 0%%."
+        ),
+    )
     parser.add_argument(
         "--data-status", choices=("REAL", "SYNTHETIC"), required=True,
         help=(
@@ -965,6 +975,24 @@ def main() -> int:
         institutional_repository = SplitAdjustedInstitutionalHoldingRepository(
             DuckDBInstitutionalHoldingRepository(institutional_engine), repository,
         )
+    risk_free = None
+    if args.risk_free_db_path is not None:
+        risk_free_engine = StorageEngine(StorageConfig(root_dir=args.risk_free_db_path))
+        try:
+            risk_free = RiskFreeRates.from_macro_records(
+                DuckDBMacroRepository(risk_free_engine).get_all_vintages(RISK_FREE_SERIES_ID),
+                source=f"macro store {args.risk_free_db_path}",
+            )
+        finally:
+            risk_free_engine.close()
+        if not len(risk_free):
+            print(f"no {RISK_FREE_SERIES_ID} observations in {args.risk_free_db_path}", file=sys.stderr)
+            return 1
+        print(f"Risk-free rate: {risk_free.describe()}", flush=True)
+    risk_free_report = (
+        risk_free.describe() if risk_free is not None
+        else {"series_id": None, "source": "none", "method": "0% (no --risk-free-db-path)"}
+    )
     institutional_filer_engine = None
     institutional_filer_repository = None
     if args.institutional_filer_db_path is not None:
@@ -1334,8 +1362,10 @@ def main() -> int:
                 repository, strategy_specs, security_ids, unseen_names_exam,
                 start=args.start, end=args.end, initial_capital=args.initial_capital,
                 benchmark_id=benchmark_id, point_in_time_universe=dynamic_universe_name,
+                risk_free=risk_free,
             )
             report.update({
+                "risk_free_rate": risk_free_report,
                 "data_status": args.data_status, "experiment_id": experiment_id, "data_version": data_version,
                 "point_in_time_sp500": point_in_time_sp500,
                 "benchmark_status": (
@@ -1400,6 +1430,7 @@ def main() -> int:
                 "region": "TRAIN+VALIDATION only (chronological_split.train_start .. validation_end)",
             },
             "held_out_skipped": args.skip_held_out,
+            "risk_free_rate": risk_free_report,
             "initial_capital": args.initial_capital,
             "benchmark_id": benchmark_id,
             "benchmark_status": (
@@ -1446,6 +1477,7 @@ def main() -> int:
                 train_window_months=args.train_window_months, test_window_months=args.test_window_months,
                 step_months=args.step_months, initial_capital=args.initial_capital, benchmark_id=benchmark_id,
                 regime_subject_id=BENCHMARK_SYMBOL, point_in_time_universe=dynamic_universe_name,
+                risk_free=risk_free,
             )
             fold_counts_by_strategy[name] = aggregate.fold_count
             aggregates_by_name[name] = aggregate
@@ -1456,7 +1488,7 @@ def main() -> int:
                     repository, factory, security_ids,
                     start_date=split.test_start.date(), end_date=split.test_end.date(),
                     initial_capital=args.initial_capital, benchmark_id=benchmark_id,
-                    point_in_time_universe=dynamic_universe_name,
+                    point_in_time_universe=dynamic_universe_name, risk_free=risk_free,
                 )
                 # ADR-0194 addendum (external audit, 2026-09-24):
                 # compute_contribution_report_from_fills now REQUIRES the
