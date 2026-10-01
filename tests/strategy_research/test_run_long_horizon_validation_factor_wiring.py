@@ -206,6 +206,8 @@ class TestCandidateTables:
         "coskewness", "ohlson_o", "merton_dd",
         "guru_consensus",
         "intermediate_momentum", "price_delay", "frog_in_the_pan",
+        # ADR-0230
+        "low_volatility", "betting_against_correlation",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
