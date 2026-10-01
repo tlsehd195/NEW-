@@ -27,6 +27,7 @@ from data_infra.universe import BENCHMARK_SYMBOL
 from storage.fundamentals_repository import DuckDBFundamentalsRepository
 
 from strategy_research.factor_scores import (
+    betting_against_correlation_score,
     abnormal_investment_score,
     altman_z_score,
     asset_growth_score,
@@ -351,6 +352,40 @@ class TestLowBetaScore:
         data = _view(repo, as_of_time)
 
         assert low_beta_score("NOBENCH", as_of_time, data) is None
+
+
+class TestBettingAgainstCorrelationScore:
+    """ADR-0230: Asness, Frazzini, Gormsen & Pedersen (2020). Score is
+    -correlation of overlapping 3-day log returns with SPY."""
+
+    def _repo(self, extra):
+        days = trading_days(date(2016, 1, 4), date(2021, 6, 1))
+        spy = [100.0 * (1.0002**i) * (1.0 + 0.02 * math.sin(i / 7.0)) for i in range(len(days))]
+        bars = [b for name, fn in extra for b in make_bars(name, days, [fn(i, spy[i]) for i in range(len(days))])]
+        return _spy_repo(date(2016, 1, 4), date(2021, 6, 1), lambda i: spy[i], extra_bars=bars)
+
+    def test_uncorrelated_stock_scores_higher_than_a_market_twin(self) -> None:
+        repo = self._repo([
+            ("TWIN", lambda i, m: 3.0 * m),  # same returns as SPY at triple the price
+            ("OWNWAY", lambda i, m: 50.0 * (1.0 + 0.02 * math.sin(i / 3.1 + 1.0))),
+        ])
+        as_of_time = _utc(2021, 1, 4)
+        data = _view(repo, as_of_time)
+        twin = betting_against_correlation_score("TWIN", as_of_time, data)
+        own = betting_against_correlation_score("OWNWAY", as_of_time, data)
+        assert twin == pytest.approx(-1.0, abs=1e-9)
+        assert own is not None and own > twin
+
+    def test_volatility_alone_does_not_change_the_score(self) -> None:
+        # Doubling a stock's moves around SPY's path leaves correlation at 1.
+        repo = self._repo([("LOUD", lambda i, m: 100.0 * math.exp(2.0 * math.log(m / 100.0)))])
+        as_of_time = _utc(2021, 1, 4)
+        assert betting_against_correlation_score("LOUD", as_of_time, _view(repo, as_of_time)) == pytest.approx(-1.0, abs=1e-9)
+
+    def test_needs_three_years_of_history(self) -> None:
+        repo = self._repo([("TWIN", lambda i, m: m)])
+        as_of_time = _utc(2018, 6, 1)  # about 2.4 years after the first bar
+        assert betting_against_correlation_score("TWIN", as_of_time, _view(repo, as_of_time)) is None
 
 
 class TestIdiosyncraticVolatilityScore:

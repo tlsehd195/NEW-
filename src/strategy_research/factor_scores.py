@@ -229,6 +229,65 @@ def low_beta_score(
     return -beta
 
 
+
+def betting_against_correlation_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *,
+    lookback_days: int = 1260, min_days: int = 750, horizon_days: int = 3,
+) -> Optional[float]:
+    """HYPOTHESIS -- "Betting Against Correlation" (Asness, Frazzini,
+    Gormsen & Pedersen 2020, Journal of Financial Economics 135(3):
+    629-652): of the two parts of market beta (correlation with the
+    market and relative volatility), it is CORRELATION that carries most
+    of the low-risk premium. Their BAC factor, per the paper's summary
+    (cxoadvisory.com/?p=29556, fetched 2026-10-02): sort stocks into
+    volatility quintiles, then within each quintile go long the
+    low-correlation half and short the high-correlation half; 0.97% a
+    month gross in the US 1963-2015.
+
+    Correlation estimator: the Frazzini & Pedersen (2014) one this
+    paper reuses -- overlapping 3-day log returns over up to 5 years,
+    at least 3 years of data, against the market (here
+    `BENCHMARK_SYMBOL`, SPY). **Source caveat**: that estimator is
+    quoted from memory of F&P 2014 section 3.1, not fetched from the
+    paper this session.
+
+    **Single-score simplification, flagged honestly**: the volatility-
+    quintile double sort needs the whole universe at once, which this
+    module's per-security score shape cannot see. This uses
+    `-correlation` alone, so it does not hold volatility fixed the way
+    the paper does. It still differs from `low_beta_score` (correlation
+    times relative volatility) and `low_volatility_score` (volatility
+    alone). Long-only top-N, no short leg, no beta-one weighting.
+
+    Score is the NEGATIVE correlation (lower correlation = more
+    attractive). `None` below `min_days` paired trading days."""
+    padded_days = int(lookback_days * 1.6)
+    security_bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    benchmark_bars = trim_to_lookback(
+        data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=padded_days), as_of_time), lookback_days,
+    )
+    security_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in security_bars}
+    benchmark_closes = {b.timestamp.date(): (b.adjusted_close or b.close) for b in benchmark_bars}
+    common_dates = sorted(set(security_closes) & set(benchmark_closes))
+    if len(common_dates) < min_days:
+        return None
+    s_prices = [security_closes[d] for d in common_dates]
+    b_prices = [benchmark_closes[d] for d in common_dates]
+    if any(p is None or p <= 0 for p in s_prices + b_prices):
+        return None
+    xs = [math.log(s_prices[i] / s_prices[i - horizon_days]) for i in range(horizon_days, len(s_prices))]
+    ys = [math.log(b_prices[i] / b_prices[i - horizon_days]) for i in range(horizon_days, len(b_prices))]
+    n = len(xs)
+    mean_x, mean_y = sum(xs) / n, sum(ys) / n
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    var_y = sum((y - mean_y) ** 2 for y in ys)
+    if var_x <= 0 or var_y <= 0:
+        return None
+    return -cov / math.sqrt(var_x * var_y)
+
 def idiosyncratic_volatility_score(
     security_id: str, as_of_time: datetime, data: AsOfDataView, *, lookback_days: int = 21,
 ) -> Optional[float]:
