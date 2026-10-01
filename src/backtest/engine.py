@@ -28,6 +28,7 @@ from backtest.integrity import BacktestIntegrityChecker, IntegrityReport
 from backtest.metrics import PerformanceReport, compute_performance_report
 from backtest.orders import Order, OrderSimulator
 from backtest.portfolio import PortfolioAccounting
+from backtest.risk_free import RiskFreeRates
 from backtest.strategy import Strategy
 
 
@@ -51,6 +52,10 @@ class BacktestConfig:
     settle_after_missing_checkpoints: Optional[int] = None
     checkpoint_time: time = time(20, 0)
     risk_free_rate: float = 0.0
+    # ADR-0229: when set, positive cash earns the 3-month T-bill yield
+    # (the latest observation before each checkpoint's date, compounded
+    # daily on an actual/365 basis). None keeps cash at 0%.
+    cash_interest: Optional[RiskFreeRates] = None
     periods_per_year: int = 252
     seed: Optional[int] = None
     code_version: str = "unknown"
@@ -130,6 +135,8 @@ class BacktestEngine:
         for index, checkpoint in enumerate(checkpoints):
             clock.index = index
             integrity.check_checkpoint_order(checkpoint)
+            if config.cash_interest is not None and index > 0:
+                self._accrue_cash_interest(portfolio, integrity, checkpoints[index - 1], checkpoint)
 
             universe_today = self._resolve_universe(checkpoint)
             if isinstance(strategy_view, MembershipFilteredDataView):
@@ -343,6 +350,10 @@ class BacktestEngine:
                 "risk_free_rate": config.risk_free_rate,
                 "periods_per_year": config.periods_per_year,
                 # Added only when set, so every existing run keeps its hash.
+                **(
+                    {"cash_interest": config.cash_interest.describe()}
+                    if config.cash_interest is not None else {}
+                ),
                 **({"restrict_strategy_to_universe": True} if config.restrict_strategy_to_universe else {}),
                 **(
                     {"settle_after_missing_checkpoints": config.settle_after_missing_checkpoints}
@@ -379,6 +390,27 @@ class BacktestEngine:
             orders=tuple(all_orders),
             fills=tuple(all_fills),
         )
+
+    def _accrue_cash_interest(
+        self,
+        portfolio: PortfolioAccounting,
+        integrity: BacktestIntegrityChecker,
+        previous: datetime,
+        checkpoint: datetime,
+    ) -> None:
+        if portfolio.cash <= 0:
+            return
+        rate = self._config.cash_interest.latest_annual_rate_before(checkpoint.date())
+        if rate is None:
+            integrity.record(
+                "cash_interest_rate_missing", IntegritySeverity.WARNING,
+                f"no 3-month T-bill yield within 10 days before {checkpoint.date()}; cash earned nothing",
+                checkpoint,
+            )
+            return
+        days = (checkpoint.date() - previous.date()).days
+        interest = portfolio.cash * ((1.0 + rate / 365.0) ** days - 1.0)
+        portfolio.accrue_cash_interest(interest, checkpoint)
 
     def _resolve_universe(self, checkpoint: datetime) -> set[str]:
         config = self._config

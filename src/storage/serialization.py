@@ -693,6 +693,10 @@ def performance_report_to_dict(report: PerformanceReport) -> dict:
         "conditional_value_at_risk_95": report.conditional_value_at_risk_95,
         "max_consecutive_wins": report.max_consecutive_wins,
         "max_consecutive_losses": report.max_consecutive_losses,
+        "beta": report.beta,
+        "tracking_error": report.tracking_error,
+        "information_ratio": report.information_ratio,
+        "jensen_alpha": report.jensen_alpha,
     }
 
 

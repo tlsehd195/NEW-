@@ -27,6 +27,10 @@ on:
         description: "Range end (YYYY-MM-DD); must stay before TEST_3 (2016-07-11, ADR-0222)"
         type: string
         default: "2016-07-10"
+      cash_interest:
+        description: "Cash earns the 3-month T-bill yield; Sharpe uses its window average (ADR-0229)"
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -83,11 +87,14 @@ jobs:
         env:
           START_INPUT: ${{ inputs.start }}
           END_INPUT: ${{ inputs.end }}
+          CASH_INTEREST: ${{ inputs.cash_interest }}
         run: |
           set -euo pipefail
+          EXTRA=()
+          if [ "$CASH_INTEREST" = "true" ]; then EXTRA+=(--cash-interest); fi
           python3 -u scripts/run_macro_filter_validation.py \
             --price-db-path ./data/price_catalog --macro-db-path ./data/macro_store \
-            --start "$START_INPUT" --end "$END_INPUT" --report-json ./macro_filter_report.json
+            --start "$START_INPUT" --end "$END_INPUT" --report-json ./macro_filter_report.json "${EXTRA[@]}"
 
       - name: Upload the report
         if: always()

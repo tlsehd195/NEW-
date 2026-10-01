@@ -57,6 +57,18 @@ class RiskFreeRates:
             raise ValueError(f"no {RISK_FREE_SERIES_ID} observation between {start} and {end} ({self.source})")
         return sum(window) / len(window) / 100.0
 
+    def latest_annual_rate_before(self, day: date, *, max_stale_days: int = 10) -> Optional[float]:
+        """Yield of the latest observation dated strictly before `day`, as
+        a decimal; None when there is none within `max_stale_days`. Used to
+        accrue interest on cash (ADR-0229): the day before's yield is the
+        one already published by the backtest's end-of-day checkpoint, and
+        the staleness cap carries it over holidays and FRED "." days without
+        stretching one rate across a real gap in the series."""
+        i = bisect.bisect_left(self._dates, day) - 1
+        if i < 0 or (day - self._dates[i]).days > max_stale_days:
+            return None
+        return self._values[i] / 100.0
+
     def describe(self) -> dict:
         return {
             "series_id": RISK_FREE_SERIES_ID,

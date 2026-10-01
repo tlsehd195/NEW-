@@ -48,6 +48,7 @@ def run_gross_and_net(
     point_in_time_universe: Optional[str] = None,
     settle_after_missing_checkpoints: int = 5,
     risk_free: Optional[RiskFreeRates] = None,
+    cash_interest: Optional[RiskFreeRates] = None,
 ) -> GrossNetResult:
     """Runs the SAME strategy specification twice against the SAME data
     window: once under `ZERO_TRANSACTION_COST_MODEL`/`ZERO_SLIPPAGE_MODEL`
@@ -66,7 +67,10 @@ def run_gross_and_net(
     `security_ids` should list every name that is ever a member.
 
     `risk_free` (ADR-0227): when given, Sharpe/Sortino use the average
-    3-month T-bill yield over this window; when None they use 0%."""
+    3-month T-bill yield over this window; when None they use 0%.
+
+    `cash_interest` (ADR-0229): when given, idle cash earns the daily
+    3-month T-bill yield in both runs; when None cash earns 0%."""
     universe_kwargs = {}
     if point_in_time_universe is not None:
         universe_kwargs = {
@@ -79,13 +83,15 @@ def run_gross_and_net(
         market=market, start_date=start_date, end_date=end_date, initial_capital=initial_capital,
         security_ids=tuple(security_ids), benchmark_id=benchmark_id,
         cost_model=ZERO_TRANSACTION_COST_MODEL, slippage_model=ZERO_SLIPPAGE_MODEL,
-        risk_free_rate=risk_free_rate, code_version=code_version, **universe_kwargs,
+        risk_free_rate=risk_free_rate, cash_interest=cash_interest, code_version=code_version,
+        **universe_kwargs,
     )
     net_config = BacktestConfig(
         market=market, start_date=start_date, end_date=end_date, initial_capital=initial_capital,
         security_ids=tuple(security_ids), benchmark_id=benchmark_id,
         cost_model=DEFAULT_TRANSACTION_COST_MODEL, slippage_model=DEFAULT_SLIPPAGE_MODEL,
-        risk_free_rate=risk_free_rate, code_version=code_version, **universe_kwargs,
+        risk_free_rate=risk_free_rate, cash_interest=cash_interest, code_version=code_version,
+        **universe_kwargs,
     )
 
     gross_result = BacktestEngine(repository, gross_config, strategy_factory()).run()

@@ -39,6 +39,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from backtest.engine import BacktestConfig, BacktestEngine  # noqa: E402
+from backtest.risk_free import RISK_FREE_SERIES_ID, RiskFreeRates  # noqa: E402
 from backtest.total_return import build_total_return_benchmark_points  # noqa: E402
 from data_infra.exchange_calendars_adapter import build_xnys_calendar  # noqa: E402
 from macro_filter.config import ALL_SIGNALS, DEFAULT_MACRO_FILTER_CONFIG, MacroFilterConfig  # noqa: E402
@@ -91,6 +92,15 @@ def load_signal_engine(macro_db_path: str, config: MacroFilterConfig) -> tuple[M
     return MacroSignalEngine(series, config), coverage
 
 
+def load_risk_free(macro_db_path: str) -> RiskFreeRates:
+    engine = StorageEngine(StorageConfig(root_dir=macro_db_path), read_only=True)
+    try:
+        records = DuckDBMacroRepository(engine).get_all_vintages(RISK_FREE_SERIES_ID)
+    finally:
+        engine.close()
+    return RiskFreeRates.from_macro_records(records, source=f"macro store {macro_db_path}")
+
+
 def exposure_stats(log: list[tuple[datetime, float]]) -> dict:
     if not log:
         return {"checkpoints": 0}
@@ -127,6 +137,10 @@ def _perf(result) -> dict:
         "sharpe_ratio": p.sharpe_ratio,
         "max_drawdown": p.max_drawdown,
         "annualized_volatility": p.annualized_volatility,
+        "beta": p.beta,
+        "tracking_error": p.tracking_error,
+        "information_ratio": p.information_ratio,
+        "jensen_alpha": p.jensen_alpha,
         "turnover": p.turnover,
         "total_transaction_cost": p.total_transaction_cost,
         "benchmark_cumulative_return": p.benchmark_cumulative_return,
@@ -164,6 +178,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--step-months", type=int, default=6)
     parser.add_argument("--pbo-groups", type=int, default=8)
     parser.add_argument("--report-json", required=True)
+    parser.add_argument(
+        "--cash-interest", action="store_true",
+        help="cash earns the daily 3-month T-bill yield (DGS3MO from --macro-db-path) and Sharpe uses "
+        "the window-average yield (ADR-0227/0229); off keeps cash and the risk-free rate at 0%%",
+    )
     args = parser.parse_args(argv)
 
     start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
@@ -174,6 +193,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     config = DEFAULT_MACRO_FILTER_CONFIG
     signal_engine, macro_coverage = load_signal_engine(args.macro_db_path, config)
+    rates = load_risk_free(args.macro_db_path) if args.cash_interest else None
     _log(f"macro series loaded: {macro_coverage}")
 
     price_engine = StorageEngine(StorageConfig(root_dir=args.price_db_path))
@@ -198,6 +218,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             bt_config = BacktestConfig(
                 market="US_EQUITY", start_date=start, end_date=end, initial_capital=args.initial_capital,
                 security_ids=(EQUITY,), benchmark_id=BENCHMARK_ID, code_version="macro_filter_validation_v1",
+                risk_free_rate=rates.average_annual_rate(start, end) if rates is not None else 0.0,
+                cash_interest=rates,
             )
             result = BacktestEngine(repository, bt_config, strategy).run()
             continuous[rule.name] = {**_perf(result), **exposure_stats(strategy.exposure_log)}
@@ -214,6 +236,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 overall_start=_utc(start), overall_end=_utc(end),
                 train_window_months=args.train_window_months, test_window_months=args.test_window_months,
                 step_months=args.step_months, initial_capital=args.initial_capital, benchmark_id=BENCHMARK_ID,
+                risk_free=rates, cash_interest=rates,
             )
             fold_returns[rule.name] = [
                 f.result.net.performance.cumulative_return if f.result.net.is_valid_performance else None
@@ -275,8 +298,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             "by_rule": walk_forward,
         },
         "grades": grades,
+        "cash_interest": rates.describe() if rates is not None else None,
         "notes": [
-            "Cash earns 0% (risk_free_rate=0.0, ADR-0208): understates any rule that holds cash.",
+            (
+                "Cash earns the daily 3-month T-bill yield and Sharpe uses the window-average yield (ADR-0229)."
+                if rates is not None else
+                "Cash earns 0% (risk_free_rate=0.0, ADR-0208): understates any rule that holds cash."
+            ),
             "Price catalog is a survivor-selected S&P 500 universe; only SPY and GLD are used here.",
             "Research window only; TEST_1/TEST_2 untouched. The best grade possible here is CANDIDATE.",
         ],
