@@ -292,3 +292,25 @@ class TestMainEndToEnd:
         bars = repository.get_bars("AVB", datetime(2000, 1, 1, tzinfo=timezone.utc), datetime(2100, 1, 1, tzinfo=timezone.utc), as_of_time=datetime(2100, 1, 1, tzinfo=timezone.utc))
         assert len(bars) == 2  # not duplicated
         engine.close()
+
+
+class TestRuntimeBudget:
+    def test_symbols_past_the_budget_are_listed_not_lost(self, tmp_path, monkeypatch) -> None:
+        """ADR-0187's open R2 finding: a run longer than the job timeout
+        used to lose everything. With a budget it stops starting symbols,
+        still writes bars and the manifest, and names what it skipped."""
+        module = _load_module()
+        clock = iter([0.0, 0.0, 120.0])
+        monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
+        monkeypatch.setattr(module.time, "sleep", lambda s: None)
+        monkeypatch.setattr(module, "fetch_snapshot_list", lambda ticker: [])
+
+        db_path = tmp_path / "wayback_catalog"
+        exit_code = module.main([
+            "--symbols", "AAA", "BBB", "CCC", "--as-of", "2026-09-19", "--db-path", str(db_path),
+            "--max-runtime-minutes", "1",
+        ])
+        assert exit_code == 1
+        manifest = json.loads((db_path / "wayback_ingestion_manifest.json").read_text())
+        assert [r["security_id"] for r in manifest["per_symbol_results"]] == ["AAA"]
+        assert manifest["not_attempted"] == ["BBB", "CCC"]

@@ -6,7 +6,7 @@
 
 ## Context
 
-Two leftovers from the 2026-10-01 ADR sweep.
+Leftovers from the 2026-10-01 ADR sweep.
 
 1. Every Sharpe and Sortino ratio in this project used a 0% risk-free
    rate (`BacktestConfig.risk_free_rate`, `PaperPerformanceConfig.
@@ -87,6 +87,29 @@ cannot be checked and pass; the paper ledger is being rebuilt from
 2024-01-02 with ADR-0226's fix (this field included), so the rebuilt
 ledger is checked end to end.
 
+## Decision 3: the two open R2 findings from ADR-0187
+
+**Delisting gate.** `BacktestEngine` asked `get_security(sid, checkpoint)`
+whether a held, price-less name was DELISTED. A real delisted record ends
+at its `valid_to`, so after the delisting that call returns None and the
+ERROR gate (ADR-0179) never fired. The engine now remembers the last
+SecurityMaster it saw for each held name and uses it. The gate also now
+applies only to names actually valued at average cost: a name ADR-0224
+marks at its last close and settles is not "marked at cost", and before
+this change it would have been flagged ERROR (invalidating the run) if
+its record still said DELISTED. The 2026-10-01 point-in-time run
+(`full-validation-20261001T122226Z.json`) had 76/76 valid folds for
+every candidate, so it was not affected.
+
+**Wayback ingestion timeout.** `ingest_stockanalysis_wayback_delisted_
+prices.py` wrote every bar and the manifest only at the end, and a full
+run (~142 symbols) is longer than the 60-minute job, so a timeout lost
+everything. `--max-runtime-minutes` (45 in the workflow) stops starting
+new symbols, saves what was fetched, and lists the rest under
+`not_attempted` in the manifest for the next run. The pipeline has never
+had a full run and nothing reads its output today (ADR-0224 uses Tiingo
+for removed names).
+
 ## Consequences
 
 - Sharpe/Sortino now mean excess return per unit of risk, as they do
@@ -98,4 +121,7 @@ ledger is checked end to end.
   `tests/orchestration/test_run_paper_trading_cycle_cli.py::TestRiskFreeRateForThePerformanceReport`,
   the two workflow tests, `tests/learning/test_cleaning.py::TestFillPricedOnDecisionBar`,
   `tests/storage/test_trade_journal_persistence.py` (field survives restart),
-  `tests/broker/paper/test_paper_accounting_invariants.py::TestFillRecordsItsPricingBar`.
+  `tests/broker/paper/test_paper_accounting_invariants.py::TestFillRecordsItsPricingBar`,
+  `tests/backtest/test_integrity.py` (two new engine-level gate tests, both
+  fail on the old engine), `tests/scripts/test_ingest_stockanalysis_
+  wayback_delisted_prices.py::TestRuntimeBudget`.
