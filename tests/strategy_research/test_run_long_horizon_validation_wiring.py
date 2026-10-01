@@ -193,8 +193,26 @@ class TestChronologicalBoundaryWiring:
     def test_held_out_test_is_gated_on_skip_held_out(self) -> None:
         # ADR-0222: a screening run (--skip-held-out) never backtests TEST.
         source = _source()
-        assert "if split.test_end > split.test_start and not args.skip_held_out:" in source
+        assert "if split.test_end > split.test_start and not args.skip_held_out and on_held_out:" in source
         assert '"held_out_skipped": args.skip_held_out' in source
+
+    def test_held_out_runs_only_named_finalists_plus_buy_and_hold(self) -> None:
+        # ADR-0228: the once-only TEST is spent on the finalists; every
+        # candidate's walk-forward (and so PBO/DSR) is unchanged.
+        source = _source()
+        assert (
+            'on_held_out = held_out_candidates is None or name == "buy_and_hold" or name in held_out_candidates'
+            in source
+        )
+        assert 'held_out_by_name[name]["verdict_vs_buy_and_hold"] = verdict_against_buy_and_hold(' in source
+        assert "held_out_candidates = parse_candidate_list(" in source
+        assert '"held_out_candidates": sorted(held_out_candidates)' in source
+
+    def test_exam_verdict_uses_the_buy_and_hold_gross(self) -> None:
+        source = _source()
+        exam_fn = source[source.index("def _run_unseen_names_exam("):source.index("def main() -> int:")]
+        assert "verdict_against_buy_and_hold(results[name], baseline)" in exam_fn
+        assert 'baseline["net"]' not in exam_fn
 
 
 class TestEqualBenchmarkConditions:

@@ -187,6 +187,16 @@ def test_held_out_test_is_skipped_unless_final_exam_is_requested():
     assert step["env"]["FINAL_EXAM_INPUT"] == "${{ inputs.final_exam }}"
 
 
+def test_final_exam_needs_named_finalists():
+    # ADR-0228: the held-out TEST is spent once, on finalists named up front.
+    inputs = _dispatch_inputs()
+    assert inputs["final_exam_candidates"]["default"] == ""
+    step = next(s for s in _steps() if s.get("name", "").startswith("Run the full walk-forward"))
+    assert step["env"]["FINAL_EXAM_CANDIDATES_INPUT"] == "${{ inputs.final_exam_candidates }}"
+    assert 'if [ -z "$FINAL_EXAM_CANDIDATES_INPUT" ]' in step["run"]
+    assert '--held-out-candidates "$FINAL_EXAM_CANDIDATES_INPUT"' in step["run"]
+
+
 def test_sharpe_uses_the_macro_store_risk_free_rate():
     """ADR-0227: the macro store is downloaded (required, no fallback) and
     passed as --risk-free-db-path."""

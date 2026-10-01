@@ -1,6 +1,6 @@
 # ADR-0225: Half-new exam on locked windows using never-evaluated S&P 500 names
 
-**Status:** Accepted (mechanism built; no exam taken yet)
+**Status:** Accepted (mechanism built; no exam taken yet). Verdict baseline amended by ADR-0228: candidate net vs buy-and-hold gross
 **Date:** 2026-09-27
 **Deciders:** account owner (approved the idea, 2026-09-27), Claude Code session
 

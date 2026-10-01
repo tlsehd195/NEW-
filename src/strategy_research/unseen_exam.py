@@ -17,7 +17,8 @@ Rules (ADR-0225):
   window blocks a second exam there.
 - Only pre-registered finalists are examined, next to an equal-weight
   buy-and-hold of the same unseen names (the benchmark that matters,
-  because the unseen names exclude today's large survivors).
+  because the unseen names exclude today's large survivors). The
+  buy-and-hold is compared gross, without costs (ADR-0228).
 """
 
 from __future__ import annotations
@@ -108,9 +109,35 @@ def exam_already_taken(window: LockedWindow, reports_dir: Path) -> Optional[Path
 
 def exam_verdict(candidate: dict, baseline: dict) -> str:
     """Pre-registered in ADR-0225: PASS only if the candidate beats the
-    same-names equal-weight buy-and-hold on both net CAGR and net Sharpe.
+    same-names equal-weight buy-and-hold on both CAGR and Sharpe.
     Anything else is FAIL. A PASS is a half-exam result, not a DSR-backed
-    validation, and it must not be used to tune the candidate."""
+    validation, and it must not be used to tune the candidate.
+
+    `candidate` is the candidate's NET performance and `baseline` the
+    buy-and-hold's GROSS performance (ADR-0228): with $1 per order and
+    $10,000 spread over hundreds of names, the net buy-and-hold pays
+    several percent in commissions an index fund would not."""
     if candidate["cagr"] > baseline["cagr"] and candidate["sharpe_ratio"] > baseline["sharpe_ratio"]:
         return "PASS"
     return "FAIL"
+
+
+def verdict_against_buy_and_hold(candidate_run: dict, baseline_run: dict) -> str:
+    """`*_run` hold `is_valid_performance`, `net` and `gross`. INVALID if
+    either run failed the integrity checks, else `exam_verdict` on the
+    candidate's net against the buy-and-hold's gross (ADR-0225/0228)."""
+    if not (candidate_run["is_valid_performance"] and baseline_run["is_valid_performance"]):
+        return "INVALID"
+    return exam_verdict(candidate_run["net"], baseline_run["gross"])
+
+
+def parse_candidate_list(text: str, known: Iterable[str]) -> frozenset[str]:
+    """Comma-separated finalist names. Unknown names are an error, so a
+    typo cannot silently drop a finalist from a once-only run."""
+    names = frozenset(n.strip() for n in text.split(",") if n.strip())
+    if not names:
+        raise ValueError("empty candidate list")
+    unknown = names - set(known)
+    if unknown:
+        raise ValueError(f"unknown candidates: {sorted(unknown)}")
+    return names

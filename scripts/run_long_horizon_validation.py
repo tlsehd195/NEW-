@@ -219,7 +219,8 @@ from strategy_research.splits import build_chronological_split  # noqa: E402
 from strategy_research.unseen_exam import (  # noqa: E402
     EXAM_REPORT_KEY,
     exam_already_taken,
-    exam_verdict,
+    parse_candidate_list,
+    verdict_against_buy_and_hold,
     locked_window_by_name,
     seen_symbols,
 )
@@ -602,8 +603,8 @@ def _run_unseen_names_exam(
     """ADR-0225: one gross/net backtest per pre-registered candidate and the
     same-names buy_and_hold over the whole window, no walk-forward, no
     tuning. A candidate PASSes only by beating that buy_and_hold on both
-    net CAGR and net Sharpe; an integrity-invalid run on either side is
-    INVALID. SPY (benchmark_id) is context only."""
+    CAGR and Sharpe, its net against the buy_and_hold's gross (ADR-0228);
+    an integrity-invalid run on either side is INVALID. SPY (benchmark_id) is context only."""
     results = {}
     for name, hypothesis, factory in strategy_specs:
         print(f"Examining: {name} ...", flush=True)
@@ -614,7 +615,7 @@ def _run_unseen_names_exam(
         )
         results[name] = {
             "hypothesis": hypothesis,
-            "is_valid_performance": result.net.is_valid_performance,
+            "is_valid_performance": result.net.is_valid_performance and result.gross.is_valid_performance,
             "gross": _perf_dict(result.gross.performance),
             "net": _perf_dict(result.net.performance),
             "num_trades_net": len(result.net.fills),
@@ -624,11 +625,7 @@ def _run_unseen_names_exam(
     baseline = results["buy_and_hold"]
     verdicts = {}
     for name in exam["candidates"]:
-        candidate = results[name]
-        if not (candidate["is_valid_performance"] and baseline["is_valid_performance"]):
-            verdicts[name] = "INVALID"
-        else:
-            verdicts[name] = exam_verdict(candidate["net"], baseline["net"])
+        verdicts[name] = verdict_against_buy_and_hold(results[name], baseline)
     return {
         "note": (
             "ADR-0225 unseen-names exam: a locked window re-used once, over S&P 500 members never "
@@ -644,7 +641,10 @@ def _run_unseen_names_exam(
         EXAM_REPORT_KEY: {
             **exam,
             "baseline": "buy_and_hold",
-            "verdict_rule": "PASS iff net cagr and net sharpe_ratio both exceed the same-names buy_and_hold",
+            "verdict_rule": (
+                "PASS iff the candidate's net cagr and net sharpe_ratio both exceed the same-names "
+                "buy_and_hold's gross (cost-free) cagr and sharpe_ratio (ADR-0228)"
+            ),
             "verdicts": verdicts,
         },
         "results": results,
@@ -762,6 +762,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--held-out-candidates", default=None,
+        help=(
+            "ADR-0228: comma-separated finalists. With the held-out TEST on (no --skip-held-out), "
+            "only these and buy_and_hold are backtested on TEST, each with a verdict against the "
+            "cost-free buy_and_hold; walk-forward and PBO/DSR still cover every candidate."
+        ),
+    )
+    parser.add_argument(
         "--unseen-names-exam", default=None, metavar="WINDOW",
         help=(
             "ADR-0225: sit the one-time half-new exam on this locked window (e.g. TEST-3). "
@@ -850,6 +858,9 @@ def main() -> int:
             return 1
         if args.skip_held_out:
             print("ERROR: --skip-held-out makes no sense with --unseen-names-exam.", file=sys.stderr)
+            return 1
+        if args.held_out_candidates:
+            print("ERROR: --held-out-candidates is for the held-out TEST, not --unseen-names-exam.", file=sys.stderr)
             return 1
         args.start, args.end = exam_window.start, exam_window.end
 
@@ -1275,6 +1286,19 @@ def main() -> int:
                     _fundamentals_factor_factory(security_ids, institutional_filer_repository, score_fn, f"{name}_v1"),
                 ))
 
+        held_out_candidates = None
+        if args.held_out_candidates and unseen_names_exam is None:
+            if args.skip_held_out:
+                print("ERROR: --held-out-candidates needs the held-out TEST (drop --skip-held-out).", file=sys.stderr)
+                return 1
+            try:
+                held_out_candidates = parse_candidate_list(
+                    args.held_out_candidates, (name for name, _, _ in strategy_specs),
+                ) - {"buy_and_hold"}
+            except ValueError as exc:
+                print(f"ERROR: --held-out-candidates: {exc}", file=sys.stderr)
+                return 1
+
         if unseen_names_exam is not None:
             wanted = {name.strip() for name in args.exam_candidates.split(",") if name.strip()} - {"buy_and_hold"}
             unknown = sorted(wanted - {name for name, _, _ in strategy_specs})
@@ -1430,6 +1454,7 @@ def main() -> int:
                 "region": "TRAIN+VALIDATION only (chronological_split.train_start .. validation_end)",
             },
             "held_out_skipped": args.skip_held_out,
+            "held_out_candidates": sorted(held_out_candidates) if held_out_candidates is not None else None,
             "risk_free_rate": risk_free_report,
             "initial_capital": args.initial_capital,
             "benchmark_id": benchmark_id,
@@ -1483,7 +1508,8 @@ def main() -> int:
             aggregates_by_name[name] = aggregate
 
             held_out_test = None
-            if split.test_end > split.test_start and not args.skip_held_out:
+            on_held_out = held_out_candidates is None or name == "buy_and_hold" or name in held_out_candidates
+            if split.test_end > split.test_start and not args.skip_held_out and on_held_out:
                 held_out_result = run_gross_and_net(
                     repository, factory, security_ids,
                     start_date=split.test_start.date(), end_date=split.test_end.date(),
@@ -1509,6 +1535,9 @@ def main() -> int:
                     held_out_result.net.fills, args.initial_capital, final_prices, held_out_corporate_actions,
                 )
                 held_out_test = {
+                    "is_valid_performance": (
+                        held_out_result.net.is_valid_performance and held_out_result.gross.is_valid_performance
+                    ),
                     "gross": _perf_dict(held_out_result.gross.performance),
                     "net": _perf_dict(held_out_result.net.performance),
                     "num_trades_net": len(held_out_result.net.fills),
@@ -1526,6 +1555,14 @@ def main() -> int:
                     notes=(f"walk-forward folds={aggregate.fold_count}",),
                 )
             )
+
+        # ADR-0228: a finalist's held-out verdict, fixed before the run.
+        if held_out_candidates is not None and held_out_by_name.get("buy_and_hold") is not None:
+            for name in held_out_candidates:
+                if held_out_by_name.get(name) is not None:
+                    held_out_by_name[name]["verdict_vs_buy_and_hold"] = verdict_against_buy_and_hold(
+                        held_out_by_name[name], held_out_by_name["buy_and_hold"],
+                    )
 
         applicability = assess_pbo_dsr_applicability(log, real_fold_counts_by_candidate=fold_counts_by_strategy)
         report["pbo_dsr_applicability"] = {

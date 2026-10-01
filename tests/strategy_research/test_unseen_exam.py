@@ -15,7 +15,9 @@ from strategy_research.unseen_exam import (
     exam_already_taken,
     exam_verdict,
     locked_window_by_name,
+    parse_candidate_list,
     seen_symbols,
+    verdict_against_buy_and_hold,
 )
 
 
@@ -77,6 +79,36 @@ class TestVerdict:
         assert exam_verdict({"cagr": 0.12, "sharpe_ratio": 0.9}, baseline) == "PASS"
         assert exam_verdict({"cagr": 0.12, "sharpe_ratio": 0.7}, baseline) == "FAIL"
         assert exam_verdict({"cagr": 0.10, "sharpe_ratio": 0.9}, baseline) == "FAIL"
+
+    def test_candidate_net_is_judged_against_the_cost_free_buy_and_hold(self) -> None:
+        # ADR-0228: the buy-and-hold's net pays $1 per order across hundreds
+        # of names; a candidate must beat its gross, not that handicap.
+        candidate = {"is_valid_performance": True, "net": {"cagr": 0.08, "sharpe_ratio": 0.6}}
+        baseline = {
+            "is_valid_performance": True,
+            "gross": {"cagr": 0.09, "sharpe_ratio": 0.7},
+            "net": {"cagr": 0.04, "sharpe_ratio": 0.3},
+        }
+        assert verdict_against_buy_and_hold(candidate, baseline) == "FAIL"
+        candidate["net"] = {"cagr": 0.10, "sharpe_ratio": 0.8}
+        assert verdict_against_buy_and_hold(candidate, baseline) == "PASS"
+
+    def test_an_invalid_run_on_either_side_is_invalid(self) -> None:
+        good = {"is_valid_performance": True, "net": {"cagr": 0.5, "sharpe_ratio": 3.0}}
+        baseline = {"is_valid_performance": True, "gross": {"cagr": 0.0, "sharpe_ratio": 0.0}}
+        assert verdict_against_buy_and_hold({**good, "is_valid_performance": False}, baseline) == "INVALID"
+        assert verdict_against_buy_and_hold(good, {**baseline, "is_valid_performance": False}) == "INVALID"
+
+
+class TestCandidateList:
+    def test_parses_and_strips(self) -> None:
+        assert parse_candidate_list(" a, b ,,", ["a", "b", "c"]) == frozenset({"a", "b"})
+
+    def test_unknown_or_empty_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="unknown"):
+            parse_candidate_list("a,typo", ["a"])
+        with pytest.raises(ValueError, match="empty"):
+            parse_candidate_list(" , ", ["a"])
 
 
 def test_locked_window_by_name() -> None:
