@@ -13,6 +13,7 @@ from backtest_helpers import build_repository, checkpoint, make_bars, make_membe
 from backtest.engine import BacktestConfig, BacktestEngine
 from backtest.enums import OrderSide
 from backtest.strategy import BuyAndHoldStrategy, OrderIntent
+from data_infra.universe import BENCHMARK_SYMBOL
 
 
 def _config(days, **overrides):
@@ -64,6 +65,30 @@ class TestRestrictStrategyToUniverse:
         assert sells[0].execution_time.date() > drop_day
         assert not any(i.check == "universe_correctness" for i in result.integrity.issues)
         assert result.is_valid_performance
+
+    def test_benchmark_bars_stay_visible(self) -> None:
+        """Beta-style factor scores read SPY bars next to each member's.
+        SPY is never an index member, so hiding it with the non-members
+        left every such factor without a score and the run never traded
+        (2026-10-01 point-in-time validation run)."""
+        days = trading_days(date(2024, 1, 2), date(2024, 1, 31))
+        bars = make_bars("OLD", days, [100.0] * len(days)) + make_bars(BENCHMARK_SYMBOL, days, [400.0] * len(days))
+        repo = build_repository(
+            bars=bars,
+            securities=[make_security("OLD", "OLD"), make_security(BENCHMARK_SYMBOL, BENCHMARK_SYMBOL)],
+            universe_memberships=[make_membership("OLD", checkpoint(days[0]) - timedelta(days=1))],
+        )
+        seen = []
+
+        class _ReadsBenchmark:
+            version = "reads_benchmark_v1"
+
+            def generate_orders(self, as_of_time, data, portfolio):
+                seen.append(len(data.get_bars(BENCHMARK_SYMBOL, as_of_time - timedelta(days=5), as_of_time)))
+                return []
+
+        BacktestEngine(repo, _config(days, restrict_strategy_to_universe=True), _ReadsBenchmark()).run()
+        assert seen and all(n > 0 for n in seen)
 
     def test_requires_a_dynamic_universe(self) -> None:
         with pytest.raises(ValueError):
