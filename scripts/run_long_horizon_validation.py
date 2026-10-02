@@ -197,6 +197,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     short_interest_score,
     short_term_reversal_score,
     size_score,
+    large_cap_bearish_ma_score,
     sloan_accruals_score,
     sue_score,
     value_composite_score,
@@ -369,6 +370,16 @@ _PRICE_FACTOR_CANDIDATES = (
     # see volume_surge_price_absorption_score's own docstring. Wired in
     # before any result exists, per RULE 0.8.
     ("volume_surge_price_absorption", "동동 2026-10-02: volume surge with muted price response (cf. Kyle 1985 stealth accumulation), price+volume", volume_surge_price_absorption_score),
+    # 2026-10-02 (project chat) -- 동동's own second idea: the
+    # highest-dollar-volume (size proxy, see size_score's real market
+    # cap vs. this factor's own docstring caveat) names currently in
+    # 역배열 (bearish 5/20/60 moving-average alignment). Distinct from
+    # long_term_reversal/short_term_reversal (own-return sort, no MA
+    # shape, no size gate) -- see large_cap_bearish_ma_score's own
+    # docstring, including its honest Brock-Lakonishok-LeBaron 1992
+    # caveat that the closest precedent argues the opposite direction.
+    # Wired in anyway per RULE 0.8.
+    ("large_cap_bearish_ma", "동동 2026-10-02: high dollar-volume names in bearish 5/20/60 MA alignment (역배열), price-only", large_cap_bearish_ma_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),

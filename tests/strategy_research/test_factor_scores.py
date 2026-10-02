@@ -50,6 +50,7 @@ from strategy_research.factor_scores import (
     illiquidity_score,
     industry_momentum_score,
     intermediate_momentum_score,
+    large_cap_bearish_ma_score,
     leverage_score,
     long_term_reversal_score,
     low_beta_score,
@@ -898,6 +899,79 @@ class TestVolumeSurgePriceAbsorptionScore:
         data = _view(repo, as_of_time)
 
         assert volume_surge_price_absorption_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestLargeCapBearishMaScore:
+    """2026-10-02 (project chat, 동동's own second idea) -- high
+    dollar-volume names in bearish 5/20/60 moving-average alignment
+    (역배열). Score = RAW `log(avg_dollar_volume + 1) * bearish_strength`,
+    `None` unless `short_ma < mid_ma < long_ma` strictly."""
+
+    def test_downtrend_scores_above_none_and_uptrend_is_excluded(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 4, 1))  # >= 60 trading days
+        down_closes = [100.0 - 0.5 * i for i in range(len(days))]  # monotonic decline
+        up_closes = [100.0 + 0.5 * i for i in range(len(days))]  # monotonic rise
+        repo = InMemoryDataRepository(
+            bars=list(make_bars("DOWN", days, down_closes, volume=10_000.0))
+            + list(make_bars("UP", days, up_closes, volume=10_000.0))
+        )
+        as_of_time = _utc(2020, 3, 31)
+        data = _view(repo, as_of_time)
+
+        down_score = large_cap_bearish_ma_score("DOWN", as_of_time, data)
+        up_score = large_cap_bearish_ma_score("UP", as_of_time, data)
+
+        assert down_score is not None and down_score > 0  # short<mid<long holds, score positive
+        assert up_score is None  # short>mid>long -- not in 역배열, excluded entirely
+
+    def test_bigger_dollar_volume_scores_higher_at_the_same_downtrend(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 4, 1))
+        closes = [100.0 - 0.5 * i for i in range(len(days))]
+        repo = InMemoryDataRepository(
+            bars=list(make_bars("BIG", days, closes, volume=100_000.0))
+            + list(make_bars("SMALL", days, closes, volume=1_000.0))
+        )
+        as_of_time = _utc(2020, 3, 31)
+        data = _view(repo, as_of_time)
+
+        big_score = large_cap_bearish_ma_score("BIG", as_of_time, data)
+        small_score = large_cap_bearish_ma_score("SMALL", as_of_time, data)
+
+        assert big_score is not None and small_score is not None
+        assert big_score > small_score
+
+    def test_deeper_downtrend_scores_higher_at_the_same_dollar_volume(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 4, 1))
+        steep_closes = [100.0 - 1.0 * i for i in range(len(days))]
+        mild_closes = [100.0 - 0.1 * i for i in range(len(days))]
+        repo = InMemoryDataRepository(
+            bars=list(make_bars("STEEP", days, steep_closes, volume=10_000.0))
+            + list(make_bars("MILD", days, mild_closes, volume=10_000.0))
+        )
+        as_of_time = _utc(2020, 3, 31)
+        data = _view(repo, as_of_time)
+
+        steep_score = large_cap_bearish_ma_score("STEEP", as_of_time, data)
+        mild_score = large_cap_bearish_ma_score("MILD", as_of_time, data)
+
+        assert steep_score is not None and mild_score is not None
+        assert steep_score > mild_score
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 60-day floor
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 1, 19)
+        data = _view(repo, as_of_time)
+
+        assert large_cap_bearish_ma_score("THIN", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 4, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 3, 31)
+        data = _view(repo, as_of_time)
+
+        assert large_cap_bearish_ma_score("NONEXISTENT", as_of_time, data) is None
 
 
 class TestResidualMomentumScore:

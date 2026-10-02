@@ -952,6 +952,89 @@ VOLUME_SURGE_PRICE_ABSORPTION_VOLUME_RATIO_THRESHOLD = 3.0
 VOLUME_SURGE_PRICE_ABSORPTION_PRICE_CHANGE_THRESHOLD = 0.03
 
 
+def large_cap_bearish_ma_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, short_days: int = 5, mid_days: int = 20, long_days: int = 60,
+) -> Optional[float]:
+    """HYPOTHESIS -- 동동's own idea (2026-10-02): among the biggest
+    (by size) stocks, the ones currently in "역배열" (bearish moving-
+    average alignment -- short-term MA below mid-term MA below
+    long-term MA, i.e. a confirmed downtrend) will revert and
+    outperform afterward, so bigger + deeper in that downtrend should
+    rank more attractive.
+
+    **Honest caveat -- the closest direct precedent argues the OPPOSITE
+    direction.** Brock, Lakonishok & LeBaron (1992, "Simple Technical
+    Trading Rules and the Stochastic Properties of Stock Returns," The
+    Journal of Finance 47(5): 1731-1764) test exactly this kind of
+    moving-average crossover rule (their variable-length moving-average
+    rule) on the Dow Jones index and find BUY signals (short MA above
+    long MA, a "golden cross") outperform SELL signals (short MA below
+    long MA, a "dead cross", i.e. 역배열) going forward -- trend-
+    FOLLOWING, not fading. Separately, Zarowin (1990, "Size, Seasonality,
+    and Stock Market Overreaction," Journal of Financial and
+    Quantitative Analysis 25(1): 113-125) finds the long-horizon
+    overreaction/reversal effect this hypothesis would need is
+    concentrated in SMALL firms once controlled for size, which argues
+    against a LARGE-cap-specific version being strong. Wired in anyway,
+    exactly as given, per RULE 0.8 ("no post-hoc filtering by raw IC
+    sign or by whether the literature agrees") -- flagged here rather
+    than silently dropped or silently presented as well-supported.
+
+    **Size proxy caveat**: the fundamentals catalog (CommonStockShares
+    Outstanding, needed for true `market_cap` -- see `size_score`)
+    only starts 2010, so this factor cannot compute real market cap in
+    the 2000-2010-07 open research window. Uses average DOLLAR VOLUME
+    (`close * volume`, log-transformed to tame its heavy right skew,
+    same rationale `size_score`'s own docstring discusses for market
+    cap) over `long_days` as the size proxy instead -- correlated with
+    size but not identical to it (a small, highly-traded stock scores
+    as "big" here; a large, thinly-traded one does not), so a result
+    from this factor is evidence about "high-dollar-volume stocks in a
+    downtrend," not strictly "large-cap stocks in a downtrend".
+
+    **Distinct from every reversal/momentum factor already in this
+    module**: `long_term_reversal_score` (De Bondt & Thaler 1985) and
+    `short_term_reversal_score` (Jegadeesh 1990) both sort on a
+    security's OWN raw past return over a fixed window, with no size
+    restriction and no moving-average SHAPE condition; this factor
+    instead gates on a three-point moving-average ORDERING (역배열)
+    and ranks only among names satisfying it, weighted by a dollar-
+    volume size proxy neither reversal factor uses at all.
+
+    Construction, matching 동동's own periods (short_days=5,
+    mid_days=20, long_days=60, chosen once here and not retuned --
+    RULE 0.8): `None` unless `short_ma < mid_ma < long_ma` strictly
+    (실제 역배열 상태가 아니면 후보에서 제외, a gate rather than a
+    continuous penalty, since the hypothesis is specifically about this
+    MA-ordering regime) -- `bearish_strength = (long_ma - short_ma) /
+    long_ma`; score = `log(avg_dollar_volume + 1) * bearish_strength`.
+    RAW (not negated) -- higher score (bigger dollar volume, deeper
+    downtrend) is the hypothesized more attractive direction. `None`
+    also unless the full `long_days` window of closes and volumes is
+    populated."""
+    padded_days = int(long_days * 1.6)
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), long_days,
+    )
+    if len(bars) < long_days:
+        return None
+    window = bars[-long_days:]
+    closes = [b.adjusted_close or b.close for b in window]
+    volumes = [b.volume for b in window]
+    if any(c is None for c in closes) or any(v is None or v < 0 for v in volumes):
+        return None
+    short_ma = sum(closes[-short_days:]) / short_days
+    mid_ma = sum(closes[-mid_days:]) / mid_days
+    long_ma = sum(closes) / long_days
+    if long_ma <= 0 or not (short_ma < mid_ma < long_ma):
+        return None
+    bearish_strength = (long_ma - short_ma) / long_ma
+    avg_dollar_volume = sum(c * v for c, v in zip(closes, volumes)) / long_days
+    if avg_dollar_volume <= 0:
+        return None
+    return math.log(avg_dollar_volume + 1.0) * bearish_strength
+
+
 def intermediate_momentum_score(
     security_id: str, as_of_time: datetime, data: AsOfDataView, *, start_months: int = 12, end_months: int = 7,
 ) -> Optional[float]:

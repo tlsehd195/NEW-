@@ -208,8 +208,8 @@ class TestCandidateTables:
         "intermediate_momentum", "price_delay", "frog_in_the_pan",
         # ADR-0230
         "low_volatility", "betting_against_correlation",
-        # 2026-10-02 (project chat, 동동's own idea)
-        "volume_surge_price_absorption",
+        # 2026-10-02 (project chat, 동동's own ideas)
+        "volume_surge_price_absorption", "large_cap_bearish_ma",
     }
     _PRE_EXISTING_NAMES = {
         "buy_and_hold", "long_term_momentum", "trend_volatility", "risk_controlled_momentum",
