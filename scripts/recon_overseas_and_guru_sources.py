@@ -19,9 +19,34 @@ YALE_PAGE = "https://faculty.som.yale.edu/michaelsinkinson/common-ownership-data
 
 
 def recon_krx() -> None:
+    import json
+    import urllib.parse as up
+
+    body = up.urlencode({
+        "bld": "dbms/MDC/STAT/issue/MDCSTAT23801", "mktId": "ALL", "isuCd": "ALL", "isuCd2": "ALL",
+        "strtDd": "20030101", "endDd": "20041231", "share": "1", "csvxls_isNo": "true",
+    }).encode()
+    for scheme in ("http", "https"):
+        req = urllib.request.Request(
+            f"{scheme}://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd", data=body,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                text = resp.read().decode("utf-8", "replace")
+                print(scheme, "KRX raw status", resp.status, "len", len(text), "head:", text[:300])
+                try:
+                    print("keys:", list(json.loads(text).keys()))
+                except Exception as exc:  # noqa: BLE001
+                    print("not json:", exc)
+        except Exception as exc:  # noqa: BLE001
+            print(scheme, "KRX raw ERROR", type(exc).__name__, exc)
     import FinanceDataReader as fdr
 
     delisted = fdr.StockListing("KRX-DELISTING")
+    if delisted.empty:
+        print("FDR returned an EMPTY delisting list from this network")
+        return
     print("delisting columns:", list(delisted.columns))
     print("delisting rows:", len(delisted))
     print(delisted.head(3).to_string())
@@ -62,18 +87,48 @@ def recon_openap() -> None:
     import openassetpricing as oap
 
     openap = oap.OpenAP()
-    print("releases:", openap.list_release())
+    print("OpenAP attributes:", [a for a in dir(openap) if not a.startswith("_")])
     doc = openap.dl_signal_doc("pandas")
     print("signal doc columns:", list(doc.columns))
     print("signal count:", len(doc))
     print(doc.head(10).to_string())
 
 
+def recon_openap_ls() -> None:
+    import numpy as np
+    import openassetpricing as oap
+
+    openap = oap.OpenAP()
+    print("list_port:", openap.list_port())
+    ports = openap.dl_port("op", "pandas")
+    print("port columns:", list(ports.columns), "rows:", len(ports))
+    print(ports.head(3).to_string())
+    print("port values:", sorted(ports["port"].astype(str).unique())[:15])
+    doc = openap.dl_signal_doc("pandas")[["Acronym", "Predictability in OP", "SampleStartYear", "SampleEndYear", "Cat.Data", "Sign", "T-Stat", "Year"]]
+    ls = ports[ports["port"].astype(str).str.upper() == "LS"].copy()
+    ls["date"] = ls["date"].astype("datetime64[ns]")
+    win = ls[(ls["date"] >= "2000-01-01") & (ls["date"] < "2013-03-21")]
+    g = win.groupby("signalname")["ret"].agg(["mean", "std", "count"])
+    g["t_raw"] = g["mean"] / g["std"] * np.sqrt(g["count"])
+    g = g.join(doc.set_index("Acronym"), how="left")
+    clear = g[(g["Predictability in OP"].astype(str) == "1_clear")]
+    oos = clear[clear["SampleEndYear"] <= 1999]
+    print("signals with LS in window:", len(g), "clear:", len(clear), "clear and sample ended <=1999 (true OOS):", len(oos))
+    cols = ["mean", "t_raw", "SampleStartYear", "SampleEndYear", "Cat.Data", "Sign"]
+    print("--- true-OOS clear signals, by |t_raw| ---")
+    print(oos.reindex(oos["t_raw"].abs().sort_values(ascending=False).index)[cols].head(40).to_string())
+    print("--- by Cat.Data (true OOS) ---")
+    print(oos.groupby("Cat.Data").size().to_string())
+    for name in ("Accruals", "Mom12m", "BM", "Size", "STreversal"):
+        if name in g.index:
+            print(name, g.loc[name, ["mean", "t_raw", "Sign"]].to_dict())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("target", choices=["krx", "yale13f", "openap"])
+    parser.add_argument("target", choices=["krx", "yale13f", "openap", "openap_ls"])
     args = parser.parse_args()
-    {"krx": recon_krx, "yale13f": recon_yale13f, "openap": recon_openap}[args.target]()
+    {"krx": recon_krx, "yale13f": recon_yale13f, "openap": recon_openap, "openap_ls": recon_openap_ls}[args.target]()
     return 0
 
 
