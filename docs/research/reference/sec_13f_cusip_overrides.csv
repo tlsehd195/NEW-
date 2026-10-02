@@ -1,0 +1,8 @@
+ticker,kind,value,note
+GOOGL,predecessor_name,GOOGLE INC,Alphabet (2015) has a new CIK; EDGAR lists no former name for the Google era
+GOOGL,exclude_cusip,38259P706,Google class C (GOOG); GOOGL is class A
+LIN,predecessor_name,PRAXAIR INC,Linde plc (2018) took Praxair's S&P 500 seat; new CIK
+LIN,exclude_cusip,535223200,Linde AG ADR: a different company before the 2018 merger
+LIN,exclude_cusip,D50348107,Linde AG ordinary shares: a different company before the 2018 merger
+AVGO,exclude_cusip,111320107,Broadcom Corp (BRCM): acquired by Avago in 2016; not AVGO's own history
+DOW,exclude_cusip,260543103,Dow Chemical: merged into DowDuPont 2017; Dow Inc (2019) is a new company

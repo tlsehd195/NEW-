@@ -112,3 +112,17 @@ class TestLoadMap:
     def test_shared_cusip_is_refused(self) -> None:
         with pytest.raises(ValueError, match="both"):
             load_cusip_to_ticker(json.dumps({"A": ["111111111"], "B": ["111111111"]}))
+
+
+def test_committed_overrides_file_parses() -> None:
+    # *.csv is gitignored; this fails if the reviewed file is not tracked.
+    import csv
+    import subprocess
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "docs" / "research" / "reference" / "sec_13f_cusip_overrides.csv"
+    tracked = subprocess.run(["git", "ls-files", "--error-unmatch", str(path)], cwd=path.parent, capture_output=True)
+    assert tracked.returncode == 0, "sec_13f_cusip_overrides.csv must be committed (git add -f)"
+    with path.open() as fh:
+        names, excluded = read_overrides(csv.DictReader(fh))
+    assert "GOOGL" in names and "LIN" in excluded
