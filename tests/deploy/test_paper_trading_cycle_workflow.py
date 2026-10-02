@@ -86,6 +86,9 @@ def test_commit_backup_job_has_contents_write_and_the_real_push():
     steps = _backup_job_steps(doc)
     backup_step = next(s for s in steps if "export_paper_store_backup.py" in s.get("run", ""))
     assert "git push" in backup_step["run"]
+    # main moves during the ~50-minute run; a plain push was rejected on
+    # 2026-10-02 (ADR-0226 follow-up).
+    assert 'git pull --rebase origin "$GITHUB_REF_NAME" && git push' in backup_step["run"]
 
     download_steps = [s for s in steps if s.get("uses", "").startswith("actions/download-artifact")]
     assert any(s["with"]["name"] == "paper-trading-store" for s in download_steps), (
