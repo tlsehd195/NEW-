@@ -40,12 +40,20 @@ years and the paper loop's inputs.
 2. **Files over time.** Candidates come from one 13F file per year
    (legacy `YYYYq3` 2013-2023, then the `01jun` window each year) plus
    the two newest windows, instead of only the newest one.
-3. **Acceptance.** A name-matched CUSIP is kept for a ticker if OpenFIGI
-   resolves it to that ticker or one of its former tickers
-   (`sp500_ticker_renames.csv`), or if OpenFIGI no longer resolves it
-   and it shares the 6-character issuer prefix of an accepted CUSIP
-   (same issuer, new issue number, e.g. a reverse split). A CUSIP
-   claimed by two tickers is dropped from both.
+3. **Acceptance (revised 2026-10-02 after the first rebuild).** In each
+   sampled file, among share rows (`SSHPRNAMTTYPE` SH, no `PUTCALL`)
+   whose issuer name matches, the valid CUSIP (check digit) with the
+   most shares held is that file's dominant CUSIP for the ticker. The
+   common stock dwarfs preferreds, notes and typo CUSIPs, so this picks
+   the common line of each era. A dominant CUSIP is kept unless OpenFIGI
+   resolves it to a ticker that is neither this one nor a former one
+   (`sp500_ticker_renames.csv`); unresolved ones are kept and logged. A
+   CUSIP kept for two tickers is dropped from both. The first rebuild
+   (run 36941450358) used an issuer-prefix rule instead and pulled in
+   preferreds, notes and option lines (43 CUSIPs for AT&T); its name
+   normalisation also turned "INC/DE" into "INCDE", which missed BAC,
+   WFC, QCOM and NEM. Punctuation now becomes a space and state
+   suffixes are stripped.
 4. **Map format** becomes `{ticker: [cusip, ...]}`.
    `backfill_institutional_holdings_from_sec_bulk.py` reads both
    formats (`load_cusip_to_ticker`) and sums every CUSIP of a ticker per
@@ -62,6 +70,7 @@ both committed files.
 ## Consequences
 
 - Known limit: a company whose old line OpenFIGI resolves to a ticker
-  that is neither its own nor in the rename list is still missed. The
-  build log names each such case.
+  that is neither its own nor in the rename list loses that line. The
+  build log prints each rejection and each CUSIP kept without OpenFIGI
+  confirmation.
 - Tests: `tests/data_infra/test_sec_13f_cusip_history.py`.

@@ -10,8 +10,12 @@ from data_infra.providers.sec_13f_cusip_history import (
     company_names,
     confirm_cusips,
     core_name,
+    cusip_check_digit_ok,
+    dominant_cusip,
+    is_share_row,
     load_cusip_to_ticker,
     name_matches,
+    normalize,
 )
 
 
@@ -37,32 +41,50 @@ class TestNames:
         assert not name_matches("APPLE HOSPITALITY REIT INC", ["APPLE HOSPITALITY REIT INC X"])
 
 
+class TestRowFilters:
+    def test_check_digit(self) -> None:
+        for good in ("037833100", "38259P508", "02079K305", "30231G102", "369604301"):
+            assert cusip_check_digit_ok(good), good
+        assert not cusip_check_digit_ok("037833101")
+        assert not cusip_check_digit_ok("03783310")
+
+    def test_only_plain_share_rows(self) -> None:
+        assert is_share_row("SH", "")
+        assert not is_share_row("PRN", "")
+        assert not is_share_row("SH", "Put")
+
+    def test_dominant_is_largest_valid_cusip(self) -> None:
+        # The common line dwarfs a preferred and a typo CUSIP.
+        assert dominant_cusip({"037833100": 5e9, "037833101": 9e9, "060505682": 1e6}) == "037833100"
+        assert dominant_cusip({"BAD": 1.0}) is None
+
+    def test_normalize_splits_state_suffix(self) -> None:
+        assert normalize("QUALCOMM INC/DE") == "QUALCOMM INC DE"
+        assert core_name("QUALCOMM INC/DE") == "QUALCOMM"
+        assert normalize("AT&T INC") == "ATT INC"
+
+
 class TestConfirm:
-    def test_openfigi_ticker_or_former_ticker_is_accepted(self) -> None:
-        confirmed = confirm_cusips(
-            {"RTX": {"75513E101", "913017109", "999999999"}},
-            {"75513E101": "RTX", "913017109": "UTX", "999999999": "OTHER"},
+    def test_own_or_former_ticker_and_unresolved_are_kept(self) -> None:
+        confirmed, notes = confirm_cusips(
+            {"RTX": {"75513E101", "913017109"}, "XOM": {"30231G102"}},
+            {"75513E101": "RTX", "913017109": "UTX", "30231G102": None},
             {"RTX": {"UTX"}},
         )
-        assert confirmed == {"RTX": ["75513E101", "913017109"]}
+        assert confirmed == {"RTX": ["75513E101", "913017109"], "XOM": ["30231G102"]}
+        assert "RTX" not in notes
+        assert notes["XOM"] == "kept without OpenFIGI confirmation"
 
-    def test_unresolved_cusip_with_a_confirmed_issuer_prefix_is_accepted(self) -> None:
-        # GE's reverse split: same issuer prefix, new issue number.
-        confirmed = confirm_cusips(
-            {"GE": {"369604301", "369604103", "123456789"}},
-            {"369604301": "GE", "369604103": None, "123456789": None},
-            {},
-        )
-        assert confirmed == {"GE": ["369604103", "369604301"]}
+    def test_cusip_resolving_to_unrelated_ticker_is_rejected(self) -> None:
+        confirmed, notes = confirm_cusips({"GE": {"369604301", "370334104"}}, {"369604301": "GE", "370334104": "GIS"}, {})
+        assert confirmed == {"GE": ["369604301"]}
+        assert notes["GE"] == "rejected 370334104->GIS"
 
-    def test_unresolved_cusips_alone_are_never_accepted(self) -> None:
-        assert confirm_cusips({"XOM": {"30231G102"}}, {"30231G102": None}, {}) == {}
-
-    def test_a_cusip_claimed_by_two_tickers_is_dropped(self) -> None:
-        confirmed = confirm_cusips(
+    def test_a_cusip_kept_for_two_tickers_is_dropped(self) -> None:
+        confirmed, _ = confirm_cusips(
             {"AAA": {"111111111", "222222222"}, "BBB": {"222222222", "333333333"}},
-            {"111111111": "AAA", "222222222": "AAA", "333333333": "BBB"},
-            {"BBB": {"AAA"}},
+            {"111111111": "AAA", "222222222": None, "333333333": "BBB"},
+            {},
         )
         assert confirmed == {"AAA": ["111111111"], "BBB": ["333333333"]}
 

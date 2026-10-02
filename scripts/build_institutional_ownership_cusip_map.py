@@ -73,7 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data_infra.provider import PermanentProviderError, TransientProviderError  # noqa: E402
 from data_infra.providers.openfigi_cusip_resolution import build_mapping_request  # noqa: E402
-from data_infra.providers.sec_13f_cusip_history import company_names, confirm_cusips, name_matches  # noqa: E402
+from data_infra.providers.sec_13f_cusip_history import company_names, confirm_cusips, dominant_cusip, is_share_row, name_matches  # noqa: E402
 from data_infra.providers.sec_13f_bulk_dataset import generate_filing_windows  # noqa: E402
 from data_infra.providers.sec_edgar import SecEdgarFundamentalsProvider, resolve_cik, resolve_company_title  # noqa: E402
 from data_infra.providers.sec_edgar_config import SecEdgarConfig  # noqa: E402
@@ -103,15 +103,21 @@ def _download_zip(url: str, user_agent: str) -> Optional[bytes]:
 
 
 def _iter_infotable(raw_zip: bytes):
-    """Streams (NAMEOFISSUER, CUSIP) from a window's INFOTABLE.tsv, so a
-    multi-million-row file is never held in memory as dicts."""
+    """Streams (NAMEOFISSUER, CUSIP, SSHPRNAMT, SSHPRNAMTTYPE, PUTCALL)
+    from a window's INFOTABLE.tsv, so a multi-million-row file is never
+    held in memory as dicts."""
     with zipfile.ZipFile(io.BytesIO(raw_zip)) as zf:
         names = [n for n in zf.namelist() if Path(n).name.upper() == "INFOTABLE.TSV"]
         if not names:
             raise FileNotFoundError(f"INFOTABLE.tsv not found in archive; entries: {zf.namelist()}")
         with zf.open(names[0]) as fh:
             for row in csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8", errors="replace"), delimiter="\t"):
-                yield row.get("NAMEOFISSUER", ""), row.get("CUSIP", "").strip().upper()
+                try:
+                    shares = float(row.get("SSHPRNAMT") or 0)
+                except ValueError:
+                    shares = 0.0
+                yield (row.get("NAMEOFISSUER", ""), row.get("CUSIP", "").strip().upper(),
+                       shares, row.get("SSHPRNAMTTYPE") or "", row.get("PUTCALL") or "")
 
 
 def _sample_window_urls(today: date) -> list[str]:
@@ -224,7 +230,8 @@ def main(argv: Optional[list[str]] = None) -> int:
           f"({sum(len(v) > 1 for v in names_by_ticker.values())} with former names).")
 
     urls = args.window_url or _sample_window_urls(date.today())
-    candidates_by_ticker: dict[str, set[str]] = defaultdict(set)
+    dominant_by_ticker: dict[str, set[str]] = defaultdict(set)
+    tickers_for_issuer: dict[str, list[str]] = {}
     scanned = 0
     for url in urls:
         print(f"Downloading {url} ...", flush=True)
@@ -233,38 +240,45 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("  not published (404) -- skipped", flush=True)
             continue
         scanned += 1
-        seen: set[tuple[str, str]] = set()
-        for issuer, cusip in _iter_infotable(raw_zip):
-            if not cusip or (issuer, cusip) in seen:
+        shares: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        for issuer, cusip, amount, shares_type, put_call in _iter_infotable(raw_zip):
+            if not cusip or not is_share_row(shares_type, put_call):
                 continue
-            seen.add((issuer, cusip))
-            for ticker, cores in names_by_ticker.items():
-                if name_matches(issuer, cores):
-                    candidates_by_ticker[ticker].add(cusip)
-        print(f"  {len(seen):,} distinct issuer/CUSIP pairs; candidates so far: "
-              f"{sum(len(v) for v in candidates_by_ticker.values())}", flush=True)
+            if issuer not in tickers_for_issuer:
+                tickers_for_issuer[issuer] = [t for t, cores in names_by_ticker.items() if name_matches(issuer, cores)]
+            for ticker in tickers_for_issuer[issuer]:
+                shares[ticker][cusip] += amount
+        for ticker, by_cusip in shares.items():
+            top = dominant_cusip(by_cusip)
+            if top:
+                dominant_by_ticker[ticker].add(top)
+        print(f"  dominant CUSIPs so far: {sum(len(v) for v in dominant_by_ticker.values())} "
+              f"for {len(dominant_by_ticker)} tickers", flush=True)
     if scanned == 0:
         print("FATAL: no 13F file could be downloaded", file=sys.stderr)
         return 1
 
-    all_cusips = sorted({c for cs in candidates_by_ticker.values() for c in cs})
-    print(f"Confirming {len(all_cusips)} candidate CUSIPs via OpenFIGI ...", flush=True)
+    all_cusips = sorted({c for cs in dominant_by_ticker.values() for c in cs})
+    print(f"Checking {len(all_cusips)} dominant CUSIPs via OpenFIGI ...", flush=True)
     try:
         resolved, errors = _resolve_cusips_via_openfigi(all_cusips)
     except (urllib.error.URLError, urllib.error.HTTPError) as exc:
         print(f"FATAL: OpenFIGI confirmation call failed: {exc}", file=sys.stderr)
         return 1
 
-    confirmed = confirm_cusips(candidates_by_ticker, resolved, _aliases_by_ticker())
+    confirmed, notes = confirm_cusips(dominant_by_ticker, resolved, _aliases_by_ticker())
     for ticker in symbols:
         if ticker in confirmed or ticker in reasons:
             continue
-        cands = sorted(candidates_by_ticker.get(ticker, ()))
+        cands = sorted(dominant_by_ticker.get(ticker, ()))
         if not cands:
             reasons[ticker] = f"no 13F issuer name matched {names_by_ticker.get(ticker)}"
         else:
             shown = ", ".join(f"{c}->{resolved.get(c) or errors.get(c, 'unresolved')}" for c in cands[:8])
-            reasons[ticker] = f"{len(cands)} candidates, none resolved to it: {shown}"
+            reasons[ticker] = f"{len(cands)} dominant CUSIPs, none kept: {shown}"
+    for ticker, note in sorted(notes.items()):
+        if ticker in confirmed:
+            print(f"  NOTE {ticker}: {note}")
     for ticker, cusips in confirmed.items():
         if len(cusips) > 1:
             print(f"  {ticker}: {len(cusips)} CUSIPs {cusips}")

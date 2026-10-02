@@ -12,13 +12,16 @@ This module keeps every CUSIP a ticker's company has used, so
 quarter (`aggregate_holdings` already counts filers by accession, so a
 filer reporting both lines in a transition quarter is counted once).
 
-A CUSIP is accepted for a ticker only when its 13F issuer name matches
-the company's current or former SEC name AND one of:
-
-1. OpenFIGI resolves it to the ticker or one of its former tickers, or
-2. OpenFIGI no longer resolves it, and it shares the 6-character issuer
-   prefix of a CUSIP already accepted by rule 1 (same issuer, new issue
-   number, e.g. after a reverse split).
+A CUSIP is accepted for a ticker only when, in at least one yearly 13F
+file, it is the ticker's DOMINANT line: among share (not principal, not
+option) rows whose issuer name matches the company's current or former
+SEC name, the valid 9-character CUSIP with the most shares held. The
+company's common stock dwarfs its preferreds, notes and misspelled
+CUSIPs, so this picks the common line in each era. A dominant CUSIP is
+then kept unless OpenFIGI resolves it to a different, unrelated ticker
+(a name collision). The first 2026-10-02 build accepted every CUSIP
+sharing an issuer prefix and pulled in preferreds, notes and option
+lines (43 for AT&T), which this replaces.
 
 Pure functions only; the network calls live in
 `scripts/build_institutional_ownership_cusip_map.py`.
@@ -32,11 +35,16 @@ from typing import Iterable, Mapping, Optional
 _TRAILING_TOKENS_TO_STRIP = frozenset({
     "INC", "INCORPORATED", "CORP", "CORPORATION", "CO", "COMPANY", "LTD", "LIMITED",
     "LLC", "PLC", "GROUP", "HOLDINGS", "HOLDING", "COM", "NEW", "DEL",
+    # EDGAR former names carry a state suffix, e.g. "QUALCOMM INC/DE".
+    "DE", "MD", "MN", "NJ", "NY", "PA", "OH", "TX", "CA", "VA", "NC", "GA", "IL", "MA", "WA",
 })
 
 
 def normalize(text: str) -> str:
-    return " ".join("".join(ch for ch in text.upper() if ch.isalnum() or ch.isspace()).split())
+    """Uppercase; "&" is dropped, any other punctuation becomes a space
+    ("INC/DE" -> "INC DE", "AT&T" -> "ATT")."""
+    text = text.upper().replace("&", "")
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in text).split())
 
 
 def core_name(title: str) -> str:
@@ -75,31 +83,70 @@ def name_matches(issuer_name: str, cores: Iterable[str]) -> bool:
     return any(f" {core} " in padded for core in cores)
 
 
+def cusip_check_digit_ok(cusip: str) -> bool:
+    """Standard CUSIP check digit (modulus 10, double-add-double)."""
+    if len(cusip) != 9 or not cusip[8].isdigit():
+        return False
+    total = 0
+    for i, ch in enumerate(cusip[:8]):
+        if ch.isdigit():
+            v = int(ch)
+        elif ch.isalpha():
+            v = ord(ch) - ord("A") + 10
+        elif ch in "*@#":
+            v = {"*": 36, "@": 37, "#": 38}[ch]
+        else:
+            return False
+        if i % 2 == 1:
+            v *= 2
+        total += v // 10 + v % 10
+    return (10 - total % 10) % 10 == int(cusip[8])
+
+
+def is_share_row(shares_type: str, put_call: str) -> bool:
+    """Shares, not a principal amount and not an option position."""
+    return not put_call.strip() and shares_type.strip().upper() in ("SH", "")
+
+
+def dominant_cusip(shares_by_cusip: Mapping[str, float]) -> Optional[str]:
+    """The valid CUSIP with the most shares in one file, or None."""
+    valid = {c: v for c, v in shares_by_cusip.items() if cusip_check_digit_ok(c) and v > 0}
+    if not valid:
+        return None
+    return max(sorted(valid), key=lambda c: valid[c])
+
+
 def confirm_cusips(
-    candidates_by_ticker: Mapping[str, set[str]],
+    dominant_by_ticker: Mapping[str, set[str]],
     resolved: Mapping[str, Optional[str]],
     aliases_by_ticker: Mapping[str, set[str]],
-) -> dict[str, list[str]]:
-    """Applies the two acceptance rules in the module docstring.
-    `resolved` is OpenFIGI's CUSIP -> ticker (None when unresolved);
-    `aliases_by_ticker` holds former tickers (the ticker itself is always
-    included). A CUSIP accepted for two tickers is dropped from both."""
-    accepted: dict[str, set[str]] = {}
-    for ticker, cusips in candidates_by_ticker.items():
+) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """Keeps each ticker's per-file dominant CUSIPs unless OpenFIGI
+    resolves one to a ticker that is neither this one nor a former one.
+    A CUSIP kept for two tickers is dropped from both. Returns the map
+    and, per ticker, a note when nothing was kept or when no CUSIP was
+    confirmed by OpenFIGI (only unresolved ones were kept)."""
+    kept: dict[str, set[str]] = {}
+    notes: dict[str, str] = {}
+    for ticker, cusips in dominant_by_ticker.items():
         names = {ticker} | set(aliases_by_ticker.get(ticker, ()))
-        direct = {c for c in cusips if resolved.get(c) in names}
-        prefixes = {c[:6] for c in direct}
-        inactive = {c for c in cusips if resolved.get(c) is None and c[:6] in prefixes}
-        if direct:
-            accepted[ticker] = direct | inactive
+        rejected = {c: resolved.get(c) for c in cusips if resolved.get(c) not in names and resolved.get(c) is not None}
+        good = set(cusips) - set(rejected)
+        if rejected:
+            notes[ticker] = "rejected " + ", ".join(f"{c}->{t}" for c, t in sorted(rejected.items()))
+        if good:
+            kept[ticker] = good
+            if not any(resolved.get(c) in names for c in good):
+                notes[ticker] = (notes.get(ticker, "") + "; " if ticker in notes else "") + "kept without OpenFIGI confirmation"
     owners: dict[str, list[str]] = {}
-    for ticker, cusips in accepted.items():
+    for ticker, cusips in kept.items():
         for c in cusips:
             owners.setdefault(c, []).append(ticker)
-    return {
+    confirmed = {
         ticker: sorted(c for c in cusips if len(owners[c]) == 1)
-        for ticker, cusips in sorted(accepted.items())
+        for ticker, cusips in sorted(kept.items())
     }
+    return {t: c for t, c in confirmed.items() if c}, notes
 
 
 def load_cusip_to_ticker(map_json: str) -> dict[str, str]:
