@@ -116,7 +116,22 @@ def main(argv=None) -> int:
     if args.symbols is not None:
         symbols = list(args.symbols)
     else:
-        symbols = list(_UNIVERSES[args.universe].symbol_ids) + [BENCHMARK_SYMBOL]
+        universe = _UNIVERSES[args.universe]
+        symbols = list(universe.symbol_ids) + [BENCHMARK_SYMBOL]
+        # 2026-10-01 (run #53 follow-up, ADR-0122's AVB delisting): a
+        # symbol with a real, confirmed `listed_to` will never again
+        # receive a new bar -- letting its permanently-frozen per-symbol
+        # MAX(timestamp) drive the global minimum here re-requests the
+        # FULL historical range for every OTHER, healthy symbol forever.
+        # Confirmed on a real run: AVB's last bar stayed frozen at its
+        # real 2026-08-17 delisting-eve date, anchoring `--start` at
+        # ~2026-08-10 on run #53's own 2026-10-01 invocation instead of
+        # the normal few-day trailing window. Excluded from the catch-up
+        # computation only -- still part of `symbols` itself, which
+        # `ingest_real_market_data.py` separately uses for security-
+        # master/membership bookkeeping regardless of this script.
+        confirmed_delisted = {s.symbol for s in universe.symbols if s.listed_to is not None}
+        symbols = [s for s in symbols if s not in confirmed_delisted]
 
     print(compute_start_date(args.db_path, args.fallback_start, symbols))
     return 0

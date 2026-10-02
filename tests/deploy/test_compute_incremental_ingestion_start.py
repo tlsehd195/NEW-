@@ -19,15 +19,17 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from backtest_helpers import make_bars
 from storage_helpers import new_engine
 
+from data_infra.universe import SymbolMetadata, UniverseDefinition
 from storage.data_repository import DuckDBDataRepository
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import compute_incremental_ingestion_start as cis_module  # noqa: E402
 from compute_incremental_ingestion_start import _OVERLAP_DAYS, compute_start_date  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -151,6 +153,78 @@ def test_cli_prints_the_same_value_the_function_computes(tmp_path) -> None:
     )
 
     assert result.stdout.strip() == expected
+
+
+class TestConfirmedDelistedSymbolsExcludedFromCatchUp:
+    """2026-10-01 (run #53 follow-up, ADR-0122's real AVB delisting): a
+    symbol with a real, confirmed `listed_to` date will never again
+    receive a new bar -- its own permanently-frozen MAX(timestamp) must
+    not drag the global `--start` backward forever, re-requesting the
+    full historical range for every OTHER, healthy symbol on every
+    single run. Confirmed on a real production run (run #53,
+    2026-10-01): AVB's frozen last bar anchored `--start` at ~52 days
+    back instead of the normal few-day trailing window."""
+
+    def test_a_confirmed_delisted_symbols_frozen_bars_do_not_anchor_start_backward(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine)
+        old_delisted_days = _trading_days(date(2024, 1, 2), 10)
+        recent_days = _trading_days(date(2024, 6, 1), 50)
+        repo.append_bars(make_bars("DELISTED_SYM", old_delisted_days, [50.0] * len(old_delisted_days)))
+        repo.append_bars(make_bars("ACTIVE_SYM", recent_days, [200.0] * len(recent_days)))
+        repo.append_bars(make_bars("SPY", recent_days, [400.0] * len(recent_days)))
+
+        synthetic_universe = UniverseDefinition(
+            name="SYNTH_UNIVERSE", version="v1", role="PILOT", description="test fixture",
+            symbols=(
+                SymbolMetadata(symbol="DELISTED_SYM", listed_to=datetime(2024, 1, 20, tzinfo=timezone.utc)),
+                SymbolMetadata(symbol="ACTIVE_SYM"),
+            ),
+        )
+        monkeypatch.setitem(cis_module._UNIVERSES, "PILOT_UNIVERSE", synthetic_universe)
+
+        exit_code = cis_module.main(
+            ["--db-path", str(engine.config.root_dir), "--fallback-start", "2024-01-02", "--universe", "PILOT_UNIVERSE"]
+        )
+
+        assert exit_code == 0
+        printed = capsys.readouterr().out.strip()
+        expected = (recent_days[-1] - timedelta(days=_OVERLAP_DAYS)).isoformat()
+        assert printed == expected
+        # The regression this test guards against: without the
+        # exclusion, DELISTED_SYM's own old bars would have anchored
+        # the result all the way back near 2024-01-02 instead.
+        assert printed != "2024-01-02"
+
+    def test_an_unconfirmed_symbol_with_zero_bars_still_forces_the_full_fallback(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        # The exclusion must be narrow -- only a symbol with a real
+        # confirmed `listed_to` is skipped; an ordinary symbol that
+        # simply has zero bars yet (no delisting fact at all) must still
+        # force the full fallback range, exactly as before this change.
+        engine = new_engine(tmp_path)
+        repo = DuckDBDataRepository(engine)
+        recent_days = _trading_days(date(2024, 6, 1), 50)
+        repo.append_bars(make_bars("ACTIVE_SYM", recent_days, [200.0] * len(recent_days)))
+
+        synthetic_universe = UniverseDefinition(
+            name="SYNTH_UNIVERSE", version="v1", role="PILOT", description="test fixture",
+            symbols=(
+                SymbolMetadata(symbol="ACTIVE_SYM"),
+                SymbolMetadata(symbol="NEVER_INGESTED_YET"),
+            ),
+        )
+        monkeypatch.setitem(cis_module._UNIVERSES, "PILOT_UNIVERSE", synthetic_universe)
+
+        exit_code = cis_module.main(
+            ["--db-path", str(engine.config.root_dir), "--fallback-start", "2024-01-02", "--universe", "PILOT_UNIVERSE"]
+        )
+
+        assert exit_code == 0
+        assert capsys.readouterr().out.strip() == "2024-01-02"
 
 
 def test_cli_default_universe_resolves_to_a_real_symbol_list(tmp_path) -> None:
