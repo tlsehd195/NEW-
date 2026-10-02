@@ -145,6 +145,7 @@ from strategy_research.classification import (  # noqa: E402
 )
 from strategy_research.evidence import assess_pbo_dsr_applicability, classify_evidence_level  # noqa: E402
 from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
+from strategy_research.trial_ledger import compute_cumulative_dsr  # noqa: E402
 from ml.ml_strategy import MLStrategy, MLStrategyParameters, bagged_tree_builder, ridge_cv_builder  # noqa: E402
 from strategy_research.ensemble_strategy import RankAverageEnsembleParameters, RankAverageEnsembleStrategy  # noqa: E402
 from strategy_research.factor_scores import (  # noqa: E402
@@ -1637,11 +1638,16 @@ def main() -> int:
             try:
                 pbo_result = compute_pbo(fold_returns_by_candidate)
                 dsr_by_name = compute_dsr_for_all_candidates(fold_returns_by_candidate)
+                cumulative_dsr_by_name = compute_cumulative_dsr(fold_returns_by_candidate)
                 report["pbo_dsr_result"] = {
                     "pbo_probability": pbo_result.probability,
                     "num_combinations": pbo_result.num_combinations,
                     "num_groups": pbo_result.num_groups,
                     "deflated_sharpe_by_candidate": {n: r.deflated_sharpe_ratio for n, r in dsr_by_name.items()},
+                    "cumulative_deflated_sharpe_by_candidate": {
+                        n: r.deflated_sharpe_ratio for n, r in cumulative_dsr_by_name.items()
+                    },
+                    "cumulative_num_trials": next(iter(cumulative_dsr_by_name.values())).num_trials,
                 }
                 print(
                     f"PBO (Probability of Backtest Overfitting): {pbo_result.probability:.2%} "
