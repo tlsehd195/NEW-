@@ -200,6 +200,7 @@ from strategy_research.factor_scores import (  # noqa: E402
     sloan_accruals_score,
     sue_score,
     value_composite_score,
+    volume_surge_price_absorption_score,
 )
 from strategy_research.factor_strategy import (  # noqa: E402
     FactorStrategyParameters,
@@ -361,6 +362,13 @@ _PRICE_FACTOR_CANDIDATES = (
     # Wired in before any result exists, per RULE 0.8.
     ("low_volatility", "Ang, Hodrick, Xing & Zhang 2006 / Blitz & van Vliet 2007 low total volatility, price-only", low_volatility_score),
     ("betting_against_correlation", "Asness, Frazzini, Gormsen & Pedersen 2020 betting against correlation, price-only", betting_against_correlation_score),
+    # 2026-10-02 (project chat) -- 동동's own idea: volume surge (>=3x
+    # its own 60-day baseline) paired with a muted price response
+    # (<3%). Distinct from high_volume_return_premium (no price
+    # condition) and price_delay (no volume, weekly market regression) --
+    # see volume_surge_price_absorption_score's own docstring. Wired in
+    # before any result exists, per RULE 0.8.
+    ("volume_surge_price_absorption", "동동 2026-10-02: volume surge with muted price response (cf. Kyle 1985 stealth accumulation), price+volume", volume_surge_price_absorption_score),
 )
 _FUNDAMENTALS_FACTOR_CANDIDATES = (
     ("asset_growth", "Cooper, Gulen & Schill 2008 asset growth anomaly, fundamentals-only", asset_growth_score),

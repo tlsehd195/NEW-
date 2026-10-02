@@ -78,6 +78,7 @@ from strategy_research.factor_scores import (
     sloan_accruals_score,
     sue_score,
     value_composite_score,
+    volume_surge_price_absorption_score,
 )
 
 
@@ -826,6 +827,77 @@ class TestHighVolumeReturnPremiumScore:
         data = _view(repo, as_of_time)
 
         assert high_volume_return_premium_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestVolumeSurgePriceAbsorptionScore:
+    """2026-10-02 (project chat, 동동's own idea) -- volume surge paired
+    with a muted price response. Score = RAW `volume_ratio /
+    (abs(price_change) + 0.01)`, continuous, higher = more attractive
+    (both a bigger volume surge and a smaller price move raise it)."""
+
+    def test_surge_with_muted_price_scores_higher_than_surge_with_big_move(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        # Flat baseline price for both, then the last 5 (recent_days) bars
+        # diverge: ABSORB barely moves, RALLIES jumps >3%.
+        flat_closes = [100.0] * (len(days) - 5)
+        absorb_closes = flat_closes + [100.2, 100.3, 100.1, 100.2, 100.3]
+        rally_closes = flat_closes + [102.0, 103.0, 104.0, 104.5, 105.0]
+        surge_volumes = [1_000.0] * (len(days) - 5) + [5_000.0] * 5
+
+        def _bars(symbol, closes):
+            out = []
+            for d, close, vol in zip(days, closes, surge_volumes):
+                out.extend(make_bars(symbol, [d], [close], volume=vol))
+            return out
+
+        repo = InMemoryDataRepository(bars=_bars("ABSORB", absorb_closes) + _bars("RALLIES", rally_closes))
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        absorb_score = volume_surge_price_absorption_score("ABSORB", as_of_time, data)
+        rally_score = volume_surge_price_absorption_score("RALLIES", as_of_time, data)
+
+        assert absorb_score is not None and rally_score is not None
+        assert absorb_score > rally_score  # same volume surge, smaller price move -> higher score
+
+    def test_surge_scores_higher_than_flat_volume_at_the_same_muted_price(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        closes = [100.0] * (len(days) - 5) + [100.1, 100.2, 100.1, 100.2, 100.1]
+        surge_volumes = [1_000.0] * (len(days) - 5) + [5_000.0] * 5
+
+        def _bars(symbol, vols):
+            out = []
+            for d, close, vol in zip(days, closes, vols):
+                out.extend(make_bars(symbol, [d], [close], volume=vol))
+            return out
+
+        repo = InMemoryDataRepository(
+            bars=_bars("SURGE", surge_volumes) + list(make_bars("FLATVOL", days, closes, volume=1_000.0))
+        )
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        surge_score = volume_surge_price_absorption_score("SURGE", as_of_time, data)
+        flat_score = volume_surge_price_absorption_score("FLATVOL", as_of_time, data)
+
+        assert surge_score is not None and flat_score is not None
+        assert surge_score > flat_score
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 65-observation floor
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 1, 19)
+        data = _view(repo, as_of_time)
+
+        assert volume_surge_price_absorption_score("THIN", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        assert volume_surge_price_absorption_score("NONEXISTENT", as_of_time, data) is None
 
 
 class TestResidualMomentumScore:
