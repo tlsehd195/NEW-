@@ -145,6 +145,7 @@ from strategy_research.classification import (  # noqa: E402
 )
 from strategy_research.evidence import assess_pbo_dsr_applicability, classify_evidence_level  # noqa: E402
 from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
+from strategy_research.reality_check import compute_reality_check  # noqa: E402
 from strategy_research.trial_ledger import compute_cumulative_dsr  # noqa: E402
 from ml.ml_strategy import MLStrategy, MLStrategyParameters, bagged_tree_builder, ridge_cv_builder  # noqa: E402
 from strategy_research.ensemble_strategy import RankAverageEnsembleParameters, RankAverageEnsembleStrategy  # noqa: E402
@@ -1649,6 +1650,26 @@ def main() -> int:
                     },
                     "cumulative_num_trials": next(iter(cumulative_dsr_by_name.values())).num_trials,
                 }
+                if "buy_and_hold" in fold_returns_by_candidate and len(fold_returns_by_candidate) > 1:
+                    rc = compute_reality_check(
+                        {n: v for n, v in fold_returns_by_candidate.items() if n != "buy_and_hold"},
+                        fold_returns_by_candidate["buy_and_hold"],
+                    )
+                    report["pbo_dsr_result"]["reality_check"] = {
+                        "baseline": "buy_and_hold",
+                        "reality_check_p_value": rc.reality_check_p_value,
+                        "spa_p_value": rc.spa_p_value,
+                        "best_candidate": rc.best_candidate,
+                        "best_mean_excess_fold_return": rc.best_mean_excess,
+                        "num_candidates": rc.num_candidates,
+                        "num_observations": rc.num_observations,
+                        "num_bootstrap": rc.num_bootstrap,
+                        "mean_block_length": rc.mean_block_length,
+                    }
+                    print(
+                        f"Reality Check p={rc.reality_check_p_value:.3f}, SPA p={rc.spa_p_value:.3f} "
+                        f"(best vs buy_and_hold: {rc.best_candidate}, mean excess fold return {rc.best_mean_excess:+.4f})"
+                    )
                 print(
                     f"PBO (Probability of Backtest Overfitting): {pbo_result.probability:.2%} "
                     f"across {pbo_result.num_combinations} CSCV splits"
