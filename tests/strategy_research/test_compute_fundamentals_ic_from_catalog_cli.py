@@ -100,7 +100,7 @@ class TestTest1Refusal:
             "--price-db-path", str(tmp_path / "price"),
             "--fundamentals-db-path", str(tmp_path / "fundamentals"),
             "--start", "2010-01-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
         ])
         assert exit_code == 0
 
@@ -136,7 +136,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--universe", "PILOT_UNIVERSE",
             "--score", "roe",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -175,7 +175,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
                 "--universe", "PILOT_UNIVERSE",
                 "--score", score,
                 "--start", "2012-06-01",
-                "--end", "2013-01-01",
+                "--end", "2010-07-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -213,7 +213,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--universe", "PILOT_UNIVERSE",
             "--score", "asset_growth",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -265,7 +265,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--universe", "PILOT_UNIVERSE",
             "--score", "piotroski",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -307,7 +307,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--universe", "PILOT_UNIVERSE",
             "--score", "shareholder_yield",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -355,7 +355,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
                 "--universe", "PILOT_UNIVERSE",
                 "--score", score,
                 "--start", "2012-06-01",
-                "--end", "2013-01-01",
+                "--end", "2010-07-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -395,7 +395,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--universe", "PILOT_UNIVERSE",
             "--score", "earnings_yield",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -431,7 +431,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--universe", "PILOT_UNIVERSE",
             "--score", "gross_profitability",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -475,7 +475,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--universe", "PILOT_UNIVERSE",
             "--score", "altman_z",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -518,7 +518,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
                 "--universe", "PILOT_UNIVERSE",
                 "--score", score,
                 "--start", "2012-06-01",
-                "--end", "2013-01-01",
+                "--end", "2010-07-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -555,7 +555,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
             "--universe", "PILOT_UNIVERSE",
             "--score", "size",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -608,7 +608,7 @@ class TestEndToEndAgainstSyntheticCatalogs:
                 "--universe", "PILOT_UNIVERSE",
                 "--score", score,
                 "--start", "2012-06-01",
-                "--end", "2013-01-01",
+                "--end", "2010-07-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -635,7 +635,7 @@ class TestCombinedFactorScoreOption:
     needed to prove an IC is actually computed."""
 
     def test_combined_factor_option_runs_end_to_end(self, tmp_path, capsys) -> None:
-        days = trading_days(date(2012, 1, 2), date(2013, 6, 1))
+        days = trading_days(date(2009, 1, 2), date(2010, 6, 1))
         symbols = list(PILOT_UNIVERSE_V1.symbol_ids)[:2]
         # Different daily drift per symbol -- both the fundamentals AND
         # the forward returns must differ between the two symbols, or
@@ -654,8 +654,8 @@ class TestCombinedFactorScoreOption:
 
         fundamentals_engine = new_engine(tmp_path, name="fundamentals_combined")
         fundamentals_repo = DuckDBFundamentalsRepository(fundamentals_engine)
-        period_end = datetime(2011, 12, 31, tzinfo=timezone.utc)
-        prior_end = datetime(2010, 12, 31, tzinfo=timezone.utc)
+        period_end = datetime(2008, 12, 31, tzinfo=timezone.utc)
+        prior_end = datetime(2007, 12, 31, tzinfo=timezone.utc)
         # multiplier > 1.0 for the second symbol pushes every leg (all
         # of which are ratios/changes/market-cap-scaled quantities) to
         # a different rank, breaking the tie described above.
@@ -693,8 +693,8 @@ class TestCombinedFactorScoreOption:
             "--fundamentals-db-path", str(tmp_path / "fundamentals_combined"),
             "--universe", "PILOT_UNIVERSE",
             "--score", "combined_factor",
-            "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--start", "2009-06-01",
+            "--end", "2010-01-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -768,7 +768,7 @@ class TestInsiderBuyingScoreOption:
             "--universe", "PILOT_UNIVERSE",
             "--score", "insider_buying",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])

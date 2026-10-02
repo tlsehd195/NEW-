@@ -1,6 +1,6 @@
 # ADR-0230: Two new price-only candidates in place of the held-back short_interest, guru_consensus and alpha101
 
-**Status:** Accepted
+**Status:** Accepted (done 2026-10-02: low_volatility FAIL on its held-out TEST; window locked as TEST_5)
 **Date:** 2026-10-02
 **Deciders:** account owner (asked for a new candidate test, then picked "two new price factors" on a decision card, 2026-10-02), Claude Code session
 
@@ -64,3 +64,23 @@ Test plan, fixed now:
 - `short_interest`, `guru_consensus` and the `alpha101` module stay in
   the code, unwired.
 - Tests: `tests/strategy_research/test_factor_scores.py::TestBettingAgainstCorrelationScore`.
+
+## Result (2026-10-02)
+
+- Screen (24 candidates, 522 point-in-time names with prices,
+  2000-01..2013-03-21, held-out skipped, PBO 0.386):
+  `low_volatility` cleared the finalist rule (median fold lead +0.32%,
+  53% of folds ahead, chained folds 7.7% vs buy-and-hold 5.0%, DSR
+  0.62). `betting_against_correlation` did not (exactly 50% of folds
+  ahead).
+- Held-out TEST, run once for `low_volatility` only (run 36959031646,
+  `docs/research/reports/full-validation-20261002T041800Z.json`,
+  2010-07-29..2013-03-21): **FAIL**. Net CAGR 13.3% vs the same-names
+  cost-free buy-and-hold's 16.1%. Its net Sharpe was higher (1.28 vs
+  0.94, max drawdown -9.8% vs -20.4%), but a pass needs both higher.
+  SPY CAGR over the window was 16.5%.
+- The window is locked as `TEST_5`. The open research window is now
+  2000-01-01..2010-07-29, which leaves no room for fundamentals-based
+  candidates (their catalog starts in 2010). The workflow's default
+  range is now 2000-01-01..2010-07-29. TEST-2 and TEST-1 unseen-names
+  exams stay unused.

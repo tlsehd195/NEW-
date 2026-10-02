@@ -71,7 +71,7 @@ class TestTest1Refusal:
         exit_code = module.main([
             "--db-path", str(tmp_path / "store"),
             "--start", "2010-01-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
         ])
         assert exit_code == 0
 
@@ -94,7 +94,7 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--db-path", str(tmp_path / "store"),
             "--universe", "PILOT_UNIVERSE",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
