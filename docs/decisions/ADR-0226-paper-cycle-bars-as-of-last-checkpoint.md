@@ -95,3 +95,13 @@ snapshot in `backups/paper_trading_store/` was not overwritten.
   TestMaxRuntimeMinutes` and `tests/deploy/
   test_paper_trading_cycle_workflow.py::
   test_a_cancelled_cycle_is_stopped_cleanly_and_never_uploads_a_store_mid_write`.
+
+## Follow-up (2026-10-02): backup push retries with a rebase
+
+During the rebuild, run 36961598932 moved the ledger forward and uploaded
+the store without problems. Its `commit-backup` push was then rejected
+because `main` had moved during the 50-minute run. That job now runs
+`git pull --rebase` and pushes, retrying up to three times, the same
+pattern `run_full_validation.yml` uses (ADR-0222). Only this job writes
+`backups/paper_trading_store/`, and paper runs share one concurrency
+group, so the rebase cannot conflict.
