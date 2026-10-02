@@ -19,9 +19,34 @@ YALE_PAGE = "https://faculty.som.yale.edu/michaelsinkinson/common-ownership-data
 
 
 def recon_krx() -> None:
+    import json
+    import urllib.parse as up
+
+    body = up.urlencode({
+        "bld": "dbms/MDC/STAT/issue/MDCSTAT23801", "mktId": "ALL", "isuCd": "ALL", "isuCd2": "ALL",
+        "strtDd": "20030101", "endDd": "20041231", "share": "1", "csvxls_isNo": "true",
+    }).encode()
+    for scheme in ("http", "https"):
+        req = urllib.request.Request(
+            f"{scheme}://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd", data=body,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                text = resp.read().decode("utf-8", "replace")
+                print(scheme, "KRX raw status", resp.status, "len", len(text), "head:", text[:300])
+                try:
+                    print("keys:", list(json.loads(text).keys()))
+                except Exception as exc:  # noqa: BLE001
+                    print("not json:", exc)
+        except Exception as exc:  # noqa: BLE001
+            print(scheme, "KRX raw ERROR", type(exc).__name__, exc)
     import FinanceDataReader as fdr
 
     delisted = fdr.StockListing("KRX-DELISTING")
+    if delisted.empty:
+        print("FDR returned an EMPTY delisting list from this network")
+        return
     print("delisting columns:", list(delisted.columns))
     print("delisting rows:", len(delisted))
     print(delisted.head(3).to_string())
@@ -62,7 +87,7 @@ def recon_openap() -> None:
     import openassetpricing as oap
 
     openap = oap.OpenAP()
-    print("releases:", openap.list_release())
+    print("OpenAP attributes:", [a for a in dir(openap) if not a.startswith("_")])
     doc = openap.dl_signal_doc("pandas")
     print("signal doc columns:", list(doc.columns))
     print("signal count:", len(doc))
