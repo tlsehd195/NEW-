@@ -135,3 +135,30 @@ not mean validated: this window holds only two bear markets (2000-02 and
   project already holds (prices plus dividends); the others need earnings
   dates, analyst data or a pre-2009 fundamentals history.
 
+## Overlay result (2026-10-02, run 36964246942, 2000-01-01..2013-03-20)
+
+SPY with cash at the 3-month T-bill yield and the engine's default costs.
+Pass rule from section 2a applied unchanged.
+
+| | CAGR | Sharpe | Max drawdown | Mean exposure | Exposure changes | Cost on 10,000 |
+|---|---|---|---|---|---|---|
+| no_filter (buy and hold) | 2.7% | 0.13 | -54.0% | 100% | 0 | 20 |
+| sma_10m | 7.1% | 0.46 | -20.5% | 66% | 14 | 166 |
+| vol_target_10 | 3.3% | 0.16 | -29.2% | 66% | 2,685 | 413 |
+
+Both rules meet the research-window pass rule (`RESEARCH_PASS`). Read it
+narrowly:
+
+- 2000-2013 was a lost decade for SPY (2.7% a year) with two crashes, the
+  best case for a trend rule. The window says nothing about a long bull
+  market, where `sma_10m` is expected to trail buy-and-hold on CAGR.
+- `sma_10m` made only 14 exposure changes, so the drawdown gain rests on
+  roughly two episodes (2000-02, 2008-09).
+- `vol_target_10` barely beats buy-and-hold on Sharpe (0.16 vs 0.13) and
+  trades 2,685 times; its pass comes almost entirely from the drawdown
+  check.
+- Neither is validated. A held-out exam on the locked windows
+  (2013-03-21..2026-08-27) has not been run; whether to spend it on an
+  overlay, which RULE 0.8 counts as a strategy family, is the account
+  owner's call.
+
