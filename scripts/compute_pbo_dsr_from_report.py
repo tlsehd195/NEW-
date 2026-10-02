@@ -44,7 +44,14 @@ from strategy_research.evidence import (  # noqa: E402
     classify_evidence_level,
 )
 from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
+from strategy_research.reality_check_spa import (  # noqa: E402
+    excess_returns_vs_benchmark,
+    hansen_spa,
+    white_reality_check,
+)
 from strategy_research.walk_forward_evaluation import WalkForwardAggregate  # noqa: E402
+
+_BENCHMARK_CANDIDATE_NAME = "buy_and_hold"
 
 _MIN_FOLDS_FOR_PBO_DSR = 6
 
@@ -152,6 +159,45 @@ def main(argv: list[str] | None = None) -> int:
     pbo_result = compute_pbo(fold_returns_by_candidate)
     dsr_by_name = compute_dsr_for_all_candidates(fold_returns_by_candidate)
 
+    # Supplementary diagnostic only (relayed thread's ask, ADR -- see
+    # module docstring of reality_check_spa.py): does the apparent best
+    # candidate's edge over the same-names buy_and_hold benchmark
+    # survive White's Reality Check / Hansen's SPA bootstrap, once the
+    # fact that several candidates were compared is accounted for?
+    # Never changes `evidence_assessment` or any existing verdict --
+    # recorded alongside PBO/DSR as an additional field. Skipped
+    # entirely when the benchmark itself isn't among the prequalified
+    # candidates (e.g. too few valid folds), or when excluding it would
+    # leave fewer than 2 other candidates to compare.
+    reality_check_spa_result: dict | None = None
+    non_benchmark_candidates = {
+        name: returns
+        for name, returns in fold_returns_by_candidate.items()
+        if name != _BENCHMARK_CANDIDATE_NAME
+    }
+    if _BENCHMARK_CANDIDATE_NAME in fold_returns_by_candidate and len(non_benchmark_candidates) >= 2:
+        excess_returns = excess_returns_vs_benchmark(
+            non_benchmark_candidates, fold_returns_by_candidate[_BENCHMARK_CANDIDATE_NAME]
+        )
+        rc_result = white_reality_check(excess_returns)
+        spa_result = hansen_spa(excess_returns)
+        reality_check_spa_result = {
+            "benchmark": _BENCHMARK_CANDIDATE_NAME,
+            "reality_check_p_value": rc_result.p_value,
+            "reality_check_best_candidate": rc_result.best_candidate,
+            "spa_p_value": spa_result.p_value,
+            "spa_best_candidate": spa_result.best_candidate,
+            "num_bootstrap_samples": rc_result.num_bootstrap_samples,
+            "num_folds": rc_result.num_folds,
+            "candidate_names": list(rc_result.candidate_names),
+        }
+        print(
+            f"White Reality Check p-value: {rc_result.p_value:.3f} (best: {rc_result.best_candidate}); "
+            f"Hansen SPA p-value: {spa_result.p_value:.3f} (best: {spa_result.best_candidate}) "
+            f"-- vs {_BENCHMARK_CANDIDATE_NAME} benchmark, supplementary only"
+        )
+        print()
+
     print(
         f"PBO (Probability of Backtest Overfitting): {pbo_result.probability:.2%} "
         f"across {pbo_result.num_combinations} CSCV splits ({pbo_result.num_candidates} candidates, "
@@ -166,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
         "num_groups": pbo_result.num_groups,
         "deflated_sharpe_by_candidate": {n: r.deflated_sharpe_ratio for n, r in dsr_by_name.items()},
     }
+    if reality_check_spa_result is not None:
+        report["reality_check_spa_result"] = reality_check_spa_result
 
     for name in sorted(report.get("results", {})):
         result = report["results"][name]
