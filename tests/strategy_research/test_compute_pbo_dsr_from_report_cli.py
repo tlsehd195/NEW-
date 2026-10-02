@@ -74,6 +74,23 @@ def _fake_report(rng: random.Random, *, data_status: str = "REAL", n_folds: int 
     }
 
 
+def _fake_report_with_benchmark(rng: random.Random, *, n_folds: int = 40) -> dict:
+    """Same shape as `_fake_report`, plus a `buy_and_hold` candidate --
+    the benchmark `reality_check_spa_result` compares every other
+    candidate against."""
+    report = _fake_report(rng, n_folds=n_folds)
+    report["results"]["buy_and_hold"] = {"walk_forward": {
+        "train_window_months": 6, "test_window_months": 2, "step_months": 2,
+        "fold_count": n_folds, "positive_net_return_folds": n_folds // 2,
+        "median_net_cumulative_return": 0.0, "median_net_sharpe": 0.1,
+        "stdev_net_cumulative_return": 0.01, "worst_max_drawdown": -0.05,
+        "worst_fold_index": 0, "best_net_cumulative_return": 0.02, "best_fold_index": 1,
+        "regime_breakdown": {"BULL": n_folds // 2, "BEAR": n_folds - n_folds // 2},
+        "folds": _fake_folds(rng, 0.0, 0.01, n_folds),
+    }}
+    return report
+
+
 class TestComputePboDsrFromReportCli:
     def test_main_computes_and_writes_pbo_dsr_result(self, tmp_path) -> None:
         module = _load_script()
@@ -92,6 +109,29 @@ class TestComputePboDsrFromReportCli:
         good_evidence = updated["results"]["good"]["evidence_assessment"]
         assert good_evidence["pbo_probability"] is not None
         assert good_evidence["deflated_sharpe_ratio"] is not None
+        # No buy_and_hold candidate in this fixture -- Reality Check/SPA
+        # has no benchmark to compare against, so it is skipped.
+        assert "reality_check_spa_result" not in updated
+
+    def test_reality_check_spa_computed_when_benchmark_present(self, tmp_path) -> None:
+        module = _load_script()
+        rng = random.Random(42)
+        report_path = tmp_path / "report.json"
+        report_path.write_text(json.dumps(_fake_report_with_benchmark(rng)))
+
+        exit_code = module.main(["--report", str(report_path)])
+        assert exit_code == 0
+
+        updated = json.loads(report_path.read_text())
+        rc_spa = updated["reality_check_spa_result"]
+        assert rc_spa["benchmark"] == "buy_and_hold"
+        assert 0.0 <= rc_spa["reality_check_p_value"] <= 1.0
+        assert 0.0 <= rc_spa["spa_p_value"] <= 1.0
+        assert "buy_and_hold" not in rc_spa["candidate_names"]
+        # Existing verdicts/evidence must be untouched by this
+        # supplementary diagnostic.
+        assert "pbo_dsr_result" in updated
+        assert "evidence_assessment" in updated["results"]["good"]
 
     def test_refuses_non_real_data_status(self, tmp_path) -> None:
         module = _load_script()
