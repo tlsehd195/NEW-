@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""ADR-0235 recon: real, read-only probes of three free data sources the
+sandbox cannot reach (KRX/FinanceDataReader, the Yale 13F 1999-2017
+dataset page, the OpenAP signal documentation). Prints what each source
+actually returns so the next step is decided from observation, not docs.
+
+    python3 scripts/recon_overseas_and_guru_sources.py krx|yale13f|openap
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import urllib.parse
+import urllib.request
+
+YALE_PAGE = "https://faculty.som.yale.edu/michaelsinkinson/common-ownership-data/"
+
+
+def recon_krx() -> None:
+    import FinanceDataReader as fdr
+
+    delisted = fdr.StockListing("KRX-DELISTING")
+    print("delisting columns:", list(delisted.columns))
+    print("delisting rows:", len(delisted))
+    print(delisted.head(3).to_string())
+    date_col = next((c for c in delisted.columns if "Date" in c or "date" in c or "폐지" in c), None)
+    code_col = next((c for c in delisted.columns if c in ("Symbol", "Code", "종목코드")), delisted.columns[0])
+    print("date_col:", date_col, "code_col:", code_col)
+    if date_col is not None:
+        years = delisted[date_col].astype(str).str[:4]
+        print("delistings 2000-2013:", int(years.between("2000", "2013").sum()))
+        sample = delisted[years.between("2003", "2012")].head(12)
+    else:
+        sample = delisted.head(12)
+    for _, row in sample.iterrows():
+        code = str(row[code_col])
+        try:
+            df = fdr.DataReader(f"KRX-DELISTING:{code}", "1995-01-01")
+            span = (str(df.index.min())[:10], str(df.index.max())[:10]) if len(df) else None
+            print(f"{code}: rows={len(df)} span={span} delisted={row[date_col] if date_col else '?'}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"{code}: ERROR {type(exc).__name__}: {exc}")
+
+
+def recon_yale13f() -> None:
+    html = urllib.request.urlopen(YALE_PAGE, timeout=30).read().decode("utf-8", "replace")
+    links = sorted(set(re.findall(r'href="([^"]+\.(?:zip|csv|gz|dta)[^"]*)"', html)))
+    print("data links:", links)
+    for link in links:
+        url = link if link.startswith("http") else urllib.parse.urljoin(YALE_PAGE, link)
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                print(url, resp.status, resp.headers.get("Content-Length"), resp.headers.get("Content-Type"))
+        except Exception as exc:  # noqa: BLE001
+            print(url, "ERROR", type(exc).__name__, exc)
+
+
+def recon_openap() -> None:
+    import openassetpricing as oap
+
+    openap = oap.OpenAP()
+    print("releases:", openap.list_release())
+    doc = openap.dl_signal_doc("pandas")
+    print("signal doc columns:", list(doc.columns))
+    print("signal count:", len(doc))
+    print(doc.head(10).to_string())
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("target", choices=["krx", "yale13f", "openap"])
+    args = parser.parse_args()
+    {"krx": recon_krx, "yale13f": recon_yale13f, "openap": recon_openap}[args.target]()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
