@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""ADR-0235 recon: real, read-only probes of three free data sources the
+"""ADR-0235 recon: real, read-only probes of free data sources the
 sandbox cannot reach (KRX/FinanceDataReader, the Yale 13F 1999-2017
-dataset page, the OpenAP signal documentation). Prints what each source
-actually returns so the next step is decided from observation, not docs.
+dataset page, the OpenAP signal documentation, the JKP global factor
+dataset). Prints what each source actually returns so the next step is
+decided from observation, not docs.
 
-    python3 scripts/recon_overseas_and_guru_sources.py krx|yale13f|openap
+    python3 scripts/recon_overseas_and_guru_sources.py krx|yale13f|openap|jkp
 """
 
 from __future__ import annotations
@@ -124,11 +125,46 @@ def recon_openap_ls() -> None:
             print(name, g.loc[name, ["mean", "t_raw", "Sign"]].to_dict())
 
 
+def recon_jkp() -> None:
+    """Probe the JKP (Jensen-Kelly-Pedersen) Global Factor Data: free,
+    no account/API key, hosted on Dropbox, pip-installable via the
+    `globalfactordata` package. Pulls one non-US country (Korea) and one
+    cluster/theme series to confirm it's really reachable and really free.
+    License is CC BY-NC 4.0 (non-commercial) -- fine for this project's
+    own research, not for resale.
+    """
+    import globalfactordata as gfd
+
+    print("globalfactordata module file:", gfd.__file__)
+    mkt = gfd.get_market_returns(freq="monthly")
+    print("market_returns columns:", list(mkt.columns))
+    print("market_returns rows:", len(mkt))
+    print(mkt.head(3).to_string())
+
+    kor = gfd.get_factor(category="country", name="KOR", freq="monthly")
+    print("\nKOR factor columns:", list(kor.columns))
+    print("KOR factor rows:", len(kor))
+    if "date" in kor.columns:
+        print("KOR date range:", kor["date"].min(), "to", kor["date"].max())
+    print(kor.head(5).to_string())
+
+    jpn = gfd.get_factor(category="country", name="JPN", freq="monthly")
+    print("\nJPN factor rows:", len(jpn))
+    if "date" in jpn.columns:
+        print("JPN date range:", jpn["date"].min(), "to", jpn["date"].max())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("target", choices=["krx", "yale13f", "openap", "openap_ls"])
+    parser.add_argument("target", choices=["krx", "yale13f", "openap", "openap_ls", "jkp"])
     args = parser.parse_args()
-    {"krx": recon_krx, "yale13f": recon_yale13f, "openap": recon_openap, "openap_ls": recon_openap_ls}[args.target]()
+    {
+        "krx": recon_krx,
+        "yale13f": recon_yale13f,
+        "openap": recon_openap,
+        "openap_ls": recon_openap_ls,
+        "jkp": recon_jkp,
+    }[args.target]()
     return 0
 
 

@@ -1,5 +1,6 @@
 # ADR-0235 recon: real probes of KRX (FinanceDataReader), the Yale 13F
-# dataset page and the OpenAP signal docs. Read-only, workflow_dispatch only.
+# dataset page, the OpenAP signal docs, and the JKP global factor dataset.
+# Read-only, workflow_dispatch only.
 name: Recon Overseas And Guru Sources
 
 on:
@@ -13,6 +14,7 @@ on:
           - yale13f
           - openap
           - openap_ls
+          - jkp
         default: krx
 
 concurrency:
@@ -40,6 +42,7 @@ jobs:
           case "$TARGET_INPUT" in
             krx) pip install finance-datareader ;;
             openap|openap_ls) pip install openassetpricing pandas ;;
+            jkp) pip install globalfactordata pandas ;;
           esac
 
       - name: Probe source
