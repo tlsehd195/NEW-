@@ -16,9 +16,9 @@ on:
         type: string
         default: "fred-macro-vintages-v1"
       end:
-        description: "Range end (YYYY-MM-DD); must stay before TEST_4 (2013-03-21, ADR-0222/0228)"
+        description: "Range end (YYYY-MM-DD); must stay before TEST_5 (2010-07-29, ADR-0230)"
         type: string
-        default: "2013-03-20"
+        default: "2010-07-28"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

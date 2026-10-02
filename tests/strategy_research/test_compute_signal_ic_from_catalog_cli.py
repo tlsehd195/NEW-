@@ -104,7 +104,7 @@ class TestTest1Refusal:
             "--db-path", str(tmp_path / "store"),
             "--strategy", "long_term_momentum",
             "--start", "2010-01-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
         ])
         assert exit_code == 0
 
@@ -128,7 +128,7 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "long_term_momentum",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -156,7 +156,7 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "low_volatility",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -188,7 +188,7 @@ class TestEndToEndAgainstSyntheticCatalog:
                 "--universe", "PILOT_UNIVERSE",
                 "--strategy", strategy,
                 "--start", "2012-06-01",
-                "--end", "2013-01-01",
+                "--end", "2010-07-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])
@@ -218,7 +218,7 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "rs_rating",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -249,7 +249,7 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "low_beta",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -277,7 +277,7 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "idiosyncratic_volatility",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -306,7 +306,7 @@ class TestEndToEndAgainstSyntheticCatalog:
             "--universe", "PILOT_UNIVERSE",
             "--strategy", "illiquidity",
             "--start", "2012-06-01",
-            "--end", "2013-01-01",
+            "--end", "2010-07-01",
             "--step-months", "1",
             "--horizon-days", "20",
         ])
@@ -332,7 +332,7 @@ class TestEndToEndAgainstSyntheticCatalog:
                 "--universe", "PILOT_UNIVERSE",
                 "--strategy", strategy,
                 "--start", "2012-06-01",
-                "--end", "2013-01-01",
+                "--end", "2010-07-01",
                 "--step-months", "1",
                 "--horizon-days", "20",
             ])

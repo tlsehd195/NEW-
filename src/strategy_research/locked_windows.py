@@ -174,7 +174,23 @@ TEST_4 = LockedWindow(
     ),
 )
 
-LOCKED_WINDOWS: tuple[LockedWindow, ...] = (TEST_1, TEST_2, TEST_3, TEST_4)
+# ADR-0230: low_volatility's held-out TEST (2010-07-29 09:36 UTC..
+# 2013-03-21), run once for that single finalist. Locked from the start
+# of that day; ends exactly at TEST_4's start.
+TEST_5 = LockedWindow(
+    name="TEST-5",
+    start=datetime(2010, 7, 29, tzinfo=timezone.utc),
+    end=datetime(2013, 3, 21, tzinfo=timezone.utc),
+    observed_by=("buy_and_hold", "low_volatility"),
+    note=(
+        "Observed once, real data, point-in-time S&P 500. low_volatility FAIL "
+        "against the same-names cost-free buy-and-hold: net CAGR 13.3% vs "
+        "16.1% (net Sharpe 1.28 vs 0.94 was higher, but both must be). See "
+        "docs/research/reports/full-validation-20261002T041800Z.json."
+    ),
+)
+
+LOCKED_WINDOWS: tuple[LockedWindow, ...] = (TEST_1, TEST_2, TEST_3, TEST_4, TEST_5)
 
 
 def overlaps_any_locked_window(start: datetime, end: datetime) -> tuple[LockedWindow, ...]:
