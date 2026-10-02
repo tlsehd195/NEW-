@@ -1,6 +1,6 @@
 # ADR-0231: Every CUSIP a company has used in the 13F ownership map
 
-**Status:** Accepted (code merged; map rebuild and backfill re-run pending)
+**Status:** Accepted (done 2026-10-02: map run 36962309499, backfill run 36962851090)
 **Date:** 2026-10-02
 **Deciders:** account owner (asked for the 13F mapping fix, 2026-10-02), Claude Code session
 
@@ -85,3 +85,14 @@ both committed files.
   build log prints each rejection and each CUSIP kept without OpenFIGI
   confirmation.
 - Tests: `tests/data_infra/test_sec_13f_cusip_history.py`.
+
+## Result (2026-10-02)
+
+- Map (run 36962309499): 86 of 87 names. AVB is not in SEC's ticker
+  file. Multi-CUSIP names: AVGO, EQIX, GE, GOOGL (Google era), LIN
+  (Praxair era), RTX (UTX), WELL.
+- Backfill (run 36962851090): 4,353 rows, 2013-06..2026-03. Every name
+  that was missing or late now starts at 2013-06 except AVGO (2015-12,
+  Broadcom Ltd; the Avago era is not included) and DOW (2019-03, a new
+  company). Quarter-to-quarter jumps that remain are stock splits,
+  which `split_adjusted_institutional_holdings` already corrects.

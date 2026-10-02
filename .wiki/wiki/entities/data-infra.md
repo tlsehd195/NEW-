@@ -20,7 +20,7 @@ Phase 1. ADR-0002(데이터 저장), ADR-0003(데이터 모델), ADR-0004(point-
 - `TickerMembershipInterval`, `PriceDataCoverageReport`
 - `TwelveDataRateLimiter` (외부 데이터 프로바이더 레이트리밋)
 - `InstitutionalHoldingRecord`(13F 전체 filer 집계) / `InstitutionalFilerHoldingRecord`(13F 개별 filer, ADR-0194)
-- `providers.sec_13f_cusip_history` — 13F 보유내역의 티커↔CUSIP 지도를 시점별로 유지(ADR-0231): 회사의 현재·과거 SEC 이름으로 매칭하고, 티커당 CUSIP 목록(`{ticker: [cusip, ...]}`)으로 저장해서 CUSIP이 바뀐 회사(예: Google→Alphabet)도 이전 분기 보유를 합산한다.
+- `providers.sec_13f_cusip_history` — 13F 보유내역의 티커↔CUSIP 지도를 시점별로 유지(ADR-0231): 회사의 현재·과거 SEC 이름으로 매칭하고, 티커당 CUSIP 목록(`{ticker: [cusip, ...]}`)으로 저장해서 CUSIP이 바뀐 회사(예: Google→Alphabet)도 이전 분기 보유를 합산한다. 파일마다 보유 주식수가 가장 많은 보통주 CUSIP만 받고(우선주·채권·옵션 제외), 이름만으로 못 가리는 경우(새 CIK로 바뀐 회사, 이름이 같은 다른 회사)는 검토된 보정 파일 `docs/research/reference/sec_13f_cusip_overrides.csv`로 처리한다.
 - `tracked_institutional_filers.TrackedFiler`/`TRACKED_FILERS`/`active_tracked_filers` — point-in-time-aware "guru investor" registry(ADR-0194). `tracked_from`/`tracked_until`로 특정 filer의 은퇴/펀드 청산을 과거 backtest 결과에 영향 없이 반영 (실제 사례: Scion Asset Management, 2025-11-10 SEC 등록 취소).
 
 ## 경계
