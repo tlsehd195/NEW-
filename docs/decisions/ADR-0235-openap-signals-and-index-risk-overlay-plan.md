@@ -65,6 +65,26 @@ is nearly exhausted (only 2000-01-01..2013-03-21 remains open per
   tradeoff is explicit up front (same "decide the judging rule before
   running the backtest" discipline as `ADR-0228`).
 
+### 2a. Pre-registered overlay candidates (fixed before any backtest)
+
+`ADR-0220` already showed the 12 macro rules are INCONCLUSIVE (best DSR
+0.25) and the one lead, the Sahm rule, rests on 5 exposure changes, so
+promoting it is not justified. The overlay track therefore tests only
+two standard, parameter-free rules with decades of public evidence:
+
+- `sma_10m`: hold SPY while the month-end close is above its 10-month
+  average, otherwise hold cash (checked monthly, trade next open).
+- `vol_target_10`: SPY weight = min(1, 10% / trailing 21-day realized
+  volatility), no leverage.
+
+Both earn the FRED `DGS3MO` rate on cash (`ADR-0227`), pay 5 bps per
+switch, and run only on 2000-01-01..2013-03-21. Trial count: 2.
+
+Pass rule: max drawdown at least 15 points shallower than SPY buy-and-hold
+AND Sharpe not lower AND CAGR no more than 1.5 points lower. Passing does
+not mean validated: this window holds only two bear markets (2000-02 and
+2008-09), so a pass is reported as research-window evidence only.
+
 ## Consequences
 
 - No locked window is touched by either track.
