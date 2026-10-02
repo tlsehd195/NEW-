@@ -46,10 +46,11 @@ resampling and is always seeded by the caller."""
 from __future__ import annotations
 
 import math
-import random
 import statistics
 from dataclasses import dataclass
 from typing import Mapping, Sequence
+
+import numpy as np
 
 _normal = statistics.NormalDist()
 
@@ -129,7 +130,7 @@ def excess_returns_vs_benchmark(
 
 
 def _stationary_bootstrap_sample_indices(
-    n: int, *, mean_block_length: float, rng: random.Random
+    n: int, *, mean_block_length: float, rng: np.random.Generator
 ) -> list[int]:
     """One resampled index path of length `n` via the stationary
     bootstrap (Politis & Romano 1994): blocks of geometric-distributed
@@ -138,11 +139,11 @@ def _stationary_bootstrap_sample_indices(
     by i.i.d. resampling."""
     p = 1.0 / mean_block_length
     indices: list[int] = []
-    current = rng.randrange(n)
+    current = int(rng.integers(n))
     while len(indices) < n:
         indices.append(current)
         if rng.random() < p:
-            current = rng.randrange(n)
+            current = int(rng.integers(n))
         else:
             current = (current + 1) % n
     return indices
@@ -171,7 +172,7 @@ def white_reality_check(
     observed_statistic = max(math.sqrt(n) * means[name] for name in names)
     best_candidate = max(names, key=lambda name: means[name])
 
-    rng = random.Random(seed)
+    rng = np.random.default_rng(seed)
     exceed_count = 0
     for _ in range(num_bootstrap_samples):
         idx = _stationary_bootstrap_sample_indices(n, mean_block_length=mean_block_length, rng=rng)
@@ -211,7 +212,7 @@ def hansen_spa(
     names, n = _validate_excess_returns(excess_returns_by_candidate)
     means = {name: statistics.mean(excess_returns_by_candidate[name]) for name in names}
 
-    rng = random.Random(seed)
+    rng = np.random.default_rng(seed)
     # Bootstrap resamples drawn once, reused to estimate both each
     # candidate's bootstrap stdev and the SPA null statistic itself --
     # standard practice (Hansen 2005 section 3) rather than drawing two
