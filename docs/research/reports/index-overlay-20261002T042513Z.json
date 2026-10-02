@@ -1,0 +1,71 @@
+{
+  "start": "2000-01-01",
+  "end": "2013-03-20",
+  "adr": "ADR-0235",
+  "results": {
+    "no_filter": {
+      "cumulative_return": 0.4192515200132656,
+      "cagr": 0.026859003542920812,
+      "sharpe_ratio": 0.12968429880081825,
+      "max_drawdown": -0.5401101319754655,
+      "annualized_volatility": 0.20740460412190184,
+      "turnover": 1.2158071877640793,
+      "total_transaction_cost": 19.568461982998606,
+      "benchmark_cumulative_return": 0.35272115162769246,
+      "benchmark_max_drawdown": -0.552011045721762,
+      "is_valid_performance": true,
+      "fills": 12,
+      "mean_exposure": 1.0,
+      "exposure_changes": 0
+    },
+    "sma_10m": {
+      "cumulative_return": 1.483052158248396,
+      "cagr": 0.0712731587736184,
+      "sharpe_ratio": 0.45669101117703526,
+      "max_drawdown": -0.20472421813425765,
+      "annualized_volatility": 0.12078503483450116,
+      "turnover": 14.45550148886479,
+      "total_transaction_cost": 165.85878885170854,
+      "benchmark_cumulative_return": 0.35272115162769246,
+      "benchmark_max_drawdown": -0.552011045721762,
+      "is_valid_performance": true,
+      "fills": 19,
+      "mean_exposure": 0.6554,
+      "exposure_changes": 14
+    },
+    "vol_target_10": {
+      "cumulative_return": 0.5318059014491212,
+      "cagr": 0.032808555939358275,
+      "sharpe_ratio": 0.1598933382235787,
+      "max_drawdown": -0.29179392580025343,
+      "annualized_volatility": 0.10385308472791088,
+      "turnover": 29.244954669768386,
+      "total_transaction_cost": 412.6791949089437,
+      "benchmark_cumulative_return": 0.35272115162769246,
+      "benchmark_max_drawdown": -0.552011045721762,
+      "is_valid_performance": true,
+      "fills": 207,
+      "mean_exposure": 0.6631,
+      "exposure_changes": 2685
+    }
+  },
+  "pass_rule": {
+    "sma_10m": {
+      "checks": {
+        "max_drawdown_15pts_shallower": true,
+        "sharpe_not_lower": true,
+        "cagr_within_1_5pts": true
+      },
+      "grade": "RESEARCH_PASS"
+    },
+    "vol_target_10": {
+      "checks": {
+        "max_drawdown_15pts_shallower": true,
+        "sharpe_not_lower": true,
+        "cagr_within_1_5pts": true
+      },
+      "grade": "RESEARCH_PASS"
+    }
+  },
+  "caveat": "Two bear markets (2000-02, 2008-09) only; RESEARCH_PASS is not validation."
+}
