@@ -111,11 +111,10 @@ def recon_openap_ls() -> None:
     g = win.groupby("signalname")["ret"].agg(["mean", "std", "count"])
     g["t_raw"] = g["mean"] / g["std"] * np.sqrt(g["count"])
     g = g.join(doc.set_index("Acronym"), how="left")
-    g["t_oriented"] = g["t_raw"] * g["Sign"].where(g["Sign"].notna(), 1.0)
     clear = g[(g["Predictability in OP"].astype(str) == "1_clear")]
     oos = clear[clear["SampleEndYear"] <= 1999]
     print("signals with LS in window:", len(g), "clear:", len(clear), "clear and sample ended <=1999 (true OOS):", len(oos))
-    cols = ["mean", "t_raw", "t_oriented", "SampleStartYear", "SampleEndYear", "Cat.Data", "Sign"]
+    cols = ["mean", "t_raw", "SampleStartYear", "SampleEndYear", "Cat.Data", "Sign"]
     print("--- true-OOS clear signals, by |t_raw| ---")
     print(oos.reindex(oos["t_raw"].abs().sort_values(ascending=False).index)[cols].head(40).to_string())
     print("--- by Cat.Data (true OOS) ---")

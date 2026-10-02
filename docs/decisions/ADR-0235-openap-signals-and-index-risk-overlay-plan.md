@@ -77,8 +77,13 @@ two standard, parameter-free rules with decades of public evidence:
 - `vol_target_10`: SPY weight = min(1, 10% / trailing 21-day realized
   volatility), no leverage.
 
-Both earn the FRED `DGS3MO` rate on cash (`ADR-0227`), pay 5 bps per
-switch, and run only on 2000-01-01..2013-03-21. Trial count: 2.
+Both earn the FRED `DGS3MO` rate on cash (`ADR-0227`), pay the backtest
+engine's default transaction costs (as `ADR-0220`), and run only on
+2000-01-01..2013-03-20. `vol_target_10` re-weights only when the held
+share is 10 points off target; `sma_10m` decides on the first trading day
+of each month from the previous month-end closes. Trial count: 2.
+Code: `src/macro_filter/overlays.py`, `scripts/run_index_overlay_validation.py`,
+`run_index_overlay_validation.yml`.
 
 Pass rule: max drawdown at least 15 points shallower than SPY buy-and-hold
 AND Sharpe not lower AND CAGR no more than 1.5 points lower. Passing does
@@ -99,3 +104,34 @@ not mean validated: this window holds only two bear markets (2000-02 and
   the account owner to pay for and provision a provider like EODHD; 3
   has no known data source at any price for the 2000-2013 window and is
   not planned further unless a new source surfaces.
+
+## Findings (2026-10-02, real probes from GitHub runners)
+
+- **KRX (option 2, Korea) is blocked from GitHub runners.**
+  FinanceDataReader's `KRX-DELISTING` listing came back empty and a direct
+  POST to `data.krx.co.kr` (`MDCSTAT23801`) returned HTTP 400, so the free
+  route needs a Korean network or a KRX login that was not tried. Its cache
+  repo (`FinanceData/fdr_krx_data_cache`) holds delisting lists, not
+  delisted price history. Option 2 stays unproven for Korea and unavailable
+  for Japan/Europe without a paid provider.
+- **Yale 13F 1999-2017 dataset (option 3) is not downloadable.** The page
+  lists the files but no links ("evaluating hosting options, contact the
+  authors") and answers HTTP 410 to a runner. An earlier note in this
+  thread called it a free CSV download; that was wrong. The remaining free
+  route is parsing EDGAR's pre-2013 plain-text 13F filings for a short
+  list of guru filers (not started; existing 13F code reads only the XML
+  era).
+- **OpenAP works from a runner** (`openassetpricing` package): 331 signals
+  documented, plus the paper-style long-short portfolio returns
+  (`dl_port("op")`). Over 2000-01-01..2013-03-20, 165 of the 212 signals
+  with a long-short series are rated "clear" by OpenAP, and 56 of those had
+  an original sample ending in 1999 or earlier, so this window is true
+  out-of-sample for them. With 56 looks the Harvey-Liu-Zhu bar is |t| > 3:
+  AnnouncementReturn (t 6.0), DivYieldST (5.6), ChangeInRecommendation
+  (4.5), AccrualsBM (4.3) and ExchSwitch (3.4) clear it. The classics are
+  dead here: Accruals t 0.8, Size 1.2, 12-month momentum 0.2. These are
+  full-universe long-short returns including small caps, not long-only
+  S&P 500 results, and only DivYieldST is computable from data this
+  project already holds (prices plus dividends); the others need earnings
+  dates, analyst data or a pre-2009 fundamentals history.
+

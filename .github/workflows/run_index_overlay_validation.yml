@@ -1,0 +1,91 @@
+# Research-window run of the ADR-0235 index overlays (sma_10m,
+# vol_target_10) against SPY buy-and-hold, on the real 2000+ price catalog
+# and the real macro store (cash earns the 3-month T-bill yield).
+# workflow_dispatch-only; the report is committed like the macro filter's.
+name: Run Index Overlay Validation (Real Data)
+
+on:
+  workflow_dispatch:
+    inputs:
+      price_release_tag:
+        description: "Release holding price_catalog.zip"
+        type: string
+        default: "research-price-catalog-stage5-2000"
+      macro_release_tag:
+        description: "Release holding macro_store.zip"
+        type: string
+        default: "fred-macro-vintages-v1"
+      end:
+        description: "Range end (YYYY-MM-DD); must stay before TEST_4 (2013-03-21, ADR-0222/0228)"
+        type: string
+        default: "2013-03-20"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e '.[market-calendars]'
+
+      - name: Download the price catalog and the macro store
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRICE_TAG_INPUT: ${{ inputs.price_release_tag }}
+          MACRO_TAG_INPUT: ${{ inputs.macro_release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p ./data
+          gh release download "$PRICE_TAG_INPUT" --repo "${{ github.repository }}" \
+            --pattern "price_catalog.zip" --dir ./data --clobber
+          gh release download "$MACRO_TAG_INPUT" --repo "${{ github.repository }}" \
+            --pattern "macro_store.zip" --dir ./data --clobber
+          unzip -q ./data/price_catalog.zip -d ./data/price_catalog
+          unzip -q ./data/macro_store.zip -d ./data/macro_store
+          test -f ./data/price_catalog/catalog.duckdb
+          test -f ./data/macro_store/catalog.duckdb
+
+      - name: Re-stamp corporate-action available_time (ADR-0216)
+        run: python3 scripts/repair_corporate_action_available_time.py --db-path ./data/price_catalog --apply
+
+      - name: Run the overlays
+        env:
+          END_INPUT: ${{ inputs.end }}
+        run: |
+          python3 -u scripts/run_index_overlay_validation.py \
+            --price-db-path ./data/price_catalog --macro-db-path ./data/macro_store \
+            --end "$END_INPUT" --report-json ./index_overlay_report.json
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: index-overlay-report
+          path: ./index_overlay_report.json
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Commit the report into the repo
+        run: |
+          set -euo pipefail
+          mkdir -p docs/research/reports
+          DEST="docs/research/reports/index-overlay-$(date -u +%Y%m%dT%H%M%SZ).json"
+          cp ./index_overlay_report.json "$DEST"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$DEST"
+          git commit -m "chore: record index overlay validation report"
+          git push
