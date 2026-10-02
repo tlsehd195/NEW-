@@ -12,6 +12,7 @@ on:
           - krx
           - yale13f
           - openap
+          - openap_ls
         default: krx
 
 concurrency:
@@ -38,7 +39,7 @@ jobs:
         run: |
           case "$TARGET_INPUT" in
             krx) pip install finance-datareader ;;
-            openap) pip install openassetpricing pandas ;;
+            openap|openap_ls) pip install openassetpricing pandas ;;
           esac
 
       - name: Probe source

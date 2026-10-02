@@ -94,11 +94,42 @@ def recon_openap() -> None:
     print(doc.head(10).to_string())
 
 
+def recon_openap_ls() -> None:
+    import numpy as np
+    import openassetpricing as oap
+
+    openap = oap.OpenAP()
+    print("list_port:", openap.list_port())
+    ports = openap.dl_port("op", "pandas")
+    print("port columns:", list(ports.columns), "rows:", len(ports))
+    print(ports.head(3).to_string())
+    print("port values:", sorted(ports["port"].astype(str).unique())[:15])
+    doc = openap.dl_signal_doc("pandas")[["Acronym", "Predictability in OP", "SampleStartYear", "SampleEndYear", "Cat.Data", "Sign", "T-Stat", "Year"]]
+    ls = ports[ports["port"].astype(str).str.upper() == "LS"].copy()
+    ls["date"] = ls["date"].astype("datetime64[ns]")
+    win = ls[(ls["date"] >= "2000-01-01") & (ls["date"] < "2013-03-21")]
+    g = win.groupby("signalname")["ret"].agg(["mean", "std", "count"])
+    g["t_raw"] = g["mean"] / g["std"] * np.sqrt(g["count"])
+    g = g.join(doc.set_index("Acronym"), how="left")
+    g["t_oriented"] = g["t_raw"] * g["Sign"].where(g["Sign"].notna(), 1.0)
+    clear = g[(g["Predictability in OP"].astype(str) == "1_clear")]
+    oos = clear[clear["SampleEndYear"] <= 1999]
+    print("signals with LS in window:", len(g), "clear:", len(clear), "clear and sample ended <=1999 (true OOS):", len(oos))
+    cols = ["mean", "t_raw", "t_oriented", "SampleStartYear", "SampleEndYear", "Cat.Data", "Sign"]
+    print("--- true-OOS clear signals, by |t_raw| ---")
+    print(oos.reindex(oos["t_raw"].abs().sort_values(ascending=False).index)[cols].head(40).to_string())
+    print("--- by Cat.Data (true OOS) ---")
+    print(oos.groupby("Cat.Data").size().to_string())
+    for name in ("Accruals", "Mom12m", "BM", "Size", "STreversal"):
+        if name in g.index:
+            print(name, g.loc[name, ["mean", "t_raw", "Sign"]].to_dict())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("target", choices=["krx", "yale13f", "openap"])
+    parser.add_argument("target", choices=["krx", "yale13f", "openap", "openap_ls"])
     args = parser.parse_args()
-    {"krx": recon_krx, "yale13f": recon_yale13f, "openap": recon_openap}[args.target]()
+    {"krx": recon_krx, "yale13f": recon_yale13f, "openap": recon_openap, "openap_ls": recon_openap_ls}[args.target]()
     return 0
 
 
