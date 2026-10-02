@@ -84,7 +84,12 @@ jobs:
             # (real, 2026-09-26 run 36236486917).
             git add -f docs/research/reference/institutional_holdings_combined.csv
             git commit -m "Update real institutional-holdings backfill combined CSV [skip ci]"
-            git push
+            # main often moves during the run (rejected push, run 36961405514).
+            for attempt in 1 2 3; do
+              git pull --rebase origin "$GITHUB_REF_NAME" && git push && exit 0
+              sleep $((attempt * 5))
+            done
+            exit 1
           else
             echo "No change to the combined CSV since last run -- nothing to commit"
           fi
