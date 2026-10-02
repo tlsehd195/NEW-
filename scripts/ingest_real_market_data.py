@@ -328,6 +328,37 @@ def main() -> int:
             print("No symbols left to fetch -- nothing to do.")
             return 0
 
+        # 2026-10-01 (run #53 follow-up): a symbol with a real, confirmed
+        # `listed_to` (ADR-0122 -- AVB's real 2026-08-18 AvalonBay/Equity
+        # Residential merger) will NEVER again have a new bar or
+        # corporate action, yet this script retried it every single day
+        # regardless -- Twelve Data's own permanent "not found" for it
+        # (ADR-0215's own comment already noted this) forced every retry
+        # through to Tiingo/Alpha Vantage, burning real shared quota on a
+        # guaranteed-failing request and tripping this run's own
+        # `result.status != SUCCESS` gate purely because of it (run #53,
+        # 2026-10-01). Any symbol whose confirmed `listed_to` already
+        # precedes the REQUESTED window entirely is skipped from both the
+        # corporate-action loop and the price-bar fetch below -- `symbols`
+        # itself (and therefore every other manifest field: bar counts,
+        # checksum, missing-symbol detection) is left untouched, so its
+        # own already-persisted historical bars are still read back and
+        # reported normally further down; only the hopeless new-data
+        # attempt is skipped.
+        delisted_before_window = (
+            sorted(
+                s.symbol for s in universe.symbols
+                if s.listed_to is not None and s.listed_to <= args.start and s.symbol in symbols
+            )
+            if universe is not None else []
+        )
+        live_fetch_symbols = [s for s in symbols if s not in delisted_before_window]
+        if delisted_before_window:
+            print(
+                f"Skipping live fetch for {len(delisted_before_window)} symbol(s) confirmed delisted "
+                f"entirely before the requested window (no new data possible): {delisted_before_window}"
+            )
+
         # Run #44 (2026-09-25): corporate-action collection ran AFTER
         # price-bar ingestion and called Tiingo ONLY -- Tiingo's own
         # hourly request budget (ADR-0160) is shared with price-bar
@@ -344,7 +375,7 @@ def main() -> int:
         # its own and tolerates absorbing the remainder far better.
         corporate_action_results = []
         all_actions = []
-        for symbol in symbols:
+        for symbol in live_fetch_symbols:
             try:
                 # ADR-0215: leave TIINGO_PRICE_RESERVE calls of the shared
                 # hourly budget for price bars Twelve Data cannot serve;
@@ -399,7 +430,7 @@ def main() -> int:
         corporate_action_failed_symbols = sorted(r["security_id"] for r in corporate_action_results if r["error"] is not None)
 
         runner = IngestionRunner(provider, repository)
-        result = runner.run(symbols, args.start, args.end)
+        result = runner.run(live_fetch_symbols, args.start, args.end)
 
         quality = DataQualityFramework()
         # ADR-0167 identified this bug but deliberately deferred fixing it
@@ -568,7 +599,14 @@ def main() -> int:
             for offset in range((args.end.date() - args.start.date()).days + 1)
             if xnys_calendar.is_trading_day(args.start.date() + timedelta(days=offset))
         )
-        unexplained_zero_bar_symbols = list(missing_symbols) if expected_trading_days_in_range > 0 else []
+        # 2026-10-01 (run #53 follow-up): a symbol skipped above as
+        # confirmed-delisted-before-window will legitimately show zero
+        # bars in `missing_symbols` once the window moves entirely past
+        # its delisting date -- that is fully explained, not a silent
+        # provider failure, so it must not re-trip this FATAL gate.
+        unexplained_zero_bar_symbols = (
+            sorted(set(missing_symbols) - set(delisted_before_window)) if expected_trading_days_in_range > 0 else []
+        )
 
         historical_universe_membership_available = (
             any(s.listed_from is not None or s.listed_to is not None for s in universe.symbols)
@@ -592,6 +630,7 @@ def main() -> int:
             "active_count": active_count,
             "delisted_count": delisted_count,
             "missing_symbols": missing_symbols,
+            "symbols_skipped_delisted_before_window": delisted_before_window,
             "expected_trading_days_in_range": expected_trading_days_in_range,
             "unexplained_zero_bar_symbols": unexplained_zero_bar_symbols,
             "providers_used": providers_used,
@@ -671,7 +710,7 @@ def main() -> int:
             # symbol's actual error text.
             print(
                 f"Corporate-action collection failed for {len(corporate_action_failed_symbols)} of "
-                f"{len(symbols)} symbol(s) (both Tiingo and Alpha Vantage failed): {corporate_action_failed_symbols}"
+                f"{len(live_fetch_symbols)} symbol(s) (both Tiingo and Alpha Vantage failed): {corporate_action_failed_symbols}"
             )
         print(f"Data quality status: {quality_run.status.value} ({len(quality_run.issues)} issue(s))")
         # Session 37: print the severity breakdown directly to the job's

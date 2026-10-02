@@ -331,9 +331,9 @@ class TestUnexplainedZeroBarSymbolsGateExitCode:
         # is a failure" fix was rejected for during design.
         source = _source()
         assign_line_start = source.index("unexplained_zero_bar_symbols = ")
-        assign_line = source[assign_line_start:source.index("\n", assign_line_start)]
-        assert "missing_symbols" in assign_line
-        assert "expected_trading_days_in_range > 0" in assign_line
+        assign_block = source[assign_line_start:source.index("\n\n", assign_line_start)]
+        assert "missing_symbols" in assign_block
+        assert "expected_trading_days_in_range > 0" in assign_block
 
     def test_a_fatal_message_is_printed_for_unexplained_zero_bar_symbols(self) -> None:
         source = _source()
@@ -417,6 +417,77 @@ class TestCorporateActionsFallBackToAlphaVantage:
         corp_action_loop_index = source.index("tiingo.fetch_corporate_actions(")
         price_bar_runner_index = source.index("runner = IngestionRunner(provider, repository)")
         assert corp_action_loop_index < price_bar_runner_index
+
+
+class TestConfirmedDelistedSymbolsSkipLiveFetch:
+    """2026-10-01 (run #53 follow-up): AVB's real, confirmed `listed_to`
+    (ADR-0122) means it will never again have a new bar or corporate
+    action, yet this script retried it every single day regardless --
+    Twelve Data's own permanent "not found" for it forced every retry
+    through to Tiingo/Alpha Vantage, burning real shared quota on a
+    guaranteed-failing request and tripping this run's own `result.
+    status != SUCCESS` gate purely because of it. A symbol whose
+    confirmed `listed_to` already precedes the requested window entirely
+    must be skipped from the live-fetch attempt, without touching
+    `symbols` itself (bar counts/checksum/missing-symbol detection stay
+    honest about the catalog's actual historical content)."""
+
+    def test_delisted_before_window_is_computed_from_listed_to_and_args_start(self) -> None:
+        source = _source()
+        assign_line_start = source.index("delisted_before_window = (")
+        assign_block = source[assign_line_start:source.index("\n\n", assign_line_start)]
+        assert "listed_to is not None" in assign_block
+        assert "listed_to <= args.start" in assign_block
+
+    def test_live_fetch_symbols_excludes_delisted_before_window(self) -> None:
+        source = _source()
+        assign_line = next(
+            line for line in source.splitlines() if line.strip().startswith("live_fetch_symbols = ")
+        )
+        assert "delisted_before_window" in assign_line
+
+    def test_corporate_action_loop_and_runner_use_live_fetch_symbols_not_raw_symbols(self) -> None:
+        source = _source()
+        corp_loop_line = next(
+            line for line in source.splitlines() if line.strip().startswith("for symbol in live_fetch_symbols:")
+        )
+        assert corp_loop_line
+        runner_run_line = next(
+            line for line in source.splitlines() if line.strip().startswith("result = runner.run(")
+        )
+        assert "live_fetch_symbols" in runner_run_line
+        assert runner_run_line.strip() != "result = runner.run(symbols, args.start, args.end)"
+
+    def test_manifest_reports_which_symbols_were_skipped(self) -> None:
+        assert "symbols_skipped_delisted_before_window" in _manifest_keys(_tree())
+
+    def test_a_skip_message_is_printed_when_any_symbol_is_skipped(self) -> None:
+        source = _source()
+        assert "Skipping live fetch for" in source
+        assert "confirmed delisted" in source
+
+    def test_unexplained_zero_bar_symbols_excludes_delisted_before_window(self) -> None:
+        # Once the requested window moves entirely past a confirmed
+        # delisting, that symbol legitimately shows zero bars -- fully
+        # explained, not a silent provider failure, so it must not
+        # re-trip the FATAL unexplained-zero-bars gate.
+        source = _source()
+        assign_line_start = source.index("unexplained_zero_bar_symbols = (")
+        assign_block = source[assign_line_start:source.index("\n\n", assign_line_start)]
+        assert "missing_symbols" in assign_block
+        assert "delisted_before_window" in assign_block
+
+    def test_all_bars_and_checksum_still_read_from_the_full_symbols_list(self) -> None:
+        # The skip must be narrow: bar-count/checksum/missing-symbol
+        # reporting (all derived from `symbols`, not `live_fetch_
+        # symbols`) must stay untouched, so a delisted symbol's already-
+        # persisted historical bars within the window are still read
+        # back and reported honestly.
+        source = _source()
+        bar_counts_line = next(
+            line for line in source.splitlines() if line.strip().startswith("bar_counts_by_symbol = ")
+        )
+        assert "for symbol in symbols" in bar_counts_line
 
 
 class TestTiingoRequestBudgetSharedAcrossBothCallPaths:
