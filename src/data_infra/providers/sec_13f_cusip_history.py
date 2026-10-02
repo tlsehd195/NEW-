@@ -108,9 +108,15 @@ def is_share_row(shares_type: str, put_call: str) -> bool:
     return not put_call.strip() and shares_type.strip().upper() in ("SH", "")
 
 
+def is_equity_issue(cusip: str) -> bool:
+    """Equity issue numbers (CUSIP characters 7-8) are digits; debt
+    issues use letters (Tesla's convertible notes are 88160RAB7 etc.)."""
+    return cusip[6:8].isdigit()
+
+
 def dominant_cusip(shares_by_cusip: Mapping[str, float]) -> Optional[str]:
     """The valid CUSIP with the most shares in one file, or None."""
-    valid = {c: v for c, v in shares_by_cusip.items() if cusip_check_digit_ok(c) and v > 0}
+    valid = {c: v for c, v in shares_by_cusip.items() if cusip_check_digit_ok(c) and is_equity_issue(c) and v > 0}
     if not valid:
         return None
     return max(sorted(valid), key=lambda c: valid[c])
@@ -147,6 +153,25 @@ def confirm_cusips(
         for ticker, cusips in sorted(kept.items())
     }
     return {t: c for t, c in confirmed.items() if c}, notes
+
+
+def read_overrides(rows: Iterable[Mapping[str, str]]) -> tuple[dict[str, list[str]], dict[str, set[str]]]:
+    """Reviewed per-ticker corrections (`sec_13f_cusip_overrides.csv`):
+    `predecessor_name` adds an issuer name EDGAR does not list (a new
+    CIK took over the seat, e.g. Alphabet from Google), and
+    `exclude_cusip` removes a CUSIP that belongs to a different company
+    sharing the name (Linde AG before Linde plc)."""
+    names: dict[str, list[str]] = {}
+    excluded: dict[str, set[str]] = {}
+    for row in rows:
+        ticker, kind, value = row["ticker"].strip(), row["kind"].strip(), row["value"].strip()
+        if kind == "predecessor_name":
+            names.setdefault(ticker, []).append(core_name(value))
+        elif kind == "exclude_cusip":
+            excluded.setdefault(ticker, set()).add(value.upper())
+        else:
+            raise ValueError(f"unknown override kind {kind!r} for {ticker}")
+    return names, excluded
 
 
 def load_cusip_to_ticker(map_json: str) -> dict[str, str]:
