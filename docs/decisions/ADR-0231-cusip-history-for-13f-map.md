@@ -54,12 +54,23 @@ years and the paper loop's inputs.
    normalisation also turned "INC/DE" into "INCDE", which missed BAC,
    WFC, QCOM and NEM. Punctuation now becomes a space and state
    suffixes are stripped.
-4. **Map format** becomes `{ticker: [cusip, ...]}`.
+   Debt issues (letters in CUSIP characters 7-8, e.g. Tesla's
+   convertible notes) are never dominant.
+4. **Reviewed overrides.** The second rebuild (run 36959779750, 86/87
+   names) showed what name matching alone cannot settle: a ticker whose
+   predecessor filed under another CIK and name (Alphabet/Google,
+   Linde plc/Praxair) and a different company sharing the name (Linde AG
+   before 2018, Broadcom Corp before Avago bought it, Dow Chemical before
+   Dow Inc). `docs/research/reference/sec_13f_cusip_overrides.csv` lists
+   each correction with its reason (`predecessor_name`,
+   `exclude_cusip`). Avago itself is not added as a predecessor of AVGO:
+   its pre-2016 13F lines are not checked.
+5. **Map format** becomes `{ticker: [cusip, ...]}`.
    `backfill_institutional_holdings_from_sec_bulk.py` reads both
    formats (`load_cusip_to_ticker`) and sums every CUSIP of a ticker per
    quarter. `aggregate_holdings` already counts filers by accession, so
    a filer reporting both the old and new line counts once.
-5. **No silent failures.** OpenFIGI item errors and HTTP 429 are
+6. **No silent failures.** OpenFIGI item errors and HTTP 429 are
    retried. Every unmatched ticker is printed with its reason and the
    OpenFIGI answer for its candidates.
 

@@ -73,7 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data_infra.provider import PermanentProviderError, TransientProviderError  # noqa: E402
 from data_infra.providers.openfigi_cusip_resolution import build_mapping_request  # noqa: E402
-from data_infra.providers.sec_13f_cusip_history import company_names, confirm_cusips, dominant_cusip, is_share_row, name_matches  # noqa: E402
+from data_infra.providers.sec_13f_cusip_history import company_names, confirm_cusips, dominant_cusip, is_share_row, name_matches, read_overrides  # noqa: E402
 from data_infra.providers.sec_13f_bulk_dataset import generate_filing_windows  # noqa: E402
 from data_infra.providers.sec_edgar import SecEdgarFundamentalsProvider, resolve_cik, resolve_company_title  # noqa: E402
 from data_infra.providers.sec_edgar_config import SecEdgarConfig  # noqa: E402
@@ -86,6 +86,7 @@ _UNIVERSES = {"PILOT_UNIVERSE": PILOT_UNIVERSE_V1, "RESEARCH_UNIVERSE": RESEARCH
 _OPENFIGI_BATCH_SIZE = 10  # ADR-0131's own real, confirmed no-API-key limit
 _OPENFIGI_RETRIES = 3
 _FIRST_13F_YEAR = 2013  # SEC's structured 13F data sets start with 2013 Q3 filings
+_OVERRIDES_CSV = Path(__file__).resolve().parent.parent / "docs" / "research" / "reference" / "sec_13f_cusip_overrides.csv"
 _RENAMES_CSV = Path(__file__).resolve().parent.parent / "docs" / "research" / "reference" / "sp500_ticker_renames.csv"
 
 
@@ -226,6 +227,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             submissions = None
         names_by_ticker[ticker] = company_names(title, submissions)
         time.sleep(0.15)  # SEC fair access: well under 10 requests/second
+    with _OVERRIDES_CSV.open() as fh:
+        extra_names, excluded = read_overrides(csv.DictReader(fh))
+    for ticker, cores in extra_names.items():
+        if ticker in names_by_ticker:
+            names_by_ticker[ticker] += [c for c in cores if c not in names_by_ticker[ticker]]
     print(f"Company names for {len(names_by_ticker)}/{len(symbols)} symbols "
           f"({sum(len(v) > 1 for v in names_by_ticker.values())} with former names).")
 
@@ -247,7 +253,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             if issuer not in tickers_for_issuer:
                 tickers_for_issuer[issuer] = [t for t, cores in names_by_ticker.items() if name_matches(issuer, cores)]
             for ticker in tickers_for_issuer[issuer]:
-                shares[ticker][cusip] += amount
+                if cusip not in excluded.get(ticker, ()):
+                    shares[ticker][cusip] += amount
         for ticker, by_cusip in shares.items():
             top = dominant_cusip(by_cusip)
             if top:

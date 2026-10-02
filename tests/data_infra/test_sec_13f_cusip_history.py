@@ -16,6 +16,7 @@ from data_infra.providers.sec_13f_cusip_history import (
     load_cusip_to_ticker,
     name_matches,
     normalize,
+    read_overrides,
 )
 
 
@@ -57,6 +58,20 @@ class TestRowFilters:
         # The common line dwarfs a preferred and a typo CUSIP.
         assert dominant_cusip({"037833100": 5e9, "037833101": 9e9, "060505682": 1e6}) == "037833100"
         assert dominant_cusip({"BAD": 1.0}) is None
+
+    def test_debt_issues_are_never_dominant(self) -> None:
+        # Tesla's convertible notes carry letter issue numbers.
+        assert dominant_cusip({"88160R101": 1e6, "88160RAB7": 9e9}) == "88160R101"
+
+    def test_overrides(self) -> None:
+        names, excluded = read_overrides([
+            {"ticker": "GOOGL", "kind": "predecessor_name", "value": "GOOGLE INC"},
+            {"ticker": "LIN", "kind": "exclude_cusip", "value": "d50348107"},
+        ])
+        assert names == {"GOOGL": ["GOOGLE"]}
+        assert excluded == {"LIN": {"D50348107"}}
+        with pytest.raises(ValueError):
+            read_overrides([{"ticker": "X", "kind": "typo", "value": "Y"}])
 
     def test_normalize_splits_state_suffix(self) -> None:
         assert normalize("QUALCOMM INC/DE") == "QUALCOMM INC DE"
