@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "evaluated_at": "2025-03-25T20:00:00",
+    "paper_session_id": "paper-session-research_universe",
+    "payload_json": "{\"avg_trade_return\": -0.006250317618080978, \"benchmark\": {\"annualized_excess_return\": null, \"benchmark_cagr\": null, \"benchmark_cumulative_return\": null, \"benchmark_id\": null, \"benchmark_max_drawdown\": null, \"benchmark_return_type\": null, \"excess_return\": null, \"status\": \"BENCHMARK_UNAVAILABLE\"}, \"cagr\": -0.0002611503468850085, \"calmar_ratio\": -0.04803416909224915, \"configuration_version\": \"9e9a8689e589865514975b1cb2d68fe095bb2b43c0c4d464a92719e00153d8c7\", \"evaluated_at\": \"2025-03-25T20:00:00+00:00\", \"experiment_id\": null, \"max_drawdown\": -0.005436762034614814, \"model_version\": null, \"num_trades\": 582, \"paper_session_id\": \"paper-session-research_universe\", \"period_end\": \"2025-03-25T20:00:00+00:00\", \"period_start\": \"2024-01-02T20:00:00+00:00\", \"provenance\": \"PAPER_TRADING\", \"realized_pnl\": -1747.711024700057, \"reasons\": {\"turnover\": \"not_supplied\"}, \"report_id\": \"PAPERPERF-000001\", \"sharpe_ratio\": -10.219478333301254, \"sortino_ratio\": -12.710393649992687, \"strategy_version\": \"baseline_rule\", \"total_return\": -0.00032030634942725733, \"total_slippage\": 290.7971183151563, \"total_transaction_cost\": 957.6956085273353, \"turnover\": null, \"volatility\": 0.004941318710006639, \"win_rate\": 0.3686131386861314}",
+    "report_id": "PAPERPERF-000001",
+    "seq": 1
+  }
+]
