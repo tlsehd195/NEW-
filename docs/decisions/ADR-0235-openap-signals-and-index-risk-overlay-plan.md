@@ -162,3 +162,14 @@ narrowly:
   overlay, which RULE 0.8 counts as a strategy family, is the account
   owner's call.
 
+## Decision after the result (2026-10-02)
+
+The account owner chose to watch, not to spend the locked windows. The
+`sma_10m` rule is logged observe-only by `observe_sma_rule.yml`
+(`scripts/record_sma_observation.py`): once per calendar month it appends
+to `docs/research/macro_observations/sma_10m.jsonl` and sends a Discord
+message when the state flips. Prices come from Twelve Data (split-adjusted,
+not dividend-adjusted), so a borderline month can differ from the backtest.
+Nothing trades on it. `vol_target_10` is not logged: it trades too often to
+read as a monthly signal.
+
