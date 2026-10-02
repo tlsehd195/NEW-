@@ -1,0 +1,47 @@
+# ADR-0235 recon: real probes of KRX (FinanceDataReader), the Yale 13F
+# dataset page and the OpenAP signal docs. Read-only, workflow_dispatch only.
+name: Recon Overseas And Guru Sources
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which source to probe"
+        type: choice
+        options:
+          - krx
+          - yale13f
+          - openap
+        default: krx
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install probe dependencies
+        env:
+          TARGET_INPUT: ${{ inputs.target }}
+        run: |
+          case "$TARGET_INPUT" in
+            krx) pip install finance-datareader ;;
+            openap) pip install openassetpricing pandas ;;
+          esac
+
+      - name: Probe source
+        env:
+          TARGET_INPUT: ${{ inputs.target }}
+        run: python3 scripts/recon_overseas_and_guru_sources.py "$TARGET_INPUT"
