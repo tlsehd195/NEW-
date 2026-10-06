@@ -29455,5 +29455,23 @@
     "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-5fcad83dc9bcb1f1ceff7d56\", \"client_order_id\": \"CID-5fcad83dc9bcb1f1ceff7d56\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-006499\", \"observed_at\": \"2026-10-02T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
     "seq": 3273,
     "status": "PENDING"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-5fcad83dc9bcb1f1ceff7d56",
+    "observation_id": "PAPEROSTAT-008137",
+    "observed_at": "2026-10-05T20:00:00",
+    "payload_json": "{\"avg_fill_price\": 848.6489407750616, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-5fcad83dc9bcb1f1ceff7d56\", \"client_order_id\": \"CID-5fcad83dc9bcb1f1ceff7d56\", \"filled_quantity\": 1.1828440581685804, \"observation_id\": \"PAPEROSTAT-008137\", \"observed_at\": \"2026-10-05T20:00:00+00:00\", \"raw_status_code\": \"FILLED\", \"status\": \"FILLED\"}",
+    "seq": 3274,
+    "status": "FILLED"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-5a00011137b69b1e0d50a4ed",
+    "observation_id": "PAPEROSTAT-008138",
+    "observed_at": "2026-10-05T20:00:00",
+    "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-5a00011137b69b1e0d50a4ed\", \"client_order_id\": \"CID-5a00011137b69b1e0d50a4ed\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-008138\", \"observed_at\": \"2026-10-05T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
+    "seq": 3275,
+    "status": "PENDING"
   }
 ]

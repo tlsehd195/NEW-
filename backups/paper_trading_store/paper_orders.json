@@ -19642,5 +19642,17 @@
     "security_id": "CAT",
     "side": "BUY",
     "sizing_id": "SIZE-060046"
+  },
+  {
+    "client_order_id": "CID-5a00011137b69b1e0d50a4ed",
+    "decision_id": "DEC-OUT-060177",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-10-05T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-10-05T20:00:00+00:00\", \"client_order_id\": \"CID-5a00011137b69b1e0d50a4ed\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-060177\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 5.760368663594471, \"risk_assessment_id\": \"RISK-060177\", \"security_id\": \"CRM\", \"side\": \"SELL\", \"sizing_id\": \"SIZE-060177\"}}",
+    "quantity": 5.760368663594471,
+    "requested_at": "2026-10-05T20:00:00",
+    "risk_assessment_id": "RISK-060177",
+    "security_id": "CRM",
+    "side": "SELL",
+    "sizing_id": "SIZE-060177"
   }
 ]
