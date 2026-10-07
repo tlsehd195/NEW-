@@ -29473,5 +29473,32 @@
     "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-5a00011137b69b1e0d50a4ed\", \"client_order_id\": \"CID-5a00011137b69b1e0d50a4ed\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-008138\", \"observed_at\": \"2026-10-05T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
     "seq": 3275,
     "status": "PENDING"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-5a00011137b69b1e0d50a4ed",
+    "observation_id": "PAPEROSTAT-009777",
+    "observed_at": "2026-10-06T20:00:00",
+    "payload_json": "{\"avg_fill_price\": 224.85502546765707, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-5a00011137b69b1e0d50a4ed\", \"client_order_id\": \"CID-5a00011137b69b1e0d50a4ed\", \"filled_quantity\": 5.760368663594471, \"observation_id\": \"PAPEROSTAT-009777\", \"observed_at\": \"2026-10-06T20:00:00+00:00\", \"raw_status_code\": \"FILLED\", \"status\": \"FILLED\"}",
+    "seq": 3276,
+    "status": "FILLED"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-b9f3af73db5ff81c4079ec4e",
+    "observation_id": "PAPEROSTAT-009778",
+    "observed_at": "2026-10-06T20:00:00",
+    "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-b9f3af73db5ff81c4079ec4e\", \"client_order_id\": \"CID-b9f3af73db5ff81c4079ec4e\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-009778\", \"observed_at\": \"2026-10-06T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
+    "seq": 3277,
+    "status": "PENDING"
+  },
+  {
+    "broker_id": "paper-broker",
+    "client_order_id": "CID-134a6555224491d2bae3f89b",
+    "observation_id": "PAPEROSTAT-009779",
+    "observed_at": "2026-10-06T20:00:00",
+    "payload_json": "{\"avg_fill_price\": null, \"broker_id\": \"paper-broker\", \"broker_order_id\": \"PAPERORD-CID-134a6555224491d2bae3f89b\", \"client_order_id\": \"CID-134a6555224491d2bae3f89b\", \"filled_quantity\": null, \"observation_id\": \"PAPEROSTAT-009779\", \"observed_at\": \"2026-10-06T20:00:00+00:00\", \"raw_status_code\": \"PENDING\", \"status\": \"PENDING\"}",
+    "seq": 3278,
+    "status": "PENDING"
   }
 ]
