@@ -50,6 +50,7 @@ from strategy_research.factor_scores import (
     illiquidity_score,
     industry_momentum_score,
     intermediate_momentum_score,
+    large_cap_bearish_ma_score,
     leverage_score,
     long_term_reversal_score,
     low_beta_score,
@@ -78,6 +79,7 @@ from strategy_research.factor_scores import (
     sloan_accruals_score,
     sue_score,
     value_composite_score,
+    volume_surge_price_absorption_score,
 )
 
 
@@ -826,6 +828,150 @@ class TestHighVolumeReturnPremiumScore:
         data = _view(repo, as_of_time)
 
         assert high_volume_return_premium_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestVolumeSurgePriceAbsorptionScore:
+    """2026-10-02 (project chat, 동동's own idea) -- volume surge paired
+    with a muted price response. Score = RAW `volume_ratio /
+    (abs(price_change) + 0.01)`, continuous, higher = more attractive
+    (both a bigger volume surge and a smaller price move raise it)."""
+
+    def test_surge_with_muted_price_scores_higher_than_surge_with_big_move(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        # Flat baseline price for both, then the last 5 (recent_days) bars
+        # diverge: ABSORB barely moves, RALLIES jumps >3%.
+        flat_closes = [100.0] * (len(days) - 5)
+        absorb_closes = flat_closes + [100.2, 100.3, 100.1, 100.2, 100.3]
+        rally_closes = flat_closes + [102.0, 103.0, 104.0, 104.5, 105.0]
+        surge_volumes = [1_000.0] * (len(days) - 5) + [5_000.0] * 5
+
+        def _bars(symbol, closes):
+            out = []
+            for d, close, vol in zip(days, closes, surge_volumes):
+                out.extend(make_bars(symbol, [d], [close], volume=vol))
+            return out
+
+        repo = InMemoryDataRepository(bars=_bars("ABSORB", absorb_closes) + _bars("RALLIES", rally_closes))
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        absorb_score = volume_surge_price_absorption_score("ABSORB", as_of_time, data)
+        rally_score = volume_surge_price_absorption_score("RALLIES", as_of_time, data)
+
+        assert absorb_score is not None and rally_score is not None
+        assert absorb_score > rally_score  # same volume surge, smaller price move -> higher score
+
+    def test_surge_scores_higher_than_flat_volume_at_the_same_muted_price(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        closes = [100.0] * (len(days) - 5) + [100.1, 100.2, 100.1, 100.2, 100.1]
+        surge_volumes = [1_000.0] * (len(days) - 5) + [5_000.0] * 5
+
+        def _bars(symbol, vols):
+            out = []
+            for d, close, vol in zip(days, closes, vols):
+                out.extend(make_bars(symbol, [d], [close], volume=vol))
+            return out
+
+        repo = InMemoryDataRepository(
+            bars=_bars("SURGE", surge_volumes) + list(make_bars("FLATVOL", days, closes, volume=1_000.0))
+        )
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        surge_score = volume_surge_price_absorption_score("SURGE", as_of_time, data)
+        flat_score = volume_surge_price_absorption_score("FLATVOL", as_of_time, data)
+
+        assert surge_score is not None and flat_score is not None
+        assert surge_score > flat_score
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 65-observation floor
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 1, 19)
+        data = _view(repo, as_of_time)
+
+        assert volume_surge_price_absorption_score("THIN", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 6, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 5, 29)
+        data = _view(repo, as_of_time)
+
+        assert volume_surge_price_absorption_score("NONEXISTENT", as_of_time, data) is None
+
+
+class TestLargeCapBearishMaScore:
+    """2026-10-02 (project chat, 동동's own second idea) -- high
+    dollar-volume names in bearish 5/20/60 moving-average alignment
+    (역배열). Score = RAW `log(avg_dollar_volume + 1) * bearish_strength`,
+    `None` unless `short_ma < mid_ma < long_ma` strictly."""
+
+    def test_downtrend_scores_above_none_and_uptrend_is_excluded(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 4, 1))  # >= 60 trading days
+        down_closes = [100.0 - 0.5 * i for i in range(len(days))]  # monotonic decline
+        up_closes = [100.0 + 0.5 * i for i in range(len(days))]  # monotonic rise
+        repo = InMemoryDataRepository(
+            bars=list(make_bars("DOWN", days, down_closes, volume=10_000.0))
+            + list(make_bars("UP", days, up_closes, volume=10_000.0))
+        )
+        as_of_time = _utc(2020, 3, 31)
+        data = _view(repo, as_of_time)
+
+        down_score = large_cap_bearish_ma_score("DOWN", as_of_time, data)
+        up_score = large_cap_bearish_ma_score("UP", as_of_time, data)
+
+        assert down_score is not None and down_score > 0  # short<mid<long holds, score positive
+        assert up_score is None  # short>mid>long -- not in 역배열, excluded entirely
+
+    def test_bigger_dollar_volume_scores_higher_at_the_same_downtrend(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 4, 1))
+        closes = [100.0 - 0.5 * i for i in range(len(days))]
+        repo = InMemoryDataRepository(
+            bars=list(make_bars("BIG", days, closes, volume=100_000.0))
+            + list(make_bars("SMALL", days, closes, volume=1_000.0))
+        )
+        as_of_time = _utc(2020, 3, 31)
+        data = _view(repo, as_of_time)
+
+        big_score = large_cap_bearish_ma_score("BIG", as_of_time, data)
+        small_score = large_cap_bearish_ma_score("SMALL", as_of_time, data)
+
+        assert big_score is not None and small_score is not None
+        assert big_score > small_score
+
+    def test_deeper_downtrend_scores_higher_at_the_same_dollar_volume(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 4, 1))
+        steep_closes = [100.0 - 1.0 * i for i in range(len(days))]
+        mild_closes = [100.0 - 0.1 * i for i in range(len(days))]
+        repo = InMemoryDataRepository(
+            bars=list(make_bars("STEEP", days, steep_closes, volume=10_000.0))
+            + list(make_bars("MILD", days, mild_closes, volume=10_000.0))
+        )
+        as_of_time = _utc(2020, 3, 31)
+        data = _view(repo, as_of_time)
+
+        steep_score = large_cap_bearish_ma_score("STEEP", as_of_time, data)
+        mild_score = large_cap_bearish_ma_score("MILD", as_of_time, data)
+
+        assert steep_score is not None and mild_score is not None
+        assert steep_score > mild_score
+
+    def test_insufficient_history_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 1, 20))  # far fewer than the 60-day floor
+        repo = InMemoryDataRepository(bars=list(make_bars("THIN", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 1, 19)
+        data = _view(repo, as_of_time)
+
+        assert large_cap_bearish_ma_score("THIN", as_of_time, data) is None
+
+    def test_unknown_security_returns_none(self) -> None:
+        days = trading_days(date(2020, 1, 2), date(2020, 4, 1))
+        repo = InMemoryDataRepository(bars=list(make_bars("AAA", days, [100.0] * len(days), volume=1_000.0)))
+        as_of_time = _utc(2020, 3, 31)
+        data = _view(repo, as_of_time)
+
+        assert large_cap_bearish_ma_score("NONEXISTENT", as_of_time, data) is None
 
 
 class TestResidualMomentumScore:

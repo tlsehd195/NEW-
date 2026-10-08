@@ -863,6 +863,178 @@ def high_volume_return_premium_score(
     return recent_avg / baseline_avg - 1.0
 
 
+def volume_surge_price_absorption_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, recent_days: int = 5, baseline_days: int = 60,
+) -> Optional[float]:
+    """HYPOTHESIS -- 동동's own idea (2026-10-02): a stock whose recent
+    trading volume has surged well above its own normal baseline while
+    its price has barely moved may be under quiet accumulation --
+    informed/large buyers absorbing supply without pushing the price up
+    yet -- and should outperform afterward, once that demand catches up
+    to price.
+
+    **Not from a single paper testing this literal rule.** The closest
+    grounding is market-microstructure theory on *why* informed trading
+    would look like this: Kyle (1985, "Continuous Auctions and Insider
+    Trading," Econometrica 53(6): 1315-1335) models an informed trader
+    who deliberately spreads orders to minimize price impact while
+    accumulating a position -- i.e. volume without a proportional price
+    move is the theoretical signature of stealth accumulation, not
+    noise. Llorente, Michaely, Saar & Wang (2002, "Dynamic Volume-Return
+    Relation of Individual Stocks," Review of Financial Studies 15(4):
+    1005-1047) separately show that whether a volume-accompanied return
+    continues or reverses next period depends on the *mix* of informed
+    vs. hedging-motivated trading behind that volume, which is exactly
+    the ambiguity a price move muted relative to its volume is meant to
+    resolve in this factor's favor. Neither paper backtests this literal
+    3x-volume/<3%-price construction -- flagged here the same way
+    `price_delay_score` flags its own formula-source caveat, rather than
+    presented as directly reproduced.
+
+    **Distinct from every volume factor already in this module**:
+    `high_volume_return_premium_score` (Gervais, Kaniel & Mingelgrin
+    2001) scores the volume surge ALONE, with no condition on how much
+    the price already moved -- a stock that already rallied hard on
+    high volume scores just as well there. This factor instead rewards
+    a volume surge specifically paired with a MUTED price response,
+    which is a different (and on overlapping names, opposite-signed on
+    the price-change leg) condition. It also shares no mechanism with
+    `price_delay_score` (Hou & Moskowitz 2005), which regresses WEEKLY
+    returns against lagged MARKET returns over a full year and uses no
+    volume data at all.
+
+    Construction, matching 동동's own thresholds (recent_days=5,
+    baseline_days=60, chosen once here and not retuned -- see RULE 0.8):
+    `volume_ratio = average_volume(recent_days) /
+    average_volume(baseline_days immediately before that)`;
+    `price_change = close[t] / close[t - recent_days] - 1`; score =
+    `volume_ratio / (abs(price_change) + 0.01)` -- continuous (for
+    cross-sectional IC ranking, like every other factor here) rather
+    than a hard 0/1 filter, but it is maximized exactly in 동동's
+    original regime (high volume_ratio, price_change near zero) and the
+    0.01 floor only avoids a divide-by-zero blowup on a dead-flat price.
+    `volume_ratio_threshold`/`price_change_threshold` below are the
+    pre-registered 3x/<3% cutoffs for reporting which names actually
+    matched 동동's literal rule, kept separate from the ranking score
+    itself. RAW (not negated) -- higher score is the hypothesized more
+    attractive direction. `None` unless both volume windows are fully
+    populated with valid (non-negative) volume, the baseline average is
+    positive, and both closes are available."""
+    total_days = recent_days + baseline_days
+    padded_days = int(total_days * 1.6)
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), total_days,
+    )
+    if len(bars) < total_days + 1:
+        return None
+    baseline_bars, recent_bars = bars[:-recent_days], bars[-recent_days:]
+    baseline_volumes = [b.volume for b in baseline_bars if b.volume is not None and b.volume >= 0]
+    recent_volumes = [b.volume for b in recent_bars if b.volume is not None and b.volume >= 0]
+    if len(baseline_volumes) < baseline_days or len(recent_volumes) < recent_days:
+        return None
+    baseline_avg = sum(baseline_volumes) / len(baseline_volumes)
+    if baseline_avg <= 0:
+        return None
+    recent_avg = sum(recent_volumes) / len(recent_volumes)
+    volume_ratio = recent_avg / baseline_avg
+    price_before = bars[-recent_days - 1].adjusted_close or bars[-recent_days - 1].close
+    price_now = bars[-1].adjusted_close or bars[-1].close
+    if not price_before or price_now is None:
+        return None
+    price_change = price_now / price_before - 1.0
+    return volume_ratio / (abs(price_change) + 0.01)
+
+
+# Pre-registered reporting cutoffs for `volume_surge_price_absorption_score`
+# (동동's literal rule) -- fixed once alongside the factor itself, not
+# retuned after seeing results, per RULE 0.8.
+VOLUME_SURGE_PRICE_ABSORPTION_VOLUME_RATIO_THRESHOLD = 3.0
+VOLUME_SURGE_PRICE_ABSORPTION_PRICE_CHANGE_THRESHOLD = 0.03
+
+
+def large_cap_bearish_ma_score(
+    security_id: str, as_of_time: datetime, data: AsOfDataView, *, short_days: int = 5, mid_days: int = 20, long_days: int = 60,
+) -> Optional[float]:
+    """HYPOTHESIS -- 동동's own idea (2026-10-02): among the biggest
+    (by size) stocks, the ones currently in "역배열" (bearish moving-
+    average alignment -- short-term MA below mid-term MA below
+    long-term MA, i.e. a confirmed downtrend) will revert and
+    outperform afterward, so bigger + deeper in that downtrend should
+    rank more attractive.
+
+    **Honest caveat -- the closest direct precedent argues the OPPOSITE
+    direction.** Brock, Lakonishok & LeBaron (1992, "Simple Technical
+    Trading Rules and the Stochastic Properties of Stock Returns," The
+    Journal of Finance 47(5): 1731-1764) test exactly this kind of
+    moving-average crossover rule (their variable-length moving-average
+    rule) on the Dow Jones index and find BUY signals (short MA above
+    long MA, a "golden cross") outperform SELL signals (short MA below
+    long MA, a "dead cross", i.e. 역배열) going forward -- trend-
+    FOLLOWING, not fading. Separately, Zarowin (1990, "Size, Seasonality,
+    and Stock Market Overreaction," Journal of Financial and
+    Quantitative Analysis 25(1): 113-125) finds the long-horizon
+    overreaction/reversal effect this hypothesis would need is
+    concentrated in SMALL firms once controlled for size, which argues
+    against a LARGE-cap-specific version being strong. Wired in anyway,
+    exactly as given, per RULE 0.8 ("no post-hoc filtering by raw IC
+    sign or by whether the literature agrees") -- flagged here rather
+    than silently dropped or silently presented as well-supported.
+
+    **Size proxy caveat**: the fundamentals catalog (CommonStockShares
+    Outstanding, needed for true `market_cap` -- see `size_score`)
+    only starts 2010, so this factor cannot compute real market cap in
+    the 2000-2010-07 open research window. Uses average DOLLAR VOLUME
+    (`close * volume`, log-transformed to tame its heavy right skew,
+    same rationale `size_score`'s own docstring discusses for market
+    cap) over `long_days` as the size proxy instead -- correlated with
+    size but not identical to it (a small, highly-traded stock scores
+    as "big" here; a large, thinly-traded one does not), so a result
+    from this factor is evidence about "high-dollar-volume stocks in a
+    downtrend," not strictly "large-cap stocks in a downtrend".
+
+    **Distinct from every reversal/momentum factor already in this
+    module**: `long_term_reversal_score` (De Bondt & Thaler 1985) and
+    `short_term_reversal_score` (Jegadeesh 1990) both sort on a
+    security's OWN raw past return over a fixed window, with no size
+    restriction and no moving-average SHAPE condition; this factor
+    instead gates on a three-point moving-average ORDERING (역배열)
+    and ranks only among names satisfying it, weighted by a dollar-
+    volume size proxy neither reversal factor uses at all.
+
+    Construction, matching 동동's own periods (short_days=5,
+    mid_days=20, long_days=60, chosen once here and not retuned --
+    RULE 0.8): `None` unless `short_ma < mid_ma < long_ma` strictly
+    (실제 역배열 상태가 아니면 후보에서 제외, a gate rather than a
+    continuous penalty, since the hypothesis is specifically about this
+    MA-ordering regime) -- `bearish_strength = (long_ma - short_ma) /
+    long_ma`; score = `log(avg_dollar_volume + 1) * bearish_strength`.
+    RAW (not negated) -- higher score (bigger dollar volume, deeper
+    downtrend) is the hypothesized more attractive direction. `None`
+    also unless the full `long_days` window of closes and volumes is
+    populated."""
+    padded_days = int(long_days * 1.6)
+    bars = trim_to_lookback(
+        data.get_bars(security_id, as_of_time - timedelta(days=padded_days), as_of_time), long_days,
+    )
+    if len(bars) < long_days:
+        return None
+    window = bars[-long_days:]
+    closes = [b.adjusted_close or b.close for b in window]
+    volumes = [b.volume for b in window]
+    if any(c is None for c in closes) or any(v is None or v < 0 for v in volumes):
+        return None
+    short_ma = sum(closes[-short_days:]) / short_days
+    mid_ma = sum(closes[-mid_days:]) / mid_days
+    long_ma = sum(closes) / long_days
+    if long_ma <= 0 or not (short_ma < mid_ma < long_ma):
+        return None
+    bearish_strength = (long_ma - short_ma) / long_ma
+    avg_dollar_volume = sum(c * v for c, v in zip(closes, volumes)) / long_days
+    if avg_dollar_volume <= 0:
+        return None
+    return math.log(avg_dollar_volume + 1.0) * bearish_strength
+
+
 def intermediate_momentum_score(
     security_id: str, as_of_time: datetime, data: AsOfDataView, *, start_months: int = 12, end_months: int = 7,
 ) -> Optional[float]:
