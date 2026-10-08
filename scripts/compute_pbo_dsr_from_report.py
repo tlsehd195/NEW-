@@ -43,7 +43,11 @@ from strategy_research.evidence import (  # noqa: E402
     MIN_DSR_FOR_CANDIDATE,
     classify_evidence_level,
 )
-from strategy_research.pbo_dsr import compute_dsr_for_all_candidates, compute_pbo  # noqa: E402
+from strategy_research.pbo_dsr import (  # noqa: E402
+    compute_dsr_for_all_candidates,
+    compute_pbo,
+    effective_trial_count,
+)
 from strategy_research.reality_check_spa import (  # noqa: E402
     excess_returns_vs_benchmark,
     hansen_spa,
@@ -203,6 +207,13 @@ def main(argv: list[str] | None = None) -> int:
         f"across {pbo_result.num_combinations} CSCV splits ({pbo_result.num_candidates} candidates, "
         f"{pbo_result.num_groups} groups)"
     )
+    # ADR-0238, supplementary only: never changes the verdict above.
+    try:
+        n_eff: float | None = effective_trial_count(fold_returns_by_candidate)
+    except ValueError:
+        n_eff = None
+    if n_eff is not None:
+        print(f"Effective independent trials (ADR-0238, supplementary): {n_eff:.1f} of {len(fold_returns_by_candidate)} candidates")
     print(f"CANDIDATE requires PBO < {MAX_PBO_FOR_CANDIDATE:.0%} and Deflated Sharpe Ratio >= {MIN_DSR_FOR_CANDIDATE:.0%}")
     print()
 
@@ -211,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         "num_combinations": pbo_result.num_combinations,
         "num_groups": pbo_result.num_groups,
         "deflated_sharpe_by_candidate": {n: r.deflated_sharpe_ratio for n, r in dsr_by_name.items()},
+        "effective_trial_count": n_eff,
     }
     if reality_check_spa_result is not None:
         report["reality_check_spa_result"] = reality_check_spa_result
