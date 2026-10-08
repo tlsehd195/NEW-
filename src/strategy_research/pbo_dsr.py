@@ -50,7 +50,7 @@ import itertools
 import math
 import statistics
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Mapping, Optional, Sequence
 
 _EULER_MASCHERONI = 0.5772156649015329
 
@@ -226,12 +226,45 @@ class DsrResult:
     num_observations: int
     skewness: float
     kurtosis: float
+    # ADR-0238: set only when the caller passed `effective_trials`; then
+    # `expected_max_sharpe_under_null` was computed with this count instead
+    # of `num_trials`.
+    effective_num_trials: Optional[float] = None
+
+
+def effective_trial_count(fold_returns_by_candidate: Mapping[str, Sequence[float]]) -> float:
+    """Effective number of independent trials (ADR-0238): the
+    participation ratio of the candidates' fold-return correlation matrix,
+    N_eff = N^2 / sum_ij(rho_ij^2) (equal to (sum eig)^2 / sum eig^2).
+    N identical series give 1.0, N uncorrelated series give N. Pure
+    arithmetic, deterministic, no eigen-decomposition needed."""
+    names = tuple(sorted(fold_returns_by_candidate))
+    n = len(names)
+    if n < 1:
+        raise ValueError("need at least 1 candidate")
+    if n == 1:
+        return 1.0
+    fold_count = len(fold_returns_by_candidate[names[0]])
+    if fold_count < 3:
+        raise ValueError(f"need at least 3 folds to estimate correlations, got {fold_count}")
+    for name in names:
+        if len(fold_returns_by_candidate[name]) != fold_count:
+            raise ValueError("all candidates must have the same fold count in the same order")
+        if statistics.pstdev(fold_returns_by_candidate[name]) == 0:
+            raise ValueError(f"candidate {name!r} has zero variance; correlation is undefined")
+    squared_sum = float(n)  # diagonal
+    for i in range(n):
+        for j in range(i + 1, n):
+            rho = statistics.correlation(fold_returns_by_candidate[names[i]], fold_returns_by_candidate[names[j]])
+            squared_sum += 2.0 * rho * rho
+    return n * n / squared_sum
 
 
 def compute_dsr_for_all_candidates(
     fold_returns_by_candidate: Mapping[str, Sequence[float]],
     *,
     zero_sharpe_trials: int = 0,
+    effective_trials: Optional[float] = None,
 ) -> dict[str, DsrResult]:
     """Computes the Deflated Sharpe Ratio for every candidate in one
     call, since DSR for any one candidate requires the OTHER
@@ -254,7 +287,13 @@ def compute_dsr_for_all_candidates(
     whose return series is identically zero (e.g. a filter that never
     fired, measured as excess over its baseline). Their Sharpe is 0; they
     still count toward the trial count and the spread of trial Sharpes,
-    so leaving them out would under-deflate the winners."""
+    so leaving them out would under-deflate the winners.
+
+    `effective_trials` (ADR-0238): optional N_eff (see
+    `effective_trial_count`). When given it replaces the trial count in the
+    expected-max-Sharpe term only; the default (None) path is unchanged, and
+    `num_trials` always stays the literal count. The deflation is floored at
+    0 so a fractional N_eff can never be more lenient than no deflation."""
     names = tuple(sorted(fold_returns_by_candidate))
     if len(names) < 1:
         raise ValueError("need at least 1 candidate")
@@ -286,7 +325,11 @@ def compute_dsr_for_all_candidates(
     sharpe_values = list(observed_sharpe.values()) + [0.0] * zero_sharpe_trials
     variance_of_trial_sharpes = statistics.pvariance(sharpe_values) if num_trials > 1 else 0.0
 
-    if num_trials <= 1 or variance_of_trial_sharpes <= 0:
+    if effective_trials is not None and not 1.0 <= effective_trials <= num_trials:
+        raise ValueError(f"effective_trials must be in [1, {num_trials}], got {effective_trials}")
+    n_for_sr0 = num_trials if effective_trials is None else effective_trials
+
+    if n_for_sr0 <= 1 or variance_of_trial_sharpes <= 0:
         # A single trial (or all trials tied) has no selection-bias
         # pool to deflate against -- the expected max under a
         # 1-candidate "pool" is 0 (Bailey & Lopez de Prado's formula is
@@ -296,9 +339,11 @@ def compute_dsr_for_all_candidates(
         sr0 = 0.0
     else:
         sr0 = math.sqrt(variance_of_trial_sharpes) * (
-            (1 - _EULER_MASCHERONI) * _normal.inv_cdf(1 - 1 / num_trials)
-            + _EULER_MASCHERONI * _normal.inv_cdf(1 - 1 / (num_trials * math.e))
+            (1 - _EULER_MASCHERONI) * _normal.inv_cdf(1 - 1 / n_for_sr0)
+            + _EULER_MASCHERONI * _normal.inv_cdf(1 - 1 / (n_for_sr0 * math.e))
         )
+        if effective_trials is not None:
+            sr0 = max(0.0, sr0)
 
     results: dict[str, DsrResult] = {}
     for name in names:
@@ -321,6 +366,7 @@ def compute_dsr_for_all_candidates(
             num_observations=n,
             skewness=skew,
             kurtosis=kurt,
+            effective_num_trials=effective_trials,
         )
 
     return results

@@ -236,3 +236,53 @@ def test_zero_sharpe_trials_count_toward_the_deflation() -> None:
     assert padded["a"].num_trials == 11
     assert padded["a"].expected_max_sharpe_under_null > plain["a"].expected_max_sharpe_under_null
     assert padded["a"].deflated_sharpe_ratio < plain["a"].deflated_sharpe_ratio
+
+
+class TestEffectiveTrialCount:
+    """ADR-0238. SYNTHETIC FIXTURE ONLY."""
+
+    def _independent(self, n: int, folds: int = 30) -> dict[str, list[float]]:
+        rng = _seeded_rng(7)
+        return {f"c{i}": [rng.gauss(0.01, 0.05) for _ in range(folds)] for i in range(n)}
+
+    def test_identical_candidates_count_as_one(self) -> None:
+        base = [0.01, -0.02, 0.03, 0.00, 0.02, -0.01]
+        from strategy_research.pbo_dsr import effective_trial_count
+
+        assert effective_trial_count({"a": base, "b": list(base), "c": [x * 2 for x in base]}) == pytest.approx(1.0)
+
+    def test_uncorrelated_candidates_count_near_n(self) -> None:
+        from strategy_research.pbo_dsr import effective_trial_count
+
+        data = self._independent(6, folds=400)
+        assert 4.5 < effective_trial_count(data) <= 6.0
+
+    def test_single_candidate_and_bad_input(self) -> None:
+        from strategy_research.pbo_dsr import effective_trial_count
+
+        assert effective_trial_count({"a": [0.1, 0.2, 0.3]}) == 1.0
+        with pytest.raises(ValueError):
+            effective_trial_count({"a": [0.1, 0.2], "b": [0.2, 0.1]})
+        with pytest.raises(ValueError):
+            effective_trial_count({"a": [0.1, 0.1, 0.1], "b": [0.2, 0.1, 0.3]})
+
+    def test_default_dsr_path_unchanged_and_effective_never_more_lenient_than_none(self) -> None:
+        data = self._independent(5)
+        default = compute_dsr_for_all_candidates(data)
+        assert all(r.effective_num_trials is None for r in default.values())
+        fewer = compute_dsr_for_all_candidates(data, effective_trials=2.0)
+        for name in data:
+            assert fewer[name].num_trials == 5
+            assert fewer[name].effective_num_trials == 2.0
+            assert fewer[name].expected_max_sharpe_under_null <= default[name].expected_max_sharpe_under_null
+            assert fewer[name].expected_max_sharpe_under_null >= 0.0
+        same = compute_dsr_for_all_candidates(data, effective_trials=5.0)
+        for name in data:
+            assert same[name].deflated_sharpe_ratio == pytest.approx(default[name].deflated_sharpe_ratio)
+
+    def test_effective_trials_out_of_range_rejected(self) -> None:
+        data = self._independent(3)
+        with pytest.raises(ValueError):
+            compute_dsr_for_all_candidates(data, effective_trials=0.5)
+        with pytest.raises(ValueError):
+            compute_dsr_for_all_candidates(data, effective_trials=4.0)
