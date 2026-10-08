@@ -18016,5 +18016,27 @@
     "security_id": "CRM",
     "seq": 1638,
     "side": "SELL"
+  },
+  {
+    "client_order_id": "CID-b9f3af73db5ff81c4079ec4e",
+    "fill_id": "PAPERFILL-001639",
+    "payload_json": "{\"client_order_id\": \"CID-b9f3af73db5ff81c4079ec4e\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.0133045954072537, \"data_version\": \"cc14b63ded6ae38e27baba1b59c24e41cc4d310dbabf18fe15e21eac58337ac4\", \"decision_time\": \"2026-10-06T20:00:00+00:00\", \"execution_time\": \"2026-10-07T20:00:00+00:00\", \"order_id\": \"CID-b9f3af73db5ff81c4079ec4e\", \"price\": 376.73593541685443, \"quantity\": 2.660919081450733, \"reference_bar_available_time\": \"2026-10-07T20:00:00+00:00\", \"reference_price\": 376.51001, \"security_id\": \"AVGO\", \"side\": \"BUY\", \"slippage_cost\": 0.5009829856960617, \"spread_cost\": 0.10018626699654608}, \"fill_id\": \"PAPERFILL-001639\", \"recorded_at\": \"2026-10-07T20:00:00+00:00\"}",
+    "price": 376.73593541685443,
+    "quantity": 2.660919081450733,
+    "recorded_at": "2026-10-07T20:00:00",
+    "security_id": "AVGO",
+    "seq": 1639,
+    "side": "BUY"
+  },
+  {
+    "client_order_id": "CID-134a6555224491d2bae3f89b",
+    "fill_id": "PAPERFILL-001640",
+    "payload_json": "{\"client_order_id\": \"CID-134a6555224491d2bae3f89b\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"fill\": {\"commission\": 1.042394437849754, \"data_version\": \"33eadf66ca0d25e9001530b967b7ee8ee8459d4594f372ae5cea7e65588de986\", \"decision_time\": \"2026-10-06T20:00:00+00:00\", \"execution_time\": \"2026-10-07T20:00:00+00:00\", \"order_id\": \"CID-134a6555224491d2bae3f89b\", \"price\": 117.46044044830373, \"quantity\": 8.478887569950821, \"reference_bar_available_time\": \"2026-10-07T20:00:00+00:00\", \"reference_price\": 117.39, \"security_id\": \"CSCO\", \"side\": \"BUY\", \"slippage_cost\": 0.49772298036054136, \"spread_cost\": 0.09953366118370116}, \"fill_id\": \"PAPERFILL-001640\", \"recorded_at\": \"2026-10-07T20:00:00+00:00\"}",
+    "price": 117.46044044830373,
+    "quantity": 8.478887569950821,
+    "recorded_at": "2026-10-07T20:00:00",
+    "security_id": "CSCO",
+    "seq": 1640,
+    "side": "BUY"
   }
 ]

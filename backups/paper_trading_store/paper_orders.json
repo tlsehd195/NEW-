@@ -19678,5 +19678,17 @@
     "security_id": "CSCO",
     "side": "BUY",
     "sizing_id": "SIZE-060242"
+  },
+  {
+    "client_order_id": "CID-4d992a7f546cdbe57c1e275b",
+    "decision_id": "DEC-OUT-060347",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-10-07T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-10-07T20:00:00+00:00\", \"client_order_id\": \"CID-4d992a7f546cdbe57c1e275b\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-060347\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 0.8412410199519068, \"risk_assessment_id\": \"RISK-060347\", \"security_id\": \"LLY\", \"side\": \"BUY\", \"sizing_id\": \"SIZE-060347\"}}",
+    "quantity": 0.8412410199519068,
+    "requested_at": "2026-10-07T20:00:00",
+    "risk_assessment_id": "RISK-060347",
+    "security_id": "LLY",
+    "side": "BUY",
+    "sizing_id": "SIZE-060347"
   }
 ]
