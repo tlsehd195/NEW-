@@ -36078,5 +36078,27 @@
     "timestamp": "2026-10-07T20:00:00",
     "trade_id": "TRD-001640",
     "transaction_cost": 1.6396510793939967
+  },
+  {
+    "decision_id": "DEC-001641",
+    "execution_price": 1170.3018016519948,
+    "experiment_id": null,
+    "holding_period_seconds": null,
+    "natural_key": "trade|None|CID-4d992a7f546cdbe57c1e275b|2026-10-08T20:00:00+00:00|PAPERFILL-001641",
+    "order_id": "CID-4d992a7f546cdbe57c1e275b",
+    "payload_json": "{\"decision_id\": \"DEC-001641\", \"execution_price\": 1170.3018016519948, \"exit_reason\": null, \"experiment_id\": null, \"fill\": {\"commission\": 1.0042062050997596, \"data_version\": \"f9c3d4492721a27e62cd1eb60d40255d75d67bb1873d964d37f1faeac57f358e\", \"decision_time\": \"2026-10-07T20:00:00+00:00\", \"execution_time\": \"2026-10-08T20:00:00+00:00\", \"order_id\": \"CID-4d992a7f546cdbe57c1e275b\", \"price\": 1170.3018016519948, \"quantity\": 0.8412410199519068, \"reference_bar_available_time\": \"2026-10-08T20:00:00+00:00\", \"reference_price\": 1169.59998, \"security_id\": \"LLY\", \"side\": \"BUY\", \"slippage_cost\": 0.4920096143372788, \"spread_cost\": 0.0983915480111636}, \"fill_id\": \"PAPERFILL-001641\", \"holding_period_seconds\": null, \"order_id\": \"CID-4d992a7f546cdbe57c1e275b\", \"position_after\": 0.8412410199519068, \"provenance\": \"PAPER_TRADING\", \"quantity\": 0.8412410199519068, \"realized_pnl\": null, \"realized_return\": null, \"recorded_at\": \"2026-10-08T20:00:00+00:00\", \"reference_price\": 1169.59998, \"security_id\": \"LLY\", \"side\": \"BUY\", \"slippage\": 0.4920096143372788, \"timestamp\": \"2026-10-08T20:00:00+00:00\", \"trade_id\": \"TRD-001641\", \"transaction_cost\": 1.594607367448202}",
+    "position_after": 0.8412410199519068,
+    "provenance": "PAPER_TRADING",
+    "quantity": 0.8412410199519068,
+    "realized_pnl": null,
+    "realized_return": null,
+    "recorded_at": "2026-10-08T20:00:00",
+    "reference_price": 1169.59998,
+    "security_id": "LLY",
+    "side": "BUY",
+    "slippage": 0.4920096143372788,
+    "timestamp": "2026-10-08T20:00:00",
+    "trade_id": "TRD-001641",
+    "transaction_cost": 1.594607367448202
   }
 ]
