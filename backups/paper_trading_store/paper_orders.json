@@ -19690,5 +19690,29 @@
     "security_id": "LLY",
     "side": "BUY",
     "sizing_id": "SIZE-060347"
+  },
+  {
+    "client_order_id": "CID-9ee330090cca8c77bbadfa64",
+    "decision_id": "DEC-OUT-060506",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-10-09T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-10-09T20:00:00+00:00\", \"client_order_id\": \"CID-9ee330090cca8c77bbadfa64\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-060506\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 5.48726923357829, \"risk_assessment_id\": \"RISK-060506\", \"security_id\": \"AMT\", \"side\": \"BUY\", \"sizing_id\": \"SIZE-060506\"}}",
+    "quantity": 5.48726923357829,
+    "requested_at": "2026-10-09T20:00:00",
+    "risk_assessment_id": "RISK-060506",
+    "security_id": "AMT",
+    "side": "BUY",
+    "sizing_id": "SIZE-060506"
+  },
+  {
+    "client_order_id": "CID-ea6997b12b492b428f8c9251",
+    "decision_id": "DEC-OUT-060537",
+    "initial_status": "PENDING",
+    "payload_json": "{\"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"initial_status\": \"PENDING\", \"rejection_reason\": null, \"requested_at\": \"2026-10-09T20:00:00+00:00\", \"validated_order\": {\"as_of_time\": \"2026-10-09T20:00:00+00:00\", \"client_order_id\": \"CID-ea6997b12b492b428f8c9251\", \"configuration_version\": \"78a957a8bba50bba0eae94aad186607cde201e7e3949fc3eebf25bd4505a90a9\", \"decision_id\": \"DEC-OUT-060537\", \"experiment_id\": null, \"order_type\": \"MARKET\", \"provenance\": \"PAPER_TRADING\", \"quantity\": 1.6104615582826038, \"risk_assessment_id\": \"RISK-060537\", \"security_id\": \"DE\", \"side\": \"SELL\", \"sizing_id\": \"SIZE-060537\"}}",
+    "quantity": 1.6104615582826038,
+    "requested_at": "2026-10-09T20:00:00",
+    "risk_assessment_id": "RISK-060537",
+    "security_id": "DE",
+    "side": "SELL",
+    "sizing_id": "SIZE-060537"
   }
 ]
